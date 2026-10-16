@@ -1,0 +1,26 @@
+{
+  "name": "@theagentforge/cli",
+  "version": "0.1.0",
+  "description": "Check a skill, MCP server or package on The Agent Forge before your agent installs it.",
+  "type": "module",
+  "bin": { "forge": "dist/cli.mjs", "theagentforge": "dist/cli.mjs" },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "homepage": "https://theagentforge.io",
+  "repository": { "type": "git", "url": "git+https://github.com/theagentforge/agent-forge.git", "directory": "packages/cli" },
+  "keywords": ["mcp", "skills", "security", "supply-chain", "ai-agents"],
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node18 --minify --legal-comments=none --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs",
+    "prepublishOnly": "pnpm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@forge/shared": "workspace:*",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

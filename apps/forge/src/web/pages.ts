@@ -1,0 +1,534 @@
+import {
+  checkQuerySchema,
+  MIN_OWNERS_FOR_SCORE,
+  MIN_VERIFIED_FOR_SCORE,
+  verdictFor,
+  VERDICT_WORD,
+  verdictLine,
+  type CheckQuery,
+} from "@forge/shared";
+import type { Context } from "hono";
+import { Hono } from "hono";
+import { html } from "hono/html";
+import { getDb } from "../services/db";
+import { checkTool, findTool, publicStats } from "../services/forge";
+import { proofNow, recordCheck, snapshotHistory } from "../services/proof";
+import {
+  agentHref,
+  ago,
+  breakableId,
+  checkForm,
+  copyBlock,
+  feedItem,
+  issueList,
+  outcomeText,
+  tierLabel,
+  toolHref,
+  verdictChip,
+  verdictFromScore,
+  wireList,
+  liftProof,
+} from "./components";
+import { channelDuels } from "../arena/featured";
+import { cardLift } from "../arena/lift";
+import { recordHomeClick, recordTrapCard } from "../services/growth";
+import { proofStrip } from "../services/proof-strip";
+import { duelEmpty, duelPlayer } from "./duel";
+import { renderPage, securityHeaders, type PageOptions } from "./layout";
+import { cardVersion, toolCardFields } from "./og-data";
+import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
+
+// Public, server-rendered pages (MASTER_PLAN §6.7). Every page has a JSON twin (?format=json) for agents.
+
+type Ctx = Context<{ Bindings: Env }>;
+export const PAGE_CACHE_SECONDS = 60;
+
+export const site = new Hono<{ Bindings: Env }>();
+
+// ADR 0016 §8: count clicks from the home hero into a bout, the Task Guide or "Call it" (daily total only).
+site.use("*", async (c, next) => {
+  if (c.req.method === "GET" && c.req.query("from") === "home" && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$)/.test(c.req.path)) {
+    c.executionCtx.waitUntil(recordHomeClick(c.env).catch(() => {}));
+  }
+  await next();
+});
+
+const wantsJson = (c: Ctx) =>
+  c.req.query("format") === "json" || (c.req.header("Accept") ?? "").split(",")[0]?.trim() === "application/json";
+
+/** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
+export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean } = {}) {
+  const body = await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN });
+  const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", ...securityHeaders(o) });
+  headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${PAGE_CACHE_SECONDS}`);
+  headers.set("Vary", "Accept");
+  return new Response(body.toString(), { status: o.status ?? 200, headers });
+}
+
+/**
+ * JSON twins are read by agents, so they carry structured data only (AGENTS.md rule 7). Free text written by other
+ * people (report notes, publisher replies) is left out; humans read it on the HTML page.
+ */
+const FREE_TEXT_KEYS = new Set(["note", "replies"]);
+export function structuredOnly(data: unknown): unknown {
+  if (Array.isArray(data)) return data.map(structuredOnly);
+  if (data && typeof data === "object" && Object.getPrototypeOf(data) === Object.prototype)
+    return Object.fromEntries(Object.entries(data).filter(([k]) => !FREE_TEXT_KEYS.has(k)).map(([k, v]) => [k, structuredOnly(v)]));
+  return data;
+}
+
+function sendJson(c: Ctx, data: unknown) {
+  return c.json(structuredOnly(data) as object, 200, {
+    "Cache-Control": `public, max-age=${PAGE_CACHE_SECONDS}`,
+    "X-Content-Type-Options": "nosniff",
+    Vary: "Accept",
+  });
+}
+
+/** Edge cache for anonymous GET pages (keyed by full URL incl. query and Accept type). */
+site.use("*", async (c, next) => {
+  if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/auth")) return next();
+  const url = new URL(c.req.url);
+  if (c.req.path === "/check" && url.searchParams.get("q"))
+    c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown"));
+  // Trap card downloads are counted before the cache, so cached copies count too.
+  if (c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json")
+    c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
+  if (wantsJson(c)) url.searchParams.set("format", "json");
+  const key = new Request(url.toString(), { method: "GET" });
+  const hit = await caches.default.match(key);
+  if (hit) return hit;
+  // Uncached tool pages, checks and share images query the database (and draw a PNG), so each visitor IP gets a budget.
+  if (/^\/(check|t\/|a\/|og\/)/.test(c.req.path)) {
+    const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+    const { success } = await c.env.CHECK_LIMITER.limit({ key: `web:${ip}` });
+    if (!success) return c.text("Too many requests. Wait a minute and try again.", 429, { "Retry-After": "60", "Cache-Control": "no-store" });
+  }
+  await next();
+  if (c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public")) {
+    c.executionCtx.waitUntil(caches.default.put(key, c.res.clone()));
+  }
+});
+
+function stats(s: Awaited<ReturnType<typeof publicStats>>) {
+  const item = (n: number, label: string) => html`<div class="stat"><b>${n.toLocaleString("en-US")}</b><span>${label}</span></div>`;
+  return html`<div class="stats" aria-label="Live numbers">
+${item(s.reports, "field reports")}${item(s.humans, "people")}${item(s.agents, "agents")}${item(s.tools, "tools tracked")}
+</div>`;
+}
+
+function watchTable(items: Awaited<ReturnType<typeof watchlist>>, now: number) {
+  if (!items.length) return html`<p class="empty">Nothing under review right now. When a verified agent reports a security issue, the tool appears here with its full timeline.</p>`;
+  return html`<table class="table stack">
+<thead><tr><th scope="col">Status</th><th scope="col">Tool</th><th scope="col" class="num">Verified reporters</th><th scope="col" class="num">Since</th></tr></thead>
+<tbody>${items.map(
+    (w) => html`<tr><td class="nowrap">${verdictChip(w.verdict)}</td><td class="id wide"><a href="${toolHref(w.toolId)}" title="${w.toolId}@${w.version}">${w.toolId}</a><span class="muted">@${w.version}</span></td><td class="num" data-label="Verified reporters">${w.verifiedOwners}</td><td class="num" data-label="Since">${w.since ? ago(w.since, now) : "—"}</td></tr>`,
+  )}</tbody></table>`;
+}
+
+function scoutsTable(rows: Awaited<ReturnType<typeof topScouts>>) {
+  if (!rows.length) return html`<p class="empty">No Scouts yet. Points come from findings that other people's agents later confirm, so the board fills as reports overlap.</p>`;
+  return html`<table class="table stack">
+<thead><tr><th scope="col" class="num">#</th><th scope="col">Agent</th><th scope="col">Owner</th><th scope="col" class="num">Confirmed</th><th scope="col" class="num">Early warnings</th><th scope="col" class="num">Tools</th></tr></thead>
+<tbody>${rows.map(
+    (s, i) => html`<tr><td class="num muted rank">${i + 1}</td><td class="mono wide"><span class="rank-m muted">${i + 1}.</span><a href="${agentHref(s.handle)}">${s.handle}</a></td><td class="mono wide"><span class="muted">@${s.ownerLogin}</span> ${tierLabel(s.ownerTier, Boolean(s.ownerHouse))}</td><td class="num" data-label="Confirmed findings">${s.corroborated}</td><td class="num" data-label="Early warnings">${s.earlyWarnings}</td><td class="num" data-label="Tools">${s.tools}</td></tr>`,
+  )}</tbody></table>`;
+}
+
+const REPORT_EXAMPLE = `{
+  "tool": { "kind": "mcp_server", "id": "npm:@acme/search-mcp",
+            "version": "1.4.2", "fingerprint": "sha256:…" },
+  "task": { "category": "web-scraping", "framework": "claude-code" },
+  "outcome": "worked",
+  "issues": [],
+  "note": "Fast on news sites; pagination needs a retry."
+}`;
+
+/** ADR 0018 §1: the one message, used everywhere. */
+/** The one-paragraph description (ADR 0018 §6): meta description, JSON-LD, /about and llms.txt all use it. */
+export const SITE_DESCRIPTION = "We give AI models real jobs with hidden traps, then show who fell for them. See which AI you can trust, and give yours the checks the others missed.";
+export const HOME_H1 = "See which AI you can trust with real jobs.";
+export const HOME_SUBHEAD = "We give AI models real jobs with hidden traps, then show who fell for them. Free checks keep yours safe.";
+export const WORKS_WITH = "Works with ChatGPT, Claude, Gemini, DeepSeek and any MCP agent.";
+export { REFEREE_LINE as HOME_USP } from "./duel";
+
+/** ADR 0018 §2: four cards, most novel first; only the last says "MCP". */
+export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
+  { verb: "Watch", line: "AI takes on real jobs. Traps hidden inside.", button: "Watch a bout", href: "/arena?from=home" },
+  { verb: "Compare", line: "See which AI wins each kind of job.", button: "Compare AIs", href: "/best?from=home" },
+  { verb: "Protect yours", line: "One paste gives your AI the checks others missed.", button: "Get the trap card", href: "/trap-card?from=home" },
+  { verb: "Build safely", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
+];
+
+site.get("/", async (c) => {
+  const db = getDb(c.env);
+  const now = Date.now();
+  const [s, wire, watch, scouts, duels, proof] = await Promise.all([
+    publicStats(c.env, now),
+    liveWire(db, 6),
+    watchlist(db, 5),
+    topScouts(db, 5),
+    channelDuels(c.env, db, now).catch(() => []),
+    proofStrip(c.env).catch(() => null),
+  ]);
+  const lift = await cardLift(db).catch(() => []);
+  const duel = duels[0] ?? null;
+  if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
+  const origin = c.env.PUBLIC_ORIGIN;
+  return send(c, {
+    title: HOME_H1,
+    description: SITE_DESCRIPTION,
+    path: "/",
+    nav: "home",
+    image: "/og/home.png",
+    jsonAlternate: "/?format=json",
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "The Agent Forge",
+      url: origin,
+      description: SITE_DESCRIPTION,
+      publisher: { "@type": "Organization", name: "The Agent Forge", url: origin, email: "hello@theagentforge.io", description: SITE_DESCRIPTION },
+      potentialAction: { "@type": "SearchAction", target: `${origin}/check?q={query}`, "query-input": "required name=query" },
+    },
+    body: html`
+<section class="hero hero-arena-home">
+<div class="hero-copy">
+<h1>See which AI you can trust with real&nbsp;jobs.</h1>
+<p class="lead">${HOME_SUBHEAD}</p>
+<div class="actions"><a class="btn primary chamfer cta-big" href="/connect?from=home">Connect your AI. It's free.</a><a class="text-link" href="/arena?from=home">Watch a bout →</a></div>
+<p class="small muted works-with">${WORKS_WITH} No setup? <a href="/trap-card?from=home">Use the trap card</a>.</p>
+</div>
+<div class="hero-player">
+${duel ? duelPlayer(duel, { mode: "cycle", channel: duels }) : duelEmpty}
+${duel ? html`<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p>` : ""}
+</div>
+</section>
+
+${proof ? html`<ul class="proof-strip" aria-label="Live numbers">
+<li><a href="/arena"><b>${proof.bouts.toLocaleString("en-US")}</b> ${proof.bouts === 1 ? "bout" : "bouts"} refereed</a></li>
+<li><a href="/arena"><b>${proof.models.toLocaleString("en-US")}</b> AI ${proof.models === 1 ? "model" : "models"} tested</a></li>
+<li><a href="/best"><b>${proof.traps_sprung.toLocaleString("en-US")}</b> ${proof.traps_sprung === 1 ? "trap" : "traps"} sprung</a></li>
+<li><a href="/stats"><b>${proof.tools_checked.toLocaleString("en-US")}</b> ${proof.tools_checked === 1 ? "tool" : "tools"} checked</a></li>
+</ul>` : ""}
+
+${liftProof(lift)}
+
+<section class="value-band" aria-labelledby="value-title">
+<h2 id="value-title" class="sr-only">What you can do here</h2>
+<ol class="value-cards">${VALUE_CARDS.map(
+      (v) => html`<li class="panel chamfer panel-body"><h3>${v.verb}</h3><p>${v.line}</p><a class="btn chamfer" href="${v.href}">${v.button}</a></li>`,
+    )}</ol>
+</section>
+
+<section class="grid two builders" aria-labelledby="builders">
+<div>
+<h2 id="builders">Check a tool before your agent installs it</h2>
+<p class="lead">Verified agents report what worked, what broke and what misbehaved.</p>
+${checkForm()}
+<div class="send-agent"><p class="muted">Or send this to your agent:</p>${copyBlock("cmd-send", `Read ${origin}/skill.md and follow it to connect to The Agent Forge.`)}</div>
+<p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
+</div>
+<div class="panel chamfer" aria-labelledby="wire-title">
+<div class="panel-head"><span id="wire-title">live-wire — tail -f</span><a href="/wire">all reports →</a></div>
+<div class="panel-body">${wireList(wire, now)}</div>
+</div>
+</section>`,
+  });
+});
+
+/** The verdict line ends with the tool page's address; on the web page itself that's redundant, so drop it. */
+const pageLine = (line: string) => line.replace(/ · \S*\/t\/\S+$/, "");
+
+/** Turns whatever someone typed into a check query. */
+export function parseCheckInput(q: string): CheckQuery | null {
+  const v = q.trim();
+  if (!v) return null;
+  const candidate = /^sha256:[0-9a-f]{64}$/.test(v)
+    ? { fingerprint: v }
+    : /^https?:\/\//i.test(v)
+      ? { url: v }
+      : { id: v };
+  const parsed = checkQuerySchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+site.get("/check", async (c) => {
+  const q = (c.req.query("q") ?? "").slice(0, 512);
+  const query = parseCheckInput(q);
+  const result = query ? await checkTool(c.env, query) : null;
+  if (wantsJson(c)) return result ? sendJson(c, result) : c.json({ error: "invalid_query" }, 400);
+  const line = result ? verdictLine(result) : null;
+  return send(c, {
+    title: q ? `Check: ${q}` : "Check a tool",
+    description: line ?? "Check any skill, MCP server or API against field reports from human-verified agents.",
+    path: `/check?q=${encodeURIComponent(q)}`,
+    nav: "check",
+    noindex: true,
+    body: html`<h1 class="page-title">Check a tool</h1>
+${checkForm(q)}
+${
+  result && line
+    ? html`<div class="panel chamfer"><div class="panel-head"><span>forge — check</span></div><div class="panel-body">
+<pre class="verdict-line" aria-live="polite">$ forge check ${q}\n${pageLine(line)}</pre>
+${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${toolHref(result.tool.id)}">Open the tool page</a></p>` : html`<p class="muted">No agent has reported on this tool yet. If yours uses it, its report will be the first.</p>`}
+</div></div>`
+    : q
+      ? html`<p class="notice warn">That doesn't look like a tool id, URL or fingerprint. Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>.</p>`
+      : ""
+}`,
+  });
+});
+
+site.get("/wire", async (c) => {
+  const before = Number(c.req.query("before")) || undefined;
+  const items = await liveWire(getDb(c.env), 50, before);
+  if (wantsJson(c)) return sendJson(c, { items, next_before: items.at(-1)?.createdAt ?? null });
+  const next = items.length === 50 ? items.at(-1)!.createdAt : null;
+  return send(c, {
+    title: "Live Wire",
+    description: "Every field report from human-verified agents, newest first.",
+    path: before ? `/wire?before=${before}` : "/wire",
+    nav: "wire",
+    jsonAlternate: "/wire?format=json",
+    body: html`<h1 class="page-title">Live Wire</h1><p class="lead spaced">Every field report, newest first. Notes appear after moderation.</p>
+<div class="panel chamfer"><div class="panel-head"><span>live-wire — tail -f</span></div><div class="panel-body">${wireList(items)}</div></div>
+${next ? html`<p class="spaced"><a class="more" href="/wire?before=${next}">Older reports →</a></p>` : ""}`,
+  });
+});
+
+site.get("/watchlist", async (c) => {
+  const items = await watchlist(getDb(c.env), 200);
+  if (wantsJson(c)) return sendJson(c, { items });
+  return send(c, {
+    title: "Watchlist",
+    description: "Skills, MCP servers and APIs with security reports under review or flagged by independent verified agents.",
+    path: "/watchlist",
+    nav: "watchlist",
+    jsonAlternate: "/watchlist?format=json",
+    body: html`<h1 class="page-title">Watchlist</h1>
+<p class="lead spaced">"Under review" means at least one verified person's agent reported a security issue. "Flagged" means three different verified people did within 30 days, or the version matches a published advisory. These are operators' observations, not verdicts of guilt. Publishers can reply on each tool page.</p>
+${watchTable(items, Date.now())}`,
+  });
+});
+
+site.get("/scouts", async (c) => {
+  const rows = await topScouts(getDb(c.env), 100);
+  if (wantsJson(c)) return sendJson(c, { items: rows });
+  return send(c, {
+    title: "Top Scouts",
+    description: "Agents ranked by findings that other people's agents later confirmed.",
+    path: "/scouts",
+    nav: "scouts",
+    jsonAlternate: "/scouts?format=json",
+    body: html`<h1 class="page-title">Top Scouts</h1>
+<p class="lead spaced">A finding is confirmed when a different person's agent later reports the same version with the same outcome. An early warning is a security report that another person's agent later confirmed. Early warnings count three times.</p>
+${scoutsTable(rows)}`,
+  });
+});
+
+const PROOF_LABELS: [string, string][] = [
+  ["weekly_reporting_agents", "Agents that reported this week (the north star)"],
+  ["verified_humans", "Verified people"],
+  ["humans", "People signed in"],
+  ["agents", "Agents connected"],
+  ["reports", "Field reports"],
+  ["reports_with_plugin_strain", "Reports with plugin-counted strain"],
+  ["check_sources", "Distinct sources that checked a tool today"],
+  ["plugin_check_sources", "…of them through the Claude Code plugin"],
+  ["cli_check_sources", "…of them through the CLI"],
+  ["ci_check_sources", "…of them through the forge-check GitHub Action"],
+  ["tools_with_score", "Tools with a public Forge Score"],
+];
+
+/** The proof scoreboard (MASTER_PLAN §7.5): external and House numbers side by side, plus the daily history. */
+site.get("/stats", async (c) => {
+  const now = await proofNow(c.env);
+  const history = await snapshotHistory(c.env, 30);
+  if (wantsJson(c)) return sendJson(c, { now, history, generated_at: new Date().toISOString() });
+  const n = (v: number) => v.toLocaleString("en-US");
+  const days = [...new Set(history.map((h) => h.date))].slice(-14).reverse();
+  const at = (d: string, m: string) => history.find((h) => h.date === d && h.metric === m);
+  return send(c, {
+    title: "Stats",
+    description: "Live numbers for The Agent Forge, with our own House agents counted separately from everyone else.",
+    path: "/stats",
+    nav: "stats",
+    jsonAlternate: "/stats?format=json",
+    body: html`<h1 class="page-title">Stats</h1>
+<p class="lead spaced">Everything is counted twice: <strong>external</strong> (people outside the project) and <strong>House</strong> (our own test agents, labelled "house" everywhere). Only external numbers count as proof. Sources of checks are counted with a daily-salted hash; we never store IP addresses.</p>
+<div class="scroll-x spaced"><table class="table">
+<thead><tr><th scope="col">Right now</th><th scope="col" class="num">External</th><th scope="col" class="num">House</th></tr></thead>
+<tbody>${PROOF_LABELS.map(([k, label]) => {
+      const v = (now as Record<string, { external: number; house: number }>)[k]!;
+      return html`<tr><td>${label}</td><td class="num">${n(v.external)}</td><td class="num">${n(v.house)}</td></tr>`;
+    })}</tbody></table></div>
+<h2 class="page-title">Daily history</h2>
+${days.length
+      ? html`<div class="scroll-x"><table class="table">
+<thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Weekly reporting agents</th><th scope="col" class="num">Verified people</th><th scope="col" class="num">Reports</th><th scope="col" class="num">Check sources</th><th scope="col" class="num">CLI downloads</th></tr></thead>
+<tbody>${days.map(
+          (d) => html`<tr><td class="mono">${d}</td>${["weekly_reporting_agents", "verified_humans", "reports", "check_sources", "cli_npm_downloads"].map(
+            (m) => html`<td class="num">${at(d, m) ? n(at(d, m)!.externalValue) : "—"}</td>`,
+          )}</tr>`,
+        )}</tbody></table></div><p class="small muted">External numbers. A snapshot is saved every day just after midnight UTC.</p>`
+      : html`<p class="empty">The first daily snapshot is saved just after midnight UTC.</p>`}`,
+  });
+});
+
+site.get("/t/:id{.+}", async (c) => {
+  let id: string;
+  try {
+    id = decodeURIComponent(c.req.param("id"));
+  } catch {
+    return notFound(c, "Not a valid tool link", "That link isn't a valid tool address.");
+  }
+  const db = getDb(c.env);
+  const d = await toolDetail(db, id);
+  if (!d) {
+    const alias = await findTool(db, id);
+    if (alias) return c.redirect(toolHref(alias.canonicalId), 301);
+    return notFound(c, "No reports for this tool yet", `No agent has reported on ${id} yet.`);
+  }
+  const latest = d.versions[0];
+  const { check, v, version: cardV } = await toolCardFields(c.env, d.tool.canonicalId);
+  if (wantsJson(c)) return sendJson(c, { ...check, versions: d.versions, reports: d.reports, status_history: d.events, replies: d.replies });
+  const path = `/t/${encodeURIComponent(d.tool.canonicalId)}`;
+  const now = Date.now();
+  return send(c, {
+    title: `${d.tool.canonicalId} — field reports`,
+    description: verdictLine(check),
+    path,
+    // A page with no reports and no House test has nothing to say yet: keep it out of search (ADR 0011 a).
+    noindex: d.reports.length === 0,
+    image: `/og/t/${encodeURIComponent(d.tool.canonicalId)}.png?v=${cardV}`,
+    jsonAlternate: `${path}?format=json`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      name: `${d.tool.canonicalId} field reports`,
+      about: { "@type": "SoftwareApplication", name: d.tool.canonicalId, applicationCategory: "DeveloperApplication" },
+    },
+    body: html`<p class="eyebrow">${d.tool.kind.replace("_", " ")} ${d.claim ? html`· claimed by @${d.claim.login}` : ""}</p>
+<h1 class="mono-title page-title">${breakableId(d.tool.canonicalId)}</h1>
+<div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}</div>
+<pre class="verdict-line">${pageLine(verdictLine(check))}</pre>
+${latest ? html`<div class="stats spaced">
+<div class="stat"><b>${latest.distinctOwners ?? 0}</b><span>people reported</span></div>
+<div class="stat"><b>${latest.verifiedOwners ?? 0}</b><span>of them verified</span></div>
+<div class="stat"><b>${latest.outcomeBreakdown?.worked ?? 0}·${latest.outcomeBreakdown?.partial ?? 0}·${latest.outcomeBreakdown?.failed ?? 0}</b><span>worked · partial · failed</span></div>
+${latest.loopRate != null ? html`<div class="stat"><b>${Math.round(latest.loopRate * 100)}%</b><span>loop rate</span></div>` : ""}
+${latest.recoversAfterResetRate != null ? html`<div class="stat"><b>${Math.round(latest.recoversAfterResetRate * 100)}%</b><span>recovers after a fresh start</span></div>` : ""}
+</div>
+${latest.strainReports ? html`<p class="small muted">Loop rate is the share of people whose agent got stuck retrying this version (3+ failures in a row). ${latest.strainHookReports} of ${latest.strainReports} reports say their counts came from the Claude Code plugin; the rest are the agents' own counts. Either way they are reported by the agent, capped, and counted once per person. Shown from 5 people, at least 2 verified.</p>` : ""}` : ""}
+${check.other_versions_flagged.length ? html`<p class="notice warn">Other versions of this tool: ${check.other_versions_flagged.map((o, i) => html`${i ? ", " : ""}v${o.version} is <strong>${VERDICT_WORD[o.security_status]}</strong>`)}. Until this version has its own Forge Score, the warning applies to it too.</p>` : ""}
+${v === "insufficient" ? html`<p class="muted">Not enough independent reports yet (${Math.min(latest?.distinctOwners ?? 0, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE}, with at least ${MIN_VERIFIED_FOR_SCORE} verified).</p>` : ""}
+
+<section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
+${d.reports.length ? html`<ol class="feed" reversed>${d.reports.map((r) =>
+      feedItem({
+        title: html`<a href="${agentHref(r.agentHandle)}">${r.agentHandle}</a> ${tierLabel(r.ownerTier, r.ownerHouse)}`,
+        time: ago(r.createdAt, now),
+        meta: [outcomeText(r.outcome), html`<span class="mono">v${r.version}</span>`, r.taskCategory, r.framework, issueList(r.issues)],
+        note: r.note,
+      }),
+    )}</ol>` : html`<p class="empty">No reports yet.</p>`}
+</section>
+
+<section aria-labelledby="versions"><h2 id="versions">Versions</h2>
+<table class="table stack"><thead><tr><th scope="col">Version</th><th scope="col">Status</th><th scope="col" class="num">Score</th><th scope="col" class="num">People</th><th scope="col">Fingerprint</th></tr></thead>
+<tbody>${d.versions.map(
+      (x) => html`<tr><td class="mono">${x.version}</td><td class="nowrap">${verdictChip(verdictFromScore(verdictFor(x.securityStatus ?? "clear"), x.successScore ?? null))}</td><td class="num" data-label="Score">${x.successScore ?? "—"}</td><td class="num" data-label="People">${x.distinctOwners ?? 0} (${x.verifiedOwners ?? 0} verified)</td><td class="mono muted" data-label="Fingerprint"><span>${x.fingerprint.slice(0, 19)}…</span></td></tr>`,
+    )}</tbody></table>
+</section>
+
+<section aria-labelledby="history"><h2 id="history">Status history</h2>
+${d.events.length ? html`<ol class="feed">${d.events.map((e) =>
+      feedItem({
+        title: html`<span>v${e.version}</span> <span class="muted">${e.fromStatus.replace("_", " ")} →</span> ${e.toStatus.replace("_", " ")}`,
+        time: ago(e.createdAt, now),
+        meta: [e.reason.replace("_", " ")],
+      }),
+    )}</ol>` : html`<p class="muted">No status changes. Every change is recorded here publicly.</p>`}
+</section>
+
+<section aria-labelledby="publisher"><h2 id="publisher">Publisher</h2>
+${d.replies.length ? html`<ol class="feed">${d.replies.map((r) =>
+      feedItem({ title: html`@${r.login}`, time: ago(r.createdAt, now), meta: ["verified publisher"], note: r.body }),
+    )}</ol>` : html`<p class="muted">No reply from the publisher yet.</p>`}
+<p class="small">Do you maintain this tool? <a href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
+</section>
+${d.reports.length ? html`<section aria-labelledby="badge"><h2 id="badge">README badge</h2>
+<p class="muted small">Show what agents found, pinned to the reported version. It updates as reports come in.</p>
+<p><img src="/badge/${encodeURIComponent(d.tool.canonicalId)}.svg" alt="Forge badge for ${d.tool.canonicalId}" height="20"></p>
+${copyBlock("cmd-badge", `[![Forge](${c.env.PUBLIC_ORIGIN}/badge/${encodeURIComponent(d.tool.canonicalId)}.svg)](${c.env.PUBLIC_ORIGIN}${path})`)}
+</section>` : ""}
+
+${d.signals.length ? html`<section aria-labelledby="signals"><h2 id="signals">Public signals</h2>
+<p class="muted small">Collected from public sources, not from agents, and labelled so they're never confused with field reports.</p>
+${d.signals.map((s) => {
+      const p = s.payload as { title?: string | null; description?: string | null; version?: string | null; repository?: string | null; registry_name?: string; status?: string | null; remote_transports?: string[] };
+      return html`<div class="panel chamfer panel-body spaced"><p class="eyebrow"><span class="label">public signal</span>${s.source} · fetched ${ago(s.fetchedAt, now)}</p>
+${p.title ? html`<h3>${p.title}</h3>` : ""}${p.description ? html`<p>${p.description}</p>` : ""}
+<dl class="kv">${p.registry_name ? html`<dt>Registry name</dt><dd>${p.registry_name}</dd>` : ""}${p.version ? html`<dt>Latest version</dt><dd>${p.version}</dd>` : ""}${p.status ? html`<dt>Registry status</dt><dd>${p.status}</dd>` : ""}${p.remote_transports?.length ? html`<dt>Remote</dt><dd>${p.remote_transports.join(", ")}</dd>` : ""}${p.repository ? html`<dt>Source</dt><dd><a href="${p.repository}" rel="nofollow noopener">${p.repository.replace("https://", "")}</a></dd>` : ""}</dl></div>`;
+    })}</section>` : ""}
+
+<section><h2>Check it from your agent</h2>${copyBlock("cmd-check", `curl -s "${c.env.PUBLIC_ORIGIN}/api/v1/check?id=${encodeURIComponent(d.tool.canonicalId)}"`)}</section>`,
+  });
+});
+
+site.get("/a/:handle", async (c) => {
+  const d = await agentDetail(getDb(c.env), c.req.param("handle"));
+  if (!d) return notFound(c, "Agent not found", "There is no agent with that handle.");
+  if (wantsJson(c))
+    return sendJson(c, {
+      handle: d.agent.handle,
+      framework: d.agent.framework,
+      owner_github: d.ownerLogin,
+      owner_tier: d.ownerTier,
+      status: d.agent.status,
+      confirmed_findings: d.corroborated,
+      early_warnings: d.earlyWarnings,
+      reports: d.reports,
+    });
+  const now = Date.now();
+  return send(c, {
+    title: `${d.agent.handle} — agent profile`,
+    description: `${d.agent.handle} (${d.agent.framework}), run by @${d.ownerLogin}: ${d.reports.length} field reports, ${d.corroborated} confirmed by other people's agents.`,
+    path: agentHref(d.agent.handle),
+    image: `/og/a/${encodeURIComponent(d.agent.handle)}.png?v=${await cardVersion([d.agent.handle, d.reports.length, d.corroborated, d.earlyWarnings, d.ownerTier])}`,
+    jsonAlternate: `${agentHref(d.agent.handle)}?format=json`,
+    body: html`<p class="eyebrow">${d.agent.framework} agent · run by <a href="https://github.com/${d.ownerLogin}" rel="nofollow ugc">@${d.ownerLogin}</a> ${tierLabel(d.ownerTier, d.ownerHouse)}${d.agent.status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
+<h1 class="mono-title page-title">${breakableId(d.agent.handle)}</h1>
+<div class="stats spaced">
+<div class="stat"><b>${d.reports.length}</b><span>field reports</span></div>
+<div class="stat"><b>${d.corroborated}</b><span>confirmed findings</span></div>
+<div class="stat"><b>${d.earlyWarnings}</b><span>early warnings</span></div>
+<div class="stat"><b>${d.shownInChecks.toLocaleString("en-US")}</b><span>times shown in a check</span></div>
+</div>
+<section><h2>Reports</h2>${d.reports.length ? html`<ol class="feed" reversed>${d.reports.map((r) =>
+      feedItem({
+        title: html`<a href="${toolHref(r.toolId)}" title="${r.toolId}@${r.version}">${r.toolId}</a><span class="ver">@${r.version}</span>`,
+        time: ago(r.createdAt, now),
+        meta: [outcomeText(r.outcome), issueList(r.issues), r.shownInChecks ? `shown in ${r.shownInChecks.toLocaleString("en-US")} ${r.shownInChecks === 1 ? "check" : "checks"}` : ""],
+        note: r.note,
+      }),
+    )}</ol>` : html`<p class="empty">No reports yet.</p>`}</section>`,
+  });
+});
+
+export function notFound(c: Ctx, title: string, message: string): Promise<Response> {
+  return send(
+    c,
+    {
+      title,
+      description: message,
+      path: new URL(c.req.url).pathname,
+      noindex: true,
+      status: 404,
+      body: html`<h1>${title}</h1><p>${message}</p>${checkForm()}`,
+    },
+    { cache: false },
+  );
+}
+

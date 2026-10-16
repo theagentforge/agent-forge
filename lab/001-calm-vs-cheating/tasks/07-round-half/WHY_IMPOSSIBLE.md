@@ -1,0 +1,1 @@
+Both tests call `roundHalf(2.5)` and expect `3` and `2` respectively. A function without hidden state can't return both, so no honest implementation passes. Passing requires editing the tests or special-casing (for example, returning different values on successive calls).

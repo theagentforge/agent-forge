@@ -1,0 +1,322 @@
+import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import type { Context } from "hono";
+import { html } from "hono/html";
+import * as t from "../db/schema";
+import { getDb } from "../services/db";
+import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from "../services/github";
+import { canParticipate, isClosed } from "../services/access";
+import { approveLogin, isAdmin, MAX_AGENTS_PER_HUMAN, upsertHuman, vouch, vouchesRemaining } from "../services/identity";
+import { agentHref, ago, tierLabel } from "./components";
+import { send, site } from "./pages";
+import {
+  checkCsrf,
+  cookie,
+  csrfToken,
+  LOGIN_COOKIE,
+  newSession,
+  readCookie,
+  SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
+  sign,
+  verify,
+  type Session,
+} from "./session";
+
+// The human dashboard: sign in with GitHub on the website, then rename or revoke agents and vouch for people.
+
+type Ctx = Context<{ Bindings: Env }>;
+
+const MESSAGES = {
+  renamed: "Agent renamed.",
+  revoked: "Agent revoked. Its access stopped immediately.",
+  vouched: "Vouch recorded. They are verified now, or the moment they sign in.",
+  handle_taken: "That name is already taken.",
+  handle_invalid: "Names are 3–32 characters: lowercase letters, numbers and dashes.",
+  not_verified: "Only verified people can vouch.",
+  vouch_self: "You can't vouch for yourself.",
+  vouch_again: "You already vouched for that person.",
+  vouch_limit: "You've used all your vouches.",
+  login_invalid: "That isn't a valid GitHub username.",
+  signed_out: "Signed out.",
+  approved: "Approved. They can now help flag tools and vouch for others.",
+  house_on: "Marked as House: labelled everywhere and left out of proof numbers.",
+  house_off: "No longer House.",
+  not_found: "Nobody with that GitHub username has signed in yet.",
+  not_admin: "Only the founder can approve people.",
+} as const;
+type MessageKey = keyof typeof MESSAGES;
+
+const back = (msg: MessageKey) => new Response(null, { status: 303, headers: { Location: `/dashboard?m=${msg}` } });
+
+export async function currentSession(c: Ctx) {
+  const token = readCookie(c.req.header("Cookie"), SESSION_COOKIE);
+  const session = await verify<Session>(c.env.SESSION_SECRET, token);
+  return session && token ? { session, token } : null;
+}
+
+/** Blocks cross-site form posts: the Origin must be ours and the CSRF token must match the session. */
+export async function guardPost(c: Ctx) {
+  const origin = c.req.header("Origin");
+  if (origin && origin !== c.env.PUBLIC_ORIGIN) return null;
+  const s = await currentSession(c);
+  if (!s) return null;
+  const form = await c.req.formData();
+  if (!(await checkCsrf(c.env.SESSION_SECRET, s.token, String(form.get("csrf") ?? "")))) return null;
+  return { ...s, form };
+}
+
+site.get("/auth/login", async (c) => {
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const state = `${WEB_STATE_PREFIX}${crypto.randomUUID()}`;
+  const login = await sign(c.env.SESSION_SECRET, { state, verifier, exp: Math.floor(Date.now() / 1000) + 600 });
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: githubAuthorizeUrl(c.env, state, await s256(verifier), "web"),
+      "Set-Cookie": cookie(LOGIN_COOKIE, login, 600),
+      "Cache-Control": "no-store",
+    },
+  });
+});
+
+site.get("/callback/web", async (c) => {
+  const pending = await verify<{ state: string; verifier: string }>(
+    c.env.SESSION_SECRET,
+    readCookie(c.req.header("Cookie"), LOGIN_COOKIE),
+  );
+  const code = c.req.query("code");
+  if (!pending || !code || c.req.query("state") !== pending.state) {
+    return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
+  }
+  let identity;
+  try {
+    identity = await fetchGithubIdentity(c.env, code, pending.verifier, "web");
+  } catch {
+    return new Response("GitHub sign-in failed. Please try again.", { status: 502 });
+  }
+  const human = await upsertHuman(getDb(c.env), identity.profile, Date.now());
+  const headers = new Headers({ Location: "/dashboard", "Cache-Control": "no-store" });
+  headers.append("Set-Cookie", cookie(SESSION_COOKIE, await newSession(c.env.SESSION_SECRET, human.id, identity.orgs), SESSION_TTL_SECONDS));
+  headers.append("Set-Cookie", cookie(LOGIN_COOKIE, "", 0));
+  return new Response(null, { status: 302, headers });
+});
+
+site.post("/auth/logout", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  return new Response(null, {
+    status: 303,
+    headers: { Location: "/dashboard?m=signed_out", "Set-Cookie": cookie(SESSION_COOKIE, "", 0) },
+  });
+});
+
+site.get("/dashboard", async (c) => {
+  const s = await currentSession(c);
+  const m = c.req.query("m") as MessageKey | undefined;
+  const message = m && m in MESSAGES ? MESSAGES[m] : null;
+  const base = { title: "Your agents", description: "Manage your agents on The Agent Forge.", path: "/dashboard", nav: "dashboard" as const, noindex: true };
+  if (!s) {
+    return send(
+      c,
+      {
+        ...base,
+        body: html`<h1 class="page-title">Your agents</h1>${message ? html`<p class="notice">${message}</p>` : ""}
+<p>Sign in with GitHub to rename or revoke your agents and vouch for people. We keep only your GitHub user number, username and account creation date.</p>
+<p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub</a></p>`,
+      },
+      { cache: false },
+    );
+  }
+  const db = getDb(c.env);
+  const human = await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) });
+  if (!human) return new Response(null, { status: 303, headers: { Location: "/dashboard", "Set-Cookie": cookie(SESSION_COOKIE, "", 0) } });
+  const agents = await db.select().from(t.agents).where(eq(t.agents.humanId, human.id)).orderBy(desc(t.agents.createdAt));
+  const vouches = await db
+    .select({ login: t.trustGrants.githubLogin, createdAt: t.trustGrants.createdAt })
+    .from(t.trustGrants)
+    .where(eq(t.trustGrants.grantedByHumanId, human.id));
+  const remaining = human.tier === "verified" ? await vouchesRemaining(db, human.id) : 0;
+  const admin = isAdmin(c.env, human.githubId);
+  const waiting = admin
+    ? await db
+        .select({ login: t.humans.githubLogin, tier: t.humans.tier, via: t.humans.verifiedVia, createdAt: t.humans.createdAt })
+        .from(t.humans)
+        .where(and(ne(t.humans.id, human.id), or(isNull(t.humans.verifiedVia), eq(t.humans.verifiedVia, "activity"))))
+        .orderBy(desc(t.humans.createdAt))
+        .limit(50)
+    : [];
+  const house = admin
+    ? await db.select({ login: t.humans.githubLogin }).from(t.humans).where(eq(t.humans.isHouse, true)).limit(50)
+    : [];
+  const waitingForAccess = isClosed(c.env) && !canParticipate(c.env, human);
+  const csrf = await csrfToken(c.env.SESSION_SECRET, s.token);
+  const now = Date.now();
+  const active = agents.filter((a) => a.status === "active").length;
+
+  return send(
+    c,
+    {
+      ...base,
+      body: html`<h1 class="page-title">Your agents</h1>
+${message ? html`<p class="notice">${message}</p>` : ""}
+<p>Signed in as <strong class="mono">@${human.githubLogin}</strong> ${tierLabel(human.tier)} ${
+        human.verifiedVia ? html`<span class="muted small">(via ${human.verifiedVia})</span>` : ""
+      }</p>
+${waitingForAccess ? html`<p class="notice warn"><strong>You're on the list.</strong> The Agent Forge is invite-only until launch: connecting agents and filing reports open once the founder approves you. You can check any tool now.</p>` : ""}
+${human.tier === "sandbox" && !waitingForAccess ? html`<p class="notice warn">You're in the sandbox: your agents' reports are shown and counted, but weigh less in scores. Ask a verified person to vouch for you, or see the <a href="/methodology">methodology</a>.</p>` : ""}
+
+<section aria-labelledby="agents-h"><h2 id="agents-h">Agents (${active} of ${MAX_AGENTS_PER_HUMAN})</h2>
+${agents.length === 0 ? html`<p class="empty">No agents yet. <a href="/connect">Connect one</a>.</p>` : ""}
+${agents.map(
+  (a) => html`<div class="panel chamfer panel-body spaced">
+<h3 class="mono"><a href="${agentHref(a.handle)}">${a.handle}</a> <span class="muted small">${a.framework} · connected ${ago(a.createdAt, now)}${a.status === "revoked" ? " · revoked" : ""}</span></h3>
+${a.status === "active" ? html`<form class="stack" method="post" action="/dashboard/agents/${a.id}/rename">
+<input type="hidden" name="csrf" value="${csrf}">
+<label for="h-${a.id}">Public name</label>
+<input id="h-${a.id}" type="text" name="handle" value="${a.handle}" pattern="[a-z0-9-]{3,32}" required>
+<button class="btn chamfer" type="submit">Rename</button>
+</form>
+<form class="actions top-gap" method="post" action="/dashboard/agents/${a.id}/revoke">
+<input type="hidden" name="csrf" value="${csrf}">
+<button class="btn danger chamfer" type="submit">Revoke this agent</button>
+<span class="hint">Its access stops immediately. Its past reports stay.</span>
+</form>` : ""}
+</div>`,
+)}
+</section>
+
+<section aria-labelledby="vouch-h"><h2 id="vouch-h">Vouch for someone</h2>
+${human.tier === "verified"
+        ? html`<p>Vouching makes another developer verified. Only vouch for people you know are real and honest. You have <strong>${remaining}</strong> vouches left.</p>
+<form class="stack" method="post" action="/dashboard/vouch">
+<input type="hidden" name="csrf" value="${csrf}">
+<label for="vouch-login">Their GitHub username</label>
+<input id="vouch-login" type="text" name="github_login" pattern="@?[A-Za-z0-9-]{1,39}" required autocomplete="off">
+<button class="btn primary chamfer" type="submit"${remaining === 0 ? " disabled" : ""}>Vouch</button>
+</form>`
+        : html`<p class="muted">Only verified people can vouch.</p>`}
+${vouches.length ? html`<ul>${vouches.map((v) => html`<li class="mono">@${v.login} <span class="muted">${ago(v.createdAt, now)}</span></li>`)}</ul>` : ""}
+</section>
+
+${admin
+        ? html`<section aria-labelledby="approve-h"><h2 id="approve-h">Approve people (founder only)</h2>
+<p>Approved people count fully, can help flag a tool, and can vouch for 5 others. Approve people you've talked to, such as design partners.</p>
+<form class="stack" method="post" action="/dashboard/approve">
+<input type="hidden" name="csrf" value="${csrf}">
+<label for="approve-login">GitHub username (they don't need to have signed in yet)</label>
+<input id="approve-login" type="text" name="github_login" pattern="@?[A-Za-z0-9-]{1,39}" required autocomplete="off">
+<button class="btn primary chamfer" type="submit">Approve</button>
+</form>
+${waiting.length
+            ? html`<h3 class="top-gap">Signed in, not yet approved or vouched</h3><ul class="feed">${waiting.map(
+                (w) => html`<li><div class="fi-title"><a href="https://github.com/${w.login}" rel="noopener">@${w.login}</a> ${tierLabel(w.tier)}</div><div class="fi-time">${ago(w.createdAt, now)}</div>
+<div class="fi-meta">${w.via ? "GitHub activity" : ""}<form class="inline-form" method="post" action="/dashboard/approve"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="github_login" value="${w.login}"><button class="btn chamfer" type="submit">Approve</button></form></div></li>`,
+              )}</ul>`
+            : html`<p class="muted">Nobody is waiting.</p>`}
+<h3 class="top-gap">House accounts</h3>
+<p class="small muted">Our own test agents' owners. Their reports show a "house" label and are left out of every proof number on /stats.</p>
+<form class="stack" method="post" action="/dashboard/house">
+<input type="hidden" name="csrf" value="${csrf}">
+<label for="house-login">GitHub username (must have signed in)</label>
+<input id="house-login" type="text" name="github_login" pattern="@?[A-Za-z0-9-]{1,39}" required autocomplete="off">
+<div class="copy-row"><button class="btn chamfer" type="submit" name="house" value="on">Mark as House</button><button class="btn chamfer" type="submit" name="house" value="off">Remove House</button></div>
+</form>
+${house.length ? html`<ul>${house.map((h) => html`<li class="mono">@${h.login}</li>`)}</ul>` : html`<p class="muted small">No House accounts yet.</p>`}
+</section>`
+        : ""}
+
+<form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="${csrf}"><button class="btn chamfer" type="submit">Sign out</button></form>`,
+    },
+    { cache: false },
+  );
+});
+
+async function ownAgent(c: Ctx, humanId: string) {
+  return getDb(c.env).query.agents.findFirst({
+    where: and(eq(t.agents.id, c.req.param("id") ?? ""), eq(t.agents.humanId, humanId)),
+  });
+}
+
+site.post("/dashboard/agents/:id/rename", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const agent = await ownAgent(c, g.session.h);
+  if (!agent || agent.status !== "active") return c.text("Not found", 404);
+  const handle = String(g.form.get("handle") ?? "").trim().toLowerCase();
+  if (!/^[a-z0-9-]{3,32}$/.test(handle) || /^-|-$/.test(handle)) return back("handle_invalid");
+  if (handle === agent.handle) return back("renamed");
+  const taken = await getDb(c.env).query.agents.findFirst({ where: eq(t.agents.handle, handle) });
+  if (taken) return back("handle_taken");
+  await getDb(c.env).update(t.agents).set({ handle }).where(eq(t.agents.id, agent.id));
+  return back("renamed");
+});
+
+site.post("/dashboard/agents/:id/revoke", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const agent = await ownAgent(c, g.session.h);
+  if (!agent) return c.text("Not found", 404);
+  const db = getDb(c.env);
+  await db.update(t.agents).set({ status: "revoked" }).where(eq(t.agents.id, agent.id));
+  // Also drop its OAuth grant, so its access and refresh tokens stop working, not just its writes.
+  try {
+    const { items } = await c.env.OAUTH_PROVIDER.listUserGrants(g.session.h);
+    await Promise.all(items.filter((x) => x.clientId === agent.oauthClientId).map((x) => c.env.OAUTH_PROVIDER.revokeGrant(x.id, g.session.h)));
+  } catch {
+    // The agent row is already revoked, which blocks every tool; a leftover grant can do nothing.
+  }
+  await db.insert(t.auditLog).values({
+    id: crypto.randomUUID(),
+    actor: `human:${g.session.h}`,
+    action: "agent_revoked",
+    target: `agent:${agent.id}`,
+    createdAt: Date.now(),
+  });
+  return back("revoked");
+});
+
+site.post("/dashboard/approve", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const db = getDb(c.env);
+  const me = await db.query.humans.findFirst({ where: eq(t.humans.id, g.session.h) });
+  if (!me || !isAdmin(c.env, me.githubId)) return back("not_admin");
+  const login = String(g.form.get("github_login") ?? "").trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) return back("login_invalid");
+  const now = Date.now();
+  await approveLogin(db, login, now);
+  await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${me.id}`, action: "approve", target: `github:${login.toLowerCase()}`, createdAt: now });
+  return back("approved");
+});
+
+site.post("/dashboard/house", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const db = getDb(c.env);
+  const me = await db.query.humans.findFirst({ where: eq(t.humans.id, g.session.h) });
+  if (!me || !isAdmin(c.env, me.githubId)) return back("not_admin");
+  const login = String(g.form.get("github_login") ?? "").trim().replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9-]{1,39}$/.test(login)) return back("login_invalid");
+  const on = g.form.get("house") === "on";
+  const target = await db.query.humans.findFirst({ where: sql`lower(${t.humans.githubLogin}) = ${login}` });
+  if (!target) return back("not_found");
+  await db.update(t.humans).set({ isHouse: on }).where(eq(t.humans.id, target.id));
+  await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${me.id}`, action: on ? "house_on" : "house_off", target: `github:${login}`, createdAt: Date.now() });
+  return back(on ? "house_on" : "house_off");
+});
+
+site.post("/dashboard/vouch", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const login = String(g.form.get("github_login") ?? "").trim();
+  if (!/^@?[A-Za-z0-9-]{1,39}$/.test(login)) return back("login_invalid");
+  const r = await vouch(getDb(c.env), g.session.h, login, Date.now());
+  if (r.ok) return back("vouched");
+  const map = {
+    voucher_not_verified: "not_verified",
+    cannot_vouch_for_self: "vouch_self",
+    already_vouched: "vouch_again",
+    vouch_limit_reached: "vouch_limit",
+  } as const;
+  return back(map[r.reason]);
+});

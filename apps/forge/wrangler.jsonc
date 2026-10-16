@@ -1,0 +1,72 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Production Worker at theagentforge.io.
+  "name": "forge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // global_fetch_strictly_public: required to fetch OAuth Client ID Metadata Documents safely.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  // Static files (fonts, logo, stylesheet) are served straight from Cloudflare's edge, before the Worker runs.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // Published reports and Forge Lab write-ups are bundled as text from docs/ and lab/ (src/web/publications.ts).
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv"], "fallthrough": true }],
+  // Hourly seeding from the official MCP Registry (one page of 100 servers per run).
+  // Hourly: registry seeding. Every 5 minutes: the Arena runner (does nothing when no bouts are queued).
+  "triggers": { "crons": ["17 * * * *", "*/5 * * * *"] },
+  "workers_dev": false,
+  // Live at the apex domain. Production builds are started by hand (docs/runbooks/releases.md), never on every push.
+  "routes": [{ "pattern": "theagentforge.io", "custom_domain": true }],
+  // ADMIN_GITHUB_IDS: GitHub user numbers of founder accounts that may approve people (not a secret).
+  // ACCESS_MODE: "open" since 15 Oct 2026 (anyone with GitHub can connect agents). "closed" = only approved people.
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PUBLIC_ORIGIN": "https://theagentforge.io",
+    "ADMIN_GITHUB_IDS": "342224870",
+    "ACCESS_MODE": "open"
+  },
+  // Secrets (set in the Cloudflare dashboard, never in git): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REPORT_SIGNING_KEY.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "forge-production",
+      "database_id": "ccf1d15a-45ae-4daf-9ef0-be42cd717d85",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "KV", "id": "ec8f79759256467084b06958c48c7674" },
+    { "binding": "OAUTH_KV", "id": "94048d82434c4722814bbba93f945f01" }
+  ],
+  "ai": { "binding": "AI" },
+  "ratelimits": [
+    { "name": "CHECK_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "REPORT_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } }
+  ],
+  "env": {
+    // Staging: deployed from `main` to staging.theagentforge.io, with its own database.
+    "staging": {
+      "name": "forge-staging",
+      "workers_dev": false,
+      "routes": [{ "pattern": "staging.theagentforge.io", "custom_domain": true }],
+      "vars": { "ENVIRONMENT": "staging", "PUBLIC_ORIGIN": "https://staging.theagentforge.io", "ADMIN_GITHUB_IDS": "342224870", "ACCESS_MODE": "open" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "forge-staging",
+          "database_id": "e7fbbb72-8130-4588-a40a-e4516a40a1ae",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        { "binding": "KV", "id": "a2e879a71f324ec0bb2c2b8e6e09f2cd" },
+        { "binding": "OAUTH_KV", "id": "1b8c90be869945aaac1506e624f942b7" }
+      ],
+      "ai": { "binding": "AI" },
+      "ratelimits": [
+        { "name": "CHECK_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
+        { "name": "REPORT_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+      ]
+    }
+  }
+}

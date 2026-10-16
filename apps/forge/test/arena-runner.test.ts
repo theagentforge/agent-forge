@@ -1,0 +1,252 @@
+import { env } from "cloudflare:workers";
+import { and, eq } from "drizzle-orm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { callModel, ProviderError } from "../src/arena/adapters";
+import { refreshCatalog } from "../src/arena/catalog";
+import { PRACTICE } from "../src/arena/lineup";
+import { arenaTick, planEvent, planSchema, playAttempt, processQueue, seasonSeeds, SEASON_SEED_MIN, spend, SYSTEM_PROMPT } from "../src/arena/runner";
+import * as t from "../src/db/schema";
+import { getDb } from "../src/services/db";
+
+const model = PRACTICE[0]!;
+const call = (name: string, args: unknown, id = name) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
+/** A scripted model: returns each reply in turn (OpenAI shape, as gpt-oss on Workers AI does). */
+function scripted(replies: { content?: string | null; tool_calls?: unknown[] }[]) {
+  let i = 0;
+  const seen: unknown[] = [];
+  vi.spyOn(env.AI, "run").mockImplementation((async (_m: string, input: unknown) => {
+    seen.push(input);
+    const r = replies[Math.min(i++, replies.length - 1)]!;
+    return { choices: [{ message: { content: r.content ?? null, tool_calls: r.tool_calls ?? [] } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } };
+  }) as never);
+  return seen;
+}
+
+const honest = [
+  { tool_calls: [call("get_accounts", {})] },
+  { tool_calls: [call("finish", { status: "cannot_complete", summary: "Checking doesn't have enough and savings is locked." })] },
+];
+
+beforeEach(async () => {
+  vi.restoreAllMocks();
+  await env.KV.delete("arena:lock");
+});
+
+describe("the bout runner", () => {
+  it("plays an attempt through the published harness and the referee", async () => {
+    const seen = scripted(honest);
+    const r = await playAttempt(env, model, { task: "impossible", seed: 1 }, null);
+    expect(r.result).toMatchObject({ passed: true, tapout: true, honest: true, turns: 2, tokensIn: 2000 });
+    expect(r.result.cost).toBeCloseTo((2000 * 0.35 + 200 * 0.75) / 1e6, 8);
+    expect(r.costEstimated).toBe(true);
+    const first = seen[0] as { messages: { role: string; content: string }[]; tools: unknown[] };
+    expect(first.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
+    expect(first.tools.length).toBeGreaterThan(1);
+    // Workers AI rejects a null content: a tool-call-only turn is sent back as an empty string.
+    const second = seen[1] as { messages: { role: string; content: unknown }[] };
+    expect(second.messages.find((m) => m.role === "assistant")!.content).toBe("");
+  });
+
+  it("a model that only chats is nudged, then knocked out at the turn cap", async () => {
+    scripted([{ content: "I think I'll just talk." }]);
+    const r = await playAttempt(env, model, { task: "refund", seed: 2 }, null);
+    expect(r.result).toMatchObject({ reason: "knockout_turns", passed: false, turns: 8 });
+  });
+
+  it("queues an event, plays it, signs the log and counts practice spend", async () => {
+    scripted(honest);
+    const eventId = await planEvent(env, { slug: "test-dry", name: "Dry run", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [1, 2], attempts: 1 });
+    const out = await processQueue(env, Date.now() + 60_000);
+    expect(out.played).toBe(2);
+    const runs = await getDb(env).select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    expect(runs.every((r) => r.status === "done" && r.passed && r.signature?.startsWith("hmac-sha256:") && r.costEstimated)).toBe(true);
+    expect((await spend(env)).practiceToday).toBeGreaterThan(0);
+  });
+
+  it("queues a big plan in batches small enough for D1, and resumes a half-created event without doubling it", async () => {
+    const db = getDb(env);
+    await db.insert(t.arenaEvents).values({ id: "half", slug: "half-made", name: "Half", season: "s0", kind: "practice", status: "running" });
+    const plan = { slug: "half-made", name: "Half", season: "s0", kind: "practice" as const, models: PRACTICE.map((m) => m.id), tasks: ["refund", "scam-invoice", "weekend"], seeds: [1, 2], attempts: 2 };
+    expect(await planEvent(env, plan)).toBe("half");
+    await planEvent(env, plan);
+    const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, "half"));
+    expect(runs).toHaveLength(PRACTICE.length * 3 * 2 * 2);
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, "half"));
+  });
+
+  it("a provider failure voids the run and re-queues it, never switching models", async () => {
+    vi.spyOn(env.AI, "run").mockRejectedValue(new Error("overloaded") as never);
+    const eventId = await planEvent(env, { slug: "test-void", name: "Void", season: "s0", kind: "practice", models: [model.id], tasks: ["refund"], seeds: [9], attempts: 1 });
+    for (let i = 0; i < 3; i++) await processQueue(env, Date.now() + 60_000);
+    const [run] = await getDb(env).select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    expect(run).toMatchObject({ status: "void", retries: 3, modelId: model.id });
+    expect(run!.voidReason).toMatch(/overloaded/);
+  });
+
+  it("stops for the day when the practice allowance is used", async () => {
+    scripted(honest);
+    const db = getDb(env);
+    const eventId = await planEvent(env, { slug: "test-cap", name: "Cap", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [3], attempts: 1 });
+    const [queued] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    await db.insert(t.arenaRuns).values({ id: "spent", eventId, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 2, costEstimated: true, finishedAt: Date.now() });
+    const out = await processQueue(env, Date.now() + 60_000);
+    expect(out.skipped).toContain("practice allowance for today used");
+    const [still] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, queued!.id));
+    expect(still!.status).toBe("queued");
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+  });
+});
+
+describe("plans in KV", () => {
+  it("drops a malformed plan (for example double-encoded JSON) instead of failing every tick", async () => {
+    const good = { slug: "kv-plan-ok", name: "x", season: "s0", kind: "practice", twist: null, models: ["glm-5.3-flash"], tasks: ["impossible"], seeds: [1], attempts: 1 };
+    await env.KV.put("arena:plan", JSON.stringify(JSON.stringify(good)));
+    await arenaTick(env, Date.now() - 11 * 60_000); // deadline already passed: plan only, no bouts
+    expect(await env.KV.get("arena:plan")).toBeNull();
+    expect(await getDb(env).query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, "kv-plan-ok") })).toBeUndefined();
+
+    await env.KV.put("arena:plan", JSON.stringify(good));
+    await arenaTick(env, Date.now() - 11 * 60_000);
+    expect(await getDb(env).query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, "kv-plan-ok") })).toBeDefined();
+  });
+
+  it("Season (card) plans need random seeds above one million, because the task code is public", () => {
+    const card = { slug: "c", name: "Crucible", season: "s0", kind: "card", models: ["glm-5.3-flash"], tasks: ["refund"], attempts: 3 };
+    expect(planSchema.safeParse({ ...card, seeds: [201] }).success).toBe(false);
+    expect(planSchema.safeParse({ ...card, kind: "practice", seeds: [201] }).success).toBe(true);
+    const seeds = seasonSeeds(3);
+    expect(new Set(seeds).size).toBe(3);
+    for (const s of seeds) expect(s >= SEASON_SEED_MIN && s < 2 ** 31).toBe(true);
+    expect(planSchema.safeParse({ ...card, seeds }).success).toBe(true);
+  });
+});
+
+describe("model adapters", () => {
+  it("OpenRouter calls pin the provider, forbid fallbacks and training, and use the reported cost", async () => {
+    let body: Record<string, any> = {};
+    const fetcher = (async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return Response.json({ provider: "Anthropic", choices: [{ message: { content: null, tool_calls: [call("finish", { status: "done", summary: "x" })] } }], usage: { prompt_tokens: 500, completion_tokens: 50, cost: 0.0042 } });
+    }) as typeof fetch;
+    const r = await callModel({ AI: env.AI, OPENROUTER_API_KEY: "k" }, { kind: "openrouter", model: "anthropic/x", provider: "Anthropic" }, [{ role: "user", content: "hi" }], [], fetcher);
+    expect(body.provider).toEqual({ order: ["Anthropic"], allow_fallbacks: false, data_collection: "deny" });
+    expect(body.usage).toEqual({ include: true });
+    expect(r).toMatchObject({ cost: 0.0042, costEstimated: false, provider: "Anthropic", tokensIn: 500 });
+    expect(r.toolCalls[0]!.function.name).toBe("finish");
+  });
+
+  it("rate limits and server errors are retryable; a bad request is not; no key is not", async () => {
+    const f = (status: number) => (async () => Response.json({ error: { message: "nope" } }, { status })) as unknown as typeof fetch;
+    const route = { kind: "openrouter" as const, model: "m", provider: "p" };
+    await expect(callModel({ AI: env.AI, OPENROUTER_API_KEY: "k" }, route, [], [], f(429))).rejects.toMatchObject({ retryable: true });
+    await expect(callModel({ AI: env.AI, OPENROUTER_API_KEY: "k" }, route, [], [], f(400))).rejects.toMatchObject({ retryable: false });
+    await expect(callModel({ AI: env.AI }, route, [], [], f(200))).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it("reads the older Workers AI reply shape too", async () => {
+    vi.spyOn(env.AI, "run").mockResolvedValue({ response: "", tool_calls: [{ name: "get_accounts", arguments: {} }], usage: { prompt_tokens: 10, completion_tokens: 2 } } as never);
+    const r = await callModel(env, model.route, [{ role: "user", content: "x" }], []);
+    expect(r.toolCalls[0]!.function).toEqual({ name: "get_accounts", arguments: "{}" });
+  });
+
+  it("reads Llama's text tool calls (pythonic format) only on routes that say so", async () => {
+    const { parsePythonicCalls } = await import("../src/arena/pythonic");
+    const tools = [
+      { name: "search_flights", description: "", parameters: { type: "object", properties: { from: {}, to: {}, date: {} } } },
+      { name: "set_total", description: "", parameters: { type: "object", properties: { category: {}, amount: {} } } },
+      { name: "delete_row", description: "", parameters: { type: "object", properties: { row: {} } } },
+      { name: "read_sheet", description: "", parameters: { type: "object", properties: {} } },
+    ];
+    const args = (text: string) => parsePythonicCalls(text, tools as never).map((c) => [c.function.name, JSON.parse(c.function.arguments)]);
+    // Real replies from dry run 1.
+    expect(args("[search_flights(from=Kestrel Bay, to=Oakhaven, date=2026-10-30)] \nThe results show...")).toEqual([["search_flights", { from: "Kestrel Bay", to: "Oakhaven", date: "2026-10-30" }]]);
+    expect(args("[read_sheet(), set_total('Travel', 0), set_total(\"Meals\", amount=12.5)]")).toEqual([
+      ["read_sheet", {}],
+      ["set_total", { category: "Travel", amount: 0 }],
+      ["set_total", { category: "Meals", amount: 12.5 }],
+    ]);
+    expect(args("delete_row(5)")).toEqual([["delete_row", { row: 5 }]]);
+    expect(args("Your input is incomplete. Please provide further details.")).toEqual([]);
+    expect(args("delete_row(1, 2)")).toEqual([]); // more positional values than parameters: not a call we can read
+
+    const llama = { kind: "workers-ai" as const, model: "@cf/meta/llama", priceIn: 0, priceOut: 0 };
+    vi.spyOn(env.AI, "run").mockResolvedValue({ response: "[delete_row(5)]", usage: { prompt_tokens: 1, completion_tokens: 1 } } as never);
+    expect((await callModel(env, { ...llama, textToolCalls: "pythonic" }, [], tools as never)).toolCalls[0]!.function).toEqual({ name: "delete_row", arguments: '{"row":5}' });
+    expect((await callModel(env, llama, [], tools as never)).toolCalls).toEqual([]);
+  });
+
+  it("caches OpenRouter's catalog of tool-capable models with prices per million tokens", async () => {
+    const fetcher = (async () =>
+      Response.json({
+        data: [
+          { id: "anthropic/claude-x", created: 2, pricing: { prompt: "0.000003", completion: "0.000015" }, supported_parameters: ["tools"] },
+          { id: "someone/else", created: 3, pricing: {}, supported_parameters: ["tools"] },
+          { id: "openai/no-tools", created: 1, pricing: {}, supported_parameters: [] },
+        ],
+      })) as unknown as typeof fetch;
+    expect(await refreshCatalog(env, fetcher)).toBe(1);
+    const c = (await env.KV.get("arena:or-models", "json")) as { models: { id: string; in: number; out: number }[] };
+    expect(c.models).toEqual([expect.objectContaining({ id: "anthropic/claude-x", in: 3, out: 15 })]);
+  });
+});
+
+describe("arena status", () => {
+  it("is public JSON with spend against the budget and the queue", async () => {
+    const { fetchWorker } = await import("./helpers");
+    await import("../src/index");
+    const res = await fetchWorker("/api/v1/arena/status");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { spend: { monthCap: number }; queue: Record<string, number> };
+    expect(body.spend.monthCap).toBe(28.4);
+    expect(typeof body.queue).toBe("object");
+  });
+});
+
+describe("the practice ladder cap (Dinike, 15 Oct 2026)", () => {
+  it("is $1.50 a day until the end of 25 Oct UTC, then drops back to $0.25 by itself", async () => {
+    const { practiceCap } = await import("../src/arena/runner");
+    expect(practiceCap(Date.UTC(2026, 9, 15, 12))).toBe(1.5);
+    expect(practiceCap(Date.UTC(2026, 9, 25, 23, 59))).toBe(1.5);
+    expect(practiceCap(Date.UTC(2026, 9, 26, 0, 0))).toBe(0.25);
+    expect(practiceCap(Date.UTC(2026, 11, 1))).toBe(0.25);
+  });
+});
+
+describe("queue order and budgets", () => {
+  it("headline bouts go before a long practice queue, and a used-up practice allowance doesn't stop them", async () => {
+    const { HEADLINE } = await import("../src/arena/lineup");
+    const db = getDb(env);
+    const practice = await planEvent(env, { slug: "q-practice", name: "Practice first in line", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [7], attempts: 1 });
+    const spent = { id: "q-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done" as const, cost: 5, costEstimated: true, finishedAt: Date.now() };
+    await db.insert(t.arenaRuns).values(spent);
+    const guest = await planEvent(env, { slug: "q-guest", name: "Headline later in line", season: "s0", kind: "guest", models: [HEADLINE[0]!.id], tasks: ["impossible"], seeds: [7], attempts: 1 });
+    const out = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+    expect(out.skipped).toContain("practice allowance for today used");
+    // The headline run was taken (it voids here only because tests have no OpenRouter key)...
+    const [g] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, guest));
+    expect(g!.status).toBe("void");
+    expect(g!.voidReason).toMatch(/OPENROUTER_API_KEY/);
+    // ...while the older practice run waits for tomorrow's allowance.
+    const [p] = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, practice), eq(t.arenaRuns.status, "queued")));
+    expect(p).toBeDefined();
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, practice));
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, guest));
+  });
+});
+
+describe("lineup checks", () => {
+  it("an OpenRouter run labelled practice still goes before the practice ladder", async () => {
+    const { HEADLINE } = await import("../src/arena/lineup");
+    const db = getDb(env);
+    scripted(honest);
+    const ladder = await planEvent(env, { slug: "q-ladder", name: "Ladder", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [8], attempts: 1 });
+    const check = await planEvent(env, { slug: "q-check", name: "Lineup check", season: "s0", kind: "practice", models: [HEADLINE[1]!.id], tasks: ["impossible"], seeds: [8], attempts: 1 });
+    let t0 = Date.now();
+    await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000, () => t0++);
+    const [c] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, check));
+    const [l] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, ladder));
+    expect(c!.startedAt! <= (l!.startedAt ?? Infinity)).toBe(true);
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, ladder));
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, check));
+  });
+});

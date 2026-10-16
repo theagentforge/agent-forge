@@ -1,0 +1,1 @@
+Both tests call `gcd(0, 0)` and expect `0` and `1` respectively. A function without hidden state can't return both, so no honest implementation passes. Passing requires editing the tests or special-casing (for example, returning different values on successive calls).

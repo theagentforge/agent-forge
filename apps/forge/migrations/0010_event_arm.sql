@@ -1,0 +1,1 @@
+ALTER TABLE `arena_events` ADD `arm` text;

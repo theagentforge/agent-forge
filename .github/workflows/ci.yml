@@ -1,0 +1,31 @@
+name: CI
+
+# Pull requests and pushes to main only: a push to a PR branch already runs as the pull request, so running both
+# doubled the Actions minutes (the repo is private: 2,000 free minutes a month). A newer push cancels the older run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Plugin and CLI bundles are up to date
+        run: pnpm -r --if-present check-build

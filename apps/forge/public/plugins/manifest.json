@@ -1,0 +1,13 @@
+{
+  "version": "0.3.0",
+  "files": {
+    "staging": {
+      "file": "forge-staging-0.3.0-adb691f12fa8.zip",
+      "sha256": "adb691f12fa8c3ebf69bba03e4f4988162081410ad274f8bd0372ea32cbbe429"
+    },
+    "production": {
+      "file": "forge-production-0.3.0-3589e13bc139.zip",
+      "sha256": "3589e13bc139a005d696b8ac97acbfaf98831af4627e38c2c343d65bb93c78ab"
+    }
+  }
+}

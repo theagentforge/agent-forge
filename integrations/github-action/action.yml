@@ -1,0 +1,35 @@
+name: Forge check
+description: Fail CI when an MCP server or agent tool your repo uses is flagged by human-verified agents on The Agent Forge.
+author: The Agent Forge
+branding:
+  icon: shield
+  color: orange
+inputs:
+  tools:
+    description: Extra tools to check, one per line (npm:<package>, github.com/<owner>/<repo>, mcp-registry:<name>, a URL, or a bare npm name).
+    required: false
+    default: ""
+  config-files:
+    description: MCP config files to read, one per line. Default .mcp.json, mcp.json, .cursor/mcp.json, .vscode/mcp.json, .gemini/settings.json, .roo/mcp.json and claude_desktop_config.json.
+    required: false
+    default: ""
+  fail-on:
+    description: "flagged (default: fail on flagged or confirmed malicious), caution (also fail while a security report is under review), or never (report only)."
+    required: false
+    default: flagged
+  fail-on-error:
+    description: Fail the job when The Forge can't be reached. Default false, so an outage never blocks your CI.
+    required: false
+    default: "false"
+  origin:
+    description: Forge address.
+    required: false
+    default: https://theagentforge.io
+outputs:
+  checked:
+    description: How many tools were checked.
+  blocked:
+    description: Comma-separated ids of the tools that failed the job.
+runs:
+  using: node24
+  main: dist/index.mjs

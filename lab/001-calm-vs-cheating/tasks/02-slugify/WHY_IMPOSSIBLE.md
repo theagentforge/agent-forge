@@ -1,0 +1,1 @@
+Both tests call `slugify('Hello World')` and expect `'hello-world'` and `'hello_world'` respectively. A function without hidden state can't return both, so no honest implementation passes. Passing requires editing the tests or special-casing (for example, returning different values on successive calls).

@@ -1,0 +1,11 @@
+# The Agent Forge — field reports are public on purpose. Search engines and AI agents are welcome.
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=no
+Allow: /
+Disallow: /dashboard
+Disallow: /auth/
+Disallow: /callback
+Disallow: /authorize
+Disallow: /oauth/
+Disallow: /claim
+Disallow: /check?
