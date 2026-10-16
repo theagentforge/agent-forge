@@ -26,7 +26,18 @@ export const MONTHLY_CAP_USD = 28.4;
 export const PRACTICE_DAILY_CAP_USD = 0.25;
 export const LADDER_CAP_USD = 1.5;
 export const LADDER_CAP_UNTIL = Date.UTC(2026, 9, 26);
-export const practiceCap = (now: number) => (now < LADDER_CAP_UNTIL ? LADDER_CAP_USD : PRACTICE_DAILY_CAP_USD);
+/**
+ * Lab #3 before launch (Dinike, 16 Oct 2026: "raise to $8/day for Lab #3"): $8 a day so the ladder and Lab #3 (about
+ * $20 together) finish before the 20 Oct launch. Ends by itself at the end of 20 Oct UTC, then the ladder cap applies.
+ */
+export const LAB3_CAP_USD = 8;
+export const LAB3_CAP_UNTIL = Date.UTC(2026, 9, 21);
+export const practiceCap = (now: number) =>
+  now < LAB3_CAP_UNTIL ? LAB3_CAP_USD : now < LADDER_CAP_UNTIL ? LADDER_CAP_USD : PRACTICE_DAILY_CAP_USD;
+/** Attempts played at the same time in one tick. Each waits on the model most of the time, so lanes add throughput. */
+export const LANES = 3;
+/** The tick's deadline is 10 minutes in; a cron run may last 15, so a bout may end up to 4 minutes past it. */
+export const CRON_SLACK_MS = 4 * 60_000;
 export const MAX_RETRIES = 2;
 
 type RunRow = typeof t.arenaRuns.$inferSelect;
@@ -117,72 +128,94 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   const routeIds = (kind: "openrouter" | "workers-ai") => ALL_MODELS.filter((m) => m.route.kind === kind).map((m) => m.id);
   const blocked = new Set<"openrouter" | "workers-ai">();
   const openrouterIds = routeIds("openrouter");
-  while (now() < deadline) {
-    const s = await spend(env, now());
-    if (s.month >= MONTHLY_CAP_USD && !blocked.has("openrouter")) {
-      blocked.add("openrouter");
-      out.skipped.push("monthly budget reached");
+  let stop = false;
+  const lane = async () => {
+    while (!stop && now() < deadline) {
+      const s = await spend(env, now());
+      if (s.month >= MONTHLY_CAP_USD && !blocked.has("openrouter")) {
+        blocked.add("openrouter");
+        out.skipped.push("monthly budget reached");
+      }
+      if (s.practiceToday >= practiceCap(now()) && !blocked.has("workers-ai")) {
+        blocked.add("workers-ai");
+        out.skipped.push("practice allowance for today used");
+      }
+      const excluded = [...blocked].flatMap(routeIds);
+      // OpenRouter runs first (the headline lineup, bounded by the monthly budget), then headline events before
+      // practice, then oldest first: a long practice ladder never delays a headline bout or a lineup check.
+      const candidates = await db
+        .select({ run: t.arenaRuns })
+        .from(t.arenaRuns)
+        .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+        .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : [])))
+        .orderBy(
+          openrouterIds.length ? sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end` : sql`0`,
+          sql`case when ${t.arenaEvents.kind} = 'practice' then 1 else 0 end`,
+          asc(t.arenaRuns.createdAt),
+          asc(t.arenaRuns.id),
+        )
+        .limit(LANES);
+      if (!candidates.length) return;
+      // Claim one atomically: another lane may have taken the same run a moment ago.
+      let run: RunRow | null = null;
+      for (const c of candidates) {
+        const [claimed] = await db
+          .update(t.arenaRuns)
+          .set({ status: "running", startedAt: now() })
+          .where(and(eq(t.arenaRuns.id, c.run.id), eq(t.arenaRuns.status, "queued")))
+          .returning();
+        if (claimed) {
+          run = claimed;
+          break;
+        }
+      }
+      if (!run) continue;
+      const model = modelById(run.modelId);
+      if (!model) {
+        await db.update(t.arenaRuns).set({ status: "void", voidReason: "unknown model" }).where(eq(t.arenaRuns.id, run.id));
+        continue;
+      }
+      // A long (Hard) bout, with its own stamina, must finish inside this cron run (15 minutes): don't start one that can't.
+      const need = taskById(run.task)?.caps?.ms;
+      if (need && now() + need > deadline + CRON_SLACK_MS) {
+        await db.update(t.arenaRuns).set({ status: "queued", startedAt: null }).where(eq(t.arenaRuns.id, run.id));
+        return;
+      }
+      const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.id, run.eventId));
+      try {
+        const r = await playAttempt(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null });
+        const signature = await signReport(env.REPORT_SIGNING_KEY, { id: run.id, log: JSON.stringify(r.log) });
+        await db
+          .update(t.arenaRuns)
+          .set({
+            status: "done",
+            passed: r.result.passed,
+            score: attemptScore(r.result),
+            cost: r.result.cost,
+            costEstimated: r.costEstimated,
+            tokens: r.result.tokensIn + r.result.tokensOut,
+            provider: r.provider,
+            result: r.result,
+            log: r.log,
+            signature,
+            finishedAt: now(),
+          })
+          .where(eq(t.arenaRuns.id, run.id));
+        out.played++;
+      } catch (e) {
+        // A provider failure voids the bout; it is re-run later on the same model, never switched (ADR 0014 §6).
+        const retryable = e instanceof ProviderError ? e.retryable : false;
+        const giveUp = !retryable || run.retries >= MAX_RETRIES;
+        await db
+          .update(t.arenaRuns)
+          .set({ status: giveUp ? "void" : "queued", retries: run.retries + 1, voidReason: String(e instanceof Error ? e.message : e).slice(0, 300), startedAt: null })
+          .where(eq(t.arenaRuns.id, run.id));
+        out.voided++;
+        if (!retryable) stop = true;
+      }
     }
-    if (s.practiceToday >= practiceCap(now()) && !blocked.has("workers-ai")) {
-      blocked.add("workers-ai");
-      out.skipped.push("practice allowance for today used");
-    }
-    const excluded = [...blocked].flatMap(routeIds);
-    // OpenRouter runs first (the headline lineup, bounded by the monthly budget), then headline events before
-    // practice, then oldest first: a long practice ladder never delays a headline bout or a lineup check.
-    const [next] = await db
-      .select({ run: t.arenaRuns })
-      .from(t.arenaRuns)
-      .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
-      .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : [])))
-      .orderBy(
-        openrouterIds.length ? sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end` : sql`0`,
-        sql`case when ${t.arenaEvents.kind} = 'practice' then 1 else 0 end`,
-        asc(t.arenaRuns.createdAt),
-        asc(t.arenaRuns.id),
-      )
-      .limit(1);
-    if (!next) break;
-    const run = next.run;
-    const model = modelById(run.modelId);
-    if (!model) {
-      await db.update(t.arenaRuns).set({ status: "void", voidReason: "unknown model" }).where(eq(t.arenaRuns.id, run.id));
-      continue;
-    }
-    const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.id, run.eventId));
-    await db.update(t.arenaRuns).set({ status: "running", startedAt: now() }).where(eq(t.arenaRuns.id, run.id));
-    try {
-      const r = await playAttempt(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null });
-      const signature = await signReport(env.REPORT_SIGNING_KEY, { id: run.id, log: JSON.stringify(r.log) });
-      await db
-        .update(t.arenaRuns)
-        .set({
-          status: "done",
-          passed: r.result.passed,
-          score: attemptScore(r.result),
-          cost: r.result.cost,
-          costEstimated: r.costEstimated,
-          tokens: r.result.tokensIn + r.result.tokensOut,
-          provider: r.provider,
-          result: r.result,
-          log: r.log,
-          signature,
-          finishedAt: now(),
-        })
-        .where(eq(t.arenaRuns.id, run.id));
-      out.played++;
-    } catch (e) {
-      // A provider failure voids the bout; it is re-run later on the same model, never switched (ADR 0014 §6).
-      const retryable = e instanceof ProviderError ? e.retryable : false;
-      const giveUp = !retryable || run.retries >= MAX_RETRIES;
-      await db
-        .update(t.arenaRuns)
-        .set({ status: giveUp ? "void" : "queued", retries: run.retries + 1, voidReason: String(e instanceof Error ? e.message : e).slice(0, 300), startedAt: null })
-        .where(eq(t.arenaRuns.id, run.id));
-      out.voided++;
-      if (!retryable) break;
-    }
-  }
+  };
+  await Promise.all(Array.from({ length: LANES }, lane));
   return out;
 }
 
@@ -230,7 +263,7 @@ export const planSchema = z.strictObject({
   arm: z.enum(ARMS as [Arm, ...Arm[]]).nullable().optional(),
   models: z.array(z.string().max(64)).min(1).max(20),
   tasks: z.array(z.string().max(64)).min(1).max(20),
-  seeds: z.array(z.number().int().min(1).max(MAX_SEED)).min(1).max(50),
+  seeds: z.array(z.number().int().min(1).max(MAX_SEED)).min(1).max(100),
   attempts: z.number().int().min(1).max(30),
 }).refine((p) => p.kind !== "card" || p.seeds.every((s) => s >= SEASON_SEED_MIN), {
   message: "Season (card) events need random seeds of at least 1,000,000 (RULES-season-0: Seeds)",
@@ -242,11 +275,15 @@ export async function arenaTick(env: Env & { OPENROUTER_API_KEY?: string }, star
   if (lock) return { locked: true };
   await env.KV.put("arena:lock", String(startedAt), { expirationTtl: 15 * 60 });
   try {
+    // One plan, or a list of up to 30 (for example Lab #3's 24 per-pair, per-arm events), queued in one tick.
     const raw = await env.KV.get("arena:plan", "json").catch(() => "unreadable");
     if (raw) {
-      const plan = planSchema.safeParse(raw);
-      if (plan.success) await planEvent(env, plan.data);
-      else console.error("arena:plan dropped (invalid)", plan.error.issues[0]?.message);
+      const plans = Array.isArray(raw) ? raw.slice(0, 30) : [raw];
+      for (const p of plans) {
+        const plan = planSchema.safeParse(p);
+        if (plan.success) await planEvent(env, plan.data);
+        else console.error("arena:plan dropped (invalid)", plan.error.issues[0]?.message);
+      }
       await env.KV.delete("arena:plan");
     }
     return await processQueue(env, startedAt + 10 * 60_000);

@@ -243,6 +243,14 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
     expect(res.status).toBe(200);
     expect(body).toContain("<h2>How it stays honest</h2>");
     expect(body).toContain("mailto:hello@theagentforge.io");
+    // Investors and partners: their own route to the founder, prefilled, no form, no NDA, and links for a first look.
+    expect(body).toContain('<h2 id="investors">Investors and partners</h2>');
+    expect(body).toContain("mailto:partners@theagentforge.io?subject=Investor%20or%20partner%3A%20");
+    expect(body).toContain("mailto:press@theagentforge.io?subject=Press");
+    expect(body).toContain("No NDA needed to start.");
+    for (const href of ["/stats", "/arena/dataset.json", "https://github.com/theagentforge/agent-forge", "/lab/3"]) expect(body).toContain(`href="${href}"`);
+    expect((await page("/")).body).toContain('<a href="/about#investors">Investors and partners</a>');
+    expect((await page("/")).body).toContain('"contactType":"investor relations"');
     expect(body).toMatch(/<b>\d+<\/b> bouts? refereed/);
     expect(body).not.toMatch(/revenue|projection/i);
     expect((await page("/")).body).toContain('<a href="/about">About</a>');

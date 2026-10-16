@@ -88,7 +88,7 @@ describe("the bout runner", () => {
     const db = getDb(env);
     const eventId = await planEvent(env, { slug: "test-cap", name: "Cap", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [3], attempts: 1 });
     const [queued] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
-    await db.insert(t.arenaRuns).values({ id: "spent", eventId, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 2, costEstimated: true, finishedAt: Date.now() });
+    await db.insert(t.arenaRuns).values({ id: "spent", eventId, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 10, costEstimated: true, finishedAt: Date.now() });
     const out = await processQueue(env, Date.now() + 60_000);
     expect(out.skipped).toContain("practice allowance for today used");
     const [still] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, queued!.id));
@@ -108,6 +108,21 @@ describe("plans in KV", () => {
     await env.KV.put("arena:plan", JSON.stringify(good));
     await arenaTick(env, Date.now() - 11 * 60_000);
     expect(await getDb(env).query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, "kv-plan-ok") })).toBeDefined();
+  });
+
+  it("takes a list of plans in one go (Lab #3 queues 24 events at once)", async () => {
+    const one = (slug: string) => ({ slug, name: slug, season: "s0", kind: "practice", arm: "card", models: ["glm-5.3-flash"], tasks: ["impossible"], seeds: Array.from({ length: 82 }, (_, i) => 101 + i), attempts: 1 });
+    await env.KV.put("arena:plan", JSON.stringify([one("kv-list-a"), one("kv-list-b"), { bad: true }]));
+    await arenaTick(env, Date.now() - 11 * 60_000);
+    const db = getDb(env);
+    for (const slug of ["kv-list-a", "kv-list-b"]) {
+      const ev = await db.query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, slug) });
+      expect(ev?.arm).toBe("card");
+      const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, ev!.id));
+      expect(runs.length).toBe(82);
+      await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, ev!.id));
+    }
+    expect(await env.KV.get("arena:plan")).toBeNull();
   });
 
   it("Season (card) plans need random seeds above one million, because the task code is public", () => {
@@ -202,10 +217,12 @@ describe("arena status", () => {
   });
 });
 
-describe("the practice ladder cap (Dinike, 15 Oct 2026)", () => {
-  it("is $1.50 a day until the end of 25 Oct UTC, then drops back to $0.25 by itself", async () => {
+describe("the practice caps (Dinike, 15 and 16 Oct 2026)", () => {
+  it("is $8 a day to the end of 20 Oct UTC (Lab #3), $1.50 to the end of 25 Oct, then $0.25 by itself", async () => {
     const { practiceCap } = await import("../src/arena/runner");
-    expect(practiceCap(Date.UTC(2026, 9, 15, 12))).toBe(1.5);
+    expect(practiceCap(Date.UTC(2026, 9, 15, 12))).toBe(8); // Lab #3 before launch (Dinike, 16 Oct)
+    expect(practiceCap(Date.UTC(2026, 9, 20, 23, 59))).toBe(8);
+    expect(practiceCap(Date.UTC(2026, 9, 21, 0, 0))).toBe(1.5);
     expect(practiceCap(Date.UTC(2026, 9, 25, 23, 59))).toBe(1.5);
     expect(practiceCap(Date.UTC(2026, 9, 26, 0, 0))).toBe(0.25);
     expect(practiceCap(Date.UTC(2026, 11, 1))).toBe(0.25);
@@ -217,7 +234,7 @@ describe("queue order and budgets", () => {
     const { HEADLINE } = await import("../src/arena/lineup");
     const db = getDb(env);
     const practice = await planEvent(env, { slug: "q-practice", name: "Practice first in line", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [7], attempts: 1 });
-    const spent = { id: "q-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done" as const, cost: 5, costEstimated: true, finishedAt: Date.now() };
+    const spent = { id: "q-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done" as const, cost: 10, costEstimated: true, finishedAt: Date.now() };
     await db.insert(t.arenaRuns).values(spent);
     const guest = await planEvent(env, { slug: "q-guest", name: "Headline later in line", season: "s0", kind: "guest", models: [HEADLINE[0]!.id], tasks: ["impossible"], seeds: [7], attempts: 1 });
     const out = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
@@ -231,6 +248,19 @@ describe("queue order and budgets", () => {
     expect(p).toBeDefined();
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, practice));
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, guest));
+  });
+});
+
+describe("parallel lanes", () => {
+  it("plays every queued run exactly once with several lanes at the same time", async () => {
+    scripted(honest);
+    const db = getDb(env);
+    const eventId = await planEvent(env, { slug: "q-lanes", name: "Lanes", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [11, 12, 13, 14, 15], attempts: 1 });
+    const out = await processQueue(env, Date.now() + 60_000);
+    const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    expect(runs.every((r) => r.status === "done")).toBe(true);
+    expect(out.played).toBeGreaterThanOrEqual(runs.length); // earlier tests can leave a queued run behind
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
   });
 });
 
@@ -248,5 +278,37 @@ describe("lineup checks", () => {
     expect(c!.startedAt! <= (l!.startedAt ?? Infinity)).toBe(true);
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, ladder));
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, check));
+  });
+});
+
+describe("the Hard tier (ADR 0021)", () => {
+  it("plays a Hard job with its own stamina, and keeps it out of the Normal pages until asked", async () => {
+    const { HARD_TASKS } = await import("@forge/arena");
+    const { finishedRuns } = await import("../src/arena/views");
+    scripted(honest);
+    const db = getDb(env);
+    const hard = HARD_TASKS[0]!;
+    expect(hard.tier).toBe("hard");
+    const eventId = await planEvent(env, { slug: "q-hard", name: "Hard check", season: "s0", kind: "practice", models: [model.id], tasks: [hard.id], seeds: [301], attempts: 1 });
+    await processQueue(env, Date.now() + 10 * 60_000); // a full tick: room for the Hard job's stamina
+    const [run] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    expect(run!.status).toBe("done");
+    expect((run!.log as { type: string; caps?: { toolCalls: number } }[])[0]!.caps!.toolCalls).toBe(hard.caps!.toolCalls);
+    expect((await finishedRuns(db)).some((r) => r.summary.task === hard.id)).toBe(false);
+    expect((await finishedRuns(db, { hard: true })).some((r) => r.summary.task === hard.id)).toBe(true);
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+  });
+});
+
+describe("long bouts and the cron limit", () => {
+  it("doesn't start a bout whose stamina can't fit before the run ends", async () => {
+    const { HARD_TASKS } = await import("@forge/arena");
+    const db = getDb(env);
+    const hard = HARD_TASKS.find((x) => (x.caps?.ms ?? 0) > 6 * 60_000)!;
+    const eventId = await planEvent(env, { slug: "q-long", name: "Long", season: "s0", kind: "practice", models: [model.id], tasks: [hard.id], seeds: [303], attempts: 1 });
+    await processQueue(env, Date.now() + 60_000); // one minute left: not enough
+    const [run] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
+    expect(run!.status).toBe("queued");
+    await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
   });
 });

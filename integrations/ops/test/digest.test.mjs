@@ -39,5 +39,6 @@ describe("ops digest", () => {
     expect(growthLine(g)).toBe("Growth signals: **3** tool claims (2 verified), Forge badges shown on **5** outside sites this week.");
     expect(render({ now: {}, history: [] }, "2026-10-16", null, g)).toContain("Growth signals");
     expect(growthLine({ ...g, trap_card_copies_7d: 4, trap_card_downloads_7d: 9 })).toContain("Trap card this week: **4** copies, **9** downloads.");
+    expect(growthLine({ ...g, mcp_sessions_7d: 12, mcp_sessions_signed_in_7d: 3, mcp_tool_calls_7d: 40 })).toContain("AI connections this week: **12** (3 signed in), **40** tool calls.");
   });
 });

@@ -3,7 +3,17 @@ import { proofStrip } from "../services/proof-strip";
 import { send, site, SITE_DESCRIPTION } from "./pages";
 
 // /about (ADR 0018 §5): for press, investors and partners. What it is, why now, how it stays honest, live numbers,
-// contact. No revenue claims, projections or named buyers.
+// contact. No revenue claims, projections or named buyers. Investors and partners get their own route straight to the
+// founder (partners@), with a prefilled subject, a short "what helps" line, no NDA and no form, and links for diligence.
+
+const mailto = (to: string, subject: string, body: string) =>
+  `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+const NOTE = "Who you are:\nWhat you have in mind:\nA good time to talk (and time zone):\n";
+export const CONTACT_ROUTES = [
+  { who: "Investors and strategic partners", to: "partners@theagentforge.io", subject: "Investor or partner: ", what: "Funding, partnerships, or making the Forge part of something bigger." },
+  { who: "Data and API", to: "partners@theagentforge.io", subject: "Data or API: ", what: "Licensing the refereed bout data, entering your model or agent in the Arena, or the check API at volume." },
+  { who: "Press", to: "press@theagentforge.io", subject: "Press: ", what: "Interviews, data for a story, or images." },
+];
 
 site.get("/about", async (c) => {
   const p = await proofStrip(c.env).catch(() => null);
@@ -38,8 +48,23 @@ ${p ? html`<h2>Live numbers</h2>
 <li><b>${n(p.tools_checked)}</b> ${p.tools_checked === 1 ? "tool" : "tools"} checked</li>
 </ul>` : ""}
 
+<h2 id="investors">Investors and partners</h2>
+<p>We're glad to talk to investors, to companies that want to build on the Forge, and to teams it could be part of. Messages go straight to the founder, and a person reads every one.</p>
+<ul class="contact-routes">
+${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailto(r.to, r.subject, NOTE)}">${r.to}</a></li>`)}
+</ul>
+<p>What helps: who you are, what you have in mind, and a good time to talk. No NDA needed to start.</p>
+<h3>For a first look</h3>
+<ul>
+<li><a href="/stats">Live numbers</a>, updated every day, with outside and in-house activity counted separately.</li>
+<li><a href="/arena/dataset.json">The full bout dataset</a>, every refereed run with its signed log.</li>
+<li><a href="https://github.com/theagentforge/agent-forge">The code</a>, including the referee and the Arena's jobs.</li>
+<li><a href="/arena/rules">The rules</a> and <a href="/methodology">how scores work</a>.</li>
+<li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, published whatever it shows.</li>
+</ul>
+
 <h2>Contact</h2>
-<p>Press, partners and everything else: <a href="mailto:hello@theagentforge.io">hello@theagentforge.io</a>.</p>
+<p>Everything else: <a href="mailto:hello@theagentforge.io">hello@theagentforge.io</a>.</p>
 </article>`,
   });
 });

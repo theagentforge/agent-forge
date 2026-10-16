@@ -1,5 +1,5 @@
-import { boutOutcome, conservative, glicko2, NEW_RATING, summarize, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { boutOutcome, conservative, glicko2, HARD_TASKS, NEW_RATING, summarize, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { modelById, type ArenaModel } from "./lineup";
@@ -35,8 +35,10 @@ export const modelName = (id: string) => modelById(id)?.name ?? id;
  * Lab #3 events (an `arm` is set) change the prompt, so they never mix into rankings, task guides, the hero or trap
  * rates. Only the lab's own measurement (arena/lift.ts) reads them, with `lab: true`. An event-id filter sees its own.
  */
-export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; now?: number; lab?: boolean } = {}) {
+export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; now?: number; lab?: boolean; hard?: boolean } = {}) {
   const where = [eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(f.now ?? Date.now())];
+  // Hard-tier runs (ADR 0021) stay out of the Normal pages, rankings, trap data and the home duel until asked for.
+  if (!f.hard && !f.eventId && !f.task) where.push(notInArray(t.arenaRuns.task, HARD_TASKS.map((x) => x.id)));
   if (f.lab) where.push(isNotNull(t.arenaEvents.arm));
   else if (!f.eventId) where.push(isNull(t.arenaEvents.arm));
   if (f.task) where.push(eq(t.arenaRuns.task, f.task));

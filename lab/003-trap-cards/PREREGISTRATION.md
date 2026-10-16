@@ -81,8 +81,8 @@ From the qualifying pairs, the **6 with the highest ladder trap rate** are selec
 
 ## Cost and timing
 - **Cost:** about $12 on Cloudflare Workers AI at the ladder's measured cost per attempt, plus up to ~$5 for the optional headline arm.
-- **Timing:** it runs after launch, once the ladder has finished.
-- **Budget:** it needs a practice budget, which Dinike approves at the time.
+- **Timing:** it runs after launch, once the ladder has finished. *(Deviation, 16 Oct, before any run: timing only. It runs before the 20 Oct launch, as soon as the ladder finishes. Nothing else changes.)*
+- **Budget:** it needs a practice budget, which Dinike approves at the time. *(Approved 16 Oct: $8 a day until the end of 20 Oct UTC.)*
 
 ## Amendment 1 (15 Oct 2026, before any run): per-job results and where they're shown
 Dinike asked for the card's value to be measured per job and shown on the home page when it's good enough. This is added before any Lab #3 run, so it's part of the plan:

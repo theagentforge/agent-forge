@@ -29,7 +29,8 @@ export function growthLine(g) {
   if (!g) return null;
   const home = g.home_clickins_7d === undefined ? "" : ` Home page click-ins to the Arena (ADR 0016): **${g.home_clickins_yesterday}** yesterday, **${g.home_clickins_7d}** this week (compare with home views in Cloudflare Web Analytics).`;
   const card = g.trap_card_copies_7d === undefined ? "" : ` Trap card this week: **${g.trap_card_copies_7d}** copies, **${g.trap_card_downloads_7d}** downloads.`;
-  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${home}${card}`;
+  const mcp = g.mcp_sessions_7d === undefined ? "" : ` AI connections this week: **${g.mcp_sessions_7d}** (${g.mcp_sessions_signed_in_7d} signed in), **${g.mcp_tool_calls_7d}** tool calls.`;
+  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${home}${card}${mcp}`;
 }
 
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */

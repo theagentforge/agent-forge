@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { protectedApi, publicApi } from "./api";
 import { auth } from "./auth";
 import { PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
+import { type McpEndpoint, recordMcp } from "./services/usage";
 import { seedRun } from "./seed/mcp-registry";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
@@ -122,13 +123,25 @@ export default {
     // The anonymous, read-only MCP endpoint (ADR 0017 §3) is answered before the OAuth provider, which would
     // otherwise treat it as part of the protected /mcp route.
     const path = new URL(request.url).pathname;
+    // Usage counts (services/usage.ts): read from a copy of the body, counted only when the endpoint accepted it.
+    const counted = (endpoint: McpEndpoint, res: Response | Promise<Response>, copy: Request | null) =>
+      Promise.resolve(res).then((r) => {
+        if (copy && r.status < 400) ctx.waitUntil(recordMcp(env, endpoint, copy));
+        return r;
+      });
+    const copyIfPost = () => (request.method === "POST" ? request.clone() : null);
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
-      return publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx);
+      const copy = copyIfPost();
+      return counted("public", publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
     }
     let provider = providers.get(env.PUBLIC_ORIGIN);
     if (!provider) {
       provider = new OAuthProvider<Env>(providerOptions(env.PUBLIC_ORIGIN));
       providers.set(env.PUBLIC_ORIGIN, provider);
+    }
+    if (path === "/mcp") {
+      const copy = copyIfPost();
+      return counted("signed_in", provider.fetch(request, env, ctx), copy);
     }
     return provider.fetch(request, env, ctx);
   },

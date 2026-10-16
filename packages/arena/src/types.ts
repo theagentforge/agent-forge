@@ -76,6 +76,10 @@ export interface TaskType<S = any> {
   make: (seed: number) => TaskVariant<S>;
   tools: (variant: TaskVariant<S>) => ToolDef<S>[];
   referee: (variant: TaskVariant<S>, finalState: S, calls: CallRecord[], claim: FinishClaim | null) => { checkpoints: Checkpoint[]; traps: TrapResult[] };
+  /** Hard jobs (ADR 0021) are longer, so they get their own stamina; twists still multiply it. */
+  caps?: Caps;
+  /** "hard": the harder tier built so frontier models can still fall for traps (ADR 0021). Default "normal". */
+  tier?: "normal" | "hard";
 }
 
 export interface CallRecord {

@@ -78,6 +78,13 @@
       "when": 1792072681703,
       "tag": "0010_event_arm",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1792119615176,
+      "tag": "0011_usage_daily",
+      "breakpoints": true
     }
   ]
 }

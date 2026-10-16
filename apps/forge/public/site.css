@@ -470,3 +470,7 @@ main>section>.feed,main>.panel .feed{max-width:880px}
 .value-cards h3{font-size:var(--fs-lg);margin:0 0 var(--s2)}
 .value-cards p{font-size:var(--fs-md);margin:0 0 var(--s4)}
 @media (min-width:900px){.grid.two.even{grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s5);align-items:stretch}}
+
+/* /about: investor, partner and press routes */
+.contact-routes li{margin-bottom:var(--s2)}
+.contact-routes a{overflow-wrap:anywhere}

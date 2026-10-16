@@ -410,3 +410,17 @@ export const arenaRatings = sqliteTable("arena_ratings", {
   wins: integer("wins").notNull().default(0),
   updatedAt: integer("updated_at").notNull(),
 });
+
+/**
+ * Daily usage totals (MCP sessions, tool calls, client app names). Counters only: no IP, account, agent or session
+ * id is stored, so a row can't be traced to anyone. Proof of use for /stats and the ops digest.
+ */
+export const usageDaily = sqliteTable(
+  "usage_daily",
+  {
+    day: text("day").notNull(),
+    key: text("key").notNull(),
+    n: integer("n").notNull().default(0),
+  },
+  (t) => [uniqueIndex("usage_daily_day_key").on(t.day, t.key)],
+);

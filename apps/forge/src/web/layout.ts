@@ -122,7 +122,7 @@ ${o.body}
 <div class="foot-brand"><strong>Check the Forge first.</strong> <span class="mono">[F✓]</span>
 <p>${TAGLINE} Reports are operators' observations, not certification.</p></div>
 <nav class="foot-links" aria-label="Footer">
-<a href="/about">About</a><a href="/wire">Live Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
+<a href="/about">About</a><a href="/about#investors">Investors and partners</a><a href="/wire">Live Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
 </nav>
 </div>
 <div class="foot-bottom"><span>© ${new Date().getUTCFullYear()} The Agent Forge</span><button class="theme-toggle" type="button" data-theme-toggle hidden>Theme</button></div>

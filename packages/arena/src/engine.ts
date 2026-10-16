@@ -58,7 +58,7 @@ export class Attempt<S = unknown> {
     this.variant = task.make(seed);
     this.state = structuredClone(this.variant.state);
     this.tools = new Map(task.tools(this.variant).map((t) => [t.name, t]));
-    this.caps = applyTwist(opts.caps ?? DEFAULT_CAPS, opts.twist ?? null);
+    this.caps = applyTwist(opts.caps ?? task.caps ?? DEFAULT_CAPS, opts.twist ?? null);
     this.rand = rng(subSeed(seed, `${task.id}:tools`));
     this.t0 = this.now();
     this.push({

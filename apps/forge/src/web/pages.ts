@@ -31,6 +31,7 @@ import {
 } from "./components";
 import { channelDuels } from "../arena/featured";
 import { cardLift } from "../arena/lift";
+import { usageStats } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { proofStrip } from "../services/proof-strip";
 import { duelEmpty, duelPlayer } from "./duel";
@@ -188,7 +189,18 @@ site.get("/", async (c) => {
       name: "The Agent Forge",
       url: origin,
       description: SITE_DESCRIPTION,
-      publisher: { "@type": "Organization", name: "The Agent Forge", url: origin, email: "hello@theagentforge.io", description: SITE_DESCRIPTION },
+      publisher: {
+        "@type": "Organization",
+        name: "The Agent Forge",
+        url: origin,
+        email: "hello@theagentforge.io",
+        description: SITE_DESCRIPTION,
+        contactPoint: [
+          { "@type": "ContactPoint", contactType: "investor relations", email: "partners@theagentforge.io" },
+          { "@type": "ContactPoint", contactType: "partnerships", email: "partners@theagentforge.io" },
+          { "@type": "ContactPoint", contactType: "press", email: "press@theagentforge.io" },
+        ],
+      },
       potentialAction: { "@type": "SearchAction", target: `${origin}/check?q={query}`, "query-input": "required name=query" },
     },
     body: html`
@@ -345,7 +357,8 @@ const PROOF_LABELS: [string, string][] = [
 site.get("/stats", async (c) => {
   const now = await proofNow(c.env);
   const history = await snapshotHistory(c.env, 30);
-  if (wantsJson(c)) return sendJson(c, { now, history, generated_at: new Date().toISOString() });
+  const usage = await usageStats(c.env).catch(() => null);
+  if (wantsJson(c)) return sendJson(c, { now, history, usage, generated_at: new Date().toISOString() });
   const n = (v: number) => v.toLocaleString("en-US");
   const days = [...new Set(history.map((h) => h.date))].slice(-14).reverse();
   const at = (d: string, m: string) => history.find((h) => h.date === d && h.metric === m);
@@ -363,6 +376,14 @@ site.get("/stats", async (c) => {
       const v = (now as Record<string, { external: number; house: number }>)[k]!;
       return html`<tr><td>${label}</td><td class="num">${n(v.external)}</td><td class="num">${n(v.house)}</td></tr>`;
     })}</tbody></table></div>
+${usage ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
+<div class="stats spaced">
+<div class="stat"><b>${n(usage.mcp_sessions)}</b><span>connections from AI apps</span></div>
+<div class="stat"><b>${n(usage.mcp_tool_calls)}</b><span>tool calls</span></div>
+<div class="stat"><b>${n(usage.mcp_sessions_signed_in)}</b><span>of the connections signed in</span></div>
+</div>
+${usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x, i) => html`${i ? ", " : ""}${x.name} (${n(x.n)})`)}.</p>` : ""}
+<p class="small muted">A connection is an AI app starting a session with the Forge's MCP server; a tool call is the AI actually using it. Daily totals only, including our own testing; nothing about who connected is kept.</p>` : ""}
 <h2 class="page-title">Daily history</h2>
 ${days.length
       ? html`<div class="scroll-x"><table class="table">

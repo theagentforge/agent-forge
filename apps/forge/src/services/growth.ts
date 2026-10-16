@@ -1,6 +1,7 @@
 import { isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { usageStats } from "./usage";
 
 // ADR 0011 leading indicators that the Ops Digest reads: tool claims and sites embedding a Forge badge.
 
@@ -69,5 +70,9 @@ export async function growthStats(env: Env, now = Date.now()) {
     home_clickins_7d: await homeClicks(env, now),
     trap_card_copies_7d: await trapCardUses(env, "copy", now),
     trap_card_downloads_7d: (await trapCardUses(env, "txt", now)) + (await trapCardUses(env, "json", now)),
+    ...(await usageStats(env, now).then(
+      (u) => ({ mcp_sessions_7d: u.mcp_sessions, mcp_sessions_signed_in_7d: u.mcp_sessions_signed_in, mcp_tool_calls_7d: u.mcp_tool_calls, mcp_top_clients_7d: u.top_clients }),
+      () => ({}),
+    )),
   };
 }
