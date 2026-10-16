@@ -5,9 +5,17 @@ import type { AgentProps } from "./props";
 
 // The House tester (MASTER_PLAN §7.2): a GitHub Actions workflow in this repo starts MCP servers from the official
 // registry in a sandbox and files honest, "house"-labelled reports. It authenticates with GitHub's OIDC token, so no
-// shared secret exists anywhere: only a job in theagentforge/forge running house-tester.yml from main is accepted.
+// shared secret exists anywhere: only house-tester.yml running from main in one of our two repos is accepted. The
+// nightly run lives in the public mirror (free Actions minutes); the private repo can still run it by hand. Each repo
+// is pinned by its GitHub id too, so a deleted and re-created repo of the same name wouldn't pass.
 
-export const HOUSE_WORKFLOW = "theagentforge/forge/.github/workflows/house-tester.yml@refs/heads/main";
+/** Repos allowed to run the House tester, with their GitHub repository ids. */
+export const HOUSE_REPOS: Record<string, string> = {
+  "theagentforge/forge": "1418096645",
+  "theagentforge/agent-forge": "1421518455",
+};
+export const houseWorkflow = (repo: string) => `${repo}/.github/workflows/house-tester.yml@refs/heads/main`;
+export const HOUSE_WORKFLOW = houseWorkflow("theagentforge/forge");
 const ISSUER = "https://token.actions.githubusercontent.com";
 const HOUSE_CLIENT = "house:tester";
 
@@ -36,6 +44,7 @@ export interface OidcClaims {
   exp: number;
   iat: number;
   repository: string;
+  repository_id: string;
   job_workflow_ref: string;
   ref: string;
   event_name: string;
@@ -56,7 +65,8 @@ export async function verifyHouseToken(token: string, audience: string, fetcher:
     const c = JSON.parse(new TextDecoder().decode(b64url(parts[1]!))) as OidcClaims;
     const s = Math.floor(now / 1000);
     if (c.iss !== ISSUER || c.aud !== audience || c.exp < s || c.iat > s + 60) return null;
-    if (c.repository !== "theagentforge/forge" || c.job_workflow_ref !== HOUSE_WORKFLOW || c.ref !== "refs/heads/main") return null;
+    const id = HOUSE_REPOS[c.repository];
+    if (!id || String(c.repository_id) !== id || c.job_workflow_ref !== houseWorkflow(c.repository) || c.ref !== "refs/heads/main") return null;
     return c;
   } catch {
     return null;

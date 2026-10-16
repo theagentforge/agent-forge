@@ -1,7 +1,7 @@
 name: CI
 
 # Pull requests and pushes to main only: a push to a PR branch already runs as the pull request, so running both
-# doubled the Actions minutes (the repo is private: 2,000 free minutes a month). A newer push cancels the older run.
+# doubled the Actions minutes. A newer push cancels the older run.
 on:
   push:
     branches: [main]

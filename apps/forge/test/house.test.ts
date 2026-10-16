@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
-import { HOUSE_WORKFLOW, resetJwksCache, verifyHouseToken } from "../src/services/house";
+import { HOUSE_WORKFLOW, houseWorkflow, resetJwksCache, verifyHouseToken } from "../src/services/house";
 import { upsertHuman } from "../src/services/identity";
 import { fetchWorker, fp, profile, report } from "./helpers";
 import "../src/index";
@@ -23,6 +23,7 @@ async function token(over: Record<string, unknown> = {}, signer = keys.privateKe
     iat: now,
     exp: now + 300,
     repository: "theagentforge/forge",
+    repository_id: "1418096645",
     job_workflow_ref: HOUSE_WORKFLOW,
     ref: "refs/heads/main",
     event_name: "schedule",
@@ -52,8 +53,14 @@ beforeEach(async () => {
 describe("House tester (GitHub Actions OIDC)", () => {
   it("accepts only our workflow on main, unexpired, for this site", async () => {
     expect(await verifyHouseToken(await token(), env.PUBLIC_ORIGIN)).not.toBeNull();
+    const pub = { repository: "theagentforge/agent-forge", repository_id: "1421518455", job_workflow_ref: houseWorkflow("theagentforge/agent-forge") };
+    expect(await verifyHouseToken(await token(pub), env.PUBLIC_ORIGIN), "public mirror").not.toBeNull();
     for (const bad of [
       { repository: "someone/fork" },
+      { repository: "someone/fork", repository_id: "1", job_workflow_ref: houseWorkflow("someone/fork") },
+      { ...pub, repository_id: "999" }, // a re-created repo with the same name
+      { ...pub, job_workflow_ref: HOUSE_WORKFLOW }, // repo and workflow from different repos
+      { repository_id: "1421518455" },
       { job_workflow_ref: "theagentforge/forge/.github/workflows/ci.yml@refs/heads/main" },
       { ref: "refs/heads/feature" },
       { job_workflow_ref: "theagentforge/forge/.github/workflows/house-tester.yml@refs/heads/feature" },

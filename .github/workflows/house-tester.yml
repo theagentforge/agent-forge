@@ -1,0 +1,104 @@
+name: House tester
+
+# Every night: rank the official MCP Registry's no-setup npm servers by last week's npm downloads, start the top 500
+# with npx (5 parallel shards), check the MCP handshake, file honest "house"-labelled field reports for new versions,
+# and send the whole night's results to the public Forge House Report (docs/runbooks/house-tester.md, ADR 0011 b).
+#
+# The plan and probe jobs run untrusted code (the servers) or read untrusted data, and have no secrets and no write
+# permissions. The file job runs no third-party code; it proves who it is with GitHub's OIDC token, which the site checks.
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many of the most-downloaded servers to test"
+        default: "500"
+
+permissions: {}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Rank registry servers by npm downloads
+        working-directory: ${{ runner.temp }}
+        env:
+          COUNT: ${{ inputs.count || '500' }}
+        run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" plan "$COUNT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: house-plan
+          path: ${{ runner.temp }}/plan.json
+          retention-days: 14
+
+  probe:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: house-plan
+          path: ${{ runner.temp }}
+      - name: Start and handshake MCP servers (sandboxed, no secrets)
+        working-directory: ${{ runner.temp }}
+        run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" run plan.json ${{ matrix.shard }} 5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: house-results-${{ matrix.shard }}
+          path: ${{ runner.temp }}/results.json
+          retention-days: 14
+
+  file:
+    needs: probe
+    # Still file what the other shards found if one shard failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # Every run files as the same House account (10 reports a minute), so filing jobs take turns.
+    concurrency:
+      group: house-tester-file
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    # New versions are filed 7 s apart (10 a minute); the first night has ~500, later nights only what changed.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: house-results-*
+          path: results
+      - name: File House reports and send the House Report run
+        run: node integrations/house/file.mjs https://theagentforge.io results/*/results.json
