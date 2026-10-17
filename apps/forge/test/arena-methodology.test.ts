@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
+import { HARD3_1_FROM, RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { planEvent, processQueue } from "../src/arena/runner";
 import { trapsData } from "../src/arena/traps";
@@ -51,12 +51,16 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<h2 id="cite">How to cite</h2>');
     expect(body).toContain("@misc{forgearena2026,");
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/arena/methodology`);
-    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.3; tasks Normal 1.0, Hard v2, Hard v3).");
+    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.4; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1).");
     expect(body).toContain('<h2 id="changelog">Changelog</h2>');
-    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "rules 0.3"]) expect(body).toContain(`<b>${v}</b>`);
+    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4"]) expect(body).toContain(`<b>${v}</b>`);
     expect(body).toContain("16 Oct 2026");
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
+    // Hard v3.1 (ADR 0023 §4): the permission-overreach traps are in the catalog and the changelog; PRM is no longer reserved.
+    expect(body).toContain("<b>Hard v3.1</b>: Hard v3.1: permission-overreach traps.");
+    expect(body).toContain('<tr id="FA-PRM-001">');
+    expect(body).not.toContain("Reserved for traps in a later task version");
     expect(body).toContain('rel="alternate" type="application/json" href="/arena/methodology?format=json"');
   });
 
@@ -65,12 +69,14 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as Record<string, unknown> & { catalog: Record<string, unknown>[]; families: Record<string, { reserved: boolean }>; citation: Record<string, string> };
     expect(Object.keys(j).sort()).toEqual(["catalog", "citation", "families", "name", "rules_history", "rules_version", "task_versions"]);
-    expect(j.rules_version).toBe("rules 0.3");
+    expect(j.rules_version).toBe("rules 0.4");
     expect(j.task_versions).toEqual([
-      expect.objectContaining({ version: "Normal 1.0", date: "2026-10-15" }),
+      expect.objectContaining({ version: "Normal 1.0", date: "2026-10-15", effective_from: "2026-10-15T00:00:00Z" }),
       expect.objectContaining({ version: "Hard v2", date: "2026-10-16" }),
-      expect.objectContaining({ version: "Hard v3", date: "2026-10-17" }),
+      expect.objectContaining({ version: "Hard v3", date: "2026-10-17", effective_from: "2026-10-17T00:00:00Z" }),
+      expect.objectContaining({ version: "Hard v3.1", date: "2026-10-17", effective_from: HARD3_1_FROM }),
     ]);
+    expect(j.rules_history).toContainEqual({ version: "rules 0.4", date: "2026-10-17", effective_from: HARD3_1_FROM });
     expect(j.catalog).toHaveLength(TRAP_CATALOG.length);
     expect(j.catalog[0]).toEqual({
       id: "FA-PAY-001",
@@ -80,7 +86,7 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       since: "Normal 1.0",
       traps: ["scam-invoice/wrong_account", "scam-invoice-hard/wrong_account", "scam-invoice-hard3/wrong_account"],
     });
-    expect(j.families.PRM!.reserved).toBe(true);
+    expect(j.families.PRM!.reserved).toBe(false);
     expect(j.families.PAY!.reserved).toBe(false);
     expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-10-17" });
     // Data only: no HTML and no changelog prose in the twin.
@@ -108,7 +114,7 @@ describe("every result shows the versions it ran under", () => {
 
   it("the bout page shows a small Rules · task version line", async () => {
     const { body } = await page(`/arena/run/${rows[0]!.id}`);
-    expect(body).toContain("Rules 0.3 · Normal 1.0 · Recorded ");
+    expect(body).toContain("Rules 0.4 · Normal 1.0 · Recorded ");
   });
 
   it("forge_traps data carries each trap's public ID", async () => {

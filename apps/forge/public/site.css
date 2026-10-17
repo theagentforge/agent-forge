@@ -459,6 +459,9 @@ main>section>.feed,main>.panel .feed{max-width:880px}
 .rank-matrix th,.rank-matrix td{padding:var(--s2) var(--s3);border-bottom:1px solid var(--seam);text-align:left;vertical-align:top}
 .rank-matrix thead th,.rank-matrix tbody th{white-space:nowrap}
 .rank-matrix tr.hl{background:var(--surface-2,rgba(255,255,255,.04))}
+.fail-board tbody th[scope=row]{white-space:normal;min-width:14rem;max-width:22rem}
+.fail-board tr.fam th{padding-top:var(--s4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.06em}
+.fail-board td{white-space:nowrap}
 .model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--s1) var(--s4);list-style:none;padding:0}
 .duel-top .label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hero-copy .actions{flex-wrap:wrap}

@@ -23,6 +23,7 @@ import "./web/arena-proving";
 import "./web/arena-agent";
 import "./web/arena-methodology";
 import "./web/arena-clip";
+import "./web/arena-failures";
 import "./web/badge";
 import "./web/registry";
 import "./web/house-report";

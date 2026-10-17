@@ -23,6 +23,7 @@ import {
   VERDICT_RUNS,
   versionLine,
   type AttemptResult,
+  type LogEvent,
   type Stats,
 } from "@forge/arena";
 import { testedModels } from "../arena/lineup";
@@ -132,6 +133,7 @@ ${headlineSlotLine(Date.now())}
 ${tierSwitch("/arena", "hard")}
 <section>
 <h2>Hard rankings</h2>
+<p><a href="/arena/failures?tier=hard">Failure modes: which model falls for which trap</a></p>
 ${divisionLists(ranks, runs.length > 0, "the first Hard event")}
 <h3>Right every time</h3>
 ${consistencyTable(board)}
@@ -202,6 +204,7 @@ ${(() => {
 </section>
 <section>
 <h2>Rankings</h2>
+<p><a href="/arena/failures">Failure modes: which model falls for which trap</a></p>
 ${divisionLists(ranks, headline.length > 0, SEASON.event)}
 <h3>Right every time</h3>
 ${consistencyTable(board)}
@@ -255,6 +258,12 @@ export function shareBlock(origin: string, id: string, card: ReturnType<typeof f
 </section>`;
 }
 
+/** The brief the model was given, from the log's start event (a later task version can change the brief). */
+const briefOf = (log: LogEvent[]) => {
+  const start = log.find((e) => e.type === "start");
+  return start && start.type === "start" ? start.brief : null;
+};
+
 /** "Next headline bout: Thu 22 Oct, 8 pm ET (Fri 00:00 UTC)" with the calendar link (ADR 0023 §2). */
 function headlineSlotLine(now: number) {
   const slot = nextHeadlineSlot(now);
@@ -274,7 +283,10 @@ export function replaySections(fs: ReturnType<typeof frames>, ms: ReturnType<typ
 <section><h2>Scorecard</h2>
 <table class="table"><tbody>
 ${result.checkpoints.map((cp) => html`<tr><td>${cp.passed ? "✓" : "✕"} ${cp.label}${cp.critical ? "" : html` <span class="muted">(bonus)</span>`}</td></tr>`)}
-${result.traps.map((t) => html`<tr><td>${t.triggered ? "⚠ Fell for" : "✓ Avoided"}: ${t.label}</td></tr>`)}
+${result.traps.map((t) => {
+  const pid = publicTrapId(result.task, t.id);
+  return html`<tr><td>${t.triggered ? "⚠ Fell for" : "✓ Avoided"}: ${t.label}${pid ? html` <a class="muted" href="/arena/failures/${pid}" title="How often every ranked model falls for this trap">${pid}</a>` : ""}</td></tr>`;
+})}
 </tbody></table>
 <p class="muted">Official score ${Math.round(score * 100)}/100 (weights: pass ${OFFICIAL_WEIGHTS.pass}, quality ${OFFICIAL_WEIGHTS.quality}, traps ${OFFICIAL_WEIGHTS.traps}, honesty ${OFFICIAL_WEIGHTS.honesty}, cost ${OFFICIAL_WEIGHTS.cost}, speed ${OFFICIAL_WEIGHTS.speed}).</p></section>
 `;
@@ -318,7 +330,7 @@ site.get("/arena/run/:id", async (c) => {
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
 ${shareBlock(c.env.PUBLIC_ORIGIN, id, card, clip)}
 ${replaySections(fs, ms, r.result, r.run.score ?? 0)}
-<section><h2>The task card</h2><pre class="verdict-line">${task ? task.make(r.run.seed).brief : ""}</pre><p><a href="/arena/run/${id}.json">Download the log, result and signature (JSON)</a></p></section>
+<section><h2>The task card</h2><pre class="verdict-line">${briefOf(r.log) ?? (task ? task.make(r.run.seed).brief : "")}</pre><p><a href="/arena/run/${id}.json">Download the log, result and signature (JSON)</a></p></section>
 ${NOT_AFFILIATED}`,
   });
 });
@@ -486,7 +498,7 @@ site.get("/arena/dataset.json", async (c) => {
       name: `${PUBLIC_NAME} dataset`,
       season: SEASON.id,
       licence: "Free to use with attribution and a link to theagentforge.io/arena. Bulk resale needs permission (Terms §8).",
-      runs: runs.map((r) => ({ ...r.summary, tier: tierOf(r.summary.task), rules_version: rulesVersionAt(r.summary.finishedAt), task_version: taskVersion(r.summary.task), traps_triggered: (r.result.traps ?? []).filter((x) => x.triggered).map((x) => publicTrapId(r.summary.task, x.id) ?? x.id), log: `/arena/run/${r.summary.id}.json` })),
+      runs: runs.map((r) => ({ ...r.summary, tier: tierOf(r.summary.task), rules_version: rulesVersionAt(r.summary.finishedAt), task_version: taskVersion(r.summary.task, r.summary.finishedAt), traps_triggered: (r.result.traps ?? []).filter((x) => x.triggered).map((x) => publicTrapId(r.summary.task, x.id) ?? x.id), log: `/arena/run/${r.summary.id}.json` })),
     },
     200,
     { "Cache-Control": "public, max-age=300" },

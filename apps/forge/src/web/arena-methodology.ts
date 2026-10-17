@@ -13,8 +13,8 @@ export function methodologyData(origin: string) {
   return {
     name: `${PUBLIC_NAME} methodology`,
     rules_version: RULES_VERSION,
-    rules_history: RULES_HISTORY.map((r) => ({ version: r.version, date: r.date })),
-    task_versions: TASK_VERSIONS.map((v) => ({ version: v.version, date: v.date, tasks: v.tasks })),
+    rules_history: RULES_HISTORY.map((r) => ({ version: r.version, date: r.date, effective_from: r.from ?? `${r.date}T00:00:00Z` })),
+    task_versions: TASK_VERSIONS.map((v) => ({ version: v.version, date: v.date, effective_from: v.from ?? `${v.date}T00:00:00Z`, tasks: v.tasks })),
     families: Object.fromEntries(Object.entries(TRAP_FAMILIES).map(([k, f]) => [k, { name: f.name, reserved: !TRAP_CATALOG.some((e) => e.family === k) }])),
     catalog: TRAP_CATALOG.map((e) => ({
       id: e.id,
@@ -33,6 +33,7 @@ site.get("/arena/methodology", async (c) => {
   if (c.req.query("format") === "json" || (c.req.header("Accept") ?? "").startsWith("application/json"))
     return c.json(methodologyData(c.env.PUBLIC_ORIGIN), 200, { "Cache-Control": "public, max-age=300", Vary: "Accept" });
   const famName = (f: TrapFamily) => TRAP_FAMILIES[f].name;
+  const reserved = (Object.keys(TRAP_FAMILIES) as TrapFamily[]).filter((f) => !TRAP_CATALOG.some((e) => e.family === f));
   return send(c, {
     title: `${PUBLIC_NAME} methodology`,
     description: "How Arena bouts are refereed, the trap catalog with stable IDs and real-world sources, versions, and how to cite results.",
@@ -52,11 +53,11 @@ site.get("/arena/methodology", async (c) => {
 <p>The scoring weights, caps and tie rules are on the <a href="/arena/rules">rules page</a>.</p>
 
 <h2 id="catalog">Trap catalog</h2>
-<p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families. The family <b>PRM</b> (${TRAP_FAMILIES.PRM.name.toLowerCase()}) is reserved for traps in a later task version.</p>
+<p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families.${reserved.length ? html` Reserved for traps in a later task version: ${reserved.map((f) => html`<b>${f}</b> (${TRAP_FAMILIES[f].name.toLowerCase()})`)}.` : ""} How often each model falls for each trap is on <a href="/arena/failures">the failure-mode board</a>.</p>
 <div class="table-wrap"><table class="table stack trap-catalog">
 <thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Models (real-world pattern)</th><th scope="col">Since</th></tr></thead>
 <tbody>${TRAP_CATALOG.map(
-      (e) => html`<tr id="${e.id}"><td data-label="ID"><code>${e.id}</code></td><td data-label="Family">${famName(e.family)}</td><td data-label="Trap">${e.description}</td><td data-label="Models">${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</td><td data-label="Since">${e.since}</td></tr>`,
+      (e) => html`<tr id="${e.id}"><td data-label="ID"><a href="/arena/failures/${e.id}"><code>${e.id}</code></a></td><td data-label="Family">${famName(e.family)}</td><td data-label="Trap">${e.description}</td><td data-label="Models">${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</td><td data-label="Since">${e.since}</td></tr>`,
     )}</tbody></table></div>
 
 <h2 id="versions">Versions</h2>

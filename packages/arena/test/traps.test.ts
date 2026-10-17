@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { citation, CHANGELOG, HARD3_TASKS, HARD_TASKS, publicTrapId, RULES_VERSION, rulesVersionAt, TASK_VERSIONS, TASKS, taskVersion, TRAP_CATALOG, TRAP_FAMILIES, TRAP_PUBLIC_IDS, versionLine } from "../src";
+import { citation, CHANGELOG, HARD3_TASKS, HARD_TASKS, publicTrapId, RULES_HISTORY, RULES_VERSION, rulesVersionAt, TASK_VERSIONS, TASKS, taskVersion, TRAP_CATALOG, TRAP_FAMILIES, TRAP_PUBLIC_IDS, versionLine } from "../src";
 
 const ALL = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS];
 
@@ -78,6 +78,9 @@ const PUBLISHED: Record<string, string> = {
   "weekend-hard3/missed_window": "FA-TIM-001",
   "weekend-hard/dst_miss": "FA-TIM-002",
   "weekend-hard3/dst_miss": "FA-TIM-002",
+  "refund-hard3/changed_customer_account": "FA-PRM-001",
+  "scam-invoice-hard3/edited_vendor_master": "FA-PRM-002",
+  "spreadsheet-hard3/exported_sheet": "FA-PRM-003",
 };
 
 /** Every trap id a task's referee reports, from a fresh world with no actions and no claim, plus its declared traps. */
@@ -111,16 +114,21 @@ describe("trap catalog (ADR 0023 §5)", () => {
       const nums = TRAP_CATALOG.filter((e) => e.family === fam).map((e) => e.id);
       expect(nums).toEqual(nums.map((_, i) => `FA-${fam}-${String(i + 1).padStart(3, "0")}`));
     }
-    expect(TRAP_CATALOG.filter((e) => e.family === "PRM")).toEqual([]); // reserved for permission overreach
+    // Permission overreach (ADR 0023 §4) arrived with Hard v3.1, on three of the six v3 jobs.
+    expect(TRAP_CATALOG.filter((e) => e.family === "PRM").map((e) => [e.id, e.since, e.traps])).toEqual([
+      ["FA-PRM-001", "Hard v3.1", ["refund-hard3/changed_customer_account"]],
+      ["FA-PRM-002", "Hard v3.1", ["scam-invoice-hard3/edited_vendor_master"]],
+      ["FA-PRM-003", "Hard v3.1", ["spreadsheet-hard3/exported_sheet"]],
+    ]);
     for (const e of TRAP_CATALOG) {
       expect(e.id).toMatch(/^FA-[A-Z]{3}-\d{3}$/);
       expect(e.id.slice(3, 6)).toBe(e.family);
       expect(e.description.length).toBeGreaterThan(10);
       expect(e.provenance.pattern.length).toBeGreaterThan(10);
       if (e.provenance.source) expect(e.provenance.source.url).toMatch(/^https:\/\/[a-z0-9.-]+\.[a-z]+\//);
-      // `since` is the earliest version any of its traps appears in.
+      // `since` is the earliest version any of its traps appears in (Hard v3.1 added traps to v3's own tasks).
       const first = TASK_VERSIONS.find((v) => e.traps.some((k) => v.tasks.includes(k.split("/")[0]!)))!.version;
-      expect(e.since).toBe(first);
+      expect(e.since).toBe(e.family === "PRM" ? "Hard v3.1" : first);
     }
   });
 
@@ -135,22 +143,34 @@ describe("versions (ADR 0023 §5)", () => {
   it("each task has a version label and the current rules are the newest in the history", () => {
     expect(taskVersion("refund")).toBe("Normal 1.0");
     expect(taskVersion("refund-hard")).toBe("Hard v2");
-    expect(taskVersion("refund-hard3")).toBe("Hard v3");
-    for (const t of ALL) expect(TASK_VERSIONS.filter((v) => v.tasks.includes(t.id))).toHaveLength(1);
-    expect(RULES_VERSION).toBe("rules 0.3");
-    expect(rulesVersionAt(Date.now())).toBe(RULES_VERSION);
+    expect(taskVersion("refund-hard3")).toBe("Hard v3.1");
+    for (const t of [...TASKS, ...HARD_TASKS]) expect(TASK_VERSIONS.filter((v) => v.tasks.includes(t.id))).toHaveLength(1);
+    for (const t of HARD3_TASKS) expect(TASK_VERSIONS.filter((v) => v.tasks.includes(t.id)).map((v) => v.version)).toEqual(["Hard v3", "Hard v3.1"]);
+    expect(RULES_VERSION).toBe("rules 0.4");
+    expect(RULES_HISTORY.at(-1)).toMatchObject({ version: "rules 0.4", date: "2026-10-17" });
+    expect(rulesVersionAt(Date.parse("2026-10-18T00:00:00Z"))).toBe(RULES_VERSION);
     expect(rulesVersionAt(Date.UTC(2026, 9, 15, 12))).toBe("rules 0.1");
     expect(rulesVersionAt(Date.UTC(2026, 9, 16, 23))).toBe("rules 0.2");
-    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 9))).toBe("Rules 0.3 · Hard v3");
+    // Rules 0.3 and 0.4 (and Hard v3 and v3.1) share a day: the exact instant decides, so earlier runs keep their versions.
+    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 6))).toBe("Rules 0.3 · Hard v3");
+    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 7))).toBe("Rules 0.4 · Hard v3.1");
+    expect(versionLine("refund-hard", Date.UTC(2026, 9, 18))).toBe("Rules 0.4 · Hard v2");
+    expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 17, 6, 59))).toBe("Hard v3");
+    expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 16))).toBe("Hard v3"); // never earlier than its first version
   });
 
   it("the citation has title, version, date and URL, as a plain line and BibTeX", () => {
     const c = citation("https://theagentforge.io/");
-    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-10-17", url: "https://theagentforge.io/arena/methodology", version: "rules 0.3; tasks Normal 1.0, Hard v2, Hard v3" });
-    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.3; tasks Normal 1.0, Hard v2, Hard v3). 17 Oct 2026. https://theagentforge.io/arena/methodology");
+    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-10-17", url: "https://theagentforge.io/arena/methodology", version: "rules 0.4; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1" });
+    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.4; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1). 17 Oct 2026. https://theagentforge.io/arena/methodology");
     expect(c.bibtex).toMatch(/^@misc\{forgearena2026,/);
     expect(c.bibtex).toContain("url          = {https://theagentforge.io/arena/methodology}");
     expect(CHANGELOG.map((x) => x.date)).toEqual([...CHANGELOG.map((x) => x.date)].sort());
-    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "rules 0.3"]));
+    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4"]));
+    expect(CHANGELOG.find((x) => x.version === "Hard v3.1")!.change).toMatch(/^Hard v3\.1: permission-overreach traps\./);
+    // Same-day entries are in the order they took effect.
+    const order = CHANGELOG.map((x) => x.version);
+    expect(order.indexOf("rules 0.3")).toBeLessThan(order.indexOf("rules 0.4"));
+    expect(order.indexOf("Hard v3")).toBeLessThan(order.indexOf("Hard v3.1"));
   });
 });

@@ -6,12 +6,13 @@ import { findTool } from "../services/forge";
 import { cardVersion, toolCardFields } from "./og-data";
 import { agentDetail } from "./queries";
 import { HOME_H1, site } from "./pages";
-import { parseWeights, rankModels, summaryLines, taskById, type AttemptResult, type Duel } from "@forge/arena";
+import { parseWeights, rankModels, summaryLines, taskById, TRAP_FAMILIES, type AttemptResult, type Duel } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { channelDuels } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
+import { trapBoard } from "../arena/failures";
 
 // Share cards, 1200×630 (docs/BRAND.md §9). The verdict, subject and domain are burned into the image, because X shows
 // large cards without the page title. Built from plain element objects (no HTML parsing), so nothing user-supplied can
@@ -292,3 +293,41 @@ site.get("/og/best/:file{[a-z-]+\\.png}", async (c) => {
 site.get("/og/trap-card.png", (c) =>
   respond(c, frame([headline("Give your AI the checks others missed.", 58), line(`Free trap card v${TRAP_CARD_VERSION} · ${TRAP_CHECKS.length} checks · paste once, about 30 seconds`)], "theagentforge.io/trap-card")),
 );
+
+/**
+ * A failure-mode card (ADR 0023 §4): the trap's public ID and family, our catalog description, and the ranked fall
+ * rate across models with n (and "Early read" under the verdict threshold). Template text only.
+ */
+export function failureCardLines(b: NonNullable<Awaited<ReturnType<typeof trapBoard>>>) {
+  const o = b.overall;
+  const worst = b.models[0];
+  return {
+    label: `FAILURE MODE · ${b.entry.id}`,
+    family: TRAP_FAMILIES[b.entry.family].name,
+    headline: b.entry.description,
+    stat: o ? `Fell for it in ${o.fell} of ${o.n} ranked attempts (${Math.round(o.rate * 100)}%) · ${b.models.length} ${b.models.length === 1 ? "model" : "models"}${o.early ? " · Early read" : ""}` : "No ranked attempts yet",
+    worst: worst && worst.cell.fell ? `Highest so far: ${worst.name}, ${worst.cell.fell} of ${worst.cell.n}` : null,
+  };
+}
+
+site.get("/og/arena/failures/:file{[A-Za-z]+-[A-Za-z]+-[0-9]+\\.png}", async (c) => {
+  const b = await trapBoard(getDb(c.env), c.req.param("file").replace(/\.png$/, "").toUpperCase());
+  if (!b) return c.redirect("/og/home.png", 302);
+  const l = failureCardLines(b);
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", alignItems: "center", gap: "16px", marginBottom: "22px", fontFamily: "JetBrains Mono", fontSize: 26 }, [
+          punch(40, C.flagged, ICON.flagged),
+          el("span", { color: C.flagged }, l.label),
+          el("span", { color: C.muted }, clip(l.family, 40)),
+        ]),
+        el("div", { display: "flex", fontFamily: "Archivo Expanded", fontSize: l.headline.length <= 70 ? 48 : 40, lineHeight: 1.12, marginBottom: "26px" }, clip(l.headline, 130)),
+        line(l.stat, 26, C.text),
+        ...(l.worst ? [line(clip(l.worst, 70))] : []),
+      ],
+      `theagentforge.io/arena/failures/${b.entry.id}`,
+    ),
+  );
+});

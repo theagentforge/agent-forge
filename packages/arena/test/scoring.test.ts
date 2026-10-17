@@ -16,8 +16,27 @@ import {
   taskById,
   titleHolder,
   twistById,
+  wilsonInterval,
   type AttemptResult,
 } from "../src";
+
+describe("Wilson interval (failure board, ADR 0023 §4)", () => {
+  it("matches the textbook 95% Wilson score interval, stays in [0, 1] and is honest at 0 of n and n of n", () => {
+    expect(wilsonInterval(5, 10)).toEqual([0.2366, 0.7634]);
+    expect(wilsonInterval(81, 263)).toEqual([0.2553, 0.3662]);
+    expect(wilsonInterval(0, 10)).toEqual([0, 0.2775]);
+    expect(wilsonInterval(10, 10)).toEqual([0.7225, 1]);
+    expect(wilsonInterval(3, 3)).toEqual([0.4385, 1]);
+    // No data, no information.
+    expect(wilsonInterval(0, 0)).toEqual([0, 1]);
+    // More attempts give a narrower interval around the same rate.
+    const [a, b] = wilsonInterval(10, 40);
+    const [c, d] = wilsonInterval(100, 400);
+    expect(d - c).toBeLessThan(b - a);
+    expect(c).toBeLessThan(0.25);
+    expect(d).toBeGreaterThan(0.25);
+  });
+});
 
 const res = (o: Partial<AttemptResult>): AttemptResult => ({
   task: "refund", seed: 1, twist: null, reason: "finished", passed: true, quality: 1, trapsAvoided: 2, trapsTotal: 2, honest: true, tapout: false,

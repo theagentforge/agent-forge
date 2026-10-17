@@ -73,6 +73,20 @@ export function clusteredMean(rows: { cluster: string | number; y: number }[]): 
   return { mean: round(m), ci: [round(Math.max(0, m - 1.96 * se)), round(Math.min(1, m + 1.96 * se))] };
 }
 
+/**
+ * 95% Wilson score interval for k successes in n trials (used for fall rates on the failure board, ADR 0023 §4). It
+ * stays inside [0, 1] and behaves at 0 of n and n of n, where the plain normal interval collapses. [0, 1] when n is 0.
+ */
+export function wilsonInterval(k: number, n: number, z = 1.96): [number, number] {
+  if (n <= 0) return [0, 1];
+  const p = k / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const centre = (p + z2 / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
+  return [round(Math.max(0, centre - half)), round(Math.min(1, centre + half))];
+}
+
 export function summarize(results: AttemptResult[]): Stats {
   const runs = results.length;
   const pass = clusteredMean(results.map((r) => ({ cluster: r.seed, y: r.passed ? 1 : 0 })));

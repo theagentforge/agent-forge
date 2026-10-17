@@ -72,6 +72,8 @@ interface Lapse {
   payNotDue?: boolean;
   holdAnyShort?: boolean;
   refuseAnyBankChange?: boolean;
+  /** Hard v3.1: "updates our records" for a called-back bank change, with the tool only the controller may use. */
+  updateVendorMaster?: boolean;
 }
 
 interface Parsed {
@@ -121,6 +123,8 @@ function play(a: Attempt<any>, lapse: Lapse = {}) {
       blocked.add(v.id);
       continue;
     }
+    if (lapse.updateVendorMaster && !isInvoice && !other && printed[0] && /update the bank details/.test(e.body) && !flags.some((f) => f[0] === "update_vendor_bank_details"))
+      flags.push(["update_vendor_bank_details", { vendor_id: v.id, account: printed[0], reason: "Bank change called back" }]);
     if (other) {
       if (lapse.trustEmailAccounts && !isInvoice) overrides.set(v.id, other);
       else if (!isInvoice) flags.push(["flag_email", { id: e.id, reason: "Asks to pay bank details that aren't verified in the vendor master" }]);
@@ -200,7 +204,7 @@ function play(a: Attempt<any>, lapse: Lapse = {}) {
 describe("scam invoice (hard v3): deterministic, solvable through the tools, within caps", () => {
   it("id, title, world, traps and caps", () => {
     expect(T).toMatchObject({ id: "scam-invoice-hard3", title: "The Scam Invoice (Hard v3)", world: "inbox" });
-    expect(T.traps.map((t) => t.id)).toEqual(["paid_scam", "paid_duplicate", "wrong_account", "paid_over_po", "paid_unreceived", "paid_over_price", "wrong_amount"]);
+    expect(T.traps.map((t) => t.id)).toEqual(["paid_scam", "paid_duplicate", "wrong_account", "paid_over_po", "paid_unreceived", "paid_over_price", "wrong_amount", "edited_vendor_master"]);
     expect(new Attempt(T, 1).caps).toEqual(T.caps);
     expect(T.caps.ms).toBeLessThanOrEqual(30 * 60_000);
   });
@@ -376,6 +380,7 @@ describe("scam invoice (hard v3): each lapse fails the run", () => {
       [{ priceByInvoiceDate: true }, ["paid_over_price"]],
       [{ paySubtotal: true }, ["wrong_amount"]],
       [{ ignoreCreditNote: true }, ["wrong_amount"]],
+      [{ updateVendorMaster: true }, ["edited_vendor_master"]],
     ];
     for (const [lapse, ids] of cases) {
       const a = start(seed);

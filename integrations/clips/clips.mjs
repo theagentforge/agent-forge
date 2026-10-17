@@ -100,7 +100,10 @@ async function record(site, planPath, outDir) {
   if (!ids.length) return console.log("record: nothing to do");
   const dir = process.env.PLAYWRIGHT_DIR;
   if (!dir) throw new Error("set PLAYWRIGHT_DIR to the folder where playwright is installed");
-  const { chromium } = await import(pathToFileURL(createRequire(join(dir, "noop.js")).resolve("playwright")).href);
+  // playwright is CommonJS: imported by file URL, its exports sit on `default`.
+  const pw = await import(pathToFileURL(createRequire(join(dir, "noop.js")).resolve("playwright")).href);
+  const chromium = pw.chromium ?? pw.default?.chromium;
+  if (!chromium) throw new Error("playwright loaded, but it has no chromium export");
   const browser = await chromium.launch();
   let failed = 0;
   try {
