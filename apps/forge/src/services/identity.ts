@@ -98,6 +98,10 @@ export async function upsertHuman(db: Db, profile: GithubProfile, now: number) {
 export const isAdmin = (env: Pick<Env, "ADMIN_GITHUB_IDS">, githubId: number) =>
   (env.ADMIN_GITHUB_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean).includes(String(githubId));
 
+/** ADR 0023 §3: our own activity (House accounts and founder/admin testing) is never counted as usage. */
+export const countsAsHouse = (env: Pick<Env, "ADMIN_GITHUB_IDS">, human: { isHouse: boolean; githubId: number }) =>
+  human.isHouse || isAdmin(env, human.githubId);
+
 /** Founder approval (MASTER_PLAN §11.3: granting access is Dinike's decision). Takes effect immediately. */
 export async function approveLogin(db: Db, githubLogin: string, now: number) {
   const login = githubLogin.toLowerCase();

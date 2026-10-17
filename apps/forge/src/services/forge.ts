@@ -10,10 +10,11 @@ import {
   type ScoredReport,
   type SecurityStatus,
 } from "@forge/shared";
-import { and, count, desc, eq, gte, ne } from "drizzle-orm";
+import { and, count, countDistinct, desc, eq, gte, ne } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
+import { gate } from "./counters";
 import { vouchesRemaining } from "./identity";
 import { moderateWithinBudget } from "./moderation";
 import type { AgentProps } from "./props";
@@ -411,19 +412,43 @@ export async function describeMe(env: Env, props: AgentProps) {
   };
 }
 
-/** Public headline numbers. Everyone counts here, sandbox included (ADR 0003). */
+/**
+ * Public headline numbers (ADR 0003): everyone outside the project counts, sandbox included. ADR 0023 §3: House
+ * accounts are never counted, and each number is null (listed in `below_minimum`) until it reaches its minimum.
+ * `tools` is a registry fact (every tool with a page, including tools seeded from public sources), not usage.
+ */
 export async function publicStats(env: Env, now = Date.now()) {
+  const { tools, ...usage } = await publicCounts(env, now);
+  return {
+    ...gate(usage),
+    /** Every tool with a page, including tools seeded from public sources (a registry fact, not usage). */
+    tools,
+    house_excluded: true,
+    generated_at: new Date(now).toISOString(),
+  };
+}
+
+/** The raw counts behind `publicStats`, House left out. Never sent to pages or agents ungated. */
+export async function publicCounts(env: Env, now = Date.now()) {
   const db = getDb(env);
-  const one = async (q: Promise<{ n: number }[]>) => (await q)[0]?.n ?? 0;
+  const one = async (q: Promise<{ n: number }[]>) => Number((await q)[0]?.n ?? 0);
   const dayAgo = now - 86_400_000;
+  const outside = eq(t.humans.isHouse, false);
+  const reportsBy = () => db.select({ n: count() }).from(t.reports).innerJoin(t.humans, eq(t.reports.humanId, t.humans.id));
   const [humans, verified, agents, reports, reports24h, tools, toolsReported] = await Promise.all([
-    one(db.select({ n: count() }).from(t.humans)),
-    one(db.select({ n: count() }).from(t.humans).where(eq(t.humans.tier, "verified"))),
-    one(db.select({ n: count() }).from(t.agents).where(eq(t.agents.status, "active"))),
-    one(db.select({ n: count() }).from(t.reports)),
-    one(db.select({ n: count() }).from(t.reports).where(gte(t.reports.createdAt, dayAgo))),
+    one(db.select({ n: count() }).from(t.humans).where(outside)),
+    one(db.select({ n: count() }).from(t.humans).where(and(outside, eq(t.humans.tier, "verified")))),
+    one(db.select({ n: count() }).from(t.agents).innerJoin(t.humans, eq(t.agents.humanId, t.humans.id)).where(and(outside, eq(t.agents.status, "active")))),
+    one(reportsBy().where(outside)),
+    one(reportsBy().where(and(outside, gte(t.reports.createdAt, dayAgo)))),
     one(db.select({ n: count() }).from(t.tools)),
-    one(db.select({ n: count() }).from(t.toolVersions)),
+    one(
+      db
+        .select({ n: countDistinct(t.reports.toolVersionId) })
+        .from(t.reports)
+        .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
+        .where(outside),
+    ),
   ]);
   return {
     humans,
@@ -431,11 +456,9 @@ export async function publicStats(env: Env, now = Date.now()) {
     agents,
     reports,
     reports_last_24h: reports24h,
-    /** Every tool with a page, including tools seeded from public sources. */
-    tools,
-    /** Tool versions at least one agent has reported on. */
+    /** Tool versions at least one agent outside the project has reported on. */
     tool_versions_reported: toolsReported,
-    generated_at: new Date(now).toISOString(),
+    tools,
   };
 }
 

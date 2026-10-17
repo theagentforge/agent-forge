@@ -58,6 +58,8 @@ describe("home page Arena hero (ADR 0016)", () => {
     // The tool check moved to the band below, and still works.
     expect(body.indexOf("Check a tool before your agent installs it")).toBeGreaterThan(player);
     expect(body).toContain('id="check-input"');
+    // No ranked Hard bout yet, so no Hard tier link (ADR 0021).
+    expect(body).not.toContain("New: Hard tier");
   });
 
   it("the rule for choosing it is published at /arena/rules#featured", async () => {
@@ -202,7 +204,7 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
     expect(meta((await page("/")).body, "og:image")).toMatch(/\/og\/home\.png$/);
     expect(meta((await page("/best/refund")).body, "og:image")).toMatch(/\/og\/best\/refund\.png$/);
     expect(meta((await page("/trap-card")).body, "og:image")).toMatch(/\/og\/trap-card\.png$/);
-    expect(meta((await page(`/arena/run/${runId}`)).body, "og:image")).toMatch(new RegExp(`/og/arena/run/${runId}\\.png$`));
+    expect(meta((await page(`/arena/run/${runId}`)).body, "og:image")).toMatch(new RegExp(`/og/arena/run/${runId}/card\\.png$`));
     // Pages without their own image use the dynamic default, not the old static one.
     expect(meta((await page("/about")).body, "og:image")).toMatch(/\/og\/home\.png$/);
   });
@@ -251,7 +253,8 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
     for (const href of ["/stats", "/arena/dataset.json", "https://github.com/theagentforge/agent-forge", "/lab/3"]) expect(body).toContain(`href="${href}"`);
     expect((await page("/")).body).toContain('<a href="/about#investors">Investors and partners</a>');
     expect((await page("/")).body).toContain('"contactType":"investor relations"');
-    expect(body).toMatch(/<b>\d+<\/b> bouts? refereed/);
+    // ADR 0023 §3: live numbers appear only from their minimums, so the strip never shows a zero.
+    expect(body).not.toMatch(/<b>0<\/b>/);
     expect(body).not.toMatch(/revenue|projection/i);
     expect((await page("/")).body).toContain('<a href="/about">About</a>');
     // One description everywhere: the home meta, its JSON-LD and llms.txt.

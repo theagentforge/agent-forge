@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { html } from "hono/html";
+import { pgBoutCount, scorecardHref } from "../arena/agent-scorecard";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
 import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from "../services/github";
@@ -43,6 +44,9 @@ const MESSAGES = {
   house_off: "No longer House.",
   not_found: "Nobody with that GitHub username has signed in yet.",
   not_admin: "Only the founder can approve people.",
+  scorecard_on: "Score page is public. Anyone with the link can see it, and the badge works in READMEs.",
+  scorecard_off: "Score page is private again. Its page, JSON and badge now show \"not found\".",
+  scorecard_no_bouts: "That agent has no refereed Proving Ground bouts yet, so there's nothing to publish.",
 } as const;
 type MessageKey = keyof typeof MESSAGES;
 
@@ -131,6 +135,7 @@ site.get("/dashboard", async (c) => {
   const human = await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) });
   if (!human) return new Response(null, { status: 303, headers: { Location: "/dashboard", "Set-Cookie": cookie(SESSION_COOKIE, "", 0) } });
   const agents = await db.select().from(t.agents).where(eq(t.agents.humanId, human.id)).orderBy(desc(t.agents.createdAt));
+  const bouts = new Map(await Promise.all(agents.map(async (a) => [a.id, await pgBoutCount(db, a.id)] as const)));
   const vouches = await db
     .select({ login: t.trustGrants.githubLogin, createdAt: t.trustGrants.createdAt })
     .from(t.trustGrants)
@@ -181,6 +186,7 @@ ${a.status === "active" ? html`<form class="stack" method="post" action="/dashbo
 <button class="btn danger chamfer" type="submit">Revoke this agent</button>
 <span class="hint">Its access stops immediately. Its past reports stay.</span>
 </form>` : ""}
+${scorecardPanel(a, bouts.get(a.id) ?? 0, csrf)}
 </div>`,
 )}
 </section>
@@ -231,6 +237,20 @@ ${house.length ? html`<ul>${house.map((h) => html`<li class="mono">@${h.login}</
   );
 });
 
+/** ADR 0023 §6: the owner's switch for the agent's Proving Ground score page. Private by default. */
+function scorecardPanel(a: typeof t.agents.$inferSelect, bouts: number, csrf: string) {
+  if (bouts === 0)
+    return html`<p class="hint top-gap">Score page: none yet. It becomes available after this agent takes a <a href="/arena/proving-ground">Proving Ground</a> bout through the Forge MCP.</p>`;
+  const href = scorecardHref(a.handle);
+  return html`<form class="actions top-gap" method="post" action="/dashboard/agents/${a.id}/scorecard">
+<input type="hidden" name="csrf" value="${csrf}">
+${a.scorecardPublic
+    ? html`<span>Score page: <strong>public</strong> at <a href="${href}">${href}</a></span><button class="btn chamfer" type="submit" name="public" value="off">Make private</button>`
+    : html`<span>Score page: <strong>private</strong></span><button class="btn chamfer" type="submit" name="public" value="on">Make public</button>`}
+<span class="hint">Making it public shows, to anyone: this agent's name, your GitHub username, your verified status, its ${bouts} refereed Proving Ground ${bouts === 1 ? "bout" : "bouts"} with links to each replay, the traps it caught and fell for, and a signed summary and README badge. You can turn it off at any time.</span>
+</form>`;
+}
+
 async function ownAgent(c: Ctx, humanId: string) {
   return getDb(c.env).query.agents.findFirst({
     where: and(eq(t.agents.id, c.req.param("id") ?? ""), eq(t.agents.humanId, humanId)),
@@ -273,6 +293,22 @@ site.post("/dashboard/agents/:id/revoke", async (c) => {
     createdAt: Date.now(),
   });
   return back("revoked");
+});
+
+site.post("/dashboard/agents/:id/scorecard", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const agent = await ownAgent(c, g.session.h);
+  if (!agent) return c.text("Not found", 404);
+  const db = getDb(c.env);
+  const on = g.form.get("public") === "on";
+  if (on && (await pgBoutCount(db, agent.id)) === 0) return back("scorecard_no_bouts");
+  const now = Date.now();
+  await db.update(t.agents).set({ scorecardPublic: on, scorecardSince: on ? now : null }).where(eq(t.agents.id, agent.id));
+  await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${g.session.h}`, action: on ? "scorecard_public" : "scorecard_private", target: `agent:${agent.id}`, createdAt: now });
+  // The badge is edge-cached for a few minutes; drop this data centre's copy so "private" shows at once here.
+  if (!on) await caches.default.delete(new Request(`${c.env.PUBLIC_ORIGIN}${scorecardHref(agent.handle)}/badge.svg`)).catch(() => false);
+  return back(on ? "scorecard_on" : "scorecard_off");
 });
 
 site.post("/dashboard/approve", async (c) => {

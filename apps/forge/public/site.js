@@ -317,3 +317,23 @@
     }).catch(function () {});
   }, 3000);
 })();
+
+// /teams (ADR 0023 §7): turn the intake form into a prefilled email. Nothing is sent to or stored by the Forge.
+(function () {
+  document.querySelectorAll("[data-print]").forEach(function (b) {
+    b.hidden = false;
+    b.addEventListener("click", function () { window.print(); });
+  });
+  var f = document.querySelector("[data-teams-form]");
+  if (!f) return;
+  f.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var val = function (n) { var el = f.querySelector("[name='" + n + "']"); return el ? String(el.value || "").trim() : ""; };
+    var mcp = f.querySelector("input[name='mcp']:checked");
+    var body = "Contact email: " + val("email") + "\nAgent framework: " + val("framework") +
+      "\nCan it connect over MCP? " + (mcp ? mcp.value : "") + "\nWhat does your agent do? " + val("what") + "\n";
+    window.location.href = "mailto:" + f.getAttribute("data-mailto") + "?subject=" + encodeURIComponent(f.getAttribute("data-subject") || "") + "&body=" + encodeURIComponent(body);
+    var s = f.querySelector("[data-teams-status]");
+    if (s) s.textContent = "Your email app should open with this filled in. Nothing is sent until you press send.";
+  });
+})();

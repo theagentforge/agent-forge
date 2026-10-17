@@ -12,6 +12,7 @@ import type { AgentProps } from "./services/props";
 import { markConnectTest } from "./services/connect-test";
 import { recordToolCheck } from "./services/feedback";
 import { recordCheck } from "./services/proof";
+import { countsAsHouse } from "./services/identity";
 
 // The remote MCP server at /mcp (MASTER_PLAN §10.5). Tool results are structured JSON only.
 
@@ -44,8 +45,9 @@ export function createForgeServer(env: Env, props: AgentProps) {
       if (!q.success) return json({ error: "invalid_query", detail: q.error.issues[0]?.message }, true);
       const who = await activeAgent(getDb(env), props);
       if (!who) return json({ error: "agent_inactive" }, true);
-      await recordCheck(env, "mcp", props.agentId, { hashed: false, house: who.human.isHouse });
-      if (!who.human.isHouse) await recordToolCheck(env, q.data);
+      const house = countsAsHouse(env, who.human);
+      await recordCheck(env, "mcp", props.agentId, { hashed: false, house });
+      if (!house) await recordToolCheck(env, q.data);
       else await markConnectTest(env, q.data); // House checks aren't counted, but the /connect "Test it" tick still works
       const { success } = await env.CHECK_LIMITER.limit({ key: `agent:${props.agentId}` });
       if (!success) return json({ error: "rate_limited" }, true);

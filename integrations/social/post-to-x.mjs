@@ -3,9 +3,11 @@
 //   node post-to-x.mjs due       scheduled run: post approved posts whose time has come, then auto-publish
 //                                 verified routine posts whose 3-hour hold window has passed
 //   node post-to-x.mjs hold      an admin commented "hold" on an auto post: stop it
+//   node post-to-x.mjs metrics   daily: read recent posts' numbers from X and comment a table on "X post metrics"
 // An issue holds one or more ```post blocks. A block may carry a time: ```post 2026-10-15 (posted at the daily
 // slot, 13:05 UTC) or ```post 2026-10-15T15:30Z. Add the word "reply" (```post 2026-10-20 reply) to post it as a reply
-// to the block before it, so a thread stays connected on X. Uses OAuth 1.0a user context against POST /2/tweets and the
+// to the block before it, so a thread stays connected on X. A line `image: /og/....png` inside a block attaches that
+// image from theagentforge.io (the line itself is not posted). Uses OAuth 1.0a user context against POST /2/tweets and the
 // GitHub REST API with the workflow's token. No dependencies.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 
@@ -15,6 +17,21 @@ const URL_WEIGHT = 23;
 /** Default time of day for date-only posts: 13:00 UTC (9 am US Eastern in summer, 6:30 pm Sri Lanka). */
 export const DEFAULT_SLOT_UTC = "13:00";
 export const MAX_POSTS_PER_ISSUE = 14;
+
+/** A line inside a post block that names its image, e.g. `image: https://theagentforge.io/og/arena/run/abc.png`. */
+const IMAGE_LINE = /^[ \t]*image:[ \t]*(\S*)[ \t]*$/i;
+export const IMAGE_ORIGIN = "https://theagentforge.io";
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The full URL of a post's image. Only PNG share cards under /og/ on theagentforge.io are allowed, so the pipeline
+ * never fetches an arbitrary address. Throws for anything else.
+ */
+export function imageUrl(spec, n = "?") {
+  const m = /^(?:https:\/\/theagentforge\.io)?(\/og(?:\/[A-Za-z0-9_-]+)+\.png)$/.exec(spec ?? "");
+  if (!m) throw new Error(`Post ${n} has an image I won't fetch ("${spec}"). Use https://theagentforge.io/og/....png or /og/....png.`);
+  return `${IMAGE_ORIGIN}${m[1]}`;
+}
 
 /**
  * Every ```post block in the issue body, numbered from 1, with its time (ms) or null for "as soon as approved", and
@@ -37,7 +54,11 @@ export function parsePosts(body) {
       at = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(spec) ? Date.parse(spec) : NaN;
       if (Number.isNaN(at)) throw new Error(`Post ${n} has a time I can't read ("${times[0]}"). Use 2026-10-15 or 2026-10-15T15:30Z.`);
     }
-    out.push({ n, at, reply, text: m[2].replace(/\r\n/g, "\n").trim() });
+    const lines = m[2].replace(/\r\n/g, "\n").split("\n");
+    const images = lines.filter((l) => IMAGE_LINE.test(l)).map((l) => IMAGE_LINE.exec(l)[1]);
+    if (images.length > 1) throw new Error(`Post ${n} has more than one image line; X posts here take one image.`);
+    const text = lines.filter((l) => !IMAGE_LINE.test(l)).join("\n").trim();
+    out.push(images.length ? { n, at, reply, text, image: images[0] } : { n, at, reply, text });
   }
   return out;
 }
@@ -55,13 +76,21 @@ export function validatePosts(posts) {
     if (!p.text) throw new Error(`Post ${p.n} is empty.`);
     const w = weightedLength(p.text);
     if (w > MAX_WEIGHT) throw new Error(`Post ${p.n} is ${w} characters as X counts them; the limit is ${MAX_WEIGHT} (${w - MAX_WEIGHT} too many).`);
+    if (p.image !== undefined) imageUrl(p.image, p.n);
   }
 }
 
-/** Fingerprint of what was approved: the posts and their times, not the surrounding notes. */
+/**
+ * Fingerprint of what was approved: the posts, their times and images, not the surrounding notes. Posts without an
+ * image hash exactly as before images existed, so schedules approved earlier still match.
+ */
 export const approvalHash = (posts) =>
   createHash("sha256")
-    .update(JSON.stringify(posts.map((p) => (p.reply ? [p.at, p.text, "reply"] : [p.at, p.text]))))
+    .update(
+      JSON.stringify(
+        posts.map((p) => [p.at, p.text, ...(p.reply ? ["reply"] : []), ...(p.image !== undefined ? [`image:${p.image}`] : [])]),
+      ),
+    )
     .digest("hex")
     .slice(0, 16);
 
@@ -123,8 +152,45 @@ function xCreds(env) {
   }
 }
 
-/** Posts one text to X (as a reply when replyTo is a post id) and returns its URL. */
-export async function postText(text, env, fetcher = fetch, replyTo = null) {
+const signed = (env, method, url, extra) =>
+  oauthHeader({ method, url, consumerKey: env.X_API_KEY, consumerSecret: env.X_API_SECRET, token: env.X_ACCESS_TOKEN, tokenSecret: env.X_ACCESS_SECRET, extra });
+
+/** Fetches an allowed share card (PNG or JPEG, at most 5 MB). Redirects are refused, so the host can't change. */
+export async function fetchImage(spec, fetcher = fetch) {
+  const url = imageUrl(spec);
+  const res = await fetcher(url, { redirect: "error" });
+  if (!res.ok) throw new Error(`the image returned HTTP ${res.status}`);
+  const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (type !== "image/png" && type !== "image/jpeg") throw new Error(`the image is ${type || "of no type"}, not PNG or JPEG`);
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES) throw new Error("the image is over 5 MB");
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("the image is over 5 MB");
+  if (!bytes.length) throw new Error("the image is empty");
+  return { bytes, type };
+}
+
+/**
+ * Uploads one image with X API v2 simple upload (POST /2/media/upload, JSON body with the file base64-encoded in
+ * `media`, `media_category: "tweet_image"`) and returns its media id. The endpoint accepts OAuth 1.0a user context
+ * ("Supported authentication types are [OAuth 1.0a User Context, OAuth 2.0 User Context]"); a JSON body is not part
+ * of the OAuth signature. See https://docs.x.com/x-api/media/upload-media
+ */
+export async function uploadImage({ bytes, type }, env, fetcher = fetch) {
+  xCreds(env);
+  const url = "https://api.x.com/2/media/upload";
+  const res = await fetcher(url, {
+    method: "POST",
+    headers: { Authorization: signed(env, "POST", url), "Content-Type": "application/json" },
+    body: JSON.stringify({ media: Buffer.from(bytes).toString("base64"), media_category: "tweet_image", media_type: type }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const id = data?.data?.id;
+  if (!res.ok || !id) throw new Error(`X refused the image upload (HTTP ${res.status}${data?.title ? `: ${data.title}` : ""})`);
+  return String(id);
+}
+
+/** Posts one text to X (as a reply when replyTo is a post id, with images when mediaIds are given) and returns its URL. */
+export async function postText(text, env, fetcher = fetch, replyTo = null, mediaIds = []) {
   xCreds(env);
   const url = "https://api.x.com/2/tweets";
   const res = await fetcher(url, {
@@ -140,7 +206,11 @@ export async function postText(text, env, fetcher = fetch, replyTo = null) {
       }),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(replyTo ? { text, reply: { in_reply_to_tweet_id: replyTo } } : { text }),
+    body: JSON.stringify({
+      text,
+      ...(replyTo ? { reply: { in_reply_to_tweet_id: replyTo } } : {}),
+      ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}),
+    }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data?.data?.id) {
@@ -208,11 +278,33 @@ async function sendDue(gh, issue, posts, comments, env, fetcher, now, budget = n
     const parent = p.reply ? ids.get(p.n - 1) : null;
     if (p.reply && !parent) continue;
     // The monthly X cap (ADR 0010) covers every post, approved or automatic.
-    if (budget && budget.spent + postCost(p.text) > MONTHLY_CAP_USD) throw new Error(`The monthly X budget ($${MONTHLY_CAP_USD}) is reached.`);
-    const url = await postText(p.text, env, fetcher, parent);
-    if (budget) budget.spent += postCost(p.text);
+    if (budget && budget.spent + postCost(p.text, p.image !== undefined) > MONTHLY_CAP_USD) throw new Error(`The monthly X budget ($${MONTHLY_CAP_USD}) is reached.`);
+    // An image that can't be fetched or uploaded never stops the post: it goes out as text and the comment says so.
+    let mediaIds = [];
+    let imageNote = "";
+    if (p.image !== undefined) {
+      try {
+        mediaIds = [await uploadImage(await fetchImage(p.image, fetcher), env, fetcher)];
+      } catch (e) {
+        imageNote = ` Posted without the image: ${e.message}.`;
+      }
+    }
+    let url;
+    try {
+      url = await postText(p.text, env, fetcher, parent, mediaIds);
+    } catch (e) {
+      if (!mediaIds.length) throw e;
+      // X refused the post with the image attached: send it as text rather than lose it.
+      mediaIds = [];
+      imageNote = ` Posted without the image: ${e.message.replace(/\.$/, "")}.`;
+      url = await postText(p.text, env, fetcher, parent);
+    }
+    const cost = roundCost(postCost(p.text) + (mediaIds.length ? COST_MEDIA_UPLOAD : 0));
+    if (budget) budget.spent += cost;
     ids.set(p.n, url.split("/").at(-1));
-    await gh("POST", `/issues/${issue}/comments`, { body: `Posted ${p.n} of ${posts.length}: ${url} <!-- forge-posted ${p.n} --> <!-- forge-cost ${postCost(p.text)} -->` });
+    await gh("POST", `/issues/${issue}/comments`, {
+      body: `Posted ${p.n} of ${posts.length}: ${url} <!-- forge-posted ${p.n} --> <!-- forge-cost ${cost} -->${mediaIds.length ? " With image." : imageNote}`,
+    });
     done.add(p.n);
   }
   const left = posts.filter((p) => !done.has(p.n));
@@ -251,10 +343,20 @@ export async function approve(env, fetcher = fetch, now = Date.now()) {
 export const HOLD_WINDOW_MS = 3 * 3_600_000;
 export const MONTHLY_CAP_USD = 10;
 export const AUTO_ISSUES_PER_DAY = 2;
-/** X API prices (ADR 0010): a post with a link, and a plain post. */
+/**
+ * X API pay-per-use prices (ADR 0010; X changelog, effective 20 Apr 2026, https://docs.x.com/changelog and
+ * https://docs.x.com/x-api/getting-started/pricing): a post with a link $0.20, any other post (text or media) $0.015.
+ * The rate card has no separate line for media upload; we count each upload as one more $0.015 write, to stay on the
+ * safe side of the cap. Reading posts (GET /2/tweets) is $0.005 per post returned. The cheaper $0.001 "owned reads"
+ * apply to /2/users/{id}/... endpoints, not to this lookup, so we count $0.005.
+ */
 export const COST_LINK = 0.2;
 export const COST_PLAIN = 0.015;
-export const postCost = (text) => (/https?:\/\//.test(text) ? COST_LINK : COST_PLAIN);
+export const COST_MEDIA_UPLOAD = 0.015;
+export const COST_READ = 0.005;
+const roundCost = (x) => Math.round(x * 1000) / 1000;
+/** Cost of one post; with `image`, the upload too (the estimate used before sending; a failed upload isn't charged). */
+export const postCost = (text, image = false) => roundCost((/https?:\/\//.test(text) ? COST_LINK : COST_PLAIN) + (image ? COST_MEDIA_UPLOAD : 0));
 const COST_MARK = /<!-- forge-cost (\d+(?:\.\d+)?) -->/;
 
 /**
@@ -296,7 +398,7 @@ export function autoDecision({ issue, posts, authorIsAdmin, postedTypes, autoTod
   const opens = Date.parse(issue.created_at) + HOLD_WINDOW_MS;
   if (now < opens) return { ok: false, why: `hold window until ${new Date(opens).toISOString()}` };
   if (autoToday >= AUTO_ISSUES_PER_DAY) return { ok: false, why: "two auto posts already today" };
-  const cost = posts.reduce((a, p) => a + postCost(p.text), 0);
+  const cost = posts.reduce((a, p) => a + postCost(p.text, p.image !== undefined), 0);
   if (spentThisMonth + cost > MONTHLY_CAP_USD) return { ok: false, why: "monthly X budget reached", capped: true };
   return { ok: true };
 }
@@ -414,6 +516,121 @@ export async function due(env, fetcher = fetch, now = Date.now()) {
   return log;
 }
 
+// --- Daily post metrics -------------------------------------------------------------------------------------------
+
+export const METRICS_TITLE = "X post metrics";
+/**
+ * Each post is measured when it is this many whole days old, not every day: reading all 30 days of posts daily at
+ * $0.005 a post would eat a large share of the $10 monthly cap. Six reads a post cost $0.03 in all.
+ */
+export const METRICS_AGES_DAYS = [1, 2, 3, 7, 14, 28];
+const DAY_MS = 86_400_000;
+const METRICS_MARK = /<!-- forge-metrics (\d{4}-\d{2}-\d{2}) -->/;
+
+/** Every post the bot recorded as sent in the last 30 days, oldest first, from its "Posted n of N" comments. */
+export function postedFromComments(comments, issueNumbers, now) {
+  const seen = new Map();
+  for (const c of comments) {
+    if (c.user?.login !== BOT) continue;
+    const at = Date.parse(c.created_at);
+    if (!(now - at <= 30 * DAY_MS)) continue;
+    const issue = Number(String(c.issue_url ?? "").split("/").at(-1));
+    if (!issueNumbers.has(issue)) continue;
+    for (const m of c.body.matchAll(POSTED_ID)) if (!seen.has(m[1])) seen.set(m[1], { id: m[1], at, issue });
+  }
+  return [...seen.values()].sort((a, b) => a.at - b.at);
+}
+
+/** The posts due a reading today: those whose age in whole days is one of METRICS_AGES_DAYS. */
+export const metricsDue = (posts, now) => posts.filter((p) => METRICS_AGES_DAYS.includes(Math.floor((now - p.at) / DAY_MS)));
+
+async function paged(gh, path, pages = 10) {
+  const all = [];
+  for (let page = 1; page <= pages; page++) {
+    const batch = await gh("GET", `${path}&page=${page}`);
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
+
+/**
+ * Reads posts from X in batches of 100 (GET /2/tweets). Private metrics (impressions, link clicks) need user context
+ * and only work for our own posts under 30 days old; if X refuses them, the batch is read again with public metrics
+ * only. Returns the posts read and whether private metrics were available.
+ */
+export async function fetchMetrics(ids, env, fetcher = fetch) {
+  xCreds(env);
+  const base = "https://api.x.com/2/tweets";
+  const tweets = [];
+  let nonPublic = true;
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const get = async (fields) => {
+      const q = { ids: batch.join(","), "tweet.fields": fields };
+      const res = await fetcher(`${base}?${Object.entries(q).map(([k, v]) => `${enc(k)}=${enc(v)}`).join("&")}`, {
+        headers: { Authorization: signed(env, "GET", base, q) },
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    };
+    let r = nonPublic ? await get("public_metrics,non_public_metrics,created_at") : null;
+    // Refused outright, or answered with errors and no posts at all (how X reports fields we may not read).
+    if (!r?.ok || (!Array.isArray(r.data?.data) && r.data?.errors)) {
+      nonPublic = false;
+      r = await get("public_metrics,created_at");
+    }
+    if (!r.ok) throw new Error(`X refused the metrics read (HTTP ${r.status}${r.data?.title ? `: ${r.data.title}` : ""}).`);
+    tweets.push(...(r.data.data ?? []));
+  }
+  return { tweets, nonPublic };
+}
+
+const num = (v) => (typeof v === "number" ? v.toLocaleString("en-US") : "–");
+
+/** The day's Markdown comment: one row per post read. */
+export function metricsComment(day, rows, cost, nonPublic) {
+  const head = "| Post | Posted | Impressions | Likes | Reposts | Replies | Quotes | Bookmarks | Link clicks |\n|---|---|--:|--:|--:|--:|--:|--:|--:|";
+  const lines = rows.map(({ id, at, tweet }) => {
+    const pub = tweet?.public_metrics ?? {};
+    const priv = tweet?.non_public_metrics ?? {};
+    const date = (tweet?.created_at ?? new Date(at).toISOString()).slice(0, 10);
+    const cells = [priv.impression_count ?? pub.impression_count, pub.like_count, pub.retweet_count, pub.reply_count, pub.quote_count, pub.bookmark_count, priv.url_link_clicks];
+    return `| [${id}](https://x.com/i/web/status/${id}) | ${date} | ${tweet ? cells.map(num).join(" | ") : "not found on X | – | – | – | – | – | –"} |`;
+  });
+  const note = nonPublic ? "" : " X didn't return private metrics today, so link clicks (and maybe impressions) are blank.";
+  return `X post metrics for ${day} (posts ${METRICS_AGES_DAYS.join(", ")} days old).\n\n${head}\n${lines.join("\n")}\n\nRead ${rows.length} post(s) from X for about $${cost}.${note} <!-- forge-metrics ${day} --> <!-- forge-cost ${cost} -->`;
+}
+
+/** Daily: reads the numbers of recent posts from X and comments one table on the "X post metrics" issue. */
+export async function metrics(env, fetcher = fetch, now = Date.now()) {
+  const gh = github(env, fetcher);
+  const day = new Date(now).toISOString().slice(0, 10);
+  const since = new Date(now - 30 * DAY_MS).toISOString();
+  const issues = await paged(gh, `/issues?state=all&labels=post&since=${since}&per_page=100`);
+  const numbers = new Set(issues.filter((i) => !i.pull_request).map((i) => i.number));
+  const comments = await paged(gh, `/issues/comments?since=${since}&per_page=100`);
+  const due = metricsDue(postedFromComments(comments, numbers, now), now);
+  if (!due.length) return [`${day}: no posts due a reading`];
+
+  const tracking = (await gh("GET", `/issues?state=all&labels=metrics&per_page=100`)).find((i) => i.title === METRICS_TITLE && !i.pull_request);
+  const issue =
+    tracking?.number ??
+    (await gh("POST", `/issues`, { title: METRICS_TITLE, labels: ["metrics"], body: "One comment a day with the numbers of recent X posts, written by `.github/workflows/post-to-x.yml` (docs/runbooks/posting.md). Don't label this issue `post`." })).number;
+  const todays = await gh("GET", `/issues/${issue}/comments?since=${day}T00:00:00Z&per_page=100`);
+  if (todays.some((c) => c.user?.login === BOT && METRICS_MARK.exec(c.body)?.[1] === day)) return [`${day}: already measured today`];
+
+  // The monthly X cap (ADR 0010) covers reads too; the estimate assumes every post comes back.
+  const spent = await spentThisMonth(gh, now);
+  if (spent + roundCost(due.length * COST_READ) > MONTHLY_CAP_USD) return [`${day}: skipped, the monthly X budget ($${MONTHLY_CAP_USD}) is reached`];
+
+  const { tweets, nonPublic } = await fetchMetrics(due.map((p) => p.id), env, fetcher);
+  const byId = new Map(tweets.map((t) => [String(t.id), t]));
+  const cost = roundCost(tweets.length * COST_READ);
+  await gh("POST", `/issues/${issue}/comments`, { body: metricsComment(day, due.map((p) => ({ ...p, tweet: byId.get(p.id) })), cost, nonPublic) });
+  return [`${day}: measured ${tweets.length} of ${due.length} post(s) for $${cost}`];
+}
+
 // --- Profile (bio, website, header image), approve-gated like posts ----------------------------------------------
 
 export const PROFILE_LIMITS = { name: 50, bio: 160 };
@@ -493,7 +710,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         ? due(process.env).then(async (a) => [...a, ...(await autoPublish(process.env))])
         : mode === "hold"
           ? hold(process.env)
-          : Promise.reject(new Error("usage: approve | profile | due | hold"));
+          : mode === "metrics"
+            ? metrics(process.env)
+            : Promise.reject(new Error("usage: approve | profile | due | hold | metrics"));
   run
     .then((r) => console.log(Array.isArray(r) ? r.join("\n") || "nothing scheduled" : `${r} post(s) still scheduled`))
     .catch((e) => {

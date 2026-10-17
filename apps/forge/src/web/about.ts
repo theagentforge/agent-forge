@@ -1,5 +1,6 @@
 import { html } from "hono/html";
-import { proofStrip } from "../services/proof-strip";
+import { gatedProofStrip } from "../services/proof-strip";
+import { proofStripList } from "./proof-strip";
 import { send, site, SITE_DESCRIPTION } from "./pages";
 
 // /about (ADR 0018 §5): for press, investors and partners. What it is, why now, how it stays honest, live numbers,
@@ -16,8 +17,7 @@ export const CONTACT_ROUTES = [
 ];
 
 site.get("/about", async (c) => {
-  const p = await proofStrip(c.env).catch(() => null);
-  const n = (x: number) => x.toLocaleString("en-US");
+  const strip = proofStripList(await gatedProofStrip(c.env).catch(() => null));
   return send(c, {
     title: "About The Agent Forge",
     description: SITE_DESCRIPTION,
@@ -40,13 +40,8 @@ site.get("/about", async (c) => {
 <li><b>No affiliation.</b> We aren't affiliated with any AI lab, and practice results are always labelled.</li>
 </ul>
 
-${p ? html`<h2>Live numbers</h2>
-<ul class="proof-strip" aria-label="Live numbers">
-<li><b>${n(p.bouts)}</b> ${p.bouts === 1 ? "bout" : "bouts"} refereed</li>
-<li><b>${n(p.models)}</b> AI ${p.models === 1 ? "model" : "models"} tested</li>
-<li><b>${n(p.traps_sprung)}</b> ${p.traps_sprung === 1 ? "trap" : "traps"} sprung</li>
-<li><b>${n(p.tools_checked)}</b> ${p.tools_checked === 1 ? "tool" : "tools"} checked</li>
-</ul>` : ""}
+${strip ? html`<h2>Live numbers</h2>
+${strip}` : ""}
 
 <h2 id="investors">Investors and partners</h2>
 <p>We're glad to talk to investors, to companies that want to build on the Forge, and to teams it could be part of. Messages go straight to the founder, and a person reads every one.</p>
@@ -54,12 +49,14 @@ ${p ? html`<h2>Live numbers</h2>
 ${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailto(r.to, r.subject, NOTE)}">${r.to}</a></li>`)}
 </ul>
 <p>What helps: who you are, what you have in mind, and a good time to talk. No NDA needed to start.</p>
+<p><b>Teams with agents near invoices, purchasing or support queues.</b> We run your agent through our trap set and send you a report. <a href="/teams">For teams</a>: free for the first design partners.</p>
 <h3>For a first look</h3>
 <ul>
 <li><a href="/stats">Live numbers</a>, updated every day, with outside and in-house activity counted separately.</li>
 <li><a href="/arena/dataset.json">The full bout dataset</a>, every refereed run with its signed log.</li>
 <li><a href="https://github.com/theagentforge/agent-forge">The code</a>, including the referee and the Arena's jobs.</li>
 <li><a href="/arena/rules">The rules</a> and <a href="/methodology">how scores work</a>.</li>
+<li><a href="/arena/methodology">The Arena methodology</a>: the trap catalog with stable IDs and sources, versions, and how to cite results.</li>
 <li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, published whatever it shows.</li>
 </ul>
 

@@ -11,6 +11,11 @@ import { connectTestSeen } from "./services/connect-test";
 import { storeRun } from "./services/house-report";
 import { checkKind, recordCheck } from "./services/proof";
 import type { AgentProps } from "./services/props";
+import { eq } from "drizzle-orm";
+import * as t from "./db/schema";
+import { getDb } from "./services/db";
+import { countsAsHouse } from "./services/identity";
+import { recordMcp } from "./services/usage";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -107,7 +112,20 @@ const propsOf = (c: Context<{ Bindings: Env }>) => (c.executionCtx as ProtectedC
 
 export const protectedApi = new Hono<{ Bindings: Env }>();
 
-protectedApi.all("/mcp", (c) => mcpHandler(c.env, propsOf(c))(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext));
+protectedApi.all("/mcp", async (c) => {
+  const props = propsOf(c);
+  // Usage counts (services/usage.ts) from a copy of the body, only when accepted; our own accounts count as "house".
+  const copy = c.req.method === "POST" ? c.req.raw.clone() : null;
+  const res = await mcpHandler(c.env, props)(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext);
+  if (copy && res.status < 400)
+    c.executionCtx.waitUntil(
+      getDb(c.env)
+        .query.humans.findFirst({ where: eq(t.humans.id, props.humanId), columns: { isHouse: true, githubId: true } })
+        .then((h) => recordMcp(c.env, h && countsAsHouse(c.env, h) ? "house" : "signed_in", copy))
+        .catch(() => {}),
+    );
+  return res;
+});
 
 protectedApi.post("/api/v1/report", async (c) => {
   let body: unknown;

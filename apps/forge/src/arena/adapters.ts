@@ -32,6 +32,8 @@ export class ProviderError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
+    /** The provider asked us to slow down (HTTP 429): the bout pauses and carries on later; it isn't a failure. */
+    readonly rateLimited = false,
   ) {
     super(message);
   }
@@ -65,7 +67,7 @@ export async function callModel(
     });
     const body = (await res.json().catch(() => null)) as OpenAiShape | null;
     if (!res.ok || !body?.choices?.[0]) {
-      throw new ProviderError(`OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300), res.status === 429 || res.status >= 500 || res.status === 408);
+      throw new ProviderError(`OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300), res.status === 429 || res.status >= 500 || res.status === 408, res.status === 429);
     }
     return fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0);
   }
@@ -74,7 +76,9 @@ export async function callModel(
   try {
     out = await env.AI.run(route.model as keyof AiModels, { messages, tools: toolsParam(tools), temperature: 0, max_tokens: 2048 } as never);
   } catch (e) {
-    throw new ProviderError(`Workers AI: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300), true);
+    const msg = e instanceof Error ? e.message : String(e);
+    // "Capacity temporarily exceeded" and 429s mean "slow down", not a failed bout.
+    throw new ProviderError(`Workers AI: ${msg}`.slice(0, 300), true, /\b429\b|rate.?limit|capacity/i.test(msg));
   }
   const ms = Date.now() - t0;
   const o = out as OpenAiShape & LegacyShape;

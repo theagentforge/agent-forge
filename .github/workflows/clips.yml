@@ -1,0 +1,121 @@
+name: Clips
+
+# Vertical clips of Arena bouts (ADR 0023 §1 and its amendment 1; docs/runbooks/clips.md). Every hour: ask the site
+# which recent ranked bouts need a clip (/arena/clips/pending.json, at most 10), record each bout's clip page
+# (/arena/run/<id>/clip) with headless Chromium at 1080×1920, encode an H.264 MP4 with ffmpeg, and publish it as
+# <run id>.mp4 on this repo's rolling "clips" release, with an index.json the site reads every hour.
+# No secrets: it uses only this workflow's own GITHUB_TOKEN, and only the site's public pages.
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "One bout's run id (re-records it, or removes its clip). Leave empty to record what's pending."
+        required: false
+        default: ""
+      action:
+        description: "record or remove"
+        type: choice
+        options: [record, remove]
+        default: record
+      site:
+        description: "The site to record from"
+        default: "https://theagentforge.io"
+
+permissions: {}
+
+concurrency:
+  group: clips
+  cancel-in-progress: false
+
+jobs:
+  clips:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # Upload release files (in theagentforge/agent-forge only; see the "Publish" steps).
+      contents: write
+    env:
+      RUN_ID: ${{ inputs.run_id || '' }}
+      ACTION: ${{ inputs.action || 'record' }}
+      SITE: ${{ inputs.site || 'https://theagentforge.io' }}
+      GH_TOKEN: ${{ github.token }}
+      PUBLIC_MIRROR: ${{ github.repository == 'theagentforge/agent-forge' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Check the inputs
+        run: |
+          case "$ACTION" in record|remove) ;; *) echo "action must be record or remove"; exit 1 ;; esac
+          if [ -n "$RUN_ID" ] && ! printf '%s' "$RUN_ID" | grep -Eq '^[A-Za-z0-9_-]{1,64}$'; then echo "run_id is not a run id"; exit 1; fi
+          if ! printf '%s' "$SITE" | grep -Eq '^https://[a-z0-9.-]+$'; then echo "site must be https://<host>"; exit 1; fi
+          if [ "$ACTION" = remove ] && [ -z "$RUN_ID" ]; then echo "remove needs a run_id"; exit 1; fi
+
+      - name: Read the clips release
+        working-directory: ${{ runner.temp }}
+        run: |
+          gh release view clips -R "$GITHUB_REPOSITORY" --json assets > assets.json 2>/dev/null || echo '{"assets":[]}' > assets.json
+          gh release download clips -R "$GITHUB_REPOSITORY" -p index.json -O old-index.json 2>/dev/null || echo '{}' > old-index.json
+
+      - name: Decide which bouts to record
+        id: plan
+        if: env.ACTION == 'record'
+        working-directory: ${{ runner.temp }}
+        run: |
+          node "$GITHUB_WORKSPACE/integrations/clips/clips.mjs" plan "$SITE" assets.json old-index.json plan.json
+          echo "count=$(node -p 'require("./plan.json").ids.length')" >> "$GITHUB_OUTPUT"
+
+      - name: Install Chromium (Playwright) and ffmpeg
+        if: steps.plan.outputs.count > 0
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p pw && cd pw
+          npm init -y > /dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+          command -v ffmpeg > /dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Record the clips
+        if: steps.plan.outputs.count > 0
+        working-directory: ${{ runner.temp }}
+        env:
+          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+        run: node "$GITHUB_WORKSPACE/integrations/clips/clips.mjs" record "$SITE" plan.json out
+
+      - name: Keep the clips as a workflow artifact (private copy, preview only)
+        if: steps.plan.outputs.count > 0 && env.PUBLIC_MIRROR != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips
+          path: ${{ runner.temp }}/out/*.mp4
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish the clips
+        if: env.PUBLIC_MIRROR == 'true' && github.repository == 'theagentforge/agent-forge'
+        working-directory: ${{ runner.temp }}
+        run: |
+          gh release view clips -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || gh release create clips -R "$GITHUB_REPOSITORY" --title "Arena clips" --latest=false \
+            --notes "Vertical clips of Forge Arena bouts, one MP4 per bout (<run id>.mp4), recorded from theagentforge.io/arena/run/<run id>/clip. index.json lists them."
+          if [ "$ACTION" = remove ]; then
+            gh release delete-asset clips "$RUN_ID.mp4" -R "$GITHUB_REPOSITORY" -y || echo "no clip file for $RUN_ID"
+          elif ls out/*.mp4 > /dev/null 2>&1; then
+            gh release upload clips out/*.mp4 -R "$GITHUB_REPOSITORY" --clobber
+          fi
+
+      - name: Publish the index the site reads
+        if: env.PUBLIC_MIRROR == 'true' && github.repository == 'theagentforge/agent-forge'
+        working-directory: ${{ runner.temp }}
+        run: |
+          gh release view clips -R "$GITHUB_REPOSITORY" --json assets > assets.json
+          if [ "$ACTION" = remove ]; then export REMOVE_ID="$RUN_ID"; elif [ -n "$RUN_ID" ]; then export RESTORE_ID="$RUN_ID"; fi
+          node "$GITHUB_WORKSPACE/integrations/clips/clips.mjs" index assets.json old-index.json index.json
+          gh release upload clips index.json -R "$GITHUB_REPOSITORY" --clobber

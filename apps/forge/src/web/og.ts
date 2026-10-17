@@ -11,6 +11,7 @@ import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { channelDuels } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
+import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 
 // Share cards, 1200×630 (docs/BRAND.md §9). The verdict, subject and domain are burned into the image, because X shows
 // large cards without the page title. Built from plain element objects (no HTML parsing), so nothing user-supplied can
@@ -228,26 +229,43 @@ export function runCardLines(r: { modelName: string; result: AttemptResult; task
   };
 }
 
-site.get("/og/arena/run/:file{[A-Za-z0-9_-]+\\.png}", async (c) => {
-  const r = await runWithLog(getDb(c.env), c.req.param("file").replace(/\.png$/, ""));
+/** The fail card's label above the sentence, by kind. */
+export const CARD_LABEL: Record<CardKind, string> = { trap: "TRAP", caught: "TRAP CAUGHT", knockout: "KNOCKOUT", claimed: "FAIL", fail: "FAIL", pass: "PASS" };
+
+/**
+ * The fail card (ADR 0023 §1): the template sentence, the trap or task id, the date, "Verified replay" and the short
+ * link. Served at /og/arena/run/<id>/card.png and, for links already posted, at /og/arena/run/<id>.png.
+ */
+async function failCardImage(c: Ctx, id: string) {
+  const r = await runWithLog(getDb(c.env), id);
   if (!r) return c.redirect("/og/home.png", 302);
-  const l = runCardLines({ modelName: modelName(r.run.modelId), result: r.result, taskTitle: taskById(r.run.task)?.title ?? r.run.task, practice: r.event.kind === "practice", finishedAt: r.run.finishedAt ?? Date.now() });
-  const color = l.verdict === "PASS" ? C.clear : C.flagged;
+  const taskTitle = taskById(r.run.task)?.title ?? r.run.task;
+  const card = failCard({ runId: r.run.id, modelName: modelName(r.run.modelId), result: r.result, taskTitle, practice: r.event.kind === "practice", finishedAt: r.run.finishedAt ?? Date.now() });
+  const ok = await verifiedReplay(c.env, r.run.id, r.log, r.run.signature);
+  const good = card.kind === "caught" || card.kind === "pass";
+  const color = good ? C.clear : card.kind === "knockout" ? C.caution : C.flagged;
+  const size = card.sentence.length <= 44 ? 56 : card.sentence.length <= 80 ? 46 : 38;
   return respond(
     c,
     frame(
       [
-        line(l.meta),
-        el("div", { display: "flex", alignItems: "center", gap: "20px", marginBottom: "24px" }, [
-          punch(72, color, l.verdict === "PASS" ? ICON.clear : ICON.flagged),
-          el("span", { fontFamily: "Archivo Expanded", fontSize: 52, color }, l.verdict),
+        el("div", { display: "flex", alignItems: "center", gap: "16px", marginBottom: "22px", fontFamily: "JetBrains Mono", fontSize: 26 }, [
+          ...(card.practice ? [el("span", { display: "flex", border: `2px solid ${C.caution}`, color: C.caution, padding: "2px 12px" }, "Practice")] : []),
+          punch(40, color, good ? ICON.clear : ICON.flagged),
+          el("span", { color }, CARD_LABEL[card.kind]),
+          el("span", { color: C.muted }, clip(card.shortId, 44)),
         ]),
-        el("div", { display: "flex", fontSize: 36, lineHeight: 1.3 }, clip(l.summary, 150)),
+        el("div", { display: "flex", fontFamily: "Archivo Expanded", fontSize: size, lineHeight: 1.12, marginBottom: "26px" }, clip(card.sentence, 140)),
+        line(`${clip(taskTitle, 40)} · ${card.dated}${card.moreTraps ? ` · and ${card.moreTraps} more ${card.moreTraps === 1 ? "trap" : "traps"}` : ""}`),
+        line(ok ? "Verified replay" : "Replay not verified", 26, ok ? C.clear : C.muted),
       ],
-      "theagentforge.io/arena",
+      card.shortLink,
     ),
   );
-});
+}
+
+site.get("/og/arena/run/:id{[A-Za-z0-9_-]+}/card.png", (c) => failCardImage(c, c.req.param("id")));
+site.get("/og/arena/run/:file{[A-Za-z0-9_-]+\\.png}", (c) => failCardImage(c, c.req.param("file").replace(/\.png$/, "")));
 
 site.get("/og/best/:file{[a-z-]+\\.png}", async (c) => {
   const task = taskById(c.req.param("file").replace(/\.png$/, ""));

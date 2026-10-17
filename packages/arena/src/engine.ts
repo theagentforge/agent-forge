@@ -1,5 +1,5 @@
 import { rng, subSeed } from "./rng";
-import type { AttemptResult, CallRecord, Caps, EndReason, FinishClaim, LogEvent, TaskType, TaskVariant, ToolDef, ToolSpec, Twist } from "./types";
+import type { AttemptCheckpoint, AttemptResult, CallRecord, Caps, EndReason, FinishClaim, LogEvent, TaskType, TaskVariant, ToolDef, ToolSpec, Twist } from "./types";
 
 // One attempt of one model at one task variant. The engine owns the sandbox state, runs tool calls, enforces the
 // shared caps (stamina) and writes the referee log. It never sees the model's text except to log it.
@@ -41,7 +41,9 @@ export class Attempt<S = unknown> {
   private readonly counts = new Map<string, number>();
   private readonly perTool = new Map<string, number>();
   private readonly rand: () => number;
-  private readonly t0: number;
+  /** Start of the current stretch of play (this tick), and the active time used in earlier ticks. */
+  private t0: number;
+  private activeBefore = 0;
   private claim: FinishClaim | null = null;
   private ended: AttemptResult | null = null;
   turns = 0;
@@ -72,12 +74,65 @@ export class Attempt<S = unknown> {
     });
   }
 
+  /**
+   * Rebuilds an attempt saved with `checkpoint()` (ADR 0022): a fresh sandbox from (task, seed, twist), then every
+   * logged tool call replayed in order. Throws if the checkpoint isn't for this task, seed and twist, or if the replay
+   * doesn't reproduce the logged results (for example, the task's code changed between ticks).
+   */
+  static resume<S>(task: TaskType<S>, seed: number, opts: { twist?: Twist | null; caps?: Caps; now?: () => number }, cp: AttemptCheckpoint): Attempt<S> {
+    if (cp?.v !== 1 || cp.task !== task.id || cp.seed !== seed || cp.twist !== (opts.twist?.id ?? null)) {
+      throw new Error("The checkpoint is for another task, seed or twist.");
+    }
+    const a = new Attempt(task, seed, opts);
+    for (const e of cp.log) if (e.type === "call") a.call(e.name, e.args);
+    // Compare without timestamps; JSON on both sides, since a stored checkpoint has been through JSON.
+    const replayed = (log: LogEvent[]) => JSON.stringify(log.filter((e) => REPLAYED.has(e.type)).map(({ t: _t, ...e }) => e));
+    if (a.done || replayed(a.log) !== replayed(cp.log)) throw new Error("The checkpoint no longer replays to the same state.");
+    a.log.splice(0, a.log.length, ...(JSON.parse(JSON.stringify(cp.log)) as LogEvent[]));
+    a.turns = cp.turns;
+    a.tokensIn = cp.tokensIn;
+    a.tokensOut = cp.tokensOut;
+    a.cost = cp.cost;
+    a.modelMs = cp.modelMs;
+    // The clock restarts now: the replay and the gap since the last tick are not the bout's time.
+    a.activeBefore = cp.activeMs;
+    a.t0 = a.now();
+    return a;
+  }
+
+  /** Saves an unfinished attempt for `Attempt.resume`. Plain JSON, as it will be stored. */
+  checkpoint(): AttemptCheckpoint {
+    if (this.ended) throw new Error("A finished attempt has no checkpoint.");
+    const cp: AttemptCheckpoint = {
+      v: 1,
+      task: this.task.id,
+      seed: this.seed,
+      twist: this.opts.twist?.id ?? null,
+      turns: this.turns,
+      tokensIn: this.tokensIn,
+      tokensOut: this.tokensOut,
+      cost: this.cost,
+      modelMs: this.modelMs,
+      activeMs: this.activeMs,
+      log: this.log,
+    };
+    return JSON.parse(JSON.stringify(cp)) as AttemptCheckpoint;
+  }
+
   private now() {
     return (this.opts.now ?? Date.now)();
   }
 
+  /**
+   * The bout's own active time (what the `ms` cap and the log's `t` count): time spent in earlier ticks plus time
+   * since this tick's stretch began. The gap between ticks of a suspended bout is never counted (ADR 0022).
+   */
+  get activeMs() {
+    return this.activeBefore + this.now() - this.t0;
+  }
+
   private push(e: Record<string, unknown>) {
-    this.log.push({ t: this.now() - (this.t0 ?? this.now()), ...e } as LogEvent);
+    this.log.push({ t: this.t0 === undefined ? 0 : this.activeMs, ...e } as LogEvent);
   }
 
   get done() {
@@ -102,7 +157,7 @@ export class Attempt<S = unknown> {
     this.modelMs += t.latencyMs;
     this.push({ type: "turn", n: this.turns, tokensIn: t.tokensIn, tokensOut: t.tokensOut, cost: t.cost, latencyMs: t.latencyMs, provider: t.provider ?? null, text: t.text ?? null });
     if (this.tokensIn + this.tokensOut > this.caps.tokens) return "knockout_tokens";
-    if (this.now() - this.t0 > this.caps.ms) return "knockout_time";
+    if (this.activeMs > this.caps.ms) return "knockout_time";
     return null;
   }
 
@@ -200,12 +255,15 @@ export class Attempt<S = unknown> {
       tokensOut: this.tokensOut,
       cost: round(this.cost, 6),
       modelMs: this.modelMs,
-      wallMs: this.now() - this.t0,
+      wallMs: this.activeMs,
     };
     this.push({ type: "finish", claim: this.claim, reason, passed, quality });
     return this.ended;
   }
 }
+
+/** Log events a replay reproduces exactly (turns, the referee's verdict and timestamps are restored from the checkpoint). */
+const REPLAYED = new Set<LogEvent["type"]>(["start", "call", "result", "hit", "spin"]);
 
 function safeRun(f: () => ReturnType<ToolDef<unknown>["run"]>) {
   try {

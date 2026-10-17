@@ -69,8 +69,12 @@ describe("home page message (ADR 0018 §1–3)", () => {
     expect(h1).toBeGreaterThan(0);
     expect(body.indexOf(HOME_SUBHEAD)).toBeGreaterThan(h1);
     expect(body).toContain(HOME_USP.replace("'", "&#39;"));
-    expect(body).toMatch(/<b>\d+<\/b> bouts? refereed/);
-    expect(body).toMatch(/<b>\d+<\/b> tools? checked/);
+    // ADR 0023 §3: proof-strip items appear only from their minimums (10 bouts, 25 tools checked), never as a zero.
+    expect(body).not.toMatch(/<b>0<\/b>/);
+    const bouts = /<b>([\d,]+)<\/b> bouts? refereed/.exec(body);
+    if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
+    const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
+    if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);
     const order = ["Watch", "Compare", "Protect yours", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);

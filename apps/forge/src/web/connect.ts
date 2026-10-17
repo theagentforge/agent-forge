@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { newTestCode } from "../services/connect-test";
 import { getDb } from "../services/db";
 import { day } from "../services/proof";
+import { atMinimum } from "../services/counters";
 import { copyBlock } from "./components";
 import { send, site } from "./pages";
 
@@ -52,9 +53,10 @@ site.get("/connect", async (c) => {
   const code = newTestCode();
   const testPrompt = `Use The Agent Forge to check the tool npm:forge-test-${code}`;
   const [row] = (await getDb(c.env)
-    .all(sql`select count(*) as n from check_sources where day = ${day(Date.now())}`)
+    .all(sql`select count(*) as n from check_sources where day = ${day(Date.now())} and is_house = 0`)
     .catch(() => [])) as { n: number }[];
-  const checksToday = Number(row?.n ?? 0);
+  // ADR 0023 §3: people outside the project only, and shown only once it reaches its minimum.
+  const checksToday = atMinimum("check_sources", Number(row?.n ?? 0));
   const section = (id: AppTab, title: string, body: unknown) =>
     html`<section class="app-tab panel chamfer panel-body" id="tab-${id}" data-tab="${id}" aria-labelledby="h-${id}"><h2 id="h-${id}">${title}</h2>${body}</section>`;
   return send(
@@ -79,7 +81,7 @@ ${copyBlock("send-agent", `Read ${origin}/skill.md and follow it to connect to T
 <li>Add it to your AI (below)</li>
 <li data-test-step>Test it</li>
 </ol>
-<p class="small muted"><span data-progress-label>1 of 3 done.</span> ${checksToday ? `${checksToday.toLocaleString("en-US")} ${checksToday === 1 ? "check" : "checks"} today.` : ""}</p>
+<p class="small muted"><span data-progress-label>1 of 3 done.</span> ${checksToday !== null ? `${checksToday.toLocaleString("en-US")} different people and agents checked a tool today.` : ""}</p>
 <nav class="app-tiles" aria-label="Your AI app">${TABS.map((t) => html`<a class="app-tile chamfer" href="#tab-${t.id}" data-tile="${t.id}">${t.label}</a>`)}</nav>
 
 ${section(

@@ -102,7 +102,10 @@ export interface Caps {
   toolCalls: number;
   /** Tokens in plus out across the attempt. */
   tokens: number;
-  /** Wall-clock milliseconds. */
+  /**
+   * Milliseconds of the bout's own active time: model latency plus tool handling, summed over every cron tick it was
+   * played in. A bout suspended between ticks (ADR 0022) never pays for the wait until the next tick.
+   */
   ms: number;
 }
 
@@ -146,5 +149,25 @@ export interface AttemptResult {
   tokensOut: number;
   cost: number;
   modelMs: number;
+  /** Active milliseconds (see `Caps.ms`): the time spent inside ticks, never the gap between them. */
   wallMs: number;
+}
+
+/**
+ * An unfinished attempt, saved so a later cron tick can carry on (ADR 0022). The sandbox isn't stored: the world is
+ * deterministic from (task, seed, twist), so `Attempt.resume` rebuilds it by replaying the `call` events in `log`.
+ */
+export interface AttemptCheckpoint {
+  v: 1;
+  task: string;
+  seed: number;
+  twist: string | null;
+  turns: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+  modelMs: number;
+  /** Active time used so far (see `Caps.ms`). */
+  activeMs: number;
+  log: LogEvent[];
 }

@@ -8,16 +8,21 @@ import { type McpEndpoint, recordMcp } from "./services/usage";
 import { seedRun } from "./seed/mcp-registry";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
+import { refreshClipIndex } from "./arena/clips";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
 import { notFound, site } from "./web/pages";
 import "./web/static-pages";
 import "./web/about";
+import "./web/teams";
 import "./web/legal";
 import "./web/publications";
 import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
+import "./web/arena-agent";
+import "./web/arena-methodology";
+import "./web/arena-clip";
 import "./web/badge";
 import "./web/registry";
 import "./web/house-report";
@@ -113,6 +118,12 @@ export default {
       ),
     );
     ctx.waitUntil(
+      refreshClipIndex(env).then(
+        (r) => console.log("clip_index", JSON.stringify(r)),
+        (e) => console.error("clip_index_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
       sweepPendingNotes(env).then(
         (r) => console.log("note_sweep", JSON.stringify(r)),
         (e) => console.error("note_sweep_failed", String(e)),
@@ -139,10 +150,7 @@ export default {
       provider = new OAuthProvider<Env>(providerOptions(env.PUBLIC_ORIGIN));
       providers.set(env.PUBLIC_ORIGIN, provider);
     }
-    if (path === "/mcp") {
-      const copy = copyIfPost();
-      return counted("signed_in", provider.fetch(request, env, ctx), copy);
-    }
+    // Signed-in /mcp is counted in api.ts, where the agent is known, so House sessions are kept apart (ADR 0023 §3).
     return provider.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

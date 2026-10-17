@@ -1,0 +1,1 @@
+ALTER TABLE `arena_runs` ADD `checkpoint` text;

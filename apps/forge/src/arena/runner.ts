@@ -1,4 +1,4 @@
-import { Attempt, attemptScore, taskById, twistById, type AttemptResult, type LogEvent } from "@forge/arena";
+import { Attempt, attemptScore, SEASON, taskById, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as t from "../db/schema";
@@ -7,9 +7,11 @@ import { signReport } from "../services/signing";
 import { callModel, ProviderError, type ChatMessage } from "./adapters";
 import { armText, ARMS, type Arm } from "./arms";
 import { ALL_MODELS, modelById, type ArenaModel } from "./lineup";
+import { lastHeadlineSlot, slotDate, WEEKLY_ATTEMPTS, WEEKLY_QUEUE_WINDOW_MS, weeklyModels, weeklySlug, weeklyTask } from "./headline-slot";
 
 // The bout runner. It runs inside the Worker's 5-minute cron: picks queued attempts, plays each one through the
 // published harness, and stores the referee's result and log. Same prompt, tools and caps for every model.
+// A bout still going at the tick's deadline is suspended between turns and resumed on a later tick (ADR 0022).
 
 /** The harness prompt, published with the season rules. */
 export const SYSTEM_PROMPT =
@@ -18,6 +20,12 @@ export const NUDGE = "Please continue: use the tools, and call finish when you'r
 
 /** Monthly OpenRouter budget: $30 cap less OpenRouter's 5.5% credit fee (ADR 0014 §10). */
 export const MONTHLY_CAP_USD = 28.4;
+/**
+ * October 2026 only (Dinike, 17 Oct: "raise it by $20") for Crucible 2: Hard in launch week: $50 less the 5.5% fee.
+ * Back to MONTHLY_CAP_USD from 1 Nov by itself. Needs the key's own OpenRouter limit and credit raised to match.
+ */
+export const OCT_2026_CAP_USD = 47.25;
+export const monthlyCap = (now: number) => (now >= Date.UTC(2026, 9, 1) && now < Date.UTC(2026, 10, 1) ? OCT_2026_CAP_USD : MONTHLY_CAP_USD);
 /**
  * Practice runs on Workers AI (estimated at list price). $0.25 a day normally (Dinike, 15 Oct 2026). For the Season 0
  * practice ladder before launch (13 models × 6 tasks × 10 variants × 3 attempts, about $14), Dinike approved $1.50 a
@@ -34,37 +42,104 @@ export const LAB3_CAP_USD = 8;
 export const LAB3_CAP_UNTIL = Date.UTC(2026, 9, 21);
 export const practiceCap = (now: number) =>
   now < LAB3_CAP_UNTIL ? LAB3_CAP_USD : now < LADDER_CAP_UNTIL ? LADDER_CAP_USD : PRACTICE_DAILY_CAP_USD;
-/** Attempts played at the same time in one tick. Each waits on the model most of the time, so lanes add throughput. */
+/**
+ * Attempts played at the same time in one tick. Each waits on the model most of the time, so lanes add throughput.
+ * Each lane takes the next run in queue order; a suspended run is first in its class, so it finishes promptly.
+ */
 export const LANES = 3;
-/** The tick's deadline is 10 minutes in; a cron run may last 15, so a bout may end up to 4 minutes past it. */
+/**
+ * The tick's deadline is 10 minutes in; a cron run may last 15. No lane claims a run after the deadline, and a bout
+ * still going suspends at its first pause between turns after it (never mid-turn), so only the model reply already
+ * in flight runs on: it has up to 4 minutes. Bouts longer than a tick span several ticks (ADR 0022).
+ */
 export const CRON_SLACK_MS = 4 * 60_000;
 export const MAX_RETRIES = 2;
 
 type RunRow = typeof t.arenaRuns.$inferSelect;
 
-/** Plays one attempt. Throws ProviderError if the provider fails (the run is then void and re-queued). */
+/** A suspended bout (stored in `arena_runs.checkpoint`): the referee's checkpoint plus the chat so far (ADR 0022). */
+export interface BoutCheckpoint {
+  v: 1;
+  attempt: AttemptCheckpoint;
+  messages: ChatMessage[];
+  costEstimated: boolean;
+  provider: string | null;
+  /** Ticks the bout has been played in so far. */
+  ticks: number;
+}
+
+type Finished = { result: AttemptResult; log: LogEvent[]; costEstimated: boolean; provider: string | null };
+
+/** Plays one attempt to the end. Throws ProviderError if the provider fails (the run is then void and re-queued). */
 export async function playAttempt(
   env: Pick<Env, "AI"> & { OPENROUTER_API_KEY?: string },
   model: ArenaModel,
   run: Pick<RunRow, "task" | "seed">,
   twistId: string | null,
   opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null } = {},
-): Promise<{ result: AttemptResult; log: LogEvent[]; costEstimated: boolean; provider: string | null }> {
+): Promise<Finished> {
+  const r = await playBout(env, model, run, twistId, opts);
+  if ("suspended" in r) throw new Error("unreachable: a bout without a deadline never suspends");
+  return r;
+}
+
+/**
+ * Plays an attempt, or carries on a suspended one (`checkpoint`). With `suspendAt`, it stops at the first pause
+ * between turns once that time has passed, and returns a checkpoint instead of a result; it always plays at least one
+ * turn first, so a bout spread over many ticks still moves forward. Throws ProviderError as `playAttempt` does.
+ */
+export async function playBout(
+  env: Pick<Env, "AI"> & { OPENROUTER_API_KEY?: string },
+  model: ArenaModel,
+  run: Pick<RunRow, "task" | "seed">,
+  twistId: string | null,
+  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number } = {},
+): Promise<Finished | { suspended: BoutCheckpoint; rateLimited?: boolean }> {
   const task = taskById(run.task);
   if (!task) throw new Error(`Unknown task ${run.task}`);
-  const a = new Attempt(task, run.seed, { twist: twistById(twistId), now: opts.now });
-  const messages: ChatMessage[] = [
-    { role: "system", content: withArm(SYSTEM_PROMPT, armText(opts.arm, model.id)) },
-    { role: "user", content: a.variant.brief },
-  ];
-  let estimated = false;
-  let provider: string | null = null;
+  const attemptOpts = { twist: twistById(twistId), now: opts.now };
+  const now = opts.now ?? Date.now;
+  let cp = opts.checkpoint ?? null;
+  let a: Attempt | null = null;
+  if (cp) {
+    try {
+      a = Attempt.resume(task, run.seed, attemptOpts, cp.attempt);
+    } catch (e) {
+      // For example, the task's code changed between ticks: start the bout again from the beginning.
+      console.warn("arena: checkpoint discarded, restarting the bout", e instanceof Error ? e.message : e);
+      cp = null;
+    }
+  }
+  a ??= new Attempt(task, run.seed, attemptOpts);
+  const messages: ChatMessage[] = cp
+    ? structuredClone(cp.messages)
+    : [
+        { role: "system", content: withArm(SYSTEM_PROMPT, armText(opts.arm, model.id)) },
+        { role: "user", content: a.variant.brief },
+      ];
+  let estimated = cp?.costEstimated ?? false;
+  let provider: string | null = cp?.provider ?? null;
+  let turnsThisTick = 0;
   while (!a.done) {
     if (a.outOfTurns()) {
       a.end("knockout_turns");
       break;
     }
-    const reply = await callModel(env, model.route, messages, a.toolSpecs(), opts.fetcher);
+    // Only here, between a finished turn and the next model call, is a bout ever suspended.
+    if (opts.suspendAt !== undefined && turnsThisTick > 0 && now() >= opts.suspendAt) {
+      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, ticks: (cp?.ticks ?? 0) + 1 } };
+    }
+    turnsThisTick++;
+    let reply: Awaited<ReturnType<typeof callModel>>;
+    try {
+      reply = await callModel(env, model.route, messages, a.toolSpecs(), opts.fetcher);
+    } catch (e) {
+      // Rate limited (429): nothing happened in the world, so pause here and carry on later, as at a deadline.
+      if (e instanceof ProviderError && e.rateLimited) {
+        return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, ticks: (cp?.ticks ?? 0) + 1 }, rateLimited: true };
+      }
+      throw e;
+    }
     estimated ||= reply.costEstimated;
     provider = reply.provider;
     const ko = a.recordTurn({ tokensIn: reply.tokensIn, tokensOut: reply.tokensOut, cost: reply.cost, latencyMs: reply.latencyMs, provider: reply.provider, text: reply.text?.slice(0, 2000) ?? null });
@@ -85,6 +160,8 @@ export async function playAttempt(
   }
   return { result: a.result!, log: a.log, costEstimated: estimated, provider };
 }
+
+const asCheckpoint = (v: unknown) => (v && typeof v === "object" && (v as BoutCheckpoint).v === 1 ? (v as BoutCheckpoint) : null);
 
 /** Lab #3: an arm's text goes after the harness prompt, as a user's custom instructions would. */
 export const withArm = (prompt: string, text: string | null) => (text ? `${prompt}\n\n${text}` : prompt);
@@ -112,14 +189,17 @@ export async function spend(env: Env, now = Date.now()) {
     )[0]?.c ?? 0;
   const month = await sum(false, monthStart(now));
   const practiceToday = await sum(true, dayStart(now));
-  return { month, monthCap: MONTHLY_CAP_USD, alert: month >= 0.8 * MONTHLY_CAP_USD, practiceToday, practiceCap: practiceCap(now) };
+  return { month, monthCap: monthlyCap(now), alert: month >= 0.8 * monthlyCap(now), practiceToday, practiceCap: practiceCap(now) };
 }
 
 /** Runs queued attempts until the deadline or a budget stops it. Returns a short log for the cron output. */
 export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, deadline: number, now = () => Date.now()) {
   const db = getDb(env);
-  const out = { played: 0, voided: 0, skipped: [] as string[] };
-  // A run left "running" by a Worker that died is re-queued (it never stored a result).
+  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, skipped: [] as string[] };
+  /** Models that were rate limited this tick: skipped until the next one. */
+  const cooling = new Set<string>();
+  // A run left "running" by a Worker that died is re-queued (it never stored a result). Its checkpoint, if any, is
+  // kept: the bout carries on from the last time it was suspended.
   await db
     .update(t.arenaRuns)
     .set({ status: "queued", startedAt: null })
@@ -132,7 +212,7 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   const lane = async () => {
     while (!stop && now() < deadline) {
       const s = await spend(env, now());
-      if (s.month >= MONTHLY_CAP_USD && !blocked.has("openrouter")) {
+      if (s.month >= s.monthCap && !blocked.has("openrouter")) {
         blocked.add("openrouter");
         out.skipped.push("monthly budget reached");
       }
@@ -140,9 +220,10 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         blocked.add("workers-ai");
         out.skipped.push("practice allowance for today used");
       }
-      const excluded = [...blocked].flatMap(routeIds);
+      const excluded = [...[...blocked].flatMap(routeIds), ...cooling];
       // OpenRouter runs first (the headline lineup, bounded by the monthly budget), then headline events before
-      // practice, then oldest first: a long practice ladder never delays a headline bout or a lineup check.
+      // practice, then suspended bouts before new ones, then oldest first: a long practice ladder never delays a
+      // headline bout or a lineup check, and a bout that was started finishes before more are started.
       const candidates = await db
         .select({ run: t.arenaRuns })
         .from(t.arenaRuns)
@@ -151,6 +232,7 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         .orderBy(
           openrouterIds.length ? sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end` : sql`0`,
           sql`case when ${t.arenaEvents.kind} = 'practice' then 1 else 0 end`,
+          sql`case when ${t.arenaRuns.checkpoint} is not null then 0 else 1 end`,
           asc(t.arenaRuns.createdAt),
           asc(t.arenaRuns.id),
         )
@@ -170,20 +252,31 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         }
       }
       if (!run) continue;
-      const model = modelById(run.modelId);
-      if (!model) {
-        await db.update(t.arenaRuns).set({ status: "void", voidReason: "unknown model" }).where(eq(t.arenaRuns.id, run.id));
-        continue;
-      }
-      // A long (Hard) bout, with its own stamina, must finish inside this cron run (15 minutes): don't start one that can't.
-      const need = taskById(run.task)?.caps?.ms;
-      if (need && now() + need > deadline + CRON_SLACK_MS) {
+      // The deadline may have passed while this lane was choosing (another lane may even have just suspended this
+      // very run): put it back untouched, checkpoint and all, rather than start a turn after the deadline.
+      if (now() >= deadline) {
         await db.update(t.arenaRuns).set({ status: "queued", startedAt: null }).where(eq(t.arenaRuns.id, run.id));
         return;
       }
+      const model = modelById(run.modelId);
+      if (!model) {
+        await db.update(t.arenaRuns).set({ status: "void", voidReason: "unknown model", checkpoint: null }).where(eq(t.arenaRuns.id, run.id));
+        continue;
+      }
       const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.id, run.eventId));
       try {
-        const r = await playAttempt(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null });
+        const r = await playBout(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null, checkpoint: asCheckpoint(run.checkpoint), suspendAt: deadline });
+        if ("suspended" in r) {
+          // Back in the queue with its checkpoint; nothing is signed or scored until the bout ends.
+          await db.update(t.arenaRuns).set({ status: "queued", checkpoint: r.suspended, startedAt: null }).where(eq(t.arenaRuns.id, run.id));
+          out.suspended++;
+          // Rate limited: leave this model alone for the rest of the tick (its other runs wait too), never a void.
+          if (r.rateLimited) {
+            cooling.add(run.modelId);
+            out.rateLimited++;
+          }
+          continue;
+        }
         const signature = await signReport(env.REPORT_SIGNING_KEY, { id: run.id, log: JSON.stringify(r.log) });
         await db
           .update(t.arenaRuns)
@@ -198,17 +291,19 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
             result: r.result,
             log: r.log,
             signature,
+            checkpoint: null,
             finishedAt: now(),
           })
           .where(eq(t.arenaRuns.id, run.id));
         out.played++;
       } catch (e) {
-        // A provider failure voids the bout; it is re-run later on the same model, never switched (ADR 0014 §6).
+        // A provider failure voids the bout; it is re-run later on the same model, never switched (ADR 0014 §6). The
+        // checkpoint goes too: a voided bout restarts from the beginning, not from where it was suspended.
         const retryable = e instanceof ProviderError ? e.retryable : false;
         const giveUp = !retryable || run.retries >= MAX_RETRIES;
         await db
           .update(t.arenaRuns)
-          .set({ status: giveUp ? "void" : "queued", retries: run.retries + 1, voidReason: String(e instanceof Error ? e.message : e).slice(0, 300), startedAt: null })
+          .set({ status: giveUp ? "void" : "queued", retries: run.retries + 1, voidReason: String(e instanceof Error ? e.message : e).slice(0, 300), startedAt: null, checkpoint: null })
           .where(eq(t.arenaRuns.id, run.id));
         out.voided++;
         if (!retryable) stop = true;
@@ -269,6 +364,36 @@ export const planSchema = z.strictObject({
   message: "Season (card) events need random seeds of at least 1,000,000 (RULES-season-0: Seeds)",
 });
 
+/**
+ * The weekly frontier headline bout (ADR 0023 §2): at the first tick at or after each Thursday 8 pm US Eastern slot
+ * (and within 12 hours of it), queue one card event, `weekly-<YYYY-MM-DD>`: each lab's flagship, the week's job by the
+ * published rule, one fresh random seed, 3 attempts. planEvent never queues a slug twice, so later ticks add nothing.
+ * Production only, and only with the OpenRouter key set: staging has the key too, and one weekly bout is the budgeted
+ * amount (about $1.50).
+ */
+export async function queueWeeklyHeadline(env: Env & { OPENROUTER_API_KEY?: string }, now = Date.now()) {
+  if (env.ENVIRONMENT !== "production" || !env.OPENROUTER_API_KEY) return null;
+  const slot = lastHeadlineSlot(now);
+  if (slot === null || now - slot > WEEKLY_QUEUE_WINDOW_MS) return null;
+  const slug = weeklySlug(slot);
+  const task = weeklyTask(slot);
+  const plan = planSchema.parse({
+    slug,
+    name: `Weekly headline bout, ${slotDate(slot)}: ${task.title.replace(/^The /, "")}`,
+    season: SEASON.id,
+    kind: "card",
+    models: weeklyModels(),
+    tasks: [task.id],
+    seeds: seasonSeeds(1),
+    attempts: WEEKLY_ATTEMPTS,
+  });
+  const db = getDb(env);
+  const [existing] = await db.select({ id: t.arenaEvents.id }).from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
+  // Already queued, or half-created: planEvent resumes it without queueing anything twice.
+  await planEvent(env, plan);
+  return existing ? null : slug;
+}
+
 /** Cron entry: expands a plan left in KV (`arena:plan`), then plays queued attempts for up to ~10 minutes. */
 export async function arenaTick(env: Env & { OPENROUTER_API_KEY?: string }, startedAt = Date.now()) {
   const lock = await env.KV.get("arena:lock");
@@ -286,6 +411,11 @@ export async function arenaTick(env: Env & { OPENROUTER_API_KEY?: string }, star
       }
       await env.KV.delete("arena:plan");
     }
+    const weekly = await queueWeeklyHeadline(env, startedAt).catch((e) => {
+      console.error("arena: weekly headline bout not queued", String(e));
+      return null;
+    });
+    if (weekly) console.log("arena: weekly headline bout queued", weekly);
     return await processQueue(env, startedAt + 10 * 60_000);
   } finally {
     await env.KV.delete("arena:lock");

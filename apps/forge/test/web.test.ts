@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { publicCounts } from "../src/services/forge";
 import { connectAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
 import "../src/index";
 
@@ -115,9 +116,12 @@ describe("public site", () => {
   });
 
   it("sandbox people count in the public numbers", async () => {
+    const before = (await publicCounts(env)).humans;
     await connectAgent({ profile: profile({ public_repos: 0, public_gists: 0, followers: 0 }) });
-    const s = (await (await fetchWorker("/?format=json&n=2")).json()) as { stats: { humans: number } };
-    expect(s.stats.humans).toBeGreaterThan(0);
+    expect((await publicCounts(env)).humans).toBe(before + 1);
+    // ADR 0023 §3: the public twin shows the number only from its minimum.
+    const s = (await (await fetchWorker("/?format=json&n=2")).json()) as { stats: { humans: number | null; below_minimum: string[] } };
+    expect(s.stats.humans === null).toBe(s.stats.below_minimum.includes("humans"));
   });
 });
 

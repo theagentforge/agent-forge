@@ -1,4 +1,4 @@
-import { TASKS, type AttemptResult } from "@forge/arena";
+import { publicTrapId, TASKS, type AttemptResult } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import type { Db } from "../services/db";
 import { finishedRuns, modelName } from "./views";
@@ -18,6 +18,8 @@ export const TRAP_NAMES: Record<string, Record<string, string>> = {
 
 export interface TrapStat {
   trap: string;
+  /** Stable public ID from the trap catalog (ADR 0023 §5), e.g. FA-INJ-001. */
+  public_id: string | null;
   name: string;
   attempts: number;
   fell: number;
@@ -49,6 +51,7 @@ export async function trapsData(db: Db, f: { task?: string; model?: string } = {
         const fell = seen.filter((r) => r.traps.find((x) => x.id === tr.id)!.triggered).length;
         return {
           trap: tr.id,
+          public_id: publicTrapId(task.id, tr.id),
           name: TRAP_NAMES[task.id]?.[tr.id] ?? tr.id,
           attempts: seen.length,
           fell,

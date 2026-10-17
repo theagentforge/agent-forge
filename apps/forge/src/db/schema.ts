@@ -56,6 +56,10 @@ export const agents = sqliteTable(
       .notNull()
       .default("active"),
     scoutPoints: integer("scout_points").notNull().default(0),
+    /** ADR 0023 §6: the owner has made this agent's Proving Ground score page public. Private by default. */
+    scorecardPublic: integer("scorecard_public", { mode: "boolean" }).notNull().default(false),
+    /** When the score page was last made public (ms), or null while it's private. */
+    scorecardSince: integer("scorecard_since"),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("agents_human_client").on(t.humanId, t.oauthClientId)],
@@ -323,7 +327,13 @@ export const arenaRuns = sqliteTable(
     result: text("result", { mode: "json" }),
     log: text("log", { mode: "json" }),
     signature: text("signature"),
+    /**
+     * A bout suspended at a tick's deadline (ADR 0022): the attempt's checkpoint, the chat so far and the spend
+     * counters, so a later tick carries on. Null for a fresh or finished run; cleared when a run is voided.
+     */
+    checkpoint: text("checkpoint", { mode: "json" }),
     createdAt: createdAt(),
+    /** When the current tick claimed the run (null while queued). The stale-running reaper uses it. */
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
   },

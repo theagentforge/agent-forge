@@ -85,6 +85,20 @@
       "when": 1792119615176,
       "tag": "0011_usage_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1792213707538,
+      "tag": "0012_resumable_bouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1792219970480,
+      "tag": "0013_agent_scorecards",
+      "breakpoints": true
     }
   ]
 }

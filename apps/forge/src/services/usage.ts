@@ -6,7 +6,8 @@ import { getDb } from "./db";
 // Daily totals only, in the spirit of the Privacy Policy's "daily count": the request body is read for its JSON-RPC
 // method, tool name and client app name, and nothing about the person, IP or session is kept.
 
-export type McpEndpoint = "public" | "signed_in";
+/** "house" is a signed-in session by one of our own accounts (ADR 0023 §3): counted apart, never as usage. */
+export type McpEndpoint = "public" | "signed_in" | "house";
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 /** Client app names as the MCP client reports them ("claude-ai", "cursor"…), squeezed to a safe, short label. */
 export const clientLabel = (name: unknown) => {
@@ -20,9 +21,11 @@ export function mcpCounters(endpoint: McpEndpoint, body: unknown): string[] {
   const keys: string[] = [];
   for (const m of msgs) {
     if (!m || typeof m !== "object") continue;
-    if (m.method === "initialize") keys.push(`mcp:${endpoint}:sessions`, `mcp:client:${clientLabel(m.params?.clientInfo?.name)}`);
+    // House sessions add only their own totals, never the app or tool lists people outside the project make.
+    const house = endpoint === "house";
+    if (m.method === "initialize") keys.push(`mcp:${endpoint}:sessions`, ...(house ? [] : [`mcp:client:${clientLabel(m.params?.clientInfo?.name)}`]));
     if (m.method === "tools/call" && typeof m.params?.name === "string" && /^[a-z_]{1,40}$/.test(m.params.name)) {
-      keys.push(`mcp:${endpoint}:calls`, `mcp:tool:${m.params.name}`);
+      keys.push(`mcp:${endpoint}:calls`, ...(house ? [] : [`mcp:tool:${m.params.name}`]));
     }
   }
   return keys;
@@ -72,7 +75,66 @@ export async function usageStats(env: Env, now = Date.now(), days = 7) {
     mcp_sessions_public: get("mcp:public:sessions"),
     mcp_sessions_signed_in: get("mcp:signed_in:sessions"),
     mcp_tool_calls: get("mcp:public:calls") + get("mcp:signed_in:calls"),
+    /** Our own signed-in sessions (House and founder accounts), never part of the totals above. */
+    house_mcp_sessions: get("mcp:house:sessions"),
+    house_mcp_tool_calls: get("mcp:house:calls"),
     top_clients: top("mcp:client:"),
     top_tools: top("mcp:tool:"),
   };
+}
+
+// Where visitors come from (Dinike, 17 Oct 2026: "are our X posts working?"). Daily totals only, like the MCP counts:
+// the referring site is reduced to a fixed source label and a link's own `?from=`/`?ref=`/`utm_source` tag to a short
+// label. No IP, no path, no cookie, nothing about the person. Bots and link-preview fetchers aren't counted.
+
+const SOURCES: [RegExp, string][] = [
+  [/(^|\.)(t\.co|x\.com|twitter\.com)$/, "x"],
+  [/(^|\.)news\.ycombinator\.com$/, "hn"],
+  [/(^|\.)reddit\.com$/, "reddit"],
+  [/(^|\.)linkedin\.com$|(^|\.)lnkd\.in$/, "linkedin"],
+  [/(^|\.)bsky\.app$/, "bluesky"],
+  [/(^|\.)github\.com$/, "github"],
+  [/(^|\.)(google|bing|duckduckgo|yahoo|ecosia|brave)\.[a-z.]+$|(^|\.)search\.brave\.com$/, "search"],
+  [/(^|\.)(chatgpt\.com|claude\.ai|perplexity\.ai|gemini\.google\.com|copilot\.microsoft\.com)$/, "ai-chat"],
+];
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|curl|wget|python|go-http|headless|lighthouse|monitor/i;
+
+/** Source label for a Referer header: "direct" when there is none, "internal" for our own pages, "other" otherwise. */
+export function sourceLabel(referer: string | null | undefined, origin: string) {
+  if (!referer) return "direct";
+  let host: string;
+  try {
+    host = new URL(referer).hostname.toLowerCase();
+  } catch {
+    return "other";
+  }
+  if (host === new URL(origin).hostname || host.endsWith(".theagentforge.io")) return "internal";
+  return SOURCES.find(([re]) => re.test(host))?.[1] ?? "other";
+}
+
+/** The counters one page view adds, or none for bots, non-GET and our own internal navigation. */
+export function visitCounters(req: { method: string; url: string; headers: Headers }, origin: string): string[] {
+  if (req.method !== "GET" || BOT_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  const source = sourceLabel(req.headers.get("referer"), origin);
+  if (source === "internal") return [];
+  const q = new URL(req.url).searchParams;
+  const tag = (q.get("from") ?? q.get("ref") ?? q.get("utm_source") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
+  return ["visit:arrivals", `visit:src:${source}`, ...(tag ? [`visit:tag:${tag}`] : [])];
+}
+
+/** Arrivals by source and by link tag over the last `days` days, for the ops digest and /api/v1/growth. */
+export async function visitStats(env: Env, now = Date.now(), days = 7) {
+  const db = getDb(env);
+  const since = day(now - (days - 1) * 86_400_000);
+  const rows = await db
+    .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, since), like(t.usageDaily.key, "visit:%")))
+    .groupBy(t.usageDaily.key);
+  const list = (prefix: string) =>
+    rows
+      .filter((r) => r.key.startsWith(prefix))
+      .map((r) => ({ name: r.key.slice(prefix.length), n: Number(r.n) }))
+      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  return { days, arrivals: Number(rows.find((r) => r.key === "visit:arrivals")?.n ?? 0), by_source: list("visit:src:"), by_tag: list("visit:tag:").slice(0, 10) };
 }

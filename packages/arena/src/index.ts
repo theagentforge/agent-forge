@@ -7,4 +7,6 @@ export * from "./ranking";
 export * from "./rng";
 export * from "./scorecard";
 export * from "./tasks/index";
+export * from "./traps";
+export * from "./versions";
 export type * from "./types";

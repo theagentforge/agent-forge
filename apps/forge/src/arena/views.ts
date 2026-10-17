@@ -1,4 +1,4 @@
-import { boutOutcome, conservative, glicko2, HARD_TASKS, NEW_RATING, summarize, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { boutOutcome, conservative, glicko2, HARD3_TASKS, HARD_TASKS, NEW_RATING, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
@@ -7,6 +7,41 @@ import { modelById, type ArenaModel } from "./lineup";
 // Read side of the Arena: what the pages, the Task Guide and the dataset show. Only finished, refereed runs.
 
 export type Kind = "card" | "guest" | "practice";
+
+/** The Normal card (TASKS) and the Hard tier (HARD_TASKS, ADR 0021): the same six jobs, shown as separate sections. */
+export type Tier = "normal" | "hard";
+const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS].map((x) => x.id);
+export const tierOf = (task: string): Tier => (HARD_IDS.includes(task) ? "hard" : "normal");
+export const tierTasks = (tier: Tier) => (tier === "hard" ? HARD_TASKS : TASKS);
+/** `?tier=hard` picks the Hard tier; anything else (or nothing) is Normal. */
+export const parseTier = (q: string | undefined): Tier => (q === "hard" ? "hard" : "normal");
+
+/**
+ * Consistency (ADR 0021 §5, amendment 2): did a model get the same version of a job right every time? Attempts are
+ * grouped by (task, seed); `reliable` is the share of groups where every attempt passed ("right 3 times out of 3").
+ */
+export interface Consistency {
+  passes: number;
+  attempts: number;
+  /** (task, seed) groups: one per version of a job a model was given. */
+  groups: number;
+  /** Groups where every attempt passed. */
+  allRight: number;
+  reliable: number;
+}
+
+export function consistency(results: { task: string; seed: number; passed: boolean }[]): Consistency {
+  const groups = new Map<string, boolean[]>();
+  for (const r of results) groups.set(`${r.task}:${r.seed}`, [...(groups.get(`${r.task}:${r.seed}`) ?? []), r.passed]);
+  const allRight = [...groups.values()].filter((g) => g.every(Boolean)).length;
+  return {
+    passes: results.filter((r) => r.passed).length,
+    attempts: results.length,
+    groups: groups.size,
+    allRight,
+    reliable: groups.size ? Math.round((allRight / groups.size) * 1000) / 1000 : 0,
+  };
+}
 
 export interface RunSummary {
   id: string;
@@ -28,6 +63,9 @@ export interface RunSummary {
   signature: string | null;
 }
 
+/** True when a bout ended because the model hit a stamina limit (ADR 0021): reported apart from traps and mistakes. */
+export const isKnockout = (r: { reason?: string } | null | undefined) => !!r?.reason?.startsWith("knockout_");
+
 export const modelName = (id: string) => modelById(id)?.name ?? id;
 
 /** Finished runs, newest first, optionally filtered. Results are parsed; logs are not loaded here. */
@@ -35,10 +73,12 @@ export const modelName = (id: string) => modelById(id)?.name ?? id;
  * Lab #3 events (an `arm` is set) change the prompt, so they never mix into rankings, task guides, the hero or trap
  * rates. Only the lab's own measurement (arena/lift.ts) reads them, with `lab: true`. An event-id filter sees its own.
  */
-export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; now?: number; lab?: boolean; hard?: boolean } = {}) {
+export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; now?: number; lab?: boolean; hard?: boolean; tier?: Tier } = {}) {
   const where = [eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(f.now ?? Date.now())];
-  // Hard-tier runs (ADR 0021) stay out of the Normal pages, rankings, trap data and the home duel until asked for.
-  if (!f.hard && !f.eventId && !f.task) where.push(notInArray(t.arenaRuns.task, HARD_TASKS.map((x) => x.id)));
+  // Hard-tier runs (ADR 0021) stay out of the Normal pages, rankings, trap data and the home duel until asked for:
+  // `tier: "hard"` gives only Hard runs, `hard: true` gives both tiers.
+  if (f.tier === "hard") where.push(inArray(t.arenaRuns.task, HARD_IDS));
+  else if (!f.hard && !f.eventId && !f.task) where.push(notInArray(t.arenaRuns.task, HARD_IDS));
   if (f.lab) where.push(isNotNull(t.arenaEvents.arm));
   else if (!f.eventId) where.push(isNull(t.arenaEvents.arm));
   if (f.task) where.push(eq(t.arenaRuns.task, f.task));
@@ -92,9 +132,21 @@ export async function runWithLog(db: Db, id: string, now = Date.now()) {
   return { run: row.run, event: row.event, result: row.run.result as AttemptResult, log: row.run.log as LogEvent[] };
 }
 
+/** A short link's run (ADR 0023 §1): the one finished, public run whose id starts with `prefix`, or null if none or several. */
+export async function runIdByPrefix(db: Db, prefix: string, now = Date.now()) {
+  if (!/^[0-9a-f]{8}$/.test(prefix)) return null;
+  const rows = await db
+    .select({ id: t.arenaRuns.id })
+    .from(t.arenaRuns)
+    .where(and(sql`${t.arenaRuns.id} like ${`${prefix}%`}`, eq(t.arenaRuns.status, "done"), notEmbargoed(now)))
+    .limit(2);
+  return rows.length === 1 ? rows[0]!.id : null;
+}
+
 export interface ModelRow {
   item: ArenaModel | { id: string; name: string; lab: string; division: string };
   stats: Stats;
+  consistency: Consistency;
 }
 
 /** Per-model stats for one task. Headline (card + guest) runs only, unless `practice` is asked for. */
@@ -102,7 +154,36 @@ export async function taskBoard(db: Db, task: string, practice = false): Promise
   const runs = await finishedRuns(db, { task, kinds: practice ? ["practice"] : ["card", "guest"] });
   const by = new Map<string, AttemptResult[]>();
   for (const r of runs) by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.result]);
-  return [...by.entries()].map(([id, results]) => ({ item: modelById(id) ?? { id, name: id, lab: "", division: "" }, stats: summarize(results) }));
+  return [...by.entries()].map(([id, results]) => ({ item: modelById(id) ?? { id, name: id, lab: "", division: "" }, stats: summarize(results), consistency: consistency(results) }));
+}
+
+/**
+ * The consistency table for one tier: for each model, passes out of attempts on each job (same version, e.g. "2 of
+ * 3"), the overall pass rate and the Reliable figure. Headline (card + guest) runs only, most reliable first.
+ */
+export async function consistencyBoard(db: Db, tier: Tier = "normal") {
+  const tasks = tierTasks(tier);
+  const runs = (await finishedRuns(db, { kinds: ["card", "guest"], tier })).filter((r) => tasks.some((x) => x.id === r.summary.task));
+  const by = new Map<string, RunSummary[]>();
+  const ranOut = new Map<string, number>();
+  for (const r of runs) {
+    by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.summary]);
+    if (isKnockout(r.result)) ranOut.set(r.summary.model, (ranOut.get(r.summary.model) ?? 0) + 1);
+  }
+  const models = [...by.entries()].map(([model, rs]) => {
+    const all = consistency(rs);
+    return {
+      model,
+      name: modelName(model),
+      passRate: all.attempts ? Math.round((all.passes / all.attempts) * 1000) / 1000 : 0,
+      overall: all,
+      /** Attempts lost to a stamina limit (time, tool calls, tokens or turns), not to a trap or a wrong answer. */
+      ranOut: ranOut.get(model) ?? 0,
+      tasks: Object.fromEntries(tasks.map((x) => [x.id, rs.some((r) => r.task === x.id) ? consistency(rs.filter((r) => r.task === x.id)) : null])) as Record<string, Consistency | null>,
+    };
+  });
+  models.sort((a, b) => b.overall.reliable - a.overall.reliable || b.passRate - a.passRate || a.name.localeCompare(b.name));
+  return { tier, tasks: tasks.map((x) => ({ id: x.id, title: x.title })), models };
 }
 
 /** One event's card: for each task, every model's stats and the head-to-head winner against the runner-up. */
@@ -110,12 +191,12 @@ export async function eventCard(db: Db, slug: string) {
   const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
   if (!event) return null;
   const runs = await finishedRuns(db, { eventId: event.id });
-  const bouts = TASKS.map((task) => {
+  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();
     for (const r of runs.filter((x) => x.summary.task === task.id)) by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.result]);
     const rows = [...by.entries()].map(([model, results]) => ({ model, results, stats: summarize(results) })).sort((a, b) => b.stats.score - a.stats.score);
     const outcome = rows.length >= 2 ? boutOutcome(rows[0]!, rows[1]!) : null;
-    return { task, rows: rows.map(({ model, stats }) => ({ model, name: modelName(model), stats })), outcome };
+    return { task, rows: rows.map(({ model, stats, results }) => ({ model, name: modelName(model), stats, consistency: consistency(results) })), outcome };
   }).filter((b) => b.rows.length);
   return { event, bouts, runs: runs.map((r) => r.summary) };
 }
@@ -125,7 +206,7 @@ export async function playlist(db: Db, limit = 24) {
   const runs = await finishedRuns(db, { limit });
   return runs.map(({ summary: s, result }) => {
     const beats = Math.min(90, Math.max(20, (result.toolCalls + result.turns) * 3));
-    return { id: s.id, model: modelName(s.model), task: TASKS.find((x) => x.id === s.task)?.title ?? s.task, kind: s.kind, recorded: s.finishedAt, seconds: beats, passed: s.passed };
+    return { id: s.id, model: modelName(s.model), task: taskById(s.task)?.title ?? s.task, kind: s.kind, recorded: s.finishedAt, seconds: beats, passed: s.passed };
   });
 }
 
@@ -158,8 +239,8 @@ export function computeRankings(events: { results: { model: string; task: string
   return ratings;
 }
 
-export async function divisionRankings(db: Db, divisionOf: (model: string) => string | null = (m) => modelById(m)?.division ?? null) {
-  const runs = (await finishedRuns(db, { kinds: ["card", "guest"] })).reverse();
+export async function divisionRankings(db: Db, divisionOf: (model: string) => string | null = (m) => modelById(m)?.division ?? null, tier: Tier = "normal") {
+  const runs = (await finishedRuns(db, { kinds: ["card", "guest"], tier })).reverse();
   const order: string[] = [];
   const byEvent = new Map<string, { model: string; task: string; result: AttemptResult }[]>();
   for (const r of runs) {

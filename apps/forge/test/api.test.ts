@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
+import { publicCounts } from "../src/services/forge";
 import { connectAgent, connectApprovedAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
 import "../src/index";
 
@@ -181,14 +182,16 @@ describe("reports", () => {
 });
 
 describe("public stats", () => {
-  it("counts everyone, sandbox included", async () => {
+  it("counts everyone outside the project, sandbox included, from each number's minimum", async () => {
     await connectAgent({ profile: profile({ public_repos: 0, public_gists: 0, followers: 0 }) });
     const res = await fetchWorker("/api/v1/stats");
     expect(res.status).toBe(200);
-    const stats = (await res.json()) as Record<string, number>;
-    expect(stats.humans).toBeGreaterThanOrEqual(1);
-    expect(stats.agents).toBeGreaterThanOrEqual(1);
-    expect(stats.humans).toBeGreaterThan(stats.verified_humans ?? 0);
+    const stats = (await res.json()) as Record<string, number | null> & { below_minimum: string[] };
+    const raw = await publicCounts(env);
+    expect(raw.humans).toBeGreaterThanOrEqual(1);
+    expect(raw.agents).toBeGreaterThanOrEqual(1);
+    expect(raw.humans).toBeGreaterThan(raw.verified_humans);
+    for (const k of ["humans", "agents", "reports"]) expect(stats[k] === null).toBe(stats.below_minimum.includes(k));
   });
 });
 

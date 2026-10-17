@@ -8,7 +8,7 @@ interface ForgeSecrets {
   REPORT_SIGNING_KEY: string;
   /** HMAC key for website session cookies and CSRF tokens. */
   SESSION_SECRET: string;
-  /** The Arena's OpenRouter key (hard-capped at $30/month on OpenRouter's side). Optional until Dinike adds it. */
+  /** The Arena's OpenRouter key (hard-capped on OpenRouter's side: $30/month, $50 for October 2026). Optional until Dinike adds it. */
   OPENROUTER_API_KEY?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;

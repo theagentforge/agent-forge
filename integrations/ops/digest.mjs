@@ -30,7 +30,9 @@ export function growthLine(g) {
   const home = g.home_clickins_7d === undefined ? "" : ` Home page click-ins to the Arena (ADR 0016): **${g.home_clickins_yesterday}** yesterday, **${g.home_clickins_7d}** this week (compare with home views in Cloudflare Web Analytics).`;
   const card = g.trap_card_copies_7d === undefined ? "" : ` Trap card this week: **${g.trap_card_copies_7d}** copies, **${g.trap_card_downloads_7d}** downloads.`;
   const mcp = g.mcp_sessions_7d === undefined ? "" : ` AI connections this week: **${g.mcp_sessions_7d}** (${g.mcp_sessions_signed_in_7d} signed in), **${g.mcp_tool_calls_7d}** tool calls.`;
-  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${home}${card}${mcp}`;
+  const fmt = (xs) => xs.map((x) => `${x.name} ${x.n}`).join(", ");
+  const arrivals = g.arrivals_7d === undefined ? "" : ` Visitors arriving this week: **${g.arrivals_7d}**${g.arrivals_by_source_7d?.length ? ` (${fmt(g.arrivals_by_source_7d)})` : ""}${g.arrivals_by_tag_7d?.length ? `; by link tag: ${fmt(g.arrivals_by_tag_7d)}` : ""}.`;
+  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${home}${card}${mcp}${arrivals}`;
 }
 
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */
@@ -63,9 +65,11 @@ export function render(stats, date, arena = null, growth = null) {
     const v = stats.now?.[k] ?? { external: null, house: null };
     const p = prev.get(k);
     const change = typeof v.external === "number" && typeof p === "number" ? (v.external - p >= 0 ? `+${v.external - p}` : `${v.external - p}`) : "";
-    return `| ${label} | **${n(v.external)}** ${change ? `(${change})` : ""} | ${n(v.house)} |`;
+    // ADR 0023 §3: /stats leaves out numbers below their minimum, so the digest says so instead of guessing.
+    const ext = v.below_minimum ? `under ${v.minimum}` : `**${n(v.external)}**`;
+    return `| ${label} | ${ext} ${change ? `(${change})` : ""} | ${n(v.house)} |`;
   });
-  const downloads = (stats.history ?? []).filter((h) => h.metric === "cli_npm_downloads").at(-1);
+  const downloads = (stats.history ?? []).filter((h) => h.metric === "cli_npm_downloads" && typeof h.externalValue === "number").at(-1);
   return [
     `Numbers for ${date}. **External** is people outside the project, the only numbers that count as proof. **House** is our own test agents.`,
     "",

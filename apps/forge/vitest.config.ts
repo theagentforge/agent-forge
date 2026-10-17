@@ -22,5 +22,6 @@ export default defineConfig({
       },
     })),
   ],
-  test: { setupFiles: ["./test/apply-migrations.ts"] },
+  // CSS is stubbed out in tests unless included; test/clips.test.ts reads clip.css as text.
+  test: { setupFiles: ["./test/apply-migrations.ts"], css: { include: [/clip\.css/] } },
 });

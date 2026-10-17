@@ -212,8 +212,19 @@ describe("arena status", () => {
     const res = await fetchWorker("/api/v1/arena/status");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { spend: { monthCap: number }; queue: Record<string, number> };
-    expect(body.spend.monthCap).toBe(28.4);
+    const { monthlyCap } = await import("../src/arena/runner");
+    expect(body.spend.monthCap).toBe(monthlyCap(Date.now()));
     expect(typeof body.queue).toBe("object");
+  });
+});
+
+describe("the monthly OpenRouter cap (Dinike, 17 Oct 2026)", () => {
+  it("is $47.25 in October 2026 only ($50 less the fee, for Crucible 2: Hard), then $28.40 again by itself", async () => {
+    const { monthlyCap } = await import("../src/arena/runner");
+    expect(monthlyCap(Date.UTC(2026, 8, 30, 23, 59))).toBe(28.4);
+    expect(monthlyCap(Date.UTC(2026, 9, 17))).toBe(47.25);
+    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(47.25);
+    expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(28.4);
   });
 });
 
@@ -301,14 +312,23 @@ describe("the Hard tier (ADR 0021)", () => {
 });
 
 describe("long bouts and the cron limit", () => {
-  it("doesn't start a bout whose stamina can't fit before the run ends", async () => {
+  it("starts a long bout even with one minute left, and suspends it at the deadline instead of refusing it (ADR 0022)", async () => {
     const { HARD_TASKS } = await import("@forge/arena");
     const db = getDb(env);
     const hard = HARD_TASKS.find((x) => (x.caps?.ms ?? 0) > 6 * 60_000)!;
+    let clock = Date.now();
+    const turns = [honest[0]!.tool_calls, honest[0]!.tool_calls, honest[1]!.tool_calls];
+    vi.spyOn(env.AI, "run").mockImplementation((async (_m: string, input: { messages: { role: string }[] }) => {
+      clock += 45_000; // a slow model
+      const n = input.messages.filter((m) => m.role === "assistant").length;
+      return { choices: [{ message: { content: null, tool_calls: turns[Math.min(n, turns.length - 1)] } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } };
+    }) as never);
     const eventId = await planEvent(env, { slug: "q-long", name: "Long", season: "s0", kind: "practice", models: [model.id], tasks: [hard.id], seeds: [303], attempts: 1 });
-    await processQueue(env, Date.now() + 60_000); // one minute left: not enough
+    const out = await processQueue(env, clock + 60_000, () => clock); // one minute left: less than the job's stamina
+    expect(out.suspended).toBe(1);
     const [run] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
     expect(run!.status).toBe("queued");
+    expect(run!.checkpoint).toMatchObject({ v: 1, attempt: { turns: 2 } });
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
   });
 });

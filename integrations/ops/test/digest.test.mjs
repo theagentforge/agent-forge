@@ -19,6 +19,11 @@ describe("ops digest", () => {
     expect(body).toContain("CLI downloads on 2026-10-15: **31**.");
   });
 
+  it("says 'under N' for numbers /stats keeps hidden below their minimum (ADR 0023 §3)", () => {
+    const body = render({ now: { agents: { external: null, below_minimum: true, minimum: 10, house: 2 } }, history: [] }, "2026-10-17");
+    expect(body).toContain("| Agents connected | under 10  | 2 |");
+  });
+
   it("adds the Arena spend line and flags 80%", () => {
     const a = { spend: { month: 23.1, monthCap: 28.4, alert: true, practiceToday: 0.04 }, queue: { queued: 5, done: 90 } };
     expect(arenaLine(a)).toBe("Arena: **$23.10** of $28.40 this month ⚠️ over 80%. Practice today: $0.040. Runs queued 5, done 90, void 0.");
@@ -40,5 +45,8 @@ describe("ops digest", () => {
     expect(render({ now: {}, history: [] }, "2026-10-16", null, g)).toContain("Growth signals");
     expect(growthLine({ ...g, trap_card_copies_7d: 4, trap_card_downloads_7d: 9 })).toContain("Trap card this week: **4** copies, **9** downloads.");
     expect(growthLine({ ...g, mcp_sessions_7d: 12, mcp_sessions_signed_in_7d: 3, mcp_tool_calls_7d: 40 })).toContain("AI connections this week: **12** (3 signed in), **40** tool calls.");
+    expect(growthLine({ ...g, arrivals_7d: 30, arrivals_by_source_7d: [{ name: "x", n: 20 }, { name: "direct", n: 10 }], arrivals_by_tag_7d: [{ name: "x-launch", n: 5 }] })).toContain(
+      "Visitors arriving this week: **30** (x 20, direct 10); by link tag: x-launch 5.",
+    );
   });
 });

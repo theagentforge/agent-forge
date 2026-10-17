@@ -30,10 +30,13 @@ import {
   liftProof,
 } from "./components";
 import { channelDuels } from "../arena/featured";
+import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
-import { usageStats } from "../services/usage";
+import { bump, usageStats, visitCounters } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
-import { proofStrip } from "../services/proof-strip";
+import { gatedProofStrip } from "../services/proof-strip";
+import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
+import { proofStripList } from "./proof-strip";
 import { duelEmpty, duelPlayer } from "./duel";
 import { renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
@@ -95,6 +98,9 @@ site.use("*", async (c, next) => {
   // Trap card downloads are counted before the cache, so cached copies count too.
   if (c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json")
     c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
+  // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
+  if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
+    c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
   if (wantsJson(c)) url.searchParams.set("format", "json");
   const key = new Request(url.toString(), { method: "GET" });
   const hit = await caches.default.match(key);
@@ -110,13 +116,6 @@ site.use("*", async (c, next) => {
     c.executionCtx.waitUntil(caches.default.put(key, c.res.clone()));
   }
 });
-
-function stats(s: Awaited<ReturnType<typeof publicStats>>) {
-  const item = (n: number, label: string) => html`<div class="stat"><b>${n.toLocaleString("en-US")}</b><span>${label}</span></div>`;
-  return html`<div class="stats" aria-label="Live numbers">
-${item(s.reports, "field reports")}${item(s.humans, "people")}${item(s.agents, "agents")}${item(s.tools, "tools tracked")}
-</div>`;
-}
 
 function watchTable(items: Awaited<ReturnType<typeof watchlist>>, now: number) {
   if (!items.length) return html`<p class="empty">Nothing under review right now. When a verified agent reports a security issue, the tool appears here with its full timeline.</p>`;
@@ -164,17 +163,19 @@ export const VALUE_CARDS: { verb: string; line: string; button: string; href: st
 site.get("/", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();
-  const [s, wire, watch, scouts, duels, proof] = await Promise.all([
+  const [s, wire, watch, scouts, duels, proof, hard] = await Promise.all([
     publicStats(c.env, now),
     liveWire(db, 6),
     watchlist(db, 5),
     topScouts(db, 5),
     channelDuels(c.env, db, now).catch(() => []),
-    proofStrip(c.env).catch(() => null),
+    gatedProofStrip(c.env).catch(() => null),
+    // ADR 0021: the Hard tier is announced only once a ranked (card) event has a finished Hard bout.
+    finishedRuns(db, { tier: "hard", kinds: ["card"], limit: 1 }).catch(() => []),
   ]);
   const lift = await cardLift(db).catch(() => []);
   const duel = duels[0] ?? null;
-  if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
+  if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
   const origin = c.env.PUBLIC_ORIGIN;
   return send(c, {
     title: HOME_H1,
@@ -216,13 +217,9 @@ ${duel ? duelPlayer(duel, { mode: "cycle", channel: duels }) : duelEmpty}
 ${duel ? html`<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p>` : ""}
 </div>
 </section>
+${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
 
-${proof ? html`<ul class="proof-strip" aria-label="Live numbers">
-<li><a href="/arena"><b>${proof.bouts.toLocaleString("en-US")}</b> ${proof.bouts === 1 ? "bout" : "bouts"} refereed</a></li>
-<li><a href="/arena"><b>${proof.models.toLocaleString("en-US")}</b> AI ${proof.models === 1 ? "model" : "models"} tested</a></li>
-<li><a href="/best"><b>${proof.traps_sprung.toLocaleString("en-US")}</b> ${proof.traps_sprung === 1 ? "trap" : "traps"} sprung</a></li>
-<li><a href="/stats"><b>${proof.tools_checked.toLocaleString("en-US")}</b> ${proof.tools_checked === 1 ? "tool" : "tools"} checked</a></li>
-</ul>` : ""}
+${proofStripList(proof, { links: true }) ?? ""}
 
 ${liftProof(lift)}
 
@@ -339,61 +336,133 @@ ${scoutsTable(rows)}`,
   });
 });
 
-const PROOF_LABELS: [string, string][] = [
-  ["weekly_reporting_agents", "Agents that reported this week (the north star)"],
-  ["verified_humans", "Verified people"],
-  ["humans", "People signed in"],
-  ["agents", "Agents connected"],
-  ["reports", "Field reports"],
-  ["reports_with_plugin_strain", "Reports with plugin-counted strain"],
-  ["check_sources", "Distinct sources that checked a tool today"],
-  ["plugin_check_sources", "…of them through the Claude Code plugin"],
-  ["cli_check_sources", "…of them through the CLI"],
-  ["ci_check_sources", "…of them through the forge-check GitHub Action"],
-  ["tools_with_score", "Tools with a public Forge Score"],
+/** /stats rows: the counter, its label, and the shorter label for the House activity line. */
+const PROOF_LABELS: [CounterKey, string, string][] = [
+  ["weekly_reporting_agents", "Agents that reported this week (the north star)", "agents reported this week"],
+  ["verified_humans", "Verified people", "verified people"],
+  ["humans", "People signed in", "people"],
+  ["agents", "Agents connected", "agents"],
+  ["reports", "Field reports", "field reports"],
+  ["reports_with_plugin_strain", "Reports with plugin-counted strain", "reports with plugin strain"],
+  ["check_sources", "Distinct sources that checked a tool today", "check sources today"],
+  ["plugin_check_sources", "…of them through the Claude Code plugin", "through the plugin"],
+  ["cli_check_sources", "…of them through the CLI", "through the CLI"],
+  ["ci_check_sources", "…of them through the forge-check GitHub Action", "through the GitHub Action"],
+  ["tools_with_score", "Tools with a public Forge Score", ""],
 ];
+const HISTORY_COLUMNS: [CounterKey, string][] = [
+  ["weekly_reporting_agents", "Weekly reporting agents"],
+  ["verified_humans", "Verified people"],
+  ["reports", "Reports"],
+  ["check_sources", "Check sources"],
+  ["cli_npm_downloads", "CLI downloads"],
+];
+const isCounter = (k: string): k is CounterKey => k in COUNTER_MINIMUMS;
 
-/** The proof scoreboard (MASTER_PLAN §7.5): external and House numbers side by side, plus the daily history. */
+/**
+ * The proof scoreboard (MASTER_PLAN §7.5). ADR 0023 §3: only numbers from people outside the project, each shown only
+ * once it reaches its minimum; our own House activity is on its own clearly labelled line, never counted as usage.
+ */
 site.get("/stats", async (c) => {
-  const now = await proofNow(c.env);
+  const now = (await proofNow(c.env)) as Record<string, { external: number; house: number }>;
   const history = await snapshotHistory(c.env, 30);
   const usage = await usageStats(c.env).catch(() => null);
-  if (wantsJson(c)) return sendJson(c, { now, history, usage, generated_at: new Date().toISOString() });
+  const external = (k: CounterKey) => atMinimum(k, now[k]?.external);
+  const house = (k: CounterKey) => now[k]?.house ?? 0;
+  const connections = usage
+    ? gate({ mcp_sessions: usage.mcp_sessions, mcp_sessions_signed_in: usage.mcp_sessions_signed_in, mcp_tool_calls: usage.mcp_tool_calls })
+    : null;
+  if (wantsJson(c))
+    return sendJson(c, {
+      now: Object.fromEntries(
+        PROOF_LABELS.map(([k]) => [k, { external: external(k), below_minimum: external(k) === null, minimum: COUNTER_MINIMUMS[k], house: house(k) }]),
+      ),
+      history: history.map((h) =>
+        isCounter(h.metric) && !reached(h.metric, h.externalValue) ? { ...h, externalValue: null, below_minimum: true } : h,
+      ),
+      usage:
+        usage && connections
+          ? {
+              days: usage.days,
+              ...connections,
+              mcp_sessions_public: atMinimum("mcp_sessions", usage.mcp_sessions_public),
+              top_clients: connections.mcp_sessions === null ? [] : usage.top_clients.map((x) => x.name),
+              top_tools: connections.mcp_tool_calls === null ? [] : usage.top_tools.map((x) => x.name),
+              house_mcp_sessions: usage.house_mcp_sessions,
+              house_mcp_tool_calls: usage.house_mcp_tool_calls,
+            }
+          : null,
+      house_excluded: true,
+      generated_at: new Date().toISOString(),
+    });
   const n = (v: number) => v.toLocaleString("en-US");
-  const days = [...new Set(history.map((h) => h.date))].slice(-14).reverse();
-  const at = (d: string, m: string) => history.find((h) => h.date === d && h.metric === m);
+  const rows = PROOF_LABELS.flatMap(([k, label]) => {
+    const v = external(k);
+    return v === null ? [] : [html`<tr><td>${label}</td><td class="num">${n(v)}</td></tr>`];
+  });
+  const houseItems = [
+    ...PROOF_LABELS.filter(([k, , short]) => short && house(k) > 0).map(([k, , short]) => `${n(house(k))} ${short}`),
+    ...(usage?.house_mcp_sessions ? [`${n(usage.house_mcp_sessions)} AI connections this week`] : []),
+  ];
+  const shownAt = (d: string, m: CounterKey) => {
+    const v = history.find((h) => h.date === d && h.metric === m)?.externalValue;
+    return reached(m, v) ? v : null;
+  };
+  const cols = HISTORY_COLUMNS.filter(([m]) => history.some((h) => h.metric === m && reached(m, h.externalValue)));
+  const days = [...new Set(history.map((h) => h.date))]
+    .filter((d) => cols.some(([m]) => shownAt(d, m) !== null))
+    .slice(-14)
+    .reverse();
+  const conn: [number, string][] = connections
+    ? (
+        [
+          [connections.mcp_sessions, "connections from AI apps"],
+          [connections.mcp_tool_calls, "tool calls"],
+          [connections.mcp_sessions_signed_in, "of the connections signed in"],
+        ] as [number | null, string][]
+      ).filter((x): x is [number, string] => x[0] !== null)
+    : [];
   return send(c, {
     title: "Stats",
-    description: "Live numbers for The Agent Forge, with our own House agents counted separately from everyone else.",
+    description: "Live numbers for The Agent Forge from people outside the project, with our own House activity kept apart.",
     path: "/stats",
     nav: "stats",
     jsonAlternate: "/stats?format=json",
     body: html`<h1 class="page-title">Stats</h1>
-<p class="lead spaced">Everything is counted twice: <strong>external</strong> (people outside the project) and <strong>House</strong> (our own test agents, labelled "house" everywhere). Only external numbers count as proof. Sources of checks are counted with a daily-salted hash; we never store IP addresses.</p>
-<div class="scroll-x spaced"><table class="table">
-<thead><tr><th scope="col">Right now</th><th scope="col" class="num">External</th><th scope="col" class="num">House</th></tr></thead>
-<tbody>${PROOF_LABELS.map(([k, label]) => {
-      const v = (now as Record<string, { external: number; house: number }>)[k]!;
-      return html`<tr><td>${label}</td><td class="num">${n(v.external)}</td><td class="num">${n(v.house)}</td></tr>`;
-    })}</tbody></table></div>
-${usage ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
-<div class="stats spaced">
-<div class="stat"><b>${n(usage.mcp_sessions)}</b><span>connections from AI apps</span></div>
-<div class="stat"><b>${n(usage.mcp_tool_calls)}</b><span>tool calls</span></div>
-<div class="stat"><b>${n(usage.mcp_sessions_signed_in)}</b><span>of the connections signed in</span></div>
-</div>
-${usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x, i) => html`${i ? ", " : ""}${x.name} (${n(x.n)})`)}.</p>` : ""}
-<p class="small muted">A connection is an AI app starting a session with the Forge's MCP server; a tool call is the AI actually using it. Daily totals only, including our own testing; nothing about who connected is kept.</p>` : ""}
-<h2 class="page-title">Daily history</h2>
+<p class="lead spaced">These numbers count only people outside the project. Each one appears once it reaches a minimum (for example, 10 agents connected), so you won't see a zero or a padded number here. Our own House agents and tests are never counted as use; they're on their own line below. Sources of checks are counted with a daily-salted hash; we never store IP addresses.</p>
+<h2 class="page-title">Right now</h2>
+${rows.length
+      ? html`<div class="scroll-x spaced"><table class="table">
+<thead><tr><th scope="col">People outside the project</th><th scope="col" class="num">Number</th></tr></thead>
+<tbody>${rows}</tbody></table></div>`
+      : html`<p class="empty">Nothing has reached its minimum yet. Numbers appear here as people outside the project use the Forge.</p>`}
+${conn.length && usage
+      ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
+<div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
+${connections?.mcp_sessions !== null && usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x) => x.name).join(", ")}.</p>` : ""}
+<p class="small muted">A connection is an AI app starting a session with the Forge's MCP server; a tool call is the AI actually using it. Daily totals only; nothing about who connected is kept. Signed-in sessions from our own accounts are counted apart, below. Connections without sign-in can't be told apart, so a few of ours may be among them.</p>`
+      : ""}
 ${days.length
-      ? html`<div class="scroll-x"><table class="table">
-<thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Weekly reporting agents</th><th scope="col" class="num">Verified people</th><th scope="col" class="num">Reports</th><th scope="col" class="num">Check sources</th><th scope="col" class="num">CLI downloads</th></tr></thead>
+      ? html`<h2 class="page-title">Daily history</h2>
+<div class="scroll-x"><table class="table">
+<thead><tr><th scope="col">Day (UTC)</th>${cols.map(([, label]) => html`<th scope="col" class="num">${label}</th>`)}</tr></thead>
 <tbody>${days.map(
-          (d) => html`<tr><td class="mono">${d}</td>${["weekly_reporting_agents", "verified_humans", "reports", "check_sources", "cli_npm_downloads"].map(
-            (m) => html`<td class="num">${at(d, m) ? n(at(d, m)!.externalValue) : "—"}</td>`,
-          )}</tr>`,
-        )}</tbody></table></div><p class="small muted">External numbers. A snapshot is saved every day just after midnight UTC.</p>`
-      : html`<p class="empty">The first daily snapshot is saved just after midnight UTC.</p>`}`,
+          (d) => html`<tr><td class="mono">${d}</td>${cols.map(([m]) => {
+            const v = shownAt(d, m);
+            return html`<td class="num">${v === null ? "" : n(v)}</td>`;
+          })}</tr>`,
+        )}</tbody></table></div><p class="small muted">People outside the project. A snapshot is saved every day just after midnight UTC; a blank cell was below the minimum that day.</p>`
+      : ""}
+<h2 class="page-title" id="house">House activity</h2>
+${houseItems.length
+      ? html`<p class="house-activity"><span class="label">house</span> ${houseItems.join(" · ")}.</p>`
+      : html`<p class="muted">No House activity recorded yet.</p>`}
+<p class="small muted">Our own test agents (labelled "house" everywhere) and the founder's own testing. Never counted in the numbers above.</p>
+<details class="spaced"><summary>The minimums</summary>
+<ul class="small">${PROOF_LABELS.map(([k, label]) => html`<li>${label}: from ${COUNTER_MINIMUMS[k]}</li>`)}
+<li>AI connections in 7 days: from ${COUNTER_MINIMUMS.mcp_sessions} (tool calls from ${COUNTER_MINIMUMS.mcp_tool_calls}, signed in from ${COUNTER_MINIMUMS.mcp_sessions_signed_in})</li>
+<li>CLI downloads in a day: from ${COUNTER_MINIMUMS.cli_npm_downloads}</li></ul>
+</details>`,
   });
 });
 

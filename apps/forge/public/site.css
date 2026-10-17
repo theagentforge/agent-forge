@@ -474,3 +474,19 @@ main>section>.feed,main>.panel .feed{max-width:880px}
 /* /about: investor, partner and press routes */
 .contact-routes li{margin-bottom:var(--s2)}
 .contact-routes a{overflow-wrap:anywhere}
+
+/* /teams (ADR 0023 §7): the design-partner page. Its form only opens the email app; the print rules give a one-pager. */
+.teams-choice{border:1px solid var(--seam);padding:var(--s3) var(--s4);margin:0;display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5)}
+.teams-choice legend{font-weight:600;font-size:var(--fs-sm);padding:0 var(--s1)}
+.teams-choice label{font-weight:400;display:inline-flex;align-items:center;gap:var(--s2);min-height:44px}
+.teams button.text-link{background:none;border:0;padding:0;color:var(--brand);font:inherit;cursor:pointer}
+.print-only{display:none}
+body:has(.teams.print-view) .site-head,body:has(.teams.print-view) .site-foot{display:none}
+@media print{
+  :root:has(.teams){--bg:#FFFFFF;--surface:#FFFFFF;--surface-2:#FFFFFF;--seam:#BBBBBB;--text:#000000;--text-muted:#333333;--brand:#000000;color-scheme:light}
+  body:has(.teams) .site-head,body:has(.teams) .site-foot,body:has(.teams) .skip,.teams .no-print,.teams-form{display:none!important}
+  .teams .print-only{display:block}
+  .teams{max-width:none}
+  .teams h2{margin-top:var(--s4);break-after:avoid}
+  .teams a{text-decoration:none}
+}
