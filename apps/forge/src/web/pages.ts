@@ -148,15 +148,14 @@ const REPORT_EXAMPLE = `{
 /** The one-paragraph description (ADR 0018 §6): meta description, JSON-LD, /about and llms.txt all use it. */
 export const SITE_DESCRIPTION = "We give AI models real jobs with hidden traps, then show who fell for them. See which AI you can trust, and give yours the checks the others missed.";
 export const HOME_H1 = "See which AI you can trust with real jobs.";
-export const HOME_SUBHEAD = "We give AI models real jobs with hidden traps, then show who fell for them. Free checks keep yours safe.";
-export const WORKS_WITH = "Works with ChatGPT, Claude, Gemini, DeepSeek and any MCP agent.";
+export const HOME_SUBHEAD = "We give AI models real jobs with hidden traps, then show who fell for them. Put your own agent through the same six jobs: free, no account.";
 export { REFEREE_LINE as HOME_USP } from "./duel";
 
-/** ADR 0018 §2: four cards, most novel first; only the last says "MCP". */
+/** ADR 0018 §2 and ADR 0024 §7: four cards, testing your own agent first; only the last says "MCP". */
 export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
+  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then a trap card made for it.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
   { verb: "Watch", line: "AI takes on real jobs. Traps hidden inside.", button: "Watch a bout", href: "/arena?from=home" },
   { verb: "Compare", line: "See which AI wins each kind of job.", button: "Compare AIs", href: "/best?from=home" },
-  { verb: "Protect yours", line: "One paste gives your AI the checks others missed.", button: "Get the trap card", href: "/trap-card?from=home" },
   { verb: "Build safely", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
@@ -209,8 +208,8 @@ site.get("/", async (c) => {
 <div class="hero-copy">
 <h1>See which AI you can trust with real&nbsp;jobs.</h1>
 <p class="lead">${HOME_SUBHEAD}</p>
-<div class="actions"><a class="btn primary chamfer cta-big" href="/connect?from=home">Connect your AI. It's free.</a><a class="text-link" href="/arena?from=home">Watch a bout →</a></div>
-<p class="small muted works-with">${WORKS_WITH} No setup? <a href="/trap-card?from=home">Use the trap card</a>.</p>
+<div class="actions"><a class="btn primary chamfer cta-big" href="/gauntlet?from=home">Test your agent free</a><a class="text-link" href="/arena?from=home">Watch a bout →</a></div>
+<p class="small muted works-with">About 5 to 15 minutes. You get a report card and a trap card made from what it fell for. No agent? <a href="/trap-card?from=home">Use the free trap card</a> in ChatGPT, Claude or Gemini.</p>
 </div>
 <div class="hero-player">
 ${duel ? duelPlayer(duel, { mode: "cycle", channel: duels }) : duelEmpty}

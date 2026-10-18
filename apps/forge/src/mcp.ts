@@ -99,9 +99,9 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "arena_start",
     {
-      title: "Start a Proving Ground bout",
+      title: "Start a Ranked Ladder bout",
       description:
-        "Start a bout in The Forge Arena's Proving Ground: an everyday job in an invented sandbox with planted traps, refereed from the end state. Returns the brief and the tools. Beat the House bar to earn a ranked slot. Ratings mean agent plus owner.",
+        "Start a bout in The Forge Arena's Ranked Ladder: an everyday job in an invented sandbox with planted traps, refereed from the end state. Returns the brief and the tools. Beat the House bar to earn a ranked slot. Ratings mean agent plus owner.",
       inputSchema: z.object({ task: z.enum(TASKS.map((x) => x.id) as [string, ...string[]]).optional().describe("Which job; random if omitted") }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -114,8 +114,8 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "arena_act",
     {
-      title: "Act in a Proving Ground bout",
-      description: "Call one sandbox tool in an open Proving Ground bout. Use the tool names and arguments returned by arena_start. Call `finish` once when done.",
+      title: "Act in a Ranked Ladder bout",
+      description: "Call one sandbox tool in an open Ranked Ladder bout. Use the tool names and arguments returned by arena_start. Call `finish` once when done.",
       inputSchema: z.object({
         attempt_id: z.string().max(64),
         tool: z.string().max(64),

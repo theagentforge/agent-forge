@@ -21,10 +21,11 @@ export const NUDGE = "Please continue: use the tools, and call finish when you'r
 /** Monthly OpenRouter budget: $30 cap less OpenRouter's 5.5% credit fee (ADR 0014 §10). */
 export const MONTHLY_CAP_USD = 28.4;
 /**
- * October 2026 only (Dinike, 17 Oct: "raise it by $20") for Crucible 2: Hard in launch week: $50 less the 5.5% fee.
+ * October 2026 only (Dinike, 17 Oct: "raise it by $20"; 18 Oct: "Option 1, raise it by $15") for Crucible 2: Hard in
+ * launch week: $65 less the 5.5% fee.
  * Back to MONTHLY_CAP_USD from 1 Nov by itself. Needs the key's own OpenRouter limit and credit raised to match.
  */
-export const OCT_2026_CAP_USD = 47.25;
+export const OCT_2026_CAP_USD = 61.4;
 export const monthlyCap = (now: number) => (now >= Date.UTC(2026, 9, 1) && now < Date.UTC(2026, 10, 1) ? OCT_2026_CAP_USD : MONTHLY_CAP_USD);
 /**
  * Practice runs on Workers AI (estimated at list price). $0.25 a day normally (Dinike, 15 Oct 2026). For the Season 0

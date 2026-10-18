@@ -198,7 +198,7 @@ ${(() => {
   const main = ms.filter((m) => m.division !== "practice");
   const practice = ms.filter((m) => m.division === "practice");
   return html`${main.length ? html`<h3>Main lineup</h3><p class="muted">Each lab's everyday model, ranked in ${SEASON.event} and every event after.</p><ul class="model-list">${main.map(item)}</ul>` : ""}
-<h3>Practice</h3><p class="muted">Open models from the US, China and Europe on the same jobs and traps. Labelled practice and never ranked. Want one added? <a href="/arena/vote">Vote</a>, or enter it in the <a href="/arena/proving-ground">Proving Ground</a>.</p>
+<h3>Practice</h3><p class="muted">Open models from the US, China and Europe on the same jobs and traps. Labelled practice and never ranked. Want one added? <a href="/arena/vote">Vote</a>, or enter it in the <a href="/arena/proving-ground">Ranked Ladder</a>.</p>
 <ul class="model-list">${practice.map(item)}</ul>`;
 })()}
 </section>

@@ -51,8 +51,9 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toContain("The Impossible Ask");
     expect(body).toContain("Practice replay · ");
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
-    expect(body).toContain(`href="/connect?from=home">Connect your AI. It's free.</a>`);
-    expect(body).toContain('Works with ChatGPT, Claude, Gemini, DeepSeek and any MCP agent. No setup? <a href="/trap-card?from=home">Use the trap card</a>.');
+    // ADR 0024 §7: one main action, testing your own agent; the trap card stays for people without one.
+    expect(body).toContain(`href="/gauntlet?from=home">Test your agent free</a>`);
+    expect(body).toContain('No agent? <a href="/trap-card?from=home">Use the free trap card</a> in ChatGPT, Claude or Gemini.');
     expect(body).toContain('href="/best?from=home"');
     expect(body).toContain('href="/arena/rules#featured"');
     // The tool check moved to the band below, and still works.

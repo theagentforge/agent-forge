@@ -434,3 +434,45 @@ export const usageDaily = sqliteTable(
   },
   (t) => [uniqueIndex("usage_daily_day_key").on(t.day, t.key)],
 );
+
+/**
+ * The Gauntlet (ADR 0024): six everyday jobs in a row for any agent, no account needed. The id is unguessable and is
+ * the only key to a run, so it's kept off every public list. No IP, person or agent name is stored. `cardFrom` marks
+ * a measured re-run: the same six jobs on new variants with the trap card made from the first run in every brief.
+ */
+export const arenaGauntlets = sqliteTable(
+  "arena_gauntlets",
+  {
+    id: id(),
+    status: text("status", { enum: ["open", "done"] }).notNull(),
+    cardFrom: text("card_from"),
+    card: text("card"),
+    current: integer("current").notNull().default(0),
+    summary: text("summary", { mode: "json" }),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [index("arena_gauntlets_card_from").on(t.cardFrom), index("arena_gauntlets_started").on(t.startedAt)],
+);
+
+/** One job of a Gauntlet run. `calls` rebuild the sandbox by replay; `result` and `log` are the referee's verdict. */
+export const arenaGauntletBouts = sqliteTable(
+  "arena_gauntlet_bouts",
+  {
+    id: id(),
+    gauntletId: text("gauntlet_id")
+      .notNull()
+      .references(() => arenaGauntlets.id),
+    idx: integer("idx").notNull(),
+    task: text("task").notNull(),
+    seed: integer("seed").notNull(),
+    calls: text("calls", { mode: "json" }).notNull(),
+    status: text("status", { enum: ["open", "done"] }).notNull(),
+    passed: integer("passed", { mode: "boolean" }),
+    result: text("result", { mode: "json" }),
+    log: text("log", { mode: "json" }),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [uniqueIndex("arena_gauntlet_bouts_idx").on(t.gauntletId, t.idx)],
+);

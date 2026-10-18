@@ -75,7 +75,7 @@ describe("home page message (ADR 0018 §1–3)", () => {
     if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
     const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
     if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);
-    const order = ["Watch", "Compare", "Protect yours", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
+    const order = ["Test yours", "Watch", "Compare", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -83,6 +83,6 @@ describe("home page message (ADR 0018 §1–3)", () => {
   it("only the developer card says MCP, and every card has one button", () => {
     for (const card of VALUE_CARDS.slice(0, 3)) expect(card.line + card.button).not.toMatch(/MCP|LLM/);
     expect(VALUE_CARDS[3]!.line).toContain("MCP");
-    expect(VALUE_CARDS.map((v) => v.href)).toEqual(["/arena?from=home", "/best?from=home", "/trap-card?from=home", "/check?from=home"]);
+    expect(VALUE_CARDS.map((v) => v.href)).toEqual(["/gauntlet?from=home", "/arena?from=home", "/best?from=home", "/check?from=home"]);
   });
 });

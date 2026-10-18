@@ -3,12 +3,13 @@ import { API_VERSION } from "@forge/shared";
 import { Hono } from "hono";
 import { protectedApi, publicApi } from "./api";
 import { auth } from "./auth";
-import { PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
+import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { seedRun } from "./seed/mcp-registry";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
 import { refreshClipIndex } from "./arena/clips";
+import { sweepGauntletLogs } from "./arena/gauntlet";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
 import { notFound, site } from "./web/pages";
@@ -20,6 +21,7 @@ import "./web/publications";
 import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
+import "./web/gauntlet";
 import "./web/arena-agent";
 import "./web/arena-methodology";
 import "./web/arena-clip";
@@ -125,6 +127,12 @@ export default {
       ),
     );
     ctx.waitUntil(
+      sweepGauntletLogs(env, controller.scheduledTime).then(
+        (r) => console.log("gauntlet_sweep", JSON.stringify(r)),
+        (e) => console.error("gauntlet_sweep_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
       sweepPendingNotes(env).then(
         (r) => console.log("note_sweep", JSON.stringify(r)),
         (e) => console.error("note_sweep_failed", String(e)),
@@ -145,6 +153,10 @@ export default {
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       return counted("public", publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
+    }
+    if (path === GAUNTLET_MCP_ROUTE || path.startsWith(`${GAUNTLET_MCP_ROUTE}/`)) {
+      const copy = copyIfPost();
+      return counted("gauntlet", gauntletMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
     }
     let provider = providers.get(env.PUBLIC_ORIGIN);
     if (!provider) {

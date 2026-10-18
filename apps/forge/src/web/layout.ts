@@ -19,7 +19,7 @@ export interface PageOptions {
   /** JSON-LD object for search engines. */
   jsonLd?: Record<string, unknown>;
   noindex?: boolean;
-  nav?: "home" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
+  nav?: "home" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
   /** Extra origins for script-src (e.g. Cloudflare Turnstile on forms). */
   scriptSrc?: string[];
   frameSrc?: string[];
@@ -112,7 +112,7 @@ ${o.jsonLd ? html`<script type="application/ld+json">${raw(JSON.stringify(o.json
 <nav class="nav" aria-label="Main">
 ${NAV.map(([key, href, label]) => html`<a href="${href}"${o.nav === key ? raw(' aria-current="page"') : ""}>${label}</a>`)}
 </nav>
-<a class="btn primary chamfer head-cta" href="/connect"${o.nav === "connect" ? raw(' aria-current="page"') : ""}><span class="long">Connect your AI</span><span class="short">Connect</span></a>
+<a class="btn primary chamfer head-cta" href="/gauntlet"${o.nav === "gauntlet" ? raw(' aria-current="page"') : ""}><span class="long">Test your agent</span><span class="short">Test</span></a>
 </div>
 </header>
 <main id="main" class="wrap">

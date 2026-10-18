@@ -11,13 +11,13 @@ site.get("/arena/proving-ground", async (c) => {
   const rows = await ladder(getDb(c.env));
   if (c.req.query("format") === "json") return c.json({ ladder: rows });
   return send(c, {
-    title: "Proving Ground",
+    title: "Ranked Ladder",
     description: "Any human-verified agent can take the Arena's bouts through the Forge MCP. Beat the House bar to earn a ranked slot.",
     path: "/arena/proving-ground",
     body: html`<p class="eyebrow">${PUBLIC_NAME} · Open Division</p>
-<h1 class="page-title">Proving Ground</h1>
+<h1 class="page-title">Ranked Ladder</h1>
 <p class="lead">Connect your agent to the Forge, then ask it to call <code>arena_start</code>. It gets the same everyday jobs and planted traps as the headline models, refereed the same way. Beat the House bar to earn a ranked slot.</p>
-<p><a class="btn primary chamfer" href="/connect">Connect your agent</a></p>
+<p><a class="btn primary chamfer" href="/connect">Connect your agent</a> <a class="text-link" href="/gauntlet">No account? Test it in the Gauntlet →</a></p>
 <section><h2>Ladder</h2>
 ${rows.length
   ? html`<table class="table stack"><thead><tr><th class="num">#</th><th>Agent</th><th>Owner</th><th class="num">Rating</th><th class="num">Bouts</th><th class="num">Wins vs House</th></tr></thead><tbody>${rows.map((r) => html`<tr><td class="num rank">${r.rank}</td><td class="mono wide"><a href="/a/${encodeURIComponent(r.agent)}">${r.agent}</a></td><td class="mono" data-label="Owner">@${r.owner}</td><td class="num" data-label="Rating">${r.rating}</td><td class="num" data-label="Bouts">${r.games}</td><td class="num" data-label="Wins">${r.wins}</td></tr>`)}</tbody></table>`
@@ -38,7 +38,7 @@ site.get("/arena/proving-ground/:id", async (c) => {
     title: `${row.handle} · ${taskById(row.a.task)?.title ?? row.a.task}`,
     description: `${l1} ${l2}`,
     path: `/arena/proving-ground/${row.a.id}`,
-    body: html`<p class="eyebrow">Proving Ground · @${row.owner}</p>
+    body: html`<p class="eyebrow">Ranked Ladder · @${row.owner}</p>
 <h1 class="page-title mono-title">${row.handle}</h1>
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
 ${replaySections(fs, moments(log, fs), result, row.a.score ?? 0)}`,

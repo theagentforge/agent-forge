@@ -7,7 +7,7 @@ import { getDb } from "./db";
 // method, tool name and client app name, and nothing about the person, IP or session is kept.
 
 /** "house" is a signed-in session by one of our own accounts (ADR 0023 §3): counted apart, never as usage. */
-export type McpEndpoint = "public" | "signed_in" | "house";
+export type McpEndpoint = "public" | "gauntlet" | "signed_in" | "house";
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 /** Client app names as the MCP client reports them ("claude-ai", "cursor"…), squeezed to a safe, short label. */
 export const clientLabel = (name: unknown) => {
@@ -71,10 +71,11 @@ export async function usageStats(env: Env, now = Date.now(), days = 7) {
       .slice(0, 5);
   return {
     days,
-    mcp_sessions: get("mcp:public:sessions") + get("mcp:signed_in:sessions"),
+    mcp_sessions: get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions"),
     mcp_sessions_public: get("mcp:public:sessions"),
+    mcp_sessions_gauntlet: get("mcp:gauntlet:sessions"),
     mcp_sessions_signed_in: get("mcp:signed_in:sessions"),
-    mcp_tool_calls: get("mcp:public:calls") + get("mcp:signed_in:calls"),
+    mcp_tool_calls: get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls"),
     /** Our own signed-in sessions (House and founder accounts), never part of the totals above. */
     house_mcp_sessions: get("mcp:house:sessions"),
     house_mcp_tool_calls: get("mcp:house:calls"),

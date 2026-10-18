@@ -99,6 +99,13 @@
       "when": 1792219970480,
       "tag": "0013_agent_scorecards",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792303586758,
+      "tag": "0014_gauntlet",
+      "breakpoints": true
     }
   ]
 }

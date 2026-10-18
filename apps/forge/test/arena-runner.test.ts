@@ -218,12 +218,12 @@ describe("arena status", () => {
   });
 });
 
-describe("the monthly OpenRouter cap (Dinike, 17 Oct 2026)", () => {
-  it("is $47.25 in October 2026 only ($50 less the fee, for Crucible 2: Hard), then $28.40 again by itself", async () => {
+describe("the monthly OpenRouter cap (Dinike, 17 and 18 Oct 2026)", () => {
+  it("is $61.40 in October 2026 only ($65 less the fee, for Crucible 2: Hard), then $28.40 again by itself", async () => {
     const { monthlyCap } = await import("../src/arena/runner");
     expect(monthlyCap(Date.UTC(2026, 8, 30, 23, 59))).toBe(28.4);
-    expect(monthlyCap(Date.UTC(2026, 9, 17))).toBe(47.25);
-    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(47.25);
+    expect(monthlyCap(Date.UTC(2026, 9, 17))).toBe(61.4);
+    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(61.4);
     expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(28.4);
   });
 });

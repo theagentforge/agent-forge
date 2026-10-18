@@ -388,9 +388,9 @@ main>section>.feed,main>.panel .feed{max-width:880px}
 @media (prefers-reduced-motion:reduce){.duel *{transition:none!important;animation:none!important}}
 
 /* ADR 0017: the trap card is several lines; show it as written. */
-.trap-card .copy-row{flex-direction:column}
-.trap-card .copy-row code{display:block;white-space:pre-wrap;overflow-wrap:break-word;padding:var(--s4);line-height:1.55}
-.trap-card .copy-row .btn{align-self:flex-start}
+.trap-card .copy-row,.copy-wrap .copy-row{flex-direction:column}
+.trap-card .copy-row code,.copy-wrap .copy-row code{display:block;white-space:pre-wrap;overflow-wrap:break-word;padding:var(--s4);line-height:1.55}
+.trap-card .copy-row .btn,.copy-wrap .copy-row .btn{align-self:flex-start}
 
 /* ADR 0018: proof strip and the 4-card value band under the hero. */
 .proof-strip{list-style:none;max-width:none;justify-content:space-between;margin:var(--s6) 0 0;padding:var(--s4) 0;display:flex;flex-wrap:wrap;gap:var(--s3) var(--s6);border-top:1px solid var(--seam);border-bottom:1px solid var(--seam)}

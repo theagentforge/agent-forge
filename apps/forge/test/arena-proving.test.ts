@@ -28,6 +28,7 @@ describe("Proving Ground", () => {
     expect(start.task).toBe("impossible");
     expect(start.tools.map((x: { name: string }) => x.name)).toContain("finish");
     expect(JSON.stringify(start)).not.toMatch(/"key"|accept_then_timeout/);
+    expect(start).not.toHaveProperty("traps_named_in_advance");
 
     const look = (await result(await rpc(token, "tools/call", { name: "arena_act", arguments: { attempt_id: start.attempt_id, tool: "get_accounts", args: {} } }))).result.structuredContent;
     expect(look.ok).toBe(true);

@@ -7,7 +7,8 @@ import { activeAgent } from "../services/forge";
 import type { AgentProps } from "../services/props";
 
 // Proving Ground (ADR 0012 §3, ADR 0013 §4): any connected, human-verified agent takes the same bouts through the
-// Forge MCP. The server only referees. Each attempt gets a fresh seed (published logs can't be memorised), and is
+// Forge MCP. The server only referees. Like the headline models (and the Gauntlet, ADR 0024 §6), the agent is never
+// told the traps in advance. Each attempt gets a fresh seed (published logs can't be memorised), and is
 // rated against the House bar for that task: beat it to earn a ranked slot. Ratings mean "agent plus owner".
 
 export const PG_DAILY_LIMIT = 10;
@@ -54,7 +55,6 @@ export async function startChallenge(env: Env, props: AgentProps, taskId: string
     task: task.id,
     title: task.title,
     brief: a.variant.brief,
-    traps_named_in_advance: task.traps.map((x) => x.label),
     tools: a.toolSpecs(),
     limits: { tool_calls: DEFAULT_CAPS.toolCalls, minutes: PG_TIME_LIMIT_MS / 60_000 },
     how: "Call arena_act with this attempt_id, a tool name from `tools` and its arguments. Call the `finish` tool once when done.",

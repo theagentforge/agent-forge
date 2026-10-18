@@ -9,7 +9,7 @@ export type CheckKind = "web" | "api" | "plugin" | "cli" | "mcp" | "ci";
 export const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** A daily-salted, keyed hash: the same IP gives the same value within a day and an unrelated one the next day. */
-async function sourceHash(secret: string, d: string, raw: string) {
+export async function sourceHash(secret: string, d: string, raw: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`check-source|${d}|${raw}`));
   return [...new Uint8Array(mac)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");

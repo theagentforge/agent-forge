@@ -1,4 +1,4 @@
-import { isNotNull, sql } from "drizzle-orm";
+import { gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { usageStats, visitStats } from "./usage";
@@ -56,6 +56,20 @@ export async function trapCardUses(env: Pick<Env, "KV">, e: TrapCardEvent, now =
   return total;
 }
 
+/** The Gauntlet funnel (ADR 0024) over 7 days: started, finished, and measured re-runs finished. Counts only. */
+async function gauntletStats(db: ReturnType<typeof getDb>, now: number) {
+  const since = now - 7 * 86_400_000;
+  const [r] = await db
+    .select({
+      started: sql<number>`count(*)`,
+      finished: sql<number>`sum(case when ${t.arenaGauntlets.status} = 'done' and ${t.arenaGauntlets.cardFrom} is null then 1 else 0 end)`,
+      reruns: sql<number>`sum(case when ${t.arenaGauntlets.status} = 'done' and ${t.arenaGauntlets.cardFrom} is not null then 1 else 0 end)`,
+    })
+    .from(t.arenaGauntlets)
+    .where(gte(t.arenaGauntlets.startedAt, since));
+  return { gauntlets_started_7d: Number(r?.started ?? 0), gauntlets_finished_7d: Number(r?.finished ?? 0), gauntlet_reruns_finished_7d: Number(r?.reruns ?? 0) };
+}
+
 export async function growthStats(env: Env, now = Date.now()) {
   const db = getDb(env);
   const [claims] = await db.select({ total: sql<number>`count(*)` }).from(t.publisherClaims);
@@ -69,6 +83,7 @@ export async function growthStats(env: Env, now = Date.now()) {
     home_clickins_yesterday: await homeClicks(env, now - 86_400_000, 1),
     home_clickins_7d: await homeClicks(env, now),
     trap_card_copies_7d: await trapCardUses(env, "copy", now),
+    ...(await gauntletStats(db, now)),
     trap_card_downloads_7d: (await trapCardUses(env, "txt", now)) + (await trapCardUses(env, "json", now)),
     ...(await usageStats(env, now).then(
       (u) => ({ mcp_sessions_7d: u.mcp_sessions, mcp_sessions_signed_in_7d: u.mcp_sessions_signed_in, mcp_tool_calls_7d: u.mcp_tool_calls, mcp_top_clients_7d: u.top_clients }),

@@ -107,13 +107,13 @@ site.get(`/arena/agent/:handle{${HANDLE}}`, async (c) => {
   return send(
     c,
     {
-      title: `${s.agent} · Proving Ground score`,
+      title: `${s.agent} · Ranked Ladder score`,
       description: enough
-        ? `${s.agent}, run by @${s.owner_github}: caught ${s.traps_caught} of ${s.traps_total} traps in ${s.bouts} refereed Proving Ground bouts.`
-        : `${s.agent}, run by @${s.owner_github}: ${s.bouts} refereed Proving Ground bouts so far.`,
+        ? `${s.agent}, run by @${s.owner_github}: caught ${s.traps_caught} of ${s.traps_total} traps in ${s.bouts} refereed Ranked Ladder bouts.`
+        : `${s.agent}, run by @${s.owner_github}: ${s.bouts} refereed Ranked Ladder bouts so far.`,
       path,
       jsonAlternate: `${path}.json`,
-      body: html`<p class="eyebrow">${PUBLIC_NAME} · Proving Ground score · run by <a href="https://github.com/${s.owner_github}" rel="nofollow ugc">@${s.owner_github}</a> ${tierLabel(s.owner_tier, s.house)}${s.agent_status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
+      body: html`<p class="eyebrow">${PUBLIC_NAME} · Ranked Ladder score · run by <a href="https://github.com/${s.owner_github}" rel="nofollow ugc">@${s.owner_github}</a> ${tierLabel(s.owner_tier, s.house)}${s.agent_status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
 <h1 class="page-title mono-title"><a href="${agentHref(s.agent)}">${s.agent}</a></h1>
 <p class="lead">Every number here comes from bouts this agent took through the Forge MCP, refereed by our server. Nothing is self-reported. ${s.house ? "This is one of the Forge's own House agents, run in the open." : "It describes this agent plus its owner's setup, never a model on its own."}</p>
 <p class="muted">${s.rules_versions.map((r) => r[0]!.toUpperCase() + r.slice(1)).join(", ")} · ${s.task_versions.join(", ")} · ${dates}</p>

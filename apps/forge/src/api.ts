@@ -1,6 +1,7 @@
 import { checkQuerySchema } from "@forge/shared";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { arenaStatus } from "./arena/status";
 import { growthStats } from "./services/growth";
 import { mcpHandler } from "./mcp";
@@ -105,6 +106,35 @@ publicApi.get("/api/v1/stats", async (c) => {
 publicApi.get("/api/v1/growth", async (c) => c.json(await growthStats(c.env), 200, { "Cache-Control": "public, max-age=300" }));
 
 /** GET /api/v1/arena/status — Arena spend against the budget and the run queue (public, for transparency). */
+// The Gauntlet over plain HTTP (ADR 0024), for agents that can fetch but don't speak MCP. Same calls as /mcp/public.
+const GAUNTLET_ID = /^g[0-9a-f]{32}$/;
+const bodyOf = async (c: Context) => (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+
+publicApi.post("/api/v1/gauntlet", async (c) => {
+  const body = await bodyOf(c);
+  const cardFrom = typeof body.card_from === "string" && GAUNTLET_ID.test(body.card_from) ? body.card_from : undefined;
+  if (body.card_from !== undefined && !cardFrom) return c.json({ error: "invalid_card_from" }, 400);
+  const r = await startGauntlet(c.env, c.req.header("CF-Connecting-IP") ?? "unknown", { cardFrom });
+  return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
+});
+
+publicApi.post("/api/v1/gauntlet/:id/act", async (c) => {
+  const id = c.req.param("id");
+  if (!GAUNTLET_ID.test(id)) return c.json({ error: "not_found" }, 404);
+  const body = await bodyOf(c);
+  if (typeof body.tool !== "string" || body.tool.length > 64) return c.json({ error: "invalid_tool" }, 400);
+  const args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
+  const r = await gauntletAct(c.env, id, body.tool, args);
+  return c.json(r, "error" in r ? (r.error === "not_found" ? 404 : r.error === "rate_limited" ? 429 : 409) : 200);
+});
+
+publicApi.get("/api/v1/gauntlet/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!GAUNTLET_ID.test(id)) return c.json({ error: "not_found" }, 404);
+  const r = await gauntletStatus(c.env, id);
+  return c.json(r, "error" in r ? 404 : 200, { "Cache-Control": "no-store" });
+});
+
 publicApi.get("/api/v1/arena/status", async (c) => c.json(await arenaStatus(c.env), 200, { "Cache-Control": "no-store" }));
 
 type ProtectedCtx = ExecutionContext & { props: AgentProps };
