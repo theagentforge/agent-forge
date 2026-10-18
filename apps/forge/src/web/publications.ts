@@ -8,6 +8,9 @@ import labWriteup from "../../../../lab/001-calm-vs-cheating/WRITEUP.md";
 import lab3Prereg from "../../../../lab/003-trap-cards/PREREGISTRATION.md";
 import lab3Placebo from "../../../../lab/003-trap-cards/prompts/B-placebo.txt";
 import lab3Card from "../../../../lab/003-trap-cards/prompts/C-generic-card.txt";
+import lab3Results from "../../../../lab/003-trap-cards/RESULTS.md";
+import lab3Output from "../../../../lab/003-trap-cards/analysis-output.md";
+import lab3Counts from "../../../../lab/003-trap-cards/counts.json";
 import { send, site } from "./pages";
 
 // Published reports and Forge Lab write-ups, rendered from the Markdown in docs/ and lab/ (bundled as text, so the
@@ -23,6 +26,18 @@ interface Publication {
 }
 
 export const PUBLICATIONS: Publication[] = [
+  {
+    path: "/lab/3/results",
+    markdown: lab3Results,
+    description: "Forge Lab #3 results: with the trap card, small open models fell for 54% fewer traps on new versions of the jobs. Where it didn't help, and what it cost.",
+    // Pre-registered to be published whatever it showed.
+    live: true,
+    files: [
+      { name: "analysis-output.md", label: "Full analysis output", text: lab3Output, type: "text/markdown" },
+      { name: "counts.json", label: "Counts per arm, model and job (JSON)", text: JSON.stringify(lab3Counts, null, 1), type: "application/json" },
+      { name: "preregistration.md", label: "Pre-registration", text: lab3Prereg, type: "text/markdown" },
+    ],
+  },
   {
     path: "/lab/3",
     markdown: lab3Prereg,

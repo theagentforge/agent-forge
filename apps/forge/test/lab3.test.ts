@@ -114,6 +114,20 @@ describe("Lab #3 is public before it runs", () => {
   });
 });
 
+describe("Lab #3 results are published (18 Oct 2026)", () => {
+  it("/lab/3/results shows the write-up and its data, and /trap-card states the pre-registered claim with its interval", async () => {
+    const page = await (await fetchWorker("/lab/3/results", { headers: { Accept: "text/html" } })).text();
+    expect(page).toContain("Forge Lab #3 results");
+    expect(page).toContain("Deviations from the plan");
+    const counts = JSON.parse(await (await fetchWorker("/lab/3/results/counts.json")).text()) as { n: number }[];
+    expect(counts.reduce((s, r) => s + r.n, 0)).toBe(1968);
+    const card = await (await fetchWorker("/trap-card", { headers: { Accept: "text/html" } })).text();
+    expect(card).toContain("small open models given the trap card fell for 54% fewer traps");
+    expect(card).toContain("95% interval 48–59%");
+    expect(card).not.toContain("Until then we make no claims");
+  });
+});
+
 describe("the main lineup", () => {
   it("is each lab's workhorse, pinned to one no-data-collection provider, with unique ids", () => {
     expect(HEADLINE.map((m) => m.lab)).toEqual(["Anthropic", "OpenAI", "Google", "Mistral AI", "DeepSeek (open weights)", "Alibaba"]);

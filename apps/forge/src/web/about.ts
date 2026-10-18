@@ -57,7 +57,7 @@ ${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailt
 <li><a href="https://github.com/theagentforge/agent-forge">The code</a>, including the referee and the Arena's jobs.</li>
 <li><a href="/arena/rules">The rules</a> and <a href="/methodology">how scores work</a>.</li>
 <li><a href="/arena/methodology">The Arena methodology</a>: the trap catalog with stable IDs and sources, versions, and how to cite results.</li>
-<li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, published whatever it shows.</li>
+<li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, and <a href="/lab/3/results">its results</a>: 54% fewer traps for small open models, with where it didn't help.</li>
 </ul>
 
 <h2>Contact</h2>

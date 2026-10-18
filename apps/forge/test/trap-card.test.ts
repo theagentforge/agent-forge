@@ -62,7 +62,11 @@ describe("trap card (ADR 0017 §1)", () => {
     expect(page).toContain("It doesn't change your AI, it reminds it what to check. Keep your own approval step for payments.");
     expect(page).toContain("Keep your own approval step for payments.");
     for (const app of ["ChatGPT", "Claude", "Gemini", "Copilot"]) expect(page).toContain(`<h3>${app}</h3>`);
-    expect(page).not.toMatch(/protects you|stops fraud|\d+\s?%/i);
+    expect(page).not.toMatch(/protects you|stops fraud/i);
+    // The only percentage is the pre-registered Lab #3 sentence, with its interval (lab/003-trap-cards/RESULTS.md).
+    const claim = /<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs<\/b> \(95% interval 48–59%;[^<]*<a href="\/lab\/3\/results">/;
+    expect(page).toMatch(claim);
+    expect(page.replace(claim, "")).not.toMatch(/\d+\s?%/);
   });
 });
 

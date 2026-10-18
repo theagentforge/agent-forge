@@ -63,7 +63,8 @@ site.get("/trap-card.json", async (c) =>
       max_chars: TRAP_CARD_MAX_CHARS,
       checks: TRAP_CHECKS,
       changelog: TRAP_CARD_CHANGELOG,
-      model_specific_lines: "off until Forge Lab #3 reports",
+      model_specific_lines: "off: held after Forge Lab #3 for a harm review (/lab/3/results)",
+      lab3: { relative_reduction: 0.536, ci95: [0.481, 0.586], arms_compared: "card vs no card", bouts: 984, models: "small open models", date: "2026-10-18", results: "/lab/3/results" },
       measured: await cardLift(getDb(c.env)).catch(() => []),
     },
     200,
@@ -104,7 +105,8 @@ ${copyBlock("trap-card-text", m.text)}
 ${liftTable(jobs)}
 <h2 id="why">Why each check is there</h2>
 <ul>${TRAP_CHECKS.map((ch) => html`<li><b>${ch.text}</b> <span class="muted small">Caught out in: ${ch.traps.map((t, i) => html`${i ? ", " : ""}<a href="/best/${t.split("/")[0]}">${TRAP_NAMES[t.split("/")[0]!]?.[t.split("/")[1]!] ?? t}</a>`)}</span></li>`)}</ul>
-<p>The card is the same for everyone. Lines for a particular AI come only after <b>Forge Lab #3</b> tests whether they beat this generic card. Until then we make no claims about how much it helps.</p>
+<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs</b> (95% interval 48–59%; 984 bouts, 18 Oct 2026). <a href="/lab/3/results">Forge Lab #3 results</a>, including the jobs where it didn't help and what it cost. Frontier models weren't part of this test.</p>
+<p>The card is the same for everyone. Lines written for a particular AI beat it on traps in Lab #3 but made two models skip work or give up too early, so they stay off while we review them.</p>
 <h2>Version</h2>
 <p class="small mono">v${m.version} · ${m.date} · ${m.sha256}<br>signature ${m.signature}</p>
 <ul>${TRAP_CARD_CHANGELOG.map((x) => html`<li>v${x.version} (${x.date}): ${x.note}</li>`)}</ul>
