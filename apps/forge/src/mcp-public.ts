@@ -6,6 +6,7 @@ import { z } from "zod";
 import { gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { trapsData } from "./arena/traps";
 import { agentView, fetchSkillText, scanAndRecord, watchStatus } from "./services/scans";
+import { bump, scanCounters, watchCounters } from "./services/usage";
 import { SCAN_MAX_BYTES } from "@forge/shared";
 import { finishedRuns, modelName } from "./arena/views";
 import { getDb } from "./services/db";
@@ -142,6 +143,7 @@ export function createPublicServer(env: Env, ip: string) {
       }
       if (!body) return json({ error: "give text or url" }, true);
       const { result, isPublic } = await scanAndRecord(env, body, { name, sourceUrl });
+      await bump(env, scanCounters("mcp", result.verdict)).catch(() => {});
       return json(agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }));
     },
   );
@@ -155,6 +157,7 @@ export function createPublicServer(env: Env, ip: string) {
     },
     async ({ fingerprints }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
+      await bump(env, watchCounters(fingerprints.length)).catch(() => {});
       return json(await watchStatus(getDb(env), fingerprints.map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`))));
     },
   );

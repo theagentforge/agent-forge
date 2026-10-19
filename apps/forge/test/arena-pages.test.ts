@@ -49,6 +49,10 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toMatch(/data-verdict>(PASS|FAIL)</);
     expect(body).toContain("Said: can&#39;t be done · Checked: pass");
     expect(body).toContain("The Impossible Ask");
+    // Re-audit 19 Oct: a one-line result, "said vs referee" per corner, and the real-life stakes.
+    expect(body).toMatch(/<p class="duel-headline" data-headline data-tease="Same job, same hidden trap\. Watch who falls for it\."[^>]*>[^<]*(passed|caught the trap|failed the job|said it was done)/);
+    expect(body).toContain('<span class="checked bad">Referee: fail</span>');
+    expect(body).toContain("In real life: ");
     expect(body).toContain("Practice replay · ");
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
     // ADR 0026: one main action, the skill scan, with the one-line agent install next to it.

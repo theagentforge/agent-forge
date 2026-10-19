@@ -32,7 +32,7 @@ import {
 import { channelDuels } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
-import { bump, usageStats, visitCounters } from "../services/usage";
+import { bump, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
@@ -101,6 +101,8 @@ site.use("*", async (c, next) => {
   // Trap card downloads are counted before the cache, so cached copies count too.
   if (c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json")
     c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
+  // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
+  if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
   // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
   if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
     c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
@@ -228,7 +230,7 @@ site.get("/", async (c) => {
 <div class="hero-copy">
 <h1>Check a skill before your agent installs&nbsp;it.</h1>
 <p class="lead">${HOME_SUBHEAD}</p>
-<form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a GitHub link to a SKILL.md" maxlength="2048" required><button class="btn primary chamfer cta-big" type="submit">Scan it</button></form>
+<form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer cta-big" type="submit">Scan it</button></form>
 <div class="agent-line-hero"><p><b>Or let your agent check every skill itself.</b> Paste this into it once:</p>
 <div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
 <p class="small muted">It checks before each install and once a week after: one small request, no account. <a href="/skill.md">Read the skill file</a> · <a href="/scan?from=home">Paste text instead</a></p></div>
@@ -387,6 +389,8 @@ site.get("/stats", async (c) => {
   const now = (await proofNow(c.env)) as Record<string, { external: number; house: number }>;
   const history = await snapshotHistory(c.env, 30);
   const usage = await usageStats(c.env).catch(() => null);
+  const skills = await skillStats(c.env).catch(() => null);
+  const checks = skills ? gate({ skill_scans_7d: skills.scans, watch_checkins_7d: skills.watch_checkins, skill_file_agent_fetches_7d: skills.skill_file_agent_fetches }) : null;
   const external = (k: CounterKey) => atMinimum(k, now[k]?.external);
   const house = (k: CounterKey) => now[k]?.house ?? 0;
   const connections = usage
@@ -412,6 +416,7 @@ site.get("/stats", async (c) => {
               house_mcp_tool_calls: usage.house_mcp_tool_calls,
             }
           : null,
+      skill_checks: checks,
       house_excluded: true,
       generated_at: new Date().toISOString(),
     });
@@ -461,6 +466,19 @@ ${conn.length && usage
 <div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
 ${connections?.mcp_sessions !== null && usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x) => x.name).join(", ")}.</p>` : ""}
 <p class="small muted">A connection is an AI app starting a session with the Forge's MCP server; a tool call is the AI actually using it. Daily totals only; nothing about who connected is kept. Signed-in sessions from our own accounts are counted apart, below. Connections without sign-in can't be told apart, so a few of ours may be among them.</p>`
+      : ""}
+${checks && (checks.skill_scans_7d !== null || checks.watch_checkins_7d !== null || checks.skill_file_agent_fetches_7d !== null)
+      ? html`<h2 class="page-title" id="skill-checks">Skill checks, last 7 days</h2>
+<div class="stats spaced">${(
+          [
+            [checks.skill_scans_7d, "skills scanned (web, API and AI apps)"],
+            [checks.skill_file_agent_fetches_7d, "agents fetched the forge-check skill"],
+            [checks.watch_checkins_7d, "weekly-watch check-ins from agents"],
+          ] as [number | null, string][]
+        )
+          .filter((x): x is [number, string] => x[0] !== null)
+          .map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
+<p class="small muted">Daily totals only. A check-in is an agent asking whether the skills it has installed changed; it comes back by itself, once a week. An agent fetch is a non-browser download of <a href="/skill.md">/skill.md</a>; crawlers aren't counted. Our own tests may be among them.</p>`
       : ""}
 ${days.length
       ? html`<h2 class="page-title">Daily history</h2>

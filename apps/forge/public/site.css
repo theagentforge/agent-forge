@@ -524,3 +524,23 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .share-buttons{display:flex;flex-wrap:wrap;gap:var(--s2)}
 .check-yours{margin:var(--s6) 0}
 .check-yours h2{margin-top:0}
+/* Arena player, re-audit 19 Oct (research: open with the stakes, show "said done" next to "checked: fail", highlight
+   the moment it went wrong, one pass colour and one fail colour). */
+.duel-headline{margin:0;font:800 var(--fs-xl)/1.2 var(--font-display);letter-spacing:-.01em}
+.duel.is-final .duel-headline,.duel:not(.is-playing) .duel-headline{color:var(--text)}
+.duel .captions{order:0}
+.duel.is-playing .captions li.current{font-size:var(--fs-md);font-weight:600}
+.contender .bar-stamina{display:none}
+.said-checked{margin:var(--s2) 0 0;display:grid;gap:2px;font:700 var(--fs-lg)/1.25 var(--font-mono)}
+.said-checked .said{color:var(--text-muted);font-weight:600}
+.said-checked .checked.ok{color:var(--clear)}
+.said-checked .checked.bad{color:var(--flagged)}
+.duel.is-playing:not(.is-final) .said-checked{visibility:hidden}
+.contender .final{display:none}
+.duel.is-final .contender:has(.stamp-foul),.duel:not(.is-playing) .contender:has(.stamp-foul){--house:var(--flagged)}
+.duel.is-final .contender:has(.stamp-caught),.duel:not(.is-playing) .contender:has(.stamp-caught){--house:var(--clear)}
+.feed-log .fl-foul{background:rgba(255,93,82,.14);outline:1px solid var(--flagged);outline-offset:-1px;padding:0 4px}
+.feed-log .fl-caught{background:rgba(61,220,151,.12);outline:1px solid var(--clear);outline-offset:-1px;padding:0 4px}
+.stamp{font-size:var(--fs-sm);padding:6px 8px}
+.duel-stakes{margin:0;color:var(--caution);font-weight:600}
+.duel.is-playing:not(.is-final) .duel-stakes{visibility:hidden}

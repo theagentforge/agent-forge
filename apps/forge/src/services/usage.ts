@@ -140,3 +140,39 @@ export async function visitStats(env: Env, now = Date.now(), days = 7) {
       .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
   return { days, arrivals: Number(rows.find((r) => r.key === "visit:arrivals")?.n ?? 0), by_source: list("visit:src:"), by_tag: list("visit:tag:").slice(0, 10) };
 }
+
+// Skill checks (ADR 0026), the launch metric: scans by where they came from, weekly-watch check-ins (agents coming
+// back by themselves) and fetches of /skill.md by agents (the nearest thing to an install count). Daily totals only.
+
+export type ScanChannel = "web" | "api" | "mcp";
+export const scanCounters = (channel: ScanChannel, verdict: string) => [`scan:${channel}`, `scan:verdict:${verdict.replace(/[^a-z]/g, "")}`];
+export const watchCounters = (fingerprints: number) => ["watch:calls", ...Array<string>(Math.min(Math.max(fingerprints, 0), 100)).fill("watch:fingerprints")];
+
+const CRAWLER_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|lighthouse|monitor/i;
+/** A fetch of the agent skill file: a browser (someone reading it), an agent (curl, fetch tools, MCP clients), or a crawler (not counted). */
+export function skillFileCounters(req: { method: string; headers: Headers }): string[] {
+  if (req.method !== "GET" || CRAWLER_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  return [/text\/html/.test(req.headers.get("accept") ?? "") ? "skillmd:browser" : "skillmd:agent"];
+}
+
+/** Skill-check totals over the last `days` days, for /stats, /api/v1/growth and the ops digest. */
+export async function skillStats(env: Env, now = Date.now(), days = 7) {
+  const db = getDb(env);
+  const since = day(now - (days - 1) * 86_400_000);
+  const rows = await db
+    .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, since), sql`(${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'skillmd:%')`))
+    .groupBy(t.usageDaily.key);
+  const get = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
+  return {
+    days,
+    scans: get("scan:web") + get("scan:api") + get("scan:mcp"),
+    scans_by_channel: { web: get("scan:web"), api: get("scan:api"), mcp: get("scan:mcp") },
+    scans_flagged: get("scan:verdict:flagged"),
+    watch_checkins: get("watch:calls"),
+    watch_fingerprints: get("watch:fingerprints"),
+    skill_file_agent_fetches: get("skillmd:agent"),
+    skill_file_browser_views: get("skillmd:browser"),
+  };
+}

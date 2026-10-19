@@ -178,10 +178,18 @@
         var v = box.querySelector("[data-verdict]");
         v.textContent = s.verdict; v.className = "verdict chamfer " + (s.verdict === "PASS" ? "v-clear" : "v-flagged");
         box.querySelector("[data-claim]").textContent = s.claim + " · " + s.check;
+        var sc = box.querySelector("[data-said-checked]");
+        if (sc) {
+          sc.children[0].textContent = s.claim;
+          sc.children[1].textContent = s.check.replace("Checked: ", "Referee: ");
+          sc.children[1].className = "checked " + (s.verdict === "PASS" ? "ok" : "bad");
+        }
         var feed = box.querySelector("[data-feed]");
         feed.innerHTML = "";
         s.feed.forEach(function (l) { var li = document.createElement("li"); li.className = "fl-" + l.kind; li.textContent = l.text; li.hidden = true; feed.appendChild(li); });
       });
+      var stakesEl = q("[data-stakes]");
+      if (stakesEl) { stakesEl.textContent = d.stakes || ""; stakesEl.hidden = !d.stakes; }
       if (caps) {
         caps.innerHTML = "";
         d.captions.forEach(function (c) { var li = document.createElement("li"); li.textContent = c; caps.appendChild(li); });
@@ -201,6 +209,9 @@
       var d = duels[st.i], secs = d.seconds, beat = (secs - 2) / d.captions.length, t = reduce ? secs : st.t;
       var final = t >= secs - 2, f = Math.max(0, Math.min(1, (t - 1) / (secs - 4)));
       fig.classList.toggle("is-final", final);
+      // The hook first ("watch who falls for it"), then the result in one line once the referee has checked.
+      var head = q("[data-headline]");
+      if (head) { var want = final && d.headline ? d.headline : head.getAttribute("data-tease"); if (head.textContent !== want) head.textContent = want; }
       ["a", "b"].forEach(function (k, n) {
         var box = q('[data-side="' + k + '"]');
         if (!box) return;

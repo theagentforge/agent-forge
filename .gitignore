@@ -10,3 +10,4 @@ dist/
 .DS_Store
 coverage/
 !integrations/github-action/dist/
+!integrations/skill-scan-action/dist/

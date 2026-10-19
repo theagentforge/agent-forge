@@ -2,7 +2,7 @@ import { gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { isLean } from "./ops-mode";
-import { usageStats, visitStats } from "./usage";
+import { usageStats, visitStats, skillStats } from "./usage";
 
 // ADR 0011 leading indicators that the Ops Digest reads: tool claims and sites embedding a Forge badge.
 
@@ -91,6 +91,10 @@ export async function growthStats(env: Env, now = Date.now()) {
     trap_card_downloads_7d: (await trapCardUses(env, "txt", now)) + (await trapCardUses(env, "json", now)),
     ...(await usageStats(env, now).then(
       (u) => ({ mcp_sessions_7d: u.mcp_sessions, mcp_sessions_signed_in_7d: u.mcp_sessions_signed_in, mcp_tool_calls_7d: u.mcp_tool_calls, mcp_top_clients_7d: u.top_clients }),
+      () => ({}),
+    )),
+    ...(await skillStats(env, now).then(
+      (k) => ({ skill_scans_7d: k.scans, skill_scans_by_channel_7d: k.scans_by_channel, skill_scans_flagged_7d: k.scans_flagged, watch_checkins_7d: k.watch_checkins, watch_fingerprints_7d: k.watch_fingerprints, skill_file_agent_fetches_7d: k.skill_file_agent_fetches, skill_file_browser_views_7d: k.skill_file_browser_views }),
       () => ({}),
     )),
     ...(await visitStats(env, now).then(

@@ -32,7 +32,8 @@ export function growthLine(g) {
   const mcp = g.mcp_sessions_7d === undefined ? "" : ` AI connections this week: **${g.mcp_sessions_7d}** (${g.mcp_sessions_signed_in_7d} signed in), **${g.mcp_tool_calls_7d}** tool calls.`;
   const fmt = (xs) => xs.map((x) => `${x.name} ${x.n}`).join(", ");
   const arrivals = g.arrivals_7d === undefined ? "" : ` Visitors arriving this week: **${g.arrivals_7d}**${g.arrivals_by_source_7d?.length ? ` (${fmt(g.arrivals_by_source_7d)})` : ""}${g.arrivals_by_tag_7d?.length ? `; by link tag: ${fmt(g.arrivals_by_tag_7d)}` : ""}.`;
-  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${home}${card}${mcp}${arrivals}`;
+  const skills = g.skill_scans_7d === undefined ? "" : ` Skill checks this week (ADR 0026): **${g.skill_scans_7d}** scans (web ${g.skill_scans_by_channel_7d?.web ?? 0}, API ${g.skill_scans_by_channel_7d?.api ?? 0}, AI apps ${g.skill_scans_by_channel_7d?.mcp ?? 0}; ${g.skill_scans_flagged_7d} flagged), **${g.skill_file_agent_fetches_7d}** agent fetches of /skill.md, **${g.watch_checkins_7d}** weekly-watch check-ins.`;
+  return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${skills}${home}${card}${mcp}${arrivals}`;
 }
 
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */

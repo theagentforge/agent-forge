@@ -1,0 +1,53 @@
+name: Forge skill scan
+description: Scan the agent skills and instruction files in a pull request (SKILL.md, AGENTS.md, CLAUDE.md, Cursor rules) for hidden instructions, piped installs and key theft. Runs on the runner; no file leaves GitHub.
+author: The Agent Forge
+branding:
+  icon: shield
+  color: orange
+inputs:
+  paths:
+    description: Files to scan, as globs, one per line. Default SKILL.md, AGENTS.md, CLAUDE.md and GEMINI.md anywhere, .claude/**/*.md, .cursor/rules/**, .cursorrules, .windsurfrules and GitHub Copilot instructions.
+    required: false
+    default: ""
+  ignore:
+    description: Globs to skip, one per line (node_modules, vendor and dist are always skipped). Handy for security courses and test fixtures that quote attacks on purpose.
+    required: false
+    default: ""
+  changed-only:
+    description: "auto (default: only the files a pull request changed; everything on other events), true or false."
+    required: false
+    default: auto
+  fail-on:
+    description: "high (default: fail on high-severity findings), medium (also medium), or never (report only)."
+    required: false
+    default: high
+  comment:
+    description: "auto (default: one pull request comment, edited in place, when there's something to say and the token may write) or never."
+    required: false
+    default: auto
+  sarif-file:
+    description: Also write the findings as SARIF to this path, for github/codeql-action/upload-sarif (needs security-events write).
+    required: false
+    default: ""
+  github-token:
+    description: Token for listing the pull request's files and writing its comment.
+    required: false
+    default: ${{ github.token }}
+  origin:
+    description: Forge address, for the links in the comment.
+    required: false
+    default: https://theagentforge.io
+outputs:
+  files:
+    description: How many files were scanned.
+  high:
+    description: High-severity findings.
+  medium:
+    description: Medium-severity findings.
+  low:
+    description: Low-severity findings.
+  verdict:
+    description: flagged, caution or clear.
+runs:
+  using: node24
+  main: dist/index.mjs

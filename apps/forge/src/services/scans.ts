@@ -33,8 +33,40 @@ export function rawUrl(input: string): URL | null {
     if (repo) return new URL(`https://raw.githubusercontent.com/${repo[1]}/${repo[2]!.replace(/\.git$/, "")}/HEAD/SKILL.md`);
     return null;
   }
+  if (u.hostname === "clawhub.ai" || u.hostname === "www.clawhub.ai") return clawhubFileUrl(u);
   if (u.hostname === "gist.github.com") return null;
   return SCAN_HOSTS.includes(u.hostname) ? u : null;
+}
+
+// ClawHub (OpenClaw's skill registry). Its public read API invites third-party use ("Public catalog reuse" in
+// github.com/openclaw/clawhub docs/api.md): no token, rate-limited, link back to the canonical skill page, no implied
+// endorsement. Skills there are MIT-0. A skill page link becomes one fetch of its SKILL.md as text.
+const CLAWHUB_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** clawhub.ai/<owner>/skills/<slug> (or the file API URL itself) → the API URL for that skill's SKILL.md as text. */
+function clawhubFileUrl(u: URL): URL | null {
+  let owner: string | undefined;
+  let slug: string | undefined;
+  const page = /^\/([^/]+)\/skills\/([^/]+)(?:\/.*)?$/.exec(u.pathname.replace(/\/+$/, ""));
+  const api = /^\/api\/v1\/skills\/([^/]+)\/file$/.exec(u.pathname);
+  if (api) [slug, owner] = [api[1], u.searchParams.get("ownerHandle") ?? undefined];
+  else if (page) [owner, slug] = [page[1], page[2]];
+  if (!owner || !slug) return null;
+  owner = decodeURIComponent(owner).replace(/^@/, "");
+  slug = decodeURIComponent(slug);
+  if (!CLAWHUB_NAME.test(owner) || !CLAWHUB_NAME.test(slug)) return null;
+  return new URL(`https://clawhub.ai/api/v1/skills/${encodeURIComponent(slug)}/file?path=SKILL.md&ownerHandle=${encodeURIComponent(owner)}&preview=1`);
+}
+
+/** For a ClawHub file API URL, the skill's own page and its ClawHub security audit; null for other sources. */
+export function clawhubPage(sourceUrl: string | null): { page: string; audit: string; owner: string; slug: string } | null {
+  if (!sourceUrl?.startsWith("https://clawhub.ai/api/v1/skills/")) return null;
+  const u = new URL(sourceUrl);
+  const slug = decodeURIComponent(/^\/api\/v1\/skills\/([^/]+)\/file$/.exec(u.pathname)?.[1] ?? "");
+  const owner = u.searchParams.get("ownerHandle") ?? "";
+  if (!slug || !owner) return null;
+  const page = `https://clawhub.ai/${encodeURIComponent(owner)}/skills/${encodeURIComponent(slug)}`;
+  return { page, audit: `${page}/security-audit`, owner, slug };
 }
 
 export type FetchedText = { ok: true; text: string; url: string } | { ok: false; error: "unsupported_url" | "not_found" | "fetch_failed" | "too_large" | "not_text" };
@@ -44,11 +76,13 @@ export async function fetchSkillText(input: string, fetcher: typeof fetch = fetc
   if (!u) return { ok: false, error: "unsupported_url" };
   let res: Response;
   try {
-    res = await fetcher(u.toString(), { headers: { "User-Agent": "theagentforge-scan/1 (+https://theagentforge.io/scan)", Accept: "text/plain, text/markdown, */*" }, redirect: "follow", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    res = await fetcher(u.toString(), { headers: { "User-Agent": "theagentforge-scan/1 (+https://theagentforge.io/scan)", Accept: "text/plain, text/markdown, */*" }, redirect: "follow", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cf: { cacheTtl: 300, cacheEverything: true } } as RequestInit);
   } catch {
     return { ok: false, error: "fetch_failed" };
   }
-  if (res.status === 404) return { ok: false, error: "not_found" };
+  // ClawHub answers 404 for a missing file, 409 when a slug is ambiguous, 415 when the file isn't text.
+  if (res.status === 404 || res.status === 409) return { ok: false, error: "not_found" };
+  if (res.status === 415) return { ok: false, error: "not_text" };
   if (!res.ok) return { ok: false, error: "fetch_failed" };
   const type = res.headers.get("content-type") ?? "";
   if (/^(image|audio|video|application\/(zip|octet-stream|pdf))/.test(type)) return { ok: false, error: "not_text" };
@@ -194,6 +228,8 @@ export function ruleFrequency(rows: { findings: unknown }[]) {
 
 /** A readable name for a scanned file: "libafl · trailofbits/skills" for a GitHub raw link, else the name or host. */
 export function skillLabel(sourceUrl: string | null, name?: string | null): { title: string; where: string | null } {
+  const claw = clawhubPage(sourceUrl);
+  if (claw) return { title: claw.slug, where: `ClawHub · ${claw.owner}` };
   if (sourceUrl) {
     try {
       const u = new URL(sourceUrl);

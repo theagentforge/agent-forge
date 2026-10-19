@@ -8,7 +8,8 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
   // Static files (fonts, logo, stylesheet) are served straight from Cloudflare's edge, before the Worker runs.
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // /skill.md runs through the Worker first so agent fetches of it can be counted (ADR 0026); it still serves the file.
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/skill.md"] },
   // Published reports and Forge Lab write-ups are bundled as text from docs/ and lab/ (src/web/publications.ts).
   "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv"], "fallthrough": true }],
   // Hourly seeding from the official MCP Registry (one page of 100 servers per run).

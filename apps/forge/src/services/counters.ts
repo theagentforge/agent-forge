@@ -41,6 +41,10 @@ export const COUNTER_MINIMUMS = {
   scorecard_bouts: 3,
   // Skill scans (ADR 0026): distinct fingerprints scanned.
   skills_scanned: 25,
+  // Skill checks, last 7 days (ADR 0026): scans run, weekly-watch check-ins, and agents fetching /skill.md.
+  skill_scans_7d: 25,
+  watch_checkins_7d: 10,
+  skill_file_agent_fetches_7d: 10,
 } as const;
 
 export type CounterKey = keyof typeof COUNTER_MINIMUMS;

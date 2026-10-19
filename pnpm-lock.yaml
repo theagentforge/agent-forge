@@ -125,6 +125,25 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  integrations/skill-scan-action:
+    dependencies:
+      '@forge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
   integrations/social:
     devDependencies:
       vitest:

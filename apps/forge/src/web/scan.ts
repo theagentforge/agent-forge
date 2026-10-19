@@ -3,8 +3,9 @@ import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSu
 import { html } from "hono/html";
 import { reached } from "../services/counters";
 import { getDb } from "../services/db";
-import { fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
+import { clawhubPage, fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
 import { recordBadgeReferrer } from "../services/growth";
+import { bump, scanCounters } from "../services/usage";
 import { AGENT_LINE } from "./agent-line";
 import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
@@ -14,6 +15,9 @@ import { send, site } from "./pages";
 // Skill scan pages (ADR 0026): paste or link a skill and see what it asks an agent to do; a shareable page per
 // public result; the rules; and Skill Watch, the public feed of flagged skills. Wording: "matches pattern X at line
 // N", never "malicious". Excerpts are shown to people only (agents get rule ids and lines; services/scans.ts).
+
+/** The skill-scan GitHub Action is mentioned once its public repo (theagentforge/skill-scan) is published. */
+export const SKILL_SCAN_ACTION_LIVE = false;
 
 const SEV_LABEL: Record<ScanSeverity, string> = { high: "High", medium: "Medium", low: "Low" };
 const verdictWord = { flagged: "Flagged", caution: "Caution", clear: "No known risky patterns" } as const;
@@ -31,7 +35,7 @@ export function shareLine(verdict: "flagged" | "caution" | "clear", findings: Sc
 function checkYours(origin: string, from: string) {
   return html`<section class="check-yours panel chamfer panel-body" aria-labelledby="check-yours">
 <h2 id="check-yours">Check your own skills</h2>
-<form class="scan-quick" method="post" action="/scan?from=${from}"><label class="sr-only" for="yours-url">Link to a skill file</label><input id="yours-url" name="url" type="url" inputmode="url" placeholder="Paste a GitHub link to a SKILL.md" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
+<form class="scan-quick" method="post" action="/scan?from=${from}"><label class="sr-only" for="yours-url">Link to a skill file</label><input id="yours-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
 <p>Or paste this into your agent once, and it checks every skill before installing it:</p>
 <div class="copy-wrap">${copyBlock(`agent-line-${from}`, AGENT_LINE(origin))}</div>
 <p class="small muted">Free, no account. <a href="/skill.md">Read the skill file first</a>.</p>
@@ -45,7 +49,7 @@ function shareButtons(text: string, url: string) {
 
 function scanForm(prefill: { url?: string; text?: string } = {}) {
   return html`<form class="scan-form" method="post" action="/scan">
-<label for="scan-url">Link to the skill file <span class="muted small">(GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr)</span></label>
+<label for="scan-url">Link to the skill <span class="muted small">(a ClawHub skill page, or the file on GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr)</span></label>
 <input id="scan-url" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo/blob/main/SKILL.md" value="${prefill.url ?? ""}" maxlength="2048">
 <label for="scan-text">…or paste its text</label>
 <textarea id="scan-text" name="text" rows="8" maxlength="${SCAN_MAX_BYTES}" placeholder="Paste SKILL.md, an MCP server's tool descriptions, or an install script">${prefill.text ?? ""}</textarea>
@@ -87,6 +91,7 @@ site.get("/scan", async (c) => {
 ${scanForm()}
 <section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. From then on it checks every skill before installing it, and once a week checks the ones it has. It costs one small request a week.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
 <p class="small muted">The <a href="/skill.md">skill file</a> is plain text you can read first. Its fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner, and it never asks your agent to fetch anything and follow it.</p></section>
+${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one calm comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
 ${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skills scanned so far · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });
 });
@@ -101,13 +106,15 @@ site.post("/scan", async (c) => {
   if (!success) body = html`<p class="notice warn">Too many scans from your connection. Wait a minute and try again.</p>`;
   else if (pasted.trim()) {
     const { result, isPublic } = await scanAndRecord(c.env, pasted.slice(0, SCAN_MAX_BYTES));
+    c.executionCtx.waitUntil(bump(c.env, scanCounters("web", result.verdict)).catch(() => {}));
     body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
   } else if (url) {
     const got = await fetchSkillText(url);
     if (!got.ok)
-      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't on a public code host we read from. Use a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
+      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't one we read from. Use a ClawHub skill page, a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
+      c.executionCtx.waitUntil(bump(c.env, scanCounters("web", result.verdict)).catch(() => {}));
       body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : "");
     }
   } else body = html`<p class="notice warn">Give a link or paste the text.</p>`;
@@ -124,6 +131,9 @@ site.post("/scan", async (c) => {
     { cache: false },
   );
 });
+
+/** The agent skill file, served from static assets; the Worker sees it first only to count fetches (pages.ts). */
+site.get("/skill.md", (c) => c.env.ASSETS.fetch(new Request(new URL("/skill.md", c.req.url), { headers: c.req.raw.headers })));
 
 site.get("/scan/rules", (c) =>
   send(c, {
@@ -147,6 +157,7 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
   const findings = row.findings as ScanFinding[];
   const page = `${origin}${scanPath(row.fingerprint)}`;
   const label = skillLabel(row.sourceUrl, row.name);
+  const claw = clawhubPage(row.sourceUrl);
   const named = label.where ? `${label.title} · ${label.where}` : label.title;
   return send(c, {
     title: `${verdictWord[row.verdict]}: ${named}`,
@@ -156,7 +167,11 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
     nav: "scan",
     body: html`<p class="eyebrow">Skill scan · first seen ${new Date(row.firstSeen).toISOString().slice(0, 10)} · scanned ${row.scans} ${row.scans === 1 ? "time" : "times"}</p>
 <h1 class="page-title">${label.title}${label.where ? html` <span class="muted title-where">· ${label.where}</span>` : ""}</h1>
-${row.sourceUrl ? html`<p class="small mono source-link"><a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a></p>` : ""}
+${claw
+      ? html`<p class="small source-link"><a href="${claw.page}" rel="nofollow ugc">${claw.page.replace(/^https:\/\//, "")}</a> · ClawHub runs its own checks too: <a href="${claw.audit}" rel="nofollow">its security audit</a>. This scan is an independent second opinion, not ClawHub's.</p>`
+      : row.sourceUrl
+        ? html`<p class="small mono source-link"><a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a></p>`
+        : ""}
 ${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number>, findings, fingerprint: row.fingerprint, rulesVersion: row.rulesVersion })}
 <section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", shareLine(row.verdict, findings, `${page}?from=share`))}</div>
 ${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page}?from=share-li`)}

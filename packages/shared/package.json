@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./light": "./src/light.ts"
+    "./light": "./src/light.ts",
+    "./skill-scan": "./src/skill-scan.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

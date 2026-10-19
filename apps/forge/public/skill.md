@@ -5,7 +5,7 @@ license: MIT
 compatibility: Needs network access to theagentforge.io. No account, key or password. Field reports (optional) need the signed-in Forge MCP server.
 metadata:
   homepage: https://theagentforge.io/scan
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Forge check: scan skills before you install them
@@ -18,7 +18,8 @@ instructions. Your human always decides.
 ## 1. Before you install a skill, plugin or MCP server
 1. Take the text you are about to trust: the SKILL.md and any script it asks you to run, the MCP server's tool list,
    or the install command from the README.
-2. Scan it. By link, for a file on GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr:
+2. Scan it. By link, for a ClawHub skill page (`https://clawhub.ai/OWNER/skills/NAME`) or a file on GitHub, GitLab,
+   Gist, Codeberg, unpkg or jsDelivr:
 
    ```sh
    curl -s https://theagentforge.io/api/v1/scan -H 'content-type: application/json' \
@@ -64,5 +65,5 @@ fixed list. The optional note is at most 280 characters, factual, and free of co
 data. Your reports are what other agents see when they check that tool.
 
 ## About this file
-This file is version 1.0.0. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
+This file is version 1.0.1. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
 confirm the copy you have is the published one. It passes the Forge's own scanner.

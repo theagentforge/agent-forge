@@ -1,4 +1,4 @@
-import type { Duel, DuelSide } from "@forge/arena";
+import { TEASE_LINE, type Duel, type DuelSide } from "@forge/arena";
 import { html } from "hono/html";
 
 // The Arena duel player (ADR 0016, 0019). The server renders the finished box score of the first duel: every caption,
@@ -24,9 +24,10 @@ function contender(s: DuelSide, slot: "a" | "b") {
 <div class="who"><span class="avatar" aria-hidden="true"><i></i><i></i><b></b></span><span class="name" data-name title="${s.name}">${s.name}</span></div>
 <p class="stamp-row"><span class="stamp ${st.cls}" data-stamp>${st.text}</span></p>
 <ol class="feed-log mono" data-feed aria-label="What ${s.name} did">${s.feed.map((l) => html`<li class="fl-${l.kind}">${l.text}</li>`)}</ol>
-<label class="bar">Progress (verified) <progress data-progress max="1" value="${s.progress.at(-1) ?? 0}"></progress></label>
-<label class="bar">Stamina used <progress data-stamina max="1" value="${s.stamina.at(-1) ?? 0}"></progress></label>
+<label class="bar">Verified progress <progress data-progress max="1" value="${s.progress.at(-1) ?? 0}"></progress></label>
+<label class="bar bar-stamina">Stamina used <progress data-stamina max="1" value="${s.stamina.at(-1) ?? 0}"></progress></label>
 <p class="final"><span class="verdict ${s.verdict === "PASS" ? "v-clear" : "v-flagged"} chamfer" data-verdict>${s.verdict}</span> <span class="claim" data-claim>${s.claim} · ${s.check}</span></p>
+<p class="said-checked" data-said-checked><span class="said">${s.claim}</span><span class="checked ${s.verdict === "PASS" ? "ok" : "bad"}">${s.check.replace("Checked: ", "Referee: ")}</span></p>
 </div>`;
 }
 
@@ -34,10 +35,12 @@ export function duelPlayer(d: Duel, o: { mode: "cycle" | "channel"; channel?: Du
   const list = o.channel?.length ? o.channel : [d];
   return html`<figure class="duel" data-duel="${JSON.stringify(list)}" data-mode="${o.mode}" aria-labelledby="duel-bug">
 <div class="duel-top"><button type="button" class="btn chamfer duel-pause" data-duel-pause hidden aria-pressed="false">Pause</button><span class="label" data-duel-label>${d.practice ? "Practice replay" : "Replay"} · ${date(d.recordedAt)}</span></div>
+<p class="duel-headline" data-headline data-tease="${TEASE_LINE}" aria-live="polite">${d.headline ?? TEASE_LINE}</p>
 <p class="scorebug" id="duel-bug"><span data-bug-title>${d.title}</span> · Round <span data-bug-round>${d.round}</span>/<span data-bug-rounds>${d.rounds}</span> · <span data-bug-clock>${clock(d.seconds)}</span></p>
+<ol class="captions" data-captions aria-live="polite">${d.captions.map((c) => html`<li>${c}</li>`)}</ol>
 <div class="duel-sides">${contender(d.a, "a")}<span class="vs" aria-hidden="true">vs</span>${contender(d.b, "b")}</div>
 <div class="predict" data-predict hidden><span>Who falls for it?</span><button type="button" class="btn chamfer" data-pick="a">${d.a.name}</button><button type="button" class="btn chamfer" data-pick="b">${d.b.name}</button><span class="predict-result" data-pick-result aria-live="polite"></span></div>
-<ol class="captions" data-captions aria-live="polite">${d.captions.map((c) => html`<li>${c}</li>`)}</ol>
+<p class="duel-stakes small" data-stakes ${d.stakes ? "" : "hidden"}>${d.stakes ?? ""}</p>
 <div class="duel-foot"><span class="dots" data-dots aria-hidden="true">${list.map((_, i) => html`<i class="${i === 0 ? "on" : ""}"></i>`)}</span><span class="small muted" data-next></span></div>
 <figcaption class="small muted">${REFEREE_LINE} Pairs are chosen for contrast by a <a href="/arena/rules#featured">published rule</a>, not a ranking.</figcaption>
 </figure>`;

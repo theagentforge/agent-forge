@@ -18,7 +18,7 @@ import { eq } from "drizzle-orm";
 import * as t from "./db/schema";
 import { getDb } from "./services/db";
 import { countsAsHouse } from "./services/identity";
-import { recordMcp } from "./services/usage";
+import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -122,11 +122,12 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
     text = input.text;
   } else if (typeof input.url === "string" && input.url.length <= 2048) {
     const got = await fetchSkillText(input.url);
-    if (!got.ok) return c.json({ error: got.error, hosts: "raw.githubusercontent.com, github.com (file, folder or repository links), gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : got.error === "not_found" ? 404 : 400);
+    if (!got.ok) return c.json({ error: got.error, hosts: "clawhub.ai (skill pages), raw.githubusercontent.com, github.com (file, folder or repository links), gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : got.error === "not_found" ? 404 : 400);
     text = got.text;
     sourceUrl = got.url;
   } else return c.json({ error: "give text or url" }, 400);
   const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
+  c.executionCtx.waitUntil(bump(c.env, scanCounters("api", result.verdict)).catch(() => {}));
   return c.json(agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), 200, { "Cache-Control": "no-store" });
 }
 
@@ -153,6 +154,7 @@ publicApi.post("/api/v1/watch", async (c) => {
   const raw = Array.isArray(body.fingerprints) ? body.fingerprints : [];
   if (!raw.length || raw.length > 100) return c.json({ error: "give 1 to 100 fingerprints" }, 400);
   const fps = raw.filter((x): x is string => typeof x === "string" && FP.test(x)).map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
+  c.executionCtx.waitUntil(bump(c.env, watchCounters(fps.length)).catch(() => {}));
   return c.json(await watchStatus(getDb(c.env), fps), 200, { "Cache-Control": "no-store" });
 });
 

@@ -223,3 +223,53 @@ describe("re-audit 19 Oct: result pages that spread and convert", () => {
     expect(xml).not.toContain("webhook.site");
   });
 });
+
+describe("ClawHub links (public read API, MIT-0 skills)", () => {
+  it("turn a skill page into one text fetch of its SKILL.md, link back to ClawHub and its own audit", async () => {
+    const api = "https://clawhub.ai/api/v1/skills/weather-pro/file?path=SKILL.md&ownerHandle=acme&preview=1";
+    expect(rawUrl("https://clawhub.ai/acme/skills/weather-pro")?.toString()).toBe(api);
+    expect(rawUrl("https://clawhub.ai/@acme/skills/weather-pro/")?.toString()).toBe(api);
+    expect(rawUrl("https://clawhub.ai/acme/skills/weather-pro/security-audit")?.toString()).toBe(api);
+    expect(rawUrl(api)?.toString()).toBe(api);
+    expect(rawUrl("https://clawhub.ai/api/v1/download?slug=x")).toBeNull();
+    expect(rawUrl("https://clawhub.ai/acme/skills/..%2f..%2fadmin")).toBeNull();
+    let asked = "";
+    const got = await fetchSkillText("https://clawhub.ai/acme/skills/weather-pro", async (u) => ((asked = String(u)), new Response(BAD.replace("abc", "claw"), { headers: { "content-type": "text/plain" } })));
+    expect(asked).toBe(api);
+    expect(await fetchSkillText("https://clawhub.ai/acme/skills/x", async () => new Response("ambiguous", { status: 409 }))).toMatchObject({ ok: false, error: "not_found" });
+
+    const { scanAndRecord } = await import("../src/services/scans");
+    const { result } = await scanAndRecord(env, (got as any).text, { sourceUrl: (got as any).url });
+    const body = await (await fetchWorker(`/scan/${result.fingerprint.slice(7)}`, { headers: { Accept: "text/html" } })).text();
+    expect(body).toContain("weather-pro <span class=\"muted title-where\">· ClawHub · acme</span>");
+    expect(body).toContain('href="https://clawhub.ai/acme/skills/weather-pro"');
+    expect(body).toContain('href="https://clawhub.ai/acme/skills/weather-pro/security-audit"');
+    expect(body).toContain("independent second opinion, not ClawHub's");
+  });
+});
+
+describe("skill-check tracking (ADR 0026 launch metrics)", () => {
+  it("counts scans by channel, weekly-watch check-ins and agent fetches of /skill.md, and gates them on /stats", async () => {
+    const { skillStats, skillFileCounters } = await import("../src/services/usage");
+    const before = await skillStats(env);
+    await json("/api/v1/scan", { text: `${BAD}\n# count` }, "203.0.113.90");
+    await json("/api/v1/watch", { fingerprints: ["1".repeat(64), "2".repeat(64)] }, "203.0.113.90");
+    await fetchWorker("/skill.md", { headers: { "User-Agent": "curl/8.7", Accept: "*/*" } });
+    await fetchWorker("/skill.md", { headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" } });
+    const md = await fetchWorker("/skill.md", { headers: { "User-Agent": "curl/8.7" } });
+    expect(await md.text()).toContain("name: forge-check");
+    await new Promise((r) => setTimeout(r, 50));
+    const after = await skillStats(env);
+    expect(after.scans_by_channel.api).toBe(before.scans_by_channel.api + 1);
+    expect(after.watch_checkins).toBe(before.watch_checkins + 1);
+    expect(after.watch_fingerprints).toBe(before.watch_fingerprints + 2);
+    expect(after.skill_file_agent_fetches).toBeGreaterThanOrEqual(before.skill_file_agent_fetches + 2);
+    expect(after.skill_file_browser_views).toBeGreaterThanOrEqual(before.skill_file_browser_views + 1);
+    expect(skillFileCounters({ method: "GET", headers: new Headers({ "User-Agent": "Googlebot/2.1" }) })).toEqual([]);
+    const stats = (await (await fetchWorker("/stats?format=json")).json()) as any;
+    expect(stats.skill_checks.below_minimum).toContain("watch_checkins_7d");
+    expect(stats.skill_checks.watch_checkins_7d).toBeNull();
+    const growth = (await (await fetchWorker("/api/v1/growth")).json()) as any;
+    expect(growth.watch_checkins_7d).toBeGreaterThanOrEqual(1);
+  });
+});
