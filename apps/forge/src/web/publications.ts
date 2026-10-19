@@ -30,9 +30,9 @@ export const PUBLICATIONS: Publication[] = [
   {
     path: "/reports/skill-scan-2026-10",
     markdown: skillScanReport,
-    description: "We scanned 9,930 public agent skills for the instructions virus scanners miss. No confirmed malware, but 14 pipe a download into a shell and 8 read the agent's whole key file.",
-    // The launch report (ADR 0026). Off until Dinike has read it: it names repositories.
-    live: false,
+    description: "We scanned 9,930 public agent skills for the instructions virus scanners miss. No malware found by this method; 14 pipe a download into a shell and 8 read the agent's whole key file.",
+    // The launch report (ADR 0026). Reviewed against disclosure practice and approved for Dinike on 19 Oct (v1.1).
+    live: true,
   },
   {
     path: "/lab/3/results",

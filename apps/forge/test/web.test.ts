@@ -89,7 +89,7 @@ describe("public site", () => {
   it.each(["/terms", "/privacy"])("%s is the approved version, not a draft", async (path) => {
     const { body } = await page(path);
     expect(body).toContain("Dinike Jayamaha");
-    expect(body).toContain("Version 1.0");
+    expect(body).toContain(path === "/privacy" ? "Version 1.1" : "Version 1.0");
     const text = body.split('class="prose"')[1]?.split("</div>")[0] ?? "";
     expect(text).not.toMatch(/draft|\[/i);
   });

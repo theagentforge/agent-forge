@@ -124,7 +124,9 @@ describe("the launch scan dataset (ADR 0026)", () => {
     const { SCAN_RULES_VERSION } = await import("@forge/shared");
     const file = (await (await env.ASSETS.fetch(new Request(`https://assets.local${SEED_PATH}`))).json()) as any;
     expect(file.meta.rules_version).toBe(SCAN_RULES_VERSION);
-    expect(file.rows.length).toBe(file.meta.files);
+    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
+    // The public mirror ships an empty held file until 2 Nov.
+    expect(file.rows.length + (held.rows.length || file.meta.held)).toBe(file.meta.files);
     const first = await importSkillSeed(env, 20);
     expect(first).toMatchObject({ loaded: 20, next: 20 });
     const again = await importSkillSeed(env, 20);
@@ -133,5 +135,51 @@ describe("the launch scan dataset (ADR 0026)", () => {
     const page = await fetchWorker(`/scan/${row[2]}`, { headers: { Accept: "text/html" } });
     expect(page.status).toBe(200);
     expect(await page.text()).toContain("raw.githubusercontent.com/");
+  });
+});
+
+describe("the Privacy Policy covers scans and Gauntlet runs (issue #108, approved 19 Oct)", () => {
+  it("lists both, at version 1.1, while the Terms stay at 1.0", async () => {
+    const privacy = await (await fetchWorker("/privacy", { headers: { Accept: "text/html" } })).text();
+    expect(privacy).toContain("Version 1.1 · in force from 19 October 2026");
+    expect(privacy).toContain("Skill scans (no account)");
+    expect(privacy).toContain("Never the pasted text");
+    expect(privacy).toContain("Gauntlet runs (no account)");
+    const terms = await (await fetchWorker("/terms", { headers: { Accept: "text/html" } })).text();
+    expect(terms).toContain("Version 1.0");
+  });
+});
+
+describe("disclosure for the launch scan (report v1.1)", () => {
+  it("holds flagged and caution results back from the dataset and the site, except the four named vendors", async () => {
+    const { seedRow, NAMED_AT_LAUNCH } = await import("../src/services/skill-seed");
+    const file = (await (await env.ASSETS.fetch(new Request("https://assets.local/data/skill-scan-2026-10-19.json"))).json()) as any;
+    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
+    let vendor = 0;
+    for (const r of file.rows) {
+      const row = seedRow(file, r);
+      expect(row.public).toBe(true);
+      if (row.verdict !== "clear") { expect(NAMED_AT_LAUNCH.has(file.repos[r[0]][0])).toBe(true); vendor++; }
+    }
+    expect(vendor).toBeGreaterThan(0);
+    for (const r of held.rows) expect(seedRow(held, r).public).toBe(false);
+    expect(file.meta.held_until).toBe("2026-11-02");
+    const report = await (await fetchWorker("/reports/skill-scan-2026-10", { headers: { Accept: "text/html" } })).text();
+    expect(report).toContain("What 9,930 public agent skills tell your agent to do");
+    expect(report).toContain("Conflict of interest");
+    // Repositories may be named as part of what we scanned, but no held file is linked or named.
+    for (const r of held.rows) {
+      expect(report).not.toContain(r[2]);
+      expect(report).not.toContain(`${held.repos[r[0]][0]}/${r[1]}`);
+    }
+  });
+
+  it("a held result has no public page even after it's loaded", async () => {
+    const { importSkillSeed } = await import("../src/services/skill-seed");
+    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
+    if (!held.rows.length) return;
+    await importSkillSeed(env, 20_000);
+    expect((await fetchWorker(`/scan/${held.rows[0][2]}`, { headers: { Accept: "text/html" } })).status).toBe(404);
+    expect((await fetchWorker(`/api/v1/scan/${held.rows[0][2]}`)).status).toBe(404);
   });
 });

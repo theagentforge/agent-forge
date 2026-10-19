@@ -8,6 +8,10 @@ export const LEGAL_VERSION = "1.0";
 export const LEGAL_DATE = "15 October 2026";
 
 const updated = html`<p class="muted">Version ${LEGAL_VERSION} · in force from ${LEGAL_DATE}</p>`;
+/** Privacy Policy 1.1 (Dinike approved issue #108, 19 Oct 2026): Gauntlet runs and skill scans. The Terms stay at 1.0. */
+export const PRIVACY_VERSION = "1.1";
+export const PRIVACY_DATE = "19 October 2026";
+const privacyUpdated = html`<p class="muted">Version ${PRIVACY_VERSION} · in force from ${PRIVACY_DATE}</p>`;
 
 site.get("/terms", (c) =>
   send(c, {
@@ -102,7 +106,7 @@ site.get("/privacy", (c) =>
     path: "/privacy",
     body: html`<div class="prose">
 <h1 class="page-title">Privacy Policy</h1>
-${updated}
+${privacyUpdated}
 
 <h2>Who is responsible</h2>
 <p>Dinike Jayamaha, an individual based in Sri Lanka, runs The Agent Forge and is the controller of the personal data described here. Contact: <a href="mailto:hello@theagentforge.io">hello@theagentforge.io</a>.</p>
@@ -121,11 +125,13 @@ ${updated}
 <tr><td data-label="What" class="wide">Vouches you give or receive</td><td data-label="Why">Verification</td><td data-label="Basis">Contract</td><td data-label="Kept">While either account exists</td></tr>
 <tr><td data-label="What" class="wide">Publisher claims, replies and disputes you file</td><td data-label="Why">Right of reply and disputes</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">While the tool page exists</td></tr>
 <tr><td data-label="What" class="wide">A log of status changes and admin actions</td><td data-label="Why">Accountability and each tool's public history</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">While the tool page exists</td></tr>
-<tr><td data-label="What" class="wide">A one-day code made from your IP address when you run a check</td><td data-label="Why">Counting distinct users per day</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept as a daily count; can't be linked across days</td></tr>
+<tr><td data-label="What" class="wide">Gauntlet runs (no account): the agent's actions in the invented sandbox and the referee's result. No IP address, name or account</td><td data-label="Why">Running the test and showing its report to whoever has the link</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Actions: 30 days. Pass/fail summary and the trap card: kept</td></tr>
+<tr><td data-label="What" class="wide">Skill scans (no account): the file's fingerprint, the rules that matched, the line numbers and short excerpts, and the public link if you scanned by link. Never the pasted text</td><td data-label="Why">Showing the result, Skill Watch, the weekly check and README badges</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept. Pasted text that comes back clean gets no public page</td></tr>
+<tr><td data-label="What" class="wide">A one-day code made from your IP address when you run a check or start a Gauntlet run</td><td data-label="Why">Counting distinct users per day</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept as a daily count; can't be linked across days</td></tr>
 <tr><td data-label="What" class="wide">Request logs (IP address, browser, time) on Cloudflare</td><td data-label="Why">Security, abuse prevention and debugging</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Up to 7 days</td></tr>
 </tbody>
 </table>
-<p><strong>About the one-day code:</strong> when anyone runs a check, we make a keyed hash of their IP address with a key that changes each day. We store only that hash, never the IP. The same visitor gives the same code on one day and an unrelated code the next, so we can count people without being able to follow anyone over time.</p>
+<p><strong>About the one-day code:</strong> when anyone runs a check or starts a Gauntlet run, we make a keyed hash of their IP address with a key that changes each day. We store only that hash, never the IP. The same visitor gives the same code on one day and an unrelated code the next, so we can count people without being able to follow anyone over time.</p>
 
 <h2>Automated processing</h2>
 <ul>
