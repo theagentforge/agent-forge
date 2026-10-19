@@ -3,6 +3,7 @@ import { TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "../services/db";
+import { isLean } from "../services/ops-mode";
 import { day, sourceHash } from "../services/proof";
 
 // The Gauntlet (ADR 0024): the six everyday jobs in a row, for any agent, with no account. The server only referees:
@@ -95,6 +96,7 @@ async function bump(env: Env, key: string) {
 
 export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string } = {}, now = Date.now()) {
   const db = getDb(env);
+  if (await isLean(env)) return { error: "busy_today" as const };
   const { success } = await env.CHECK_LIMITER.limit({ key: `gauntlet:${ip}` });
   if (!success) return { error: "rate_limited" as const };
   const keys = await sourceCount(env, ip, now);

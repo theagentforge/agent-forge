@@ -476,3 +476,27 @@ export const arenaGauntletBouts = sqliteTable(
   },
   (t) => [uniqueIndex("arena_gauntlet_bouts_idx").on(t.gauntletId, t.idx)],
 );
+
+/**
+ * Skill scans (ADR 0026): one row per scanned text fingerprint. The text itself is never stored, only what the
+ * scanner found (rule, line, a short excerpt for people) and where it came from when it was fetched from a public URL.
+ * `public` rows (fetched from a public URL, or flagged) get a page at /scan/<fingerprint>; the rest only count.
+ */
+export const skillScans = sqliteTable(
+  "skill_scans",
+  {
+    fingerprint: text("fingerprint").primaryKey(),
+    name: text("name"),
+    sourceUrl: text("source_url"),
+    verdict: text("verdict", { enum: ["flagged", "caution", "clear"] }).notNull(),
+    findings: text("findings", { mode: "json" }).notNull(),
+    counts: text("counts", { mode: "json" }).notNull(),
+    rulesVersion: text("rules_version").notNull(),
+    bytes: integer("bytes").notNull(),
+    public: integer("public", { mode: "boolean" }).notNull().default(false),
+    scans: integer("scans").notNull().default(1),
+    firstSeen: integer("first_seen").notNull(),
+    lastSeen: integer("last_seen").notNull(),
+  },
+  (t) => [index("skill_scans_verdict_seen").on(t.verdict, t.lastSeen), index("skill_scans_source").on(t.sourceUrl)],
+);

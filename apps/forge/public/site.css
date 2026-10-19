@@ -493,3 +493,19 @@ body:has(.teams.print-view) .site-head,body:has(.teams.print-view) .site-foot{di
   .teams h2{margin-top:var(--s4);break-after:avoid}
   .teams a{text-decoration:none}
 }
+/* Skill scan (ADR 0026) */
+.scan-form{display:grid;gap:var(--s2);max-width:760px;margin:0 0 var(--s5)}
+.scan-form label{font-weight:600;margin-top:var(--s2)}
+.scan-form .btn{justify-self:start;margin-top:var(--s2)}
+.scan-quick{display:flex;gap:var(--s2);max-width:640px;margin:var(--s4) 0 var(--s2)}
+.scan-quick input{flex:1;min-width:0}
+@media (max-width:560px){.scan-quick{flex-direction:column}.scan-quick .btn{width:100%}}
+.scan-result{margin:var(--s4) 0}
+.scan-result.v-flagged{border-left:4px solid var(--flagged)}.scan-result.v-caution{border-left:4px solid var(--caution)}.scan-result.v-clear{border-left:4px solid var(--clear)}
+.scan-result.v-flagged .scan-verdict{color:var(--flagged)}.scan-result.v-caution .scan-verdict{color:var(--caution)}.scan-result.v-clear .scan-verdict{color:var(--clear)}
+.scan-result{color:var(--text)}
+.sev{font-family:var(--font-mono);font-size:var(--fs-sm);font-weight:600;white-space:nowrap}
+.sev-high{color:var(--flagged)}.sev-medium{color:var(--caution)}.sev-low{color:var(--text-muted)}
+code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
+.stat-row{display:flex;flex-wrap:wrap;gap:var(--s5);list-style:none;padding:0;margin:var(--s4) 0}
+.stat-row b{font-family:var(--font-mono);font-size:var(--fs-xl)}

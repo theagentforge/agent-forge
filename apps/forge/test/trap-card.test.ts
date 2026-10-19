@@ -86,10 +86,10 @@ describe("forge_traps data (ADR 0017 §2)", () => {
 });
 
 describe("/mcp/public (ADR 0017 §3)", () => {
-  it("works without signing in, read-only tools only, each annotated", async () => {
+  it("works without signing in, read-only tools only (the skill scan reads the open web), each annotated", async () => {
     const list = await result(await publicRpc("tools/list"));
     const tools = list.result.tools as { name: string; title: string; annotations: Record<string, boolean> }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["arena_results", "forge_check", "forge_traps"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["arena_results", "forge_check", "forge_scan", "forge_traps", "forge_watch"]);
     for (const t of tools) {
       expect(t.title).toBeTruthy();
       expect(t.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
@@ -112,7 +112,8 @@ describe("/mcp/public (ADR 0017 §3)", () => {
   it("tool names, titles and descriptions are pinned", async () => {
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(PUBLIC_TOOLS))))].map((b) => b.toString(16).padStart(2, "0")).join("");
     // Changing what an agent reads about a tool is deliberate: update this hash in the same change, with a reason.
-    expect(digest).toBe("7c61c382d963acab55e1037cef6c6fd832b81b371f3c2dd2bb086a7577256d80");
+    // 19 Oct 2026: forge_scan and forge_watch added (ADR 0026); both read only.
+    expect(digest).toBe("5cdf224acc2289553bbece7e421dc002aec0ad931e0fbb06111bdc98c960eb72");
   });
 });
 

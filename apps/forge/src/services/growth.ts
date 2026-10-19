@@ -1,6 +1,7 @@
 import { gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { isLean } from "./ops-mode";
 import { usageStats, visitStats } from "./usage";
 
 // ADR 0011 leading indicators that the Ops Digest reads: tool claims and sites embedding a Forge badge.
@@ -11,6 +12,7 @@ const MAX_HOSTS_PER_DAY = 500;
 
 /** Remembers which outside site showed a badge today (host only, no path or visitor data). */
 export async function recordBadgeReferrer(env: Pick<Env, "KV" | "PUBLIC_ORIGIN">, referer: string | null | undefined, now = Date.now()) {
+  if (await isLean(env)) return;
   if (!referer) return;
   let host: string;
   try {
@@ -31,6 +33,7 @@ const clickKey = (ms: number) => `home-click:${day(ms)}`;
  * total is kept: no cookie, no visitor data. Best-effort (a rare lost increment under concurrency is accepted).
  */
 export async function recordHomeClick(env: Pick<Env, "KV">, now = Date.now()) {
+  if (await isLean(env)) return;
   const n = Number((await env.KV.get(clickKey(now))) ?? 0);
   await env.KV.put(clickKey(now), String(n + 1), { expirationTtl: 40 * 86_400 });
 }
@@ -46,6 +49,7 @@ export type TrapCardEvent = "copy" | "txt" | "json";
 const cardKey = (e: TrapCardEvent, ms: number) => `trapcard-${e}:${day(ms)}`;
 
 export async function recordTrapCard(env: Pick<Env, "KV">, e: TrapCardEvent, now = Date.now()) {
+  if (await isLean(env)) return;
   const n = Number((await env.KV.get(cardKey(e, now))) ?? 0);
   await env.KV.put(cardKey(e, now), String(n + 1), { expirationTtl: 40 * 86_400 });
 }

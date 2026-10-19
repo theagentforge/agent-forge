@@ -5,3 +5,4 @@ export * from "./note-scan";
 export * from "./scoring";
 export * from "./verdict";
 export * from "./trapcard";
+export * from "./skill-scan";

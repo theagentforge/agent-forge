@@ -1,4 +1,5 @@
 import { html } from "hono/html";
+import { AGENT_LINE } from "./agent-line";
 import { sql } from "drizzle-orm";
 import { newTestCode } from "../services/connect-test";
 import { getDb } from "../services/db";
@@ -73,7 +74,7 @@ site.get("/connect", async (c) => {
 <p>If it supports MCP (most agents and many apps do), add this address. No sign-in needed:</p>
 ${copyBlock("url-any", links.pub)}
 <p class="small">Or send this to your agent and it will set itself up:</p>
-${copyBlock("send-agent", `Read ${origin}/skill.md and follow it to connect to The Agent Forge.`)}
+${copyBlock("send-agent", AGENT_LINE(origin))}
 <p class="small muted">Not sure? Pick your app below for step-by-step help.</p>
 </section>
 <ol class="checklist" aria-label="Your progress">

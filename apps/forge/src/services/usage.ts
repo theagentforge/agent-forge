@@ -1,4 +1,5 @@
 import { and, gte, like, sql } from "drizzle-orm";
+import { isLean } from "./ops-mode";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 
@@ -32,7 +33,7 @@ export function mcpCounters(endpoint: McpEndpoint, body: unknown): string[] {
 }
 
 export async function bump(env: Env, keys: string[], now = Date.now()) {
-  if (!keys.length) return;
+  if (!keys.length || (await isLean(env))) return;
   const db = getDb(env);
   const d = day(now);
   const counts = new Map<string, number>();

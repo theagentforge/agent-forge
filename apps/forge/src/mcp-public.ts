@@ -5,6 +5,8 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import { gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { trapsData } from "./arena/traps";
+import { agentView, fetchSkillText, scanAndRecord, watchStatus } from "./services/scans";
+import { SCAN_MAX_BYTES } from "@forge/shared";
 import { finishedRuns, modelName } from "./arena/views";
 import { getDb } from "./services/db";
 import { recordToolCheck } from "./services/feedback";
@@ -12,7 +14,7 @@ import { checkTool } from "./services/forge";
 import { recordCheck } from "./services/proof";
 
 // The anonymous, read-only MCP endpoint at /mcp/public (ADR 0017 §3). No sign-in, so it works with Claude's
-// "No sign-in" connector and the Gemini app. It only reads: checks, trap data and Arena results. Reports, votes
+// "No sign-in" connector and the Gemini app. It only reads: checks, skill scans (ADR 0026), trap data and Arena results. Reports, votes
 // and the ranked ladder stay on the signed-in /mcp. Every call is rate-limited per IP like the public web check.
 // The Gauntlet (ADR 0024) has its own anonymous endpoint, /mcp/gauntlet, so this one stays read-only as submitted
 // to the Claude directory.
@@ -46,6 +48,15 @@ export const PUBLIC_TOOLS = {
     title: "Arena trap data",
     description:
       "How often AI models fell for each planted trap in The Forge Arena's everyday jobs: trap names, fall rates with sample sizes, data date and the trap card version. Optionally for one task or one model.",
+  },
+  forge_scan: {
+    title: "Scan a skill before installing it",
+    description:
+      "Before installing an agent skill, plugin, MCP server or install script, scan its text for hidden instructions, piped installs, credential reads and data sent to throwaway endpoints. Give text (the file's contents) or url (a public code host). Returns rule ids and line numbers; no account needed.",
+  },
+  forge_watch: {
+    title: "Weekly check of installed skills",
+    description: "Give the sha256 fingerprints of skills and tools already installed (up to 100). Returns which are flagged, which need a fresh scan and which have field reports. Reads only.",
   },
   arena_results: {
     title: "Arena results by task",
@@ -108,6 +119,45 @@ export function createPublicServer(env: Env, ip: string) {
     await recordToolCheck(env, q.data);
     return json(await checkTool(env, q.data));
   });
+
+  server.registerTool(
+    "forge_scan",
+    {
+      ...PUBLIC_TOOLS.forge_scan,
+      inputSchema: z.object({
+        text: z.string().max(SCAN_MAX_BYTES).optional().describe("The full text of the skill file (SKILL.md), tool descriptions or install script"),
+        url: z.string().max(2048).optional().describe("Or a public URL: raw.githubusercontent.com, github.com/…/blob/…, gist, gitlab, bitbucket, codeberg, unpkg, jsdelivr"),
+        name: z.string().max(80).optional().describe("The skill or tool name, for the result page"),
+      }),
+      annotations: { ...READ_ONLY, openWorldHint: true },
+    },
+    async ({ text, url, name }) => {
+      if (await limited()) return json({ error: "rate_limited" }, true);
+      let body = text ?? "", sourceUrl: string | null = null;
+      if (!body && url) {
+        const got = await fetchSkillText(url);
+        if (!got.ok) return json({ error: got.error }, true);
+        body = got.text;
+        sourceUrl = got.url;
+      }
+      if (!body) return json({ error: "give text or url" }, true);
+      const { result, isPublic } = await scanAndRecord(env, body, { name, sourceUrl });
+      return json(agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }));
+    },
+  );
+
+  server.registerTool(
+    "forge_watch",
+    {
+      ...PUBLIC_TOOLS.forge_watch,
+      inputSchema: z.object({ fingerprints: z.array(z.string().regex(/^(sha256:)?[0-9a-f]{64}$/)).min(1).max(100).describe("sha256 of each installed skill file, as forge_scan returns it") }),
+      annotations: READ_ONLY,
+    },
+    async ({ fingerprints }) => {
+      if (await limited()) return json({ error: "rate_limited" }, true);
+      return json(await watchStatus(getDb(env), fingerprints.map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`))));
+    },
+  );
 
   server.registerTool(
     "forge_traps",

@@ -218,25 +218,20 @@ describe("arena status", () => {
   });
 });
 
-describe("the monthly OpenRouter cap (Dinike, 17 and 18 Oct 2026)", () => {
-  it("is $61.40 in October 2026 only ($65 less the fee, for Crucible 2: Hard), then $28.40 again by itself", async () => {
+describe("the cost guard caps (ADR 0027, Dinike 19 Oct 2026: no unexpected charges)", () => {
+  it("OpenRouter: $28.40 in October (the original $30 key limit, no top-up), then $10 a month", async () => {
     const { monthlyCap } = await import("../src/arena/runner");
-    expect(monthlyCap(Date.UTC(2026, 8, 30, 23, 59))).toBe(28.4);
-    expect(monthlyCap(Date.UTC(2026, 9, 17))).toBe(61.4);
-    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(61.4);
-    expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(28.4);
+    expect(monthlyCap(Date.UTC(2026, 9, 19))).toBe(28.4);
+    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(28.4);
+    expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(10);
+    expect(monthlyCap(Date.UTC(2027, 0, 1))).toBe(10);
   });
-});
 
-describe("the practice caps (Dinike, 15 and 16 Oct 2026)", () => {
-  it("is $8 a day to the end of 20 Oct UTC (Lab #3), $1.50 to the end of 25 Oct, then $0.25 by itself", async () => {
+  it("Workers AI practice stays inside the free 10,000 neurons a day ($0.10) from 19 Oct", async () => {
     const { practiceCap } = await import("../src/arena/runner");
-    expect(practiceCap(Date.UTC(2026, 9, 15, 12))).toBe(8); // Lab #3 before launch (Dinike, 16 Oct)
-    expect(practiceCap(Date.UTC(2026, 9, 20, 23, 59))).toBe(8);
-    expect(practiceCap(Date.UTC(2026, 9, 21, 0, 0))).toBe(1.5);
-    expect(practiceCap(Date.UTC(2026, 9, 25, 23, 59))).toBe(1.5);
-    expect(practiceCap(Date.UTC(2026, 9, 26, 0, 0))).toBe(0.25);
-    expect(practiceCap(Date.UTC(2026, 11, 1))).toBe(0.25);
+    expect(practiceCap(Date.UTC(2026, 9, 18, 12))).toBe(8); // Lab #3, approved by Dinike on 16 Oct
+    expect(practiceCap(Date.UTC(2026, 9, 19, 0, 0))).toBe(0.1);
+    expect(practiceCap(Date.UTC(2026, 11, 1))).toBe(0.1);
   });
 });
 

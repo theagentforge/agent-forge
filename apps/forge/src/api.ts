@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { arenaStatus } from "./arena/status";
+import { agentView, fetchSkillText, scanAndRecord, scanByFingerprint, scanPath, watchStatus } from "./services/scans";
+import { SCAN_MAX_BYTES } from "@forge/shared";
 import { growthStats } from "./services/growth";
 import { mcpHandler } from "./mcp";
 import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
@@ -106,9 +108,56 @@ publicApi.get("/api/v1/stats", async (c) => {
 publicApi.get("/api/v1/growth", async (c) => c.json(await growthStats(c.env), 200, { "Cache-Control": "public, max-age=300" }));
 
 /** GET /api/v1/arena/status — Arena spend against the budget and the run queue (public, for transparency). */
+const bodyOf = async (c: Context) => (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+
+// Skill scans (ADR 0026): free, no account, rate-limited per IP. Text in the body, or a URL on a public code host.
+const FP = /^(sha256:)?[0-9a-f]{64}$/;
+async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknown; url?: unknown; name?: unknown }) {
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const { success } = await c.env.CHECK_LIMITER.limit({ key: `scan:${ip}` });
+  if (!success) return c.json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  let text: string, sourceUrl: string | null = null;
+  if (typeof input.text === "string" && input.text.length) {
+    if (input.text.length > SCAN_MAX_BYTES) return c.json({ error: "too_large", max_bytes: SCAN_MAX_BYTES }, 413);
+    text = input.text;
+  } else if (typeof input.url === "string" && input.url.length <= 2048) {
+    const got = await fetchSkillText(input.url);
+    if (!got.ok) return c.json({ error: got.error, hosts: "raw.githubusercontent.com, github.com/…/blob/…, gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : 400);
+    text = got.text;
+    sourceUrl = got.url;
+  } else return c.json({ error: "give text or url" }, 400);
+  const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
+  return c.json(agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), 200, { "Cache-Control": "no-store" });
+}
+
+publicApi.post("/api/v1/scan", async (c) => {
+  const len = Number(c.req.header("content-length") ?? 0);
+  if (len > SCAN_MAX_BYTES * 2) return c.json({ error: "too_large", max_bytes: SCAN_MAX_BYTES }, 413);
+  return scanRequest(c, await bodyOf(c));
+});
+publicApi.get("/api/v1/scan", async (c) => scanRequest(c, { url: c.req.query("url"), name: c.req.query("name") }));
+publicApi.get("/api/v1/scan/:fp", async (c) => {
+  const fp = c.req.param("fp");
+  if (!FP.test(fp)) return c.json({ error: "not_found" }, 404);
+  const row = await scanByFingerprint(getDb(c.env), fp.startsWith("sha256:") ? fp : `sha256:${fp}`);
+  if (!row || !row.public) return c.json({ error: "not_found" }, 404);
+  return c.json({ verdict: row.verdict, fingerprint: row.fingerprint, rules_version: row.rulesVersion, counts: row.counts, findings: (row.findings as { rule: string; family: string; severity: string; line: number; column: number }[]).map((f) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })), source_url: row.sourceUrl, page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(row.fingerprint)}`, first_seen: new Date(row.firstSeen).toISOString(), scans: row.scans, guarantee: false }, 200, { "Cache-Control": "public, max-age=300" });
+});
+
+/** The weekly watch (ADR 0026): fingerprints in, status out. Reads only. */
+publicApi.post("/api/v1/watch", async (c) => {
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const { success } = await c.env.CHECK_LIMITER.limit({ key: `watch:${ip}` });
+  if (!success) return c.json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  const body = await bodyOf(c);
+  const raw = Array.isArray(body.fingerprints) ? body.fingerprints : [];
+  if (!raw.length || raw.length > 100) return c.json({ error: "give 1 to 100 fingerprints" }, 400);
+  const fps = raw.filter((x): x is string => typeof x === "string" && FP.test(x)).map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
+  return c.json(await watchStatus(getDb(c.env), fps), 200, { "Cache-Control": "no-store" });
+});
+
 // The Gauntlet over plain HTTP (ADR 0024), for agents that can fetch but don't speak MCP. Same calls as /mcp/public.
 const GAUNTLET_ID = /^g[0-9a-f]{32}$/;
-const bodyOf = async (c: Context) => (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
 
 publicApi.post("/api/v1/gauntlet", async (c) => {
   const body = await bodyOf(c);

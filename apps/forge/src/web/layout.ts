@@ -19,7 +19,7 @@ export interface PageOptions {
   /** JSON-LD object for search engines. */
   jsonLd?: Record<string, unknown>;
   noindex?: boolean;
-  nav?: "home" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
+  nav?: "home" | "scan" | "skillwatch" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
   /** Extra origins for script-src (e.g. Cloudflare Turnstile on forms). */
   scriptSrc?: string[];
   frameSrc?: string[];
@@ -33,8 +33,8 @@ export const TAGLINE = "AI, tested on everyday jobs.";
 
 /** Plain words for what people come for (ADR 0019 §6). Live Wire, Watchlist and Top Scouts live in the footer. */
 const NAV: [NonNullable<PageOptions["nav"]>, string, string][] = [
+  ["skillwatch", "/skill-watch", "Skill Watch"],
   ["arena", "/arena", "Arena"],
-  ["best", "/best", "Which AI?"],
   ["trapcard", "/trap-card", "Trap card"],
   ["check", "/check", "Check a tool"],
   ["methodology", "/methodology", "How it works"],
@@ -112,7 +112,7 @@ ${o.jsonLd ? html`<script type="application/ld+json">${raw(JSON.stringify(o.json
 <nav class="nav" aria-label="Main">
 ${NAV.map(([key, href, label]) => html`<a href="${href}"${o.nav === key ? raw(' aria-current="page"') : ""}>${label}</a>`)}
 </nav>
-<a class="btn primary chamfer head-cta" href="/gauntlet"${o.nav === "gauntlet" ? raw(' aria-current="page"') : ""}><span class="long">Test your agent</span><span class="short">Test</span></a>
+<a class="btn primary chamfer head-cta" href="/scan"${o.path.startsWith("/scan") ? raw(' aria-current="page"') : ""}><span class="long">Scan a skill</span><span class="short">Scan</span></a>
 </div>
 </header>
 <main id="main" class="wrap">

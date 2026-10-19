@@ -31,7 +31,7 @@ describe("home page Arena hero (ADR 0016)", () => {
   it("the H1 comes first, then the featured duel, server-rendered as a finished box score (works without JS)", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    const h1 = body.indexOf("<h1>See which AI you can trust with real&nbsp;jobs.</h1>");
+    const h1 = body.indexOf("<h1>Check a skill before your agent installs&nbsp;it.</h1>");
     const player = body.indexOf("data-duel=");
     expect(h1).toBeGreaterThan(0);
     expect(player).toBeGreaterThan(h1);
@@ -51,10 +51,9 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toContain("The Impossible Ask");
     expect(body).toContain("Practice replay · ");
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
-    // ADR 0024 §7: one main action, testing your own agent; the trap card stays for people without one.
-    expect(body).toContain(`href="/gauntlet?from=home">Test your agent free</a>`);
-    expect(body).toContain('No agent? <a href="/trap-card?from=home">Use the free trap card</a> in ChatGPT, Claude or Gemini.');
-    expect(body).toContain('href="/best?from=home"');
+    // ADR 0026: one main action, the skill scan, with the one-line agent install next to it.
+    expect(body).toContain('<form class="scan-quick" method="post" action="/scan">');
+    expect(body).toContain('href="/scan?from=home#agent-line"');
     expect(body).toContain('href="/arena/rules#featured"');
     // The tool check moved to the band below, and still works.
     expect(body.indexOf("Check a tool before your agent installs it")).toBeGreaterThan(player);
@@ -237,7 +236,7 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
     }
     const home = (await (await fetchWorker("/?format=json")).json()) as { featured_bout: never };
     const h = homeCardLines(home.featured_bout);
-    expect(h.headline).toBe("See which AI you can trust with real jobs.");
+    expect(h.headline).toBe("Check a skill before your agent installs it.");
     expect(h.bug).toMatch(/^Practice · Impossible Ask · .+: (PASS|FAIL|FOUL|TRAP CAUGHT) · .+: (PASS|FAIL|FOUL|TRAP CAUGHT)$/);
   });
 

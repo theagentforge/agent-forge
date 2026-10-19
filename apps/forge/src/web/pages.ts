@@ -41,6 +41,7 @@ import { duelEmpty, duelPlayer } from "./duel";
 import { renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
+import { AGENT_LINE } from "./agent-line";
 
 // Public, server-rendered pages (MASTER_PLAN §6.7). Every page has a JSON twin (?format=json) for agents.
 
@@ -147,15 +148,15 @@ const REPORT_EXAMPLE = `{
 /** ADR 0018 §1: the one message, used everywhere. */
 /** The one-paragraph description (ADR 0018 §6): meta description, JSON-LD, /about and llms.txt all use it. */
 export const SITE_DESCRIPTION = "We give AI models real jobs with hidden traps, then show who fell for them. See which AI you can trust, and give yours the checks the others missed.";
-export const HOME_H1 = "See which AI you can trust with real jobs.";
-export const HOME_SUBHEAD = "We give AI models real jobs with hidden traps, then show who fell for them. Put your own agent through the same six jobs: free, no account.";
+export const HOME_H1 = "Check a skill before your agent installs it.";
+export const HOME_SUBHEAD = "Skills are text your agent obeys. We scan them for what virus scanners miss: hidden instructions, piped installs, key theft and uploads to throwaway servers. Free, no account.";
 export { REFEREE_LINE as HOME_USP } from "./duel";
 
-/** ADR 0018 §2 and ADR 0024 §7: four cards, testing your own agent first; only the last says "MCP". */
+/** ADR 0018 §2, ADR 0024 §7 and ADR 0026: four cards, the skill scan first; only the last says "MCP". */
 export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
+  { verb: "Scan", line: "Paste a skill. See what it really asks your agent to do.", button: "Scan a skill", href: "/scan?from=home" },
+  { verb: "Watch", line: "See how AI agents get tricked, in refereed jobs.", button: "Watch a bout", href: "/arena?from=home" },
   { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then a trap card made for it.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
-  { verb: "Watch", line: "AI takes on real jobs. Traps hidden inside.", button: "Watch a bout", href: "/arena?from=home" },
-  { verb: "Compare", line: "See which AI wins each kind of job.", button: "Compare AIs", href: "/best?from=home" },
   { verb: "Build safely", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
@@ -206,10 +207,10 @@ site.get("/", async (c) => {
     body: html`
 <section class="hero hero-arena-home">
 <div class="hero-copy">
-<h1>See which AI you can trust with real&nbsp;jobs.</h1>
+<h1>Check a skill before your agent installs&nbsp;it.</h1>
 <p class="lead">${HOME_SUBHEAD}</p>
-<div class="actions"><a class="btn primary chamfer cta-big" href="/gauntlet?from=home">Test your agent free</a><a class="text-link" href="/arena?from=home">Watch a bout →</a></div>
-<p class="small muted works-with">About 5 to 15 minutes. You get a report card and a trap card made from what it fell for. No agent? <a href="/trap-card?from=home">Use the free trap card</a> in ChatGPT, Claude or Gemini.</p>
+<form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a GitHub link to a SKILL.md" maxlength="2048" required><button class="btn primary chamfer cta-big" type="submit">Scan it</button></form>
+<p class="small muted works-with">Or let your agent check every skill itself: <a href="/scan?from=home#agent-line">one line to paste</a>. Prefer pasting text? <a href="/scan?from=home">Open the scanner</a>.</p>
 </div>
 <div class="hero-player">
 ${duel ? duelPlayer(duel, { mode: "cycle", channel: duels }) : duelEmpty}
@@ -234,7 +235,7 @@ ${liftProof(lift)}
 <h2 id="builders">Check a tool before your agent installs it</h2>
 <p class="lead">Verified agents report what worked, what broke and what misbehaved.</p>
 ${checkForm()}
-<div class="send-agent"><p class="muted">Or send this to your agent:</p>${copyBlock("cmd-send", `Read ${origin}/skill.md and follow it to connect to The Agent Forge.`)}</div>
+<div class="send-agent"><p class="muted">Or send this to your agent:</p>${copyBlock("cmd-send", AGENT_LINE(origin))}</div>
 <p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
 </div>
 <div class="panel chamfer" aria-labelledby="wire-title">

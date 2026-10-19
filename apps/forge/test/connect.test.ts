@@ -13,7 +13,7 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
     expect(body.indexOf("Any AI app or agent")).toBeGreaterThan(0);
     expect(body.indexOf("Any AI app or agent")).toBeLessThan(body.indexOf('class="app-tiles"'));
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/mcp/public</code>`);
-    expect(body).toContain(`Read ${env.PUBLIC_ORIGIN}/skill.md and follow it`);
+    expect(body).toContain(`Read ${env.PUBLIC_ORIGIN}/skill.md and use it`);
   });
 
   it("shows the app tiles, a checklist that starts at 1 of 3, and one primary button per app", async () => {
@@ -65,7 +65,7 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
 describe("home page message (ADR 0018 §1–3)", () => {
   it("has the H1, the subhead, the referee line, the proof strip and the 4 cards in order", async () => {
     const body = await page("/");
-    const h1 = body.indexOf("See which AI you can trust");
+    const h1 = body.indexOf("Check a skill before your agent installs");
     expect(h1).toBeGreaterThan(0);
     expect(body.indexOf(HOME_SUBHEAD)).toBeGreaterThan(h1);
     expect(body).toContain(HOME_USP.replace("'", "&#39;"));
@@ -75,7 +75,7 @@ describe("home page message (ADR 0018 §1–3)", () => {
     if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
     const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
     if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);
-    const order = ["Test yours", "Watch", "Compare", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
+    const order = ["Scan", "Watch", "Test yours", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -83,6 +83,6 @@ describe("home page message (ADR 0018 §1–3)", () => {
   it("only the developer card says MCP, and every card has one button", () => {
     for (const card of VALUE_CARDS.slice(0, 3)) expect(card.line + card.button).not.toMatch(/MCP|LLM/);
     expect(VALUE_CARDS[3]!.line).toContain("MCP");
-    expect(VALUE_CARDS.map((v) => v.href)).toEqual(["/gauntlet?from=home", "/arena?from=home", "/best?from=home", "/check?from=home"]);
+    expect(VALUE_CARDS.map((v) => v.href)).toEqual(["/scan?from=home", "/arena?from=home", "/gauntlet?from=home", "/check?from=home"]);
   });
 });

@@ -10,6 +10,7 @@ import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
 import { refreshClipIndex } from "./arena/clips";
 import { sweepGauntletLogs } from "./arena/gauntlet";
+import { importSkillSeed } from "./services/skill-seed";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
 import { notFound, site } from "./web/pages";
@@ -22,6 +23,7 @@ import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
 import "./web/gauntlet";
+import "./web/scan";
 import "./web/arena-agent";
 import "./web/arena-methodology";
 import "./web/arena-clip";
@@ -124,6 +126,12 @@ export default {
       refreshClipIndex(env).then(
         (r) => console.log("clip_index", JSON.stringify(r)),
         (e) => console.error("clip_index_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
+      importSkillSeed(env).then(
+        (r) => console.log("skill_seed", JSON.stringify(r)),
+        (e) => console.error("skill_seed_failed", String(e)),
       ),
     );
     ctx.waitUntil(

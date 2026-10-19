@@ -1,4 +1,6 @@
 import { CustomFont, ImageResponse, cache } from "@cf-wasm/og/workerd";
+import { isLean } from "../services/ops-mode";
+import { scanByFingerprint } from "../services/scans";
 import type { DisplayVerdict } from "@forge/shared";
 import type { Context } from "hono";
 import { getDb } from "../services/db";
@@ -109,6 +111,8 @@ function loadFonts(env: Env) {
 
 /** Content-addressed cards are immutable; the page links to the current version with ?v=<hash>. */
 async function respond(c: Ctx, node: Node) {
+  // Cost guard (ADR 0027): in lean mode, no new drawing; the site-wide card is a static file.
+  if (await isLean(c.env)) return c.redirect("/og/site.png", 302);
   cache.setExecutionContext(c.executionCtx as unknown as ExecutionContext);
   const res = await ImageResponse.async(node as never, { width: 1200, height: 630, fonts: loadFonts(c.env) });
   const headers = new Headers(res.headers);
@@ -328,6 +332,35 @@ site.get("/og/arena/failures/:file{[A-Za-z]+-[A-Za-z]+-[0-9]+\\.png}", async (c)
         ...(l.worst ? [line(clip(l.worst, 70))] : []),
       ],
       `theagentforge.io/arena/failures/${b.entry.id}`,
+    ),
+  );
+});
+
+/**
+ * A skill scan card (ADR 0026), the share artifact: verdict, counts and the titles of the rules that fired. Template
+ * text only: rule titles are ours, and the only outside text is the source path from a public URL, clipped.
+ */
+site.get("/og/scan/:file{[0-9a-f]{64}\\.png}", async (c) => {
+  const row = await scanByFingerprint(getDb(c.env), `sha256:${c.req.param("file").replace(/\.png$/, "")}`);
+  if (!row || !row.public) return c.redirect("/og/site.png", 302);
+  const v = row.verdict as "flagged" | "caution" | "clear";
+  const counts = row.counts as { high: number; medium: number; low: number };
+  const titles = [...new Set((row.findings as { title: string }[]).map((f) => f.title))].slice(0, 3);
+  const src = row.sourceUrl ? row.sourceUrl.replace(/^https:\/\/(raw\.githubusercontent\.com|[^/]+)\//, "") : (row.name ?? "pasted skill");
+  const head = v === "flagged" ? "Flagged before install" : v === "caution" ? "Worth a look before install" : "No known risky patterns";
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { fontFamily: "JetBrains Mono", fontSize: 30, color: C.muted, marginBottom: "18px" }, `SKILL SCAN · ${clip(src, 52)}`),
+        el("div", { display: "flex", alignItems: "center", gap: "20px", marginBottom: "24px" }, [
+          punch(72, VERDICT_COLOR[v], ICON[v]),
+          el("span", { fontFamily: "Archivo Expanded", fontSize: 50, color: VERDICT_COLOR[v] }, head),
+        ]),
+        ...titles.map((t) => line(`· ${clip(t, 60)}`, 28, C.text)),
+        line(`${counts.high} high · ${counts.medium} medium · ${counts.low} low · rules ${row.rulesVersion}`),
+      ],
+      "theagentforge.io/scan",
     ),
   );
 });

@@ -19,10 +19,10 @@ describe("public site", () => {
   it("home page renders with headline, check box, live numbers and security headers", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    expect(body).toContain("See which AI you can trust with real&nbsp;jobs.");
+    expect(body).toContain("Check a skill before your agent installs&nbsp;it.");
     // Plain-word navigation (ADR 0019 §6); the insider pages move to the footer.
     const nav = body.slice(body.indexOf('class="nav"'), body.indexOf("</nav>", body.indexOf('class="nav"')));
-    for (const label of ["Arena", "Which AI?", "Trap card", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
+    for (const label of ["Skill Watch", "Arena", "Trap card", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
     expect(nav).not.toContain("Live Wire");
     expect(body).toContain('<a href="/wire">Live Wire</a>');
     expect(body).toContain("Check a tool before your agent installs it");
@@ -96,7 +96,7 @@ describe("public site", () => {
 
   it("the home page offers a line to send to your agent and points to the Arena", async () => {
     const { body } = await page("/");
-    expect(body).toContain("/skill.md and follow it to connect to The Agent Forge.");
+    expect(body).toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with The Forge.");
     expect(body).toContain('href="/arena"');
   });
 

@@ -1,6 +1,7 @@
 import { html, raw } from "hono/html";
 import { marked } from "marked";
 import census from "../../../../docs/reports/2026-10-mcp-registry-census.md";
+import skillScanReport from "../../../../docs/reports/2026-10-skill-scan.md";
 import labNotes from "../../../../lab/001-calm-vs-cheating/results/NOTES.md";
 import labRuns from "../../../../lab/001-calm-vs-cheating/results/runs.csv";
 import labPrereg from "../../../../lab/001-calm-vs-cheating/PREREGISTRATION.md";
@@ -26,6 +27,13 @@ interface Publication {
 }
 
 export const PUBLICATIONS: Publication[] = [
+  {
+    path: "/reports/skill-scan-2026-10",
+    markdown: skillScanReport,
+    description: "We scanned 9,930 public agent skills for the instructions virus scanners miss. No confirmed malware, but 14 pipe a download into a shell and 8 read the agent's whole key file.",
+    // The launch report (ADR 0026). Off until Dinike has read it: it names repositories.
+    live: false,
+  },
   {
     path: "/lab/3/results",
     markdown: lab3Results,

@@ -39,6 +39,8 @@ export const COUNTER_MINIMUMS = {
   trap_card_downloads: 25,
   // Proving Ground score pages (ADR 0023 §6): refereed bouts an agent needs before its rates are shown.
   scorecard_bouts: 3,
+  // Skill scans (ADR 0026): distinct fingerprints scanned.
+  skills_scanned: 25,
 } as const;
 
 export type CounterKey = keyof typeof COUNTER_MINIMUMS;

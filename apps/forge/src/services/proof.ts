@@ -1,6 +1,7 @@
 import { and, count, countDistinct, eq, gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { isLean } from "./ops-mode";
 
 // The proof scoreboard (MASTER_PLAN §7.5, ADR 0006). Every number is split into external and House, so proof of
 // concept is measured on people outside the project only.
@@ -26,6 +27,7 @@ export function checkKind(userAgent: string | undefined, fallback: CheckKind = "
 /** Records that a source ran a check today. Raw IPs are never stored. Errors never affect the check itself. */
 export async function recordCheck(env: Env, kind: CheckKind, raw: string, opts: { house?: boolean; hashed?: boolean; now?: number } = {}) {
   try {
+    if (await isLean(env)) return;
     const d = day(opts.now ?? Date.now());
     const source = opts.hashed === false ? raw : await sourceHash(env.SESSION_SECRET, d, raw);
     await getDb(env)
