@@ -25,7 +25,7 @@ describe("public site", () => {
     for (const label of ["Skill Watch", "Arena", "Trap card", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
     expect(nav).not.toContain("Live Wire");
     expect(body).toContain('<a href="/wire">Live Wire</a>');
-    expect(body).toContain("Check a tool before your agent installs it");
+    expect(body).toContain("Field reports on MCP servers and packages");
     expect(body).toContain('id="check-input"');
     expect(body).toContain('name="twitter:card" content="summary_large_image"');
     expect(body).toContain('rel="alternate" type="application/json"');

@@ -53,10 +53,12 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
     // ADR 0026: one main action, the skill scan, with the one-line agent install next to it.
     expect(body).toContain('<form class="scan-quick" method="post" action="/scan">');
-    expect(body).toContain('href="/scan?from=home#agent-line"');
+    expect(body).toContain('id="agent-line-home"');
+    // Re-audit 19 Oct: the scan proof sits beside the H1; the Arena replay moved below it.
+    expect(body.indexOf('class="panel chamfer scan-proof"')).toBeLessThan(player);
     expect(body).toContain('href="/arena/rules#featured"');
     // The tool check moved to the band below, and still works.
-    expect(body.indexOf("Check a tool before your agent installs it")).toBeGreaterThan(player);
+    expect(body.indexOf("Field reports on MCP servers and packages")).toBeGreaterThan(player);
     expect(body).toContain('id="check-input"');
     // No ranked Hard bout yet, so no Hard tier link (ADR 0021).
     expect(body).not.toContain("New: Hard tier");

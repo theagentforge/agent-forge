@@ -22,16 +22,22 @@ export function rawUrl(input: string): URL | null {
     return null;
   }
   if (u.protocol !== "https:" || u.username || u.password || u.port) return null;
-  if (u.hostname === "github.com") {
-    const m = /^\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/.exec(u.pathname);
-    if (!m) return null;
-    return new URL(`https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}`);
+  if (u.hostname === "github.com" || u.hostname === "www.github.com") {
+    const path = u.pathname.replace(/\/+$/, "");
+    // A file (blob or raw link), a skill folder (tree link: its SKILL.md), or a repository (its root SKILL.md).
+    const file = /^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/([^/]+)\/(.+)$/.exec(path);
+    if (file) return new URL(`https://raw.githubusercontent.com/${file[1]}/${file[2]}/${file[3]}/${file[4]}`);
+    const dir = /^\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.+))?$/.exec(path);
+    if (dir) return new URL(`https://raw.githubusercontent.com/${dir[1]}/${dir[2]}/${dir[3]}/${dir[4] ? `${dir[4]}/` : ""}SKILL.md`);
+    const repo = /^\/([^/]+)\/([^/.][^/]*)$/.exec(path);
+    if (repo) return new URL(`https://raw.githubusercontent.com/${repo[1]}/${repo[2]!.replace(/\.git$/, "")}/HEAD/SKILL.md`);
+    return null;
   }
   if (u.hostname === "gist.github.com") return null;
   return SCAN_HOSTS.includes(u.hostname) ? u : null;
 }
 
-export type FetchedText = { ok: true; text: string; url: string } | { ok: false; error: "unsupported_url" | "fetch_failed" | "too_large" | "not_text" };
+export type FetchedText = { ok: true; text: string; url: string } | { ok: false; error: "unsupported_url" | "not_found" | "fetch_failed" | "too_large" | "not_text" };
 
 export async function fetchSkillText(input: string, fetcher: typeof fetch = fetch): Promise<FetchedText> {
   const u = rawUrl(input);
@@ -42,6 +48,7 @@ export async function fetchSkillText(input: string, fetcher: typeof fetch = fetc
   } catch {
     return { ok: false, error: "fetch_failed" };
   }
+  if (res.status === 404) return { ok: false, error: "not_found" };
   if (!res.ok) return { ok: false, error: "fetch_failed" };
   const type = res.headers.get("content-type") ?? "";
   if (/^(image|audio|video|application\/(zip|octet-stream|pdf))/.test(type)) return { ok: false, error: "not_text" };
@@ -183,4 +190,21 @@ export function ruleFrequency(rows: { findings: unknown }[]) {
   const counts = new Map<string, number>();
   for (const r of rows) for (const id of new Set((r.findings as ScanFinding[]).map((f) => f.rule))) counts.set(id, (counts.get(id) ?? 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+/** A readable name for a scanned file: "libafl · trailofbits/skills" for a GitHub raw link, else the name or host. */
+export function skillLabel(sourceUrl: string | null, name?: string | null): { title: string; where: string | null } {
+  if (sourceUrl) {
+    try {
+      const u = new URL(sourceUrl);
+      const parts = u.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      const gh = u.hostname === "raw.githubusercontent.com" && parts.length >= 4;
+      const file = parts.at(-1) ?? "";
+      const folder = /^skill\.md$/i.test(file) && parts.length > (gh ? 4 : 1) ? parts.at(-2)! : file;
+      return { title: folder || u.hostname, where: gh ? `${parts[0]}/${parts[1]}` : u.hostname };
+    } catch {
+      /* fall through */
+    }
+  }
+  return { title: name || "Pasted skill", where: null };
 }

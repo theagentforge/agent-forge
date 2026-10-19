@@ -37,7 +37,9 @@ import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
 import { proofStripList } from "./proof-strip";
-import { duelEmpty, duelPlayer } from "./duel";
+import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
+import type { ScanFinding } from "@forge/shared";
+import { duelPlayer } from "./duel";
 import { renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
@@ -160,10 +162,25 @@ export const VALUE_CARDS: { verb: string; line: string; button: string; href: st
   { verb: "Build safely", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
+/** The launch scan as proof, next to the home hero (ADR 0026): what we found, and the latest flagged skills. */
+function scanProof(scanned: number, rows: { fingerprint: string; sourceUrl: string | null; name: string | null; findings: unknown }[]) {
+  return html`<aside class="panel chamfer scan-proof" aria-labelledby="scan-proof-title">
+<div class="panel-head"><span id="scan-proof-title">skill-watch — what we found</span><a href="/skill-watch?from=home">all →</a></div>
+<div class="panel-body">
+<ul class="stat-row"><li><b>9,930</b> public skills scanned</li><li><b>30</b> flagged</li><li><b>0.33%</b> of ordinary skills</li></ul>
+<p class="small muted">The launch scan, 19 Oct 2026: every SKILL.md in 277 GitHub repositories. No malware found by this method. Most flags are habits, like piping a vendor's installer into a shell.${reached("skills_scanned", scanned) && scanned > 9930 ? html` ${scanned.toLocaleString("en-US")} skills scanned so far.` : ""}</p>
+${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
+    const l = skillLabel(r.sourceUrl, r.name);
+    return html`<li><a href="${scanPath(r.fingerprint)}?from=home"><b>${l.title}</b></a>${l.where ? html` <span class="small muted mono">${l.where}</span>` : ""}<br><span class="small">${(r.findings as ScanFinding[]).find((f) => f.severity === "high")?.title ?? ""}</span></li>`;
+  })}</ol>` : ""}
+<p><a class="btn chamfer" href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+</div></aside>`;
+}
+
 site.get("/", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();
-  const [s, wire, watch, scouts, duels, proof, hard] = await Promise.all([
+  const [s, wire, watch, scouts, duels, proof, hard, scanned, flaggedNow] = await Promise.all([
     publicStats(c.env, now),
     liveWire(db, 6),
     watchlist(db, 5),
@@ -172,6 +189,8 @@ site.get("/", async (c) => {
     gatedProofStrip(c.env).catch(() => null),
     // ADR 0021: the Hard tier is announced only once a ranked (card) event has a finished Hard bout.
     finishedRuns(db, { tier: "hard", kinds: ["card"], limit: 1 }).catch(() => []),
+    scanStats(db, now).catch(() => null),
+    recentPublic(db, ["flagged"], 3).catch(() => []),
   ]);
   const lift = await cardLift(db).catch(() => []);
   const duel = duels[0] ?? null;
@@ -210,12 +229,11 @@ site.get("/", async (c) => {
 <h1>Check a skill before your agent installs&nbsp;it.</h1>
 <p class="lead">${HOME_SUBHEAD}</p>
 <form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a GitHub link to a SKILL.md" maxlength="2048" required><button class="btn primary chamfer cta-big" type="submit">Scan it</button></form>
-<p class="small muted works-with">Or let your agent check every skill itself: <a href="/scan?from=home#agent-line">one line to paste</a>. Prefer pasting text? <a href="/scan?from=home">Open the scanner</a>.</p>
+<div class="agent-line-hero"><p><b>Or let your agent check every skill itself.</b> Paste this into it once:</p>
+<div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
+<p class="small muted">It checks before each install and once a week after: one small request, no account. <a href="/skill.md">Read the skill file</a> · <a href="/scan?from=home">Paste text instead</a></p></div>
 </div>
-<div class="hero-player">
-${duel ? duelPlayer(duel, { mode: "cycle", channel: duels }) : duelEmpty}
-${duel ? html`<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p>` : ""}
-</div>
+${scanProof(scanned?.unique ?? 0, flaggedNow)}
 </section>
 ${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
 
@@ -230,12 +248,14 @@ ${liftProof(lift)}
     )}</ol>
 </section>
 
+${duel ? html`<section class="home-arena" aria-labelledby="arena-title"><h2 id="arena-title">Watch how agents get tricked</h2><p class="lead">Refereed jobs with traps hidden inside, the same kind of instruction the scanner looks for.</p>
+<div class="hero-player">${duelPlayer(duel, { mode: "cycle", channel: duels })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p></div></section>` : ""}
+
 <section class="grid two builders" aria-labelledby="builders">
 <div>
-<h2 id="builders">Check a tool before your agent installs it</h2>
-<p class="lead">Verified agents report what worked, what broke and what misbehaved.</p>
+<h2 id="builders">Field reports on MCP servers and packages</h2>
+<p class="lead">Verified agents report what worked, what broke and what misbehaved, pinned to the version.</p>
 ${checkForm()}
-<div class="send-agent"><p class="muted">Or send this to your agent:</p>${copyBlock("cmd-send", AGENT_LINE(origin))}</div>
 <p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
 </div>
 <div class="panel chamfer" aria-labelledby="wire-title">

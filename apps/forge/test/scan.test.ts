@@ -183,3 +183,43 @@ describe("disclosure for the launch scan (report v1.1)", () => {
     expect((await fetchWorker(`/api/v1/scan/${held.rows[0][2]}`)).status).toBe(404);
   });
 });
+
+describe("re-audit 19 Oct: result pages that spread and convert", () => {
+  it("say what the skill does in plain words, offer share buttons, a rescan and the one-line install", async () => {
+    const { shareLine } = await import("../src/web/scan");
+    const f = (title: string, severity = "high") => ({ rule: "X", family: "exec", severity, title, why: "", line: 1, column: 1, evidence: "" }) as any;
+    expect(shareLine("flagged", [f("A download piped straight into a shell")], "u")).toBe("My agent was about to install a skill that has a download piped straight into a shell. The Forge caught it before install: u");
+    expect(shareLine("flagged", [f("Reads an agent's own key file"), f("Sends data to a throwaway collection endpoint")], "u")).toContain("a skill that reads an agent's own key file and sends data to a throwaway collection endpoint.");
+    expect(shareLine("caution", [f("Turns off the agent's permission prompts", "medium")], "u")).toContain("It turns off the agent's permission prompts, so I read those lines first");
+
+    const fetcher = async () => new Response(BAD.replace("abc", "share"));
+    const got = await fetchSkillText("https://github.com/acme/skills/tree/main/weather", fetcher);
+    expect(got).toMatchObject({ ok: true, url: "https://raw.githubusercontent.com/acme/skills/main/weather/SKILL.md" });
+    expect(rawUrl("https://github.com/acme/weather-skill")?.toString()).toBe("https://raw.githubusercontent.com/acme/weather-skill/HEAD/SKILL.md");
+    expect(rawUrl("https://github.com/acme/weather-skill/")?.toString()).toBe("https://raw.githubusercontent.com/acme/weather-skill/HEAD/SKILL.md");
+    expect(await fetchSkillText("https://github.com/acme/none", async () => new Response("", { status: 404 }))).toMatchObject({ ok: false, error: "not_found" });
+
+    const { scanAndRecord } = await import("../src/services/scans");
+    const { result } = await scanAndRecord(env, (got as any).text, { sourceUrl: (got as any).url });
+    const body = await (await fetchWorker(`/scan/${result.fingerprint.slice(7)}`, { headers: { Accept: "text/html" } })).text();
+    expect(body).toContain("<h1 class=\"page-title\">weather <span class=\"muted title-where\">· acme/skills</span></h1>");
+    expect(body).toContain("https://x.com/intent/post?text=");
+    expect(body).toContain("from%3Dshare-x");
+    expect(body).toContain('name="url" value="https://raw.githubusercontent.com/acme/skills/main/weather/SKILL.md"');
+    expect(body).toContain("Check your own skills");
+    expect(body).toContain('id="agent-line-result"');
+  });
+
+  it("Skill Watch has readable names and an Atom feed", async () => {
+    const { scanAndRecord } = await import("../src/services/scans");
+    await scanAndRecord(env, `${BAD}\n# atom`, { sourceUrl: "https://raw.githubusercontent.com/acme/atom/main/skills/feedy/SKILL.md" });
+    const watch = await (await fetchWorker("/skill-watch", { headers: { Accept: "text/html" } })).text();
+    expect(watch).toContain("<b>feedy</b>");
+    expect(watch).toContain('href="/skill-watch.atom"');
+    const atom = await fetchWorker("/skill-watch.atom");
+    expect(atom.headers.get("Content-Type")).toContain("application/atom+xml");
+    const xml = await atom.text();
+    expect(xml).toContain("<title>Flagged: feedy (acme/atom)</title>");
+    expect(xml).not.toContain("webhook.site");
+  });
+});

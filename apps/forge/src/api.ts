@@ -122,7 +122,7 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
     text = input.text;
   } else if (typeof input.url === "string" && input.url.length <= 2048) {
     const got = await fetchSkillText(input.url);
-    if (!got.ok) return c.json({ error: got.error, hosts: "raw.githubusercontent.com, github.com/…/blob/…, gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : 400);
+    if (!got.ok) return c.json({ error: got.error, hosts: "raw.githubusercontent.com, github.com (file, folder or repository links), gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : got.error === "not_found" ? 404 : 400);
     text = got.text;
     sourceUrl = got.url;
   } else return c.json({ error: "give text or url" }, 400);

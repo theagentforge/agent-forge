@@ -3,9 +3,10 @@ import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSu
 import { html } from "hono/html";
 import { reached } from "../services/counters";
 import { getDb } from "../services/db";
-import { fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats } from "../services/scans";
+import { fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
 import { recordBadgeReferrer } from "../services/growth";
 import { AGENT_LINE } from "./agent-line";
+import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
 import { copyBlock } from "./components";
 import { send, site } from "./pages";
@@ -17,6 +18,30 @@ import { send, site } from "./pages";
 const SEV_LABEL: Record<ScanSeverity, string> = { high: "High", medium: "Medium", low: "Low" };
 const verdictWord = { flagged: "Flagged", caution: "Caution", clear: "No known risky patterns" } as const;
 const vClass = { flagged: "flagged", caution: "caution", clear: "clear" } as const;
+
+/** The sentence people share from a result page, with the page link tagged by where it's shared. */
+export function shareLine(verdict: "flagged" | "caution" | "clear", findings: ScanFinding[], url: string) {
+  const what = patternPhrase(findings);
+  if (verdict === "flagged") return `My agent was about to install a skill that ${what}. The Forge caught it before install: ${url}`;
+  if (verdict === "caution") return `Checked a skill before my agent installed it. It ${what}, so I read those lines first: ${url}`;
+  return `Checked a skill before my agent installed it: no known risky patterns. Free scan, no account: ${url}`;
+}
+
+/** The two ways in, for anyone who lands on a result: scan their own, or give their agent the one line. */
+function checkYours(origin: string, from: string) {
+  return html`<section class="check-yours panel chamfer panel-body" aria-labelledby="check-yours">
+<h2 id="check-yours">Check your own skills</h2>
+<form class="scan-quick" method="post" action="/scan?from=${from}"><label class="sr-only" for="yours-url">Link to a skill file</label><input id="yours-url" name="url" type="url" inputmode="url" placeholder="Paste a GitHub link to a SKILL.md" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
+<p>Or paste this into your agent once, and it checks every skill before installing it:</p>
+<div class="copy-wrap">${copyBlock(`agent-line-${from}`, AGENT_LINE(origin))}</div>
+<p class="small muted">Free, no account. <a href="/skill.md">Read the skill file first</a>.</p>
+</section>`;
+}
+
+function shareButtons(text: string, url: string) {
+  const enc = encodeURIComponent;
+  return html`<p class="share-buttons small"><a class="btn chamfer" href="https://x.com/intent/post?text=${enc(text)}" target="_blank" rel="noopener">Post on X</a> <a class="btn chamfer" href="https://bsky.app/intent/compose?text=${enc(text)}" target="_blank" rel="noopener">Bluesky</a> <a class="btn chamfer" href="https://www.linkedin.com/sharing/share-offsite/?url=${enc(url)}" target="_blank" rel="noopener">LinkedIn</a></p>`;
+}
 
 function scanForm(prefill: { url?: string; text?: string } = {}) {
   return html`<form class="scan-form" method="post" action="/scan">
@@ -80,7 +105,7 @@ site.post("/scan", async (c) => {
   } else if (url) {
     const got = await fetchSkillText(url);
     if (!got.ok)
-      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't on a public code host we read from. Use a GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file itself, or paste its text." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
+      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't on a public code host we read from. Use a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
       body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : "");
@@ -119,19 +144,26 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
   const origin = c.env.PUBLIC_ORIGIN;
   const row = await scanByFingerprint(getDb(c.env), `sha256:${c.req.param("hex")}`);
   if (!row || !row.public) return c.notFound();
-  const share = `${row.verdict === "flagged" ? "My agent was about to install a skill that" : "Scanned a skill before my agent installed it:"} ${[...new Set((row.findings as ScanFinding[]).filter((f) => f.severity !== "low").map((f) => f.title.toLowerCase()))].slice(0, 2).join(" and ") || "no known risky patterns"}. ${origin}${scanPath(row.fingerprint)}`;
+  const findings = row.findings as ScanFinding[];
+  const page = `${origin}${scanPath(row.fingerprint)}`;
+  const label = skillLabel(row.sourceUrl, row.name);
+  const named = label.where ? `${label.title} · ${label.where}` : label.title;
   return send(c, {
-    title: `${verdictWord[row.verdict]}: ${row.sourceUrl ? row.sourceUrl.replace(/^https:\/\//, "") : (row.name ?? "skill scan")}`,
-    description: `${scanSummary({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number> })} Free skill scan by The Agent Forge.`,
+    title: `${verdictWord[row.verdict]}: ${named}`,
+    description: `${row.verdict === "clear" ? "No known risky patterns." : `This skill ${patternPhrase(findings)}.`} ${scanSummary({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number> })} Free skill scan by The Agent Forge.`,
     path: scanPath(row.fingerprint),
     image: `/og/scan/${row.fingerprint.replace("sha256:", "")}.png`,
     nav: "scan",
     body: html`<p class="eyebrow">Skill scan · first seen ${new Date(row.firstSeen).toISOString().slice(0, 10)} · scanned ${row.scans} ${row.scans === 1 ? "time" : "times"}</p>
-<h1 class="page-title mono-title">${row.sourceUrl ? html`<a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a>` : (row.name ?? "Pasted skill")}</h1>
-${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number>, findings: row.findings as ScanFinding[], fingerprint: row.fingerprint, rulesVersion: row.rulesVersion })}
-<section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", share)}</div>
-${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Put this badge in its README. It always shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${origin}${scanPath(row.fingerprint)})`)}</div>` : ""}</section>
-<p class="small muted">This page shows text patterns in one exact version of the file (its fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>`,
+<h1 class="page-title">${label.title}${label.where ? html` <span class="muted title-where">· ${label.where}</span>` : ""}</h1>
+${row.sourceUrl ? html`<p class="small mono source-link"><a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a></p>` : ""}
+${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number>, findings, fingerprint: row.fingerprint, rulesVersion: row.rulesVersion })}
+<section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", shareLine(row.verdict, findings, `${page}?from=share`))}</div>
+${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page}?from=share-li`)}
+${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Put this badge in its README. It always shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
+${row.sourceUrl && row.verdict !== "clear" ? html`<form method="post" action="/scan?from=rescan"><input type="hidden" name="url" value="${row.sourceUrl.replace(/\/[0-9a-f]{40}\//, "/HEAD/")}"><p>Your skill? Change it, then <button class="btn chamfer" type="submit">Scan the latest version</button> The new version gets its own page.</p></form>` : ""}</section>
+<p class="small muted">This page shows text patterns in one exact version of the file (its fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>
+${checkYours(origin, "result")}`,
   });
 });
 
@@ -152,17 +184,38 @@ site.get("/skill-watch", async (c) => {
 <h1 class="page-title">What skills tell agents to do</h1>
 <p class="lead">Public skills that matched a risky pattern, newest first. Each links to the exact lines. A match is a reason to read, not a verdict on the author.</p>
 ${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skills scanned</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> flagged</li><li><b>${stats.caution.toLocaleString("en-US")}</b> caution</li></ul>` : ""}
+${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner test files, which quote attacks on purpose, and results we hold back while their maintainers hear from us. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills were flagged.</p>` : ""}
 ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table"><thead><tr><th>Pattern</th><th class="num">Skills</th></tr></thead><tbody>${freq.map(([id, n]) => html`<tr><td><a href="/scan/rules#${id}">${rule(id)?.title ?? id}</a></td><td class="num">${n}</td></tr>`)}</tbody></table></section>` : ""}
 <section><h2>Newest</h2>${
       flagged.length
         ? html`<table class="table stack"><thead><tr><th>Verdict</th><th>Skill</th><th>Top pattern</th><th class="num">Seen</th></tr></thead><tbody>${flagged.map((r) => {
             const top = (r.findings as ScanFinding[])[0];
-            return html`<tr><td><span class="verdict v-${vClass[r.verdict]} chamfer">${verdictWord[r.verdict]}</span></td><td class="mono wide"><a href="${scanPath(r.fingerprint)}">${r.sourceUrl ? r.sourceUrl.replace(/^https:\/\/(raw\.githubusercontent\.com\/)?/, "") : (r.name ?? "pasted skill")}</a></td><td data-label="Top pattern">${top?.title ?? "—"}</td><td class="num" data-label="Seen">${new Date(r.lastSeen).toISOString().slice(0, 10)}</td></tr>`;
+            return html`<tr><td><span class="verdict v-${vClass[r.verdict]} chamfer">${verdictWord[r.verdict]}</span></td><td class="wide">${(() => {
+              const l = skillLabel(r.sourceUrl, r.name);
+              return html`<a href="${scanPath(r.fingerprint)}"><b>${l.title}</b></a>${l.where ? html` <span class="small muted mono">${l.where}</span>` : ""}`;
+            })()}</td><td data-label="Top pattern">${top?.title ?? "—"}</td><td class="num" data-label="Seen">${new Date(r.lastSeen).toISOString().slice(0, 10)}</td></tr>`;
           })}</tbody></table>`
         : html`<p class="empty">Nothing flagged yet. <a href="/scan">Scan a skill</a>.</p>`
     }</section>
-<p class="small muted"><a href="/scan">Scan a skill</a> · <a href="/scan/rules">The rules</a> · <a href="/skill-watch?format=json">JSON</a></p>`,
+<p class="small muted"><a href="/scan">Scan a skill</a> · <a href="/scan/rules">The rules</a> · <a href="/skill-watch.atom">Follow (Atom feed)</a> · <a href="/skill-watch?format=json">JSON</a></p>
+${checkYours(c.env.PUBLIC_ORIGIN, "skill-watch")}`,
   });
+});
+
+const xmlEsc = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
+
+/** Skill Watch as an Atom feed, for researchers and press who follow it in a reader. Flagged results only. */
+site.get("/skill-watch.atom", async (c) => {
+  const origin = c.env.PUBLIC_ORIGIN;
+  const rows = await recentPublic(getDb(c.env), ["flagged"], 30);
+  const updated = new Date(rows[0]?.lastSeen ?? Date.UTC(2026, 9, 19)).toISOString();
+  const entries = rows.map((r) => {
+    const l = skillLabel(r.sourceUrl, r.name);
+    const url = `${origin}${scanPath(r.fingerprint)}`;
+    return `<entry><id>${url}</id><title>${xmlEsc(`Flagged: ${l.title}${l.where ? ` (${l.where})` : ""}`)}</title><link href="${xmlEsc(`${url}?from=atom`)}"/><updated>${new Date(r.lastSeen).toISOString()}</updated><summary>${xmlEsc(`This skill ${patternPhrase(r.findings as ScanFinding[])}. A match is a reason to read the line, not a verdict on the author.`)}</summary></entry>`;
+  });
+  const xml = `<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom"><id>${origin}/skill-watch</id><title>Skill Watch: The Agent Forge</title><subtitle>Agent skills that matched a high-risk pattern in the Forge's free scanner.</subtitle><link href="${origin}/skill-watch"/><link rel="self" href="${origin}/skill-watch.atom"/><updated>${updated}</updated><author><name>The Agent Forge</name></author>${entries.join("")}</feed>`;
+  return c.body(xml, 200, { "Content-Type": "application/atom+xml; charset=utf-8", "Cache-Control": "public, max-age=900" });
 });
 
 /**

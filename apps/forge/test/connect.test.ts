@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { defaultTab, installLinks } from "../src/web/connect";
-import { HOME_SUBHEAD, HOME_USP, VALUE_CARDS } from "../src/web/pages";
+import { HOME_SUBHEAD, VALUE_CARDS } from "../src/web/pages";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -68,7 +68,9 @@ describe("home page message (ADR 0018 §1–3)", () => {
     const h1 = body.indexOf("Check a skill before your agent installs");
     expect(h1).toBeGreaterThan(0);
     expect(body.indexOf(HOME_SUBHEAD)).toBeGreaterThan(h1);
-    expect(body).toContain(HOME_USP.replace("'", "&#39;"));
+    // The referee line travels with the Arena replay, which now sits below the scan; the hero shows the scan proof.
+    expect(body).toContain("public skills scanned");
+    expect(body).toContain("/reports/skill-scan-2026-10?from=home");
     // ADR 0023 §3: proof-strip items appear only from their minimums (10 bouts, 25 tools checked), never as a zero.
     expect(body).not.toMatch(/<b>0<\/b>/);
     const bouts = /<b>([\d,]+)<\/b> bouts? refereed/.exec(body);

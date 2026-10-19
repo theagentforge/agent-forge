@@ -509,3 +509,18 @@ body:has(.teams.print-view) .site-head,body:has(.teams.print-view) .site-foot{di
 code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .stat-row{display:flex;flex-wrap:wrap;gap:var(--s5);list-style:none;padding:0;margin:var(--s4) 0}
 .stat-row b{font-family:var(--font-mono);font-size:var(--fs-xl)}
+/* Re-audit 19 Oct: the home hero carries the scan proof and the one-line agent install; result pages share and convert. */
+.agent-line-hero{margin:var(--s5) 0 0;max-width:640px}
+.agent-line-hero p{margin:0 0 var(--s2)}
+.scan-proof .stat-row{gap:var(--s4);margin:0 0 var(--s3)}
+.scan-proof .stat-row li{flex:1 1 30%;min-width:8rem}
+.proof-list{list-style:none;padding:0;margin:var(--s3) 0 var(--s4);display:grid;gap:var(--s3)}
+.proof-list li{border-left:3px solid var(--flagged);padding-left:var(--s3)}
+.home-arena{margin:var(--s7) 0}
+.home-arena .hero-player{max-width:760px}
+.title-where{font-size:.6em;font-weight:500}
+.source-link{overflow-wrap:anywhere;margin-top:calc(-1 * var(--s2))}
+.scan-result .mono,.scan-form+section .mono,p .mono{overflow-wrap:anywhere}
+.share-buttons{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.check-yours{margin:var(--s6) 0}
+.check-yours h2{margin-top:0}
