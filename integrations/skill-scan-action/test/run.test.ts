@@ -45,7 +45,10 @@ describe("inputs and globs", () => {
   it("matches ** across folders and * within one", () => {
     expect(globToRegExp("**/SKILL.md").test("SKILL.md")).toBe(true);
     expect(globToRegExp("**/SKILL.md").test("skills/a/b/SKILL.md")).toBe(true);
-    expect(globToRegExp(".claude/**/*.md").test(".claude/commands/x.md")).toBe(true);
+    expect(globToRegExp(".claude/commands/**/*.md").test(".claude/commands/x.md")).toBe(true);
+    const i = readInputs({}) as Inputs;
+    expect(matcher(i.paths)(".claude/worktrees/w1/docs/PLAN.md")).toBe(false);
+    expect(matcher(i.ignore)(".claude/worktrees/w1/skills/x/SKILL.md")).toBe(true);
     expect(globToRegExp("docs/*.md").test("docs/a/b.md")).toBe(false);
     const m = matcher(["**/node_modules/**"]);
     expect(m("a/node_modules/x/SKILL.md")).toBe(true);

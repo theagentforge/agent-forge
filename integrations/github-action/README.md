@@ -18,6 +18,15 @@ jobs:
       - uses: theagentforge/forge-check@v1
 ```
 
+## Also in this repo: skill scan for pull requests
+[`skill-scan/`](skill-scan#readme) scans the agent skills and instruction files in each pull request (SKILL.md,
+AGENTS.md, CLAUDE.md, Cursor and Copilot rules) for hidden instructions, piped installs and key theft. It runs on
+the runner, and no file leaves GitHub:
+
+```yaml
+      - uses: theagentforge/forge-check/skill-scan@v1
+```
+
 ## What it checks
 - **MCP servers in your config files:**
   - Files read by default: `.mcp.json`, `mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`,

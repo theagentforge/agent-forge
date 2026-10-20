@@ -1,5 +1,7 @@
 # Forge skill scan (GitHub Action)
 
+Published in the `skill-scan/` folder of [theagentforge/forge-check](https://github.com/theagentforge/forge-check), so you use it as `theagentforge/forge-check/skill-scan@v1`.
+
 Agent skills and instruction files are text your AI agent obeys. This action reads the ones in each pull request,
 including `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, Cursor rules and Copilot instructions, and flags what virus
 scanners miss: downloads piped into a shell, reads of key files, data sent to throwaway servers, hidden
@@ -23,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: theagentforge/skill-scan@v1
+      - uses: theagentforge/forge-check/skill-scan@v1
 ```
 
 For the strongest supply-chain safety, pin both actions to a full commit SHA instead of `@v5` and `@v1`.
@@ -43,7 +45,7 @@ the line notes and job summary still show every finding.
 ## Inputs
 | Input | Default | What it does |
 |---|---|---|
-| `paths` | `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` anywhere, plus `.claude/**/*.md`, `.cursor/rules/**`, `.cursorrules`, `.windsurfrules` and Copilot instructions | Which files to scan, as globs, one per line |
+| `paths` | `SKILL.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` anywhere, plus `.claude/commands`, `.claude/agents` and `.claude/rules`, `.cursor/rules/**`, `.cursorrules`, `.windsurfrules` and Copilot instructions | Which files to scan, as globs, one per line |
 | `ignore` | none (`node_modules`, `vendor` and `dist` are always skipped) | Globs to skip, for example security courses or test fixtures that quote attacks on purpose |
 | `changed-only` | `auto` | On a pull request, scan only the files it changed. On other events, scan every matching file |
 | `fail-on` | `high` | `high`, `medium` (also fail on medium), or `never` (report only) |
@@ -64,7 +66,7 @@ permissions:
   security-events: write
 steps:
   - uses: actions/checkout@v5
-  - uses: theagentforge/skill-scan@v1
+  - uses: theagentforge/forge-check/skill-scan@v1
     with:
       sarif-file: forge-skill-scan.sarif
       fail-on: never

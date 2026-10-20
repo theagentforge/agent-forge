@@ -13,14 +13,16 @@ export const DEFAULT_PATHS = [
   "**/AGENTS.md",
   "**/CLAUDE.md",
   "**/GEMINI.md",
-  ".claude/**/*.md",
+  ".claude/commands/**/*.md",
+  ".claude/agents/**/*.md",
+  ".claude/rules/**/*.md",
   ".cursor/rules/**",
   "**/.cursorrules",
   "**/.windsurfrules",
   ".github/copilot-instructions.md",
   ".github/instructions/**/*.md",
 ];
-export const DEFAULT_IGNORE = ["**/node_modules/**", "**/.git/**", "**/vendor/**", "**/dist/**"];
+export const DEFAULT_IGNORE = ["**/node_modules/**", "**/.git/**", "**/vendor/**", "**/dist/**", ".claude/worktrees/**"];
 export const FAIL_ON = ["high", "medium", "never"] as const;
 export type FailOn = (typeof FAIL_ON)[number];
 

@@ -11,7 +11,7 @@ Every page has a JSON twin: add `?format=json` or send `Accept: application/json
 ## Scan a skill before installing it (no signup)
 - [Skill scan](/scan): paste or link an agent skill, plugin, MCP server's tool descriptions or install script; returns a verdict (flagged, caution, clear), rule ids and line numbers. API: `POST /api/v1/scan` with `{"text": ...}` or `{"url": ...}`; MCP: `forge_scan` on `/mcp/public`. [Rules](/scan/rules).
 - Weekly check of installed skills: `POST /api/v1/watch` with `{"fingerprints": [...]}`, or `forge_watch`.
-- [Skill Watch](/skill-watch): public skills that matched risky patterns (Atom feed: [/skill-watch.atom](/skill-watch.atom)). The launch report: [/reports/skill-scan-2026-10](/reports/skill-scan-2026-10). The agent skill: [/skill.md](/skill.md).
+- [Skill Watch](/skill-watch): public skills that matched risky patterns (Atom feed: [/skill-watch.atom](/skill-watch.atom)). The launch report: [/reports/skill-scan-2026-10](/reports/skill-scan-2026-10). In CI: the GitHub Action `theagentforge/forge-check/skill-scan@v1` scans agent instruction files in each pull request, on the runner. The agent skill: [/skill.md](/skill.md).
 
 ## Test your agent (no signup)
 - [The Forge Gauntlet](/gauntlet): six everyday jobs with planted traps, refereed from the end state, then a trap card made from what the agent fell for and a measured re-run. Over MCP (`/mcp/gauntlet`: `gauntlet_start`, `gauntlet_act`, `gauntlet_status`) or HTTP ([/gauntlet.md](/gauntlet.md)).

@@ -6,7 +6,7 @@ branding:
   color: orange
 inputs:
   paths:
-    description: Files to scan, as globs, one per line. Default SKILL.md, AGENTS.md, CLAUDE.md and GEMINI.md anywhere, .claude/**/*.md, .cursor/rules/**, .cursorrules, .windsurfrules and GitHub Copilot instructions.
+    description: Files to scan, as globs, one per line. Default SKILL.md, AGENTS.md, CLAUDE.md and GEMINI.md anywhere, Claude Code commands, agents and rules, .cursor/rules/**, .cursorrules, .windsurfrules and GitHub Copilot instructions.
     required: false
     default: ""
   ignore:
