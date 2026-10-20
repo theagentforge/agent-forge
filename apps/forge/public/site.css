@@ -712,3 +712,4 @@ p.mono,.mono-break{overflow-wrap:anywhere}
 .lab-cats .num{text-align:right;white-space:nowrap}
 .lab-cats td.is-card{color:var(--clear);font-weight:700}
 .lab-cats tr.flat td.is-card{color:var(--text)}
+@media (max-width:640px){.lab-cats td.is-card .muted{display:block;font-size:var(--fs-xs);font-weight:500}.lab-cats th,.lab-cats td{padding:8px 4px}}
