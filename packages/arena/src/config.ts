@@ -18,7 +18,7 @@ export const VERDICT_RUNS = 30;
 
 export const DIVISIONS = {
   heavyweight: { name: "Heavyweight", note: "Each lab's everyday workhorse model." },
-  lightweight: { name: "Lightweight", note: "Open-weights and value models." },
+  lightweight: { name: "Lightweight", note: "Open models and low-cost models." },
 } as const;
 export type Division = keyof typeof DIVISIONS;
 

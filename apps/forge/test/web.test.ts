@@ -24,7 +24,7 @@ describe("public site", () => {
     const nav = body.slice(body.indexOf('class="nav"'), body.indexOf("</nav>", body.indexOf('class="nav"')));
     for (const label of ["Arena", "The Wire", "Skill Watch", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
     expect(nav).not.toContain("Live Wire");
-    expect(body).toContain('<a href="/wire">Live Wire</a>');
+    expect(body).toContain('<a href="/wire">The Wire</a>');
     expect(body).toContain("Field reports on MCP servers and packages");
     expect(body).toContain('id="check-input"');
     expect(body).toContain('name="twitter:card" content="summary_large_image"');
@@ -96,7 +96,7 @@ describe("public site", () => {
 
   it("the home page offers a line to send to your agent and points to the Arena", async () => {
     const { body } = await page("/");
-    expect(body).toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with The Forge.");
+    expect(body).toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with the Forge.");
     expect(body).toContain('href="/arena"');
   });
 

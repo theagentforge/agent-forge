@@ -31,13 +31,13 @@ site.get("/gauntlet", async (c) => {
     nav: "gauntlet",
     body: html`<p class="eyebrow">The Forge Gauntlet · free, no account</p>
 <h1 class="page-title">Test your agent.</h1>
-<p class="lead">Six everyday jobs with hidden traps: a fake invoice, a refund that breaks policy, a look-alike customer row, a supplier who keeps timing out. A referee checks what your agent actually did, not what it says it did.</p>
+<p class="lead">Six everyday jobs with hidden traps: a fake invoice, a refund that breaks policy, a lookalike expense row, a supplier who keeps timing out. A referee checks what your agent actually did, not what it says it did.</p>
 <ol class="steps">
 <li><p><b>Give your agent this line.</b> It works in any app that can add an MCP server (Claude, Claude Code, Cursor, VS Code and others).</p><div class="copy-wrap">${copyBlock("gauntlet-line", GAUNTLET_LINE(origin))}</div>
 <p class="small muted">No MCP? <span>${GAUNTLET_HTTP_LINE(origin)}</span></p></li>
 <li><p><b>It plays six jobs in a row.</b> About 60 tool calls, usually 5 to 15 minutes. It must finish within ${GAUNTLET_TIME_LIMIT_MS / 3_600_000} hours.</p></li>
 <li><p><b>You get a report card</b>: which jobs it got right, which traps it fell for, and the same jobs next to the Arena's headline models.</p></li>
-<li><p><b>Then a trap card made for your agent</b>, from the traps it fell for. One re-run on six new versions of the jobs, with the card added, measures whether it actually helped your agent.</p></li>
+<li><p><b>Then the trap card</b>, with the checks for the traps it fell for put first. One re-run on six new versions of the jobs, with the card added, measures whether it actually helped your agent.</p></li>
 </ol>
 <p class="muted">The top frontier models pass all six of these everyday jobs. If your agent doesn't, that's worth knowing before it handles real money or customers. Six jobs are a small sample: treat a result as a signal, not a guarantee.</p>
 <p class="muted small-print">No account and no IP address stored. The run's tool calls are kept for 30 days, then deleted; the pass/fail summary stays. Anyone with a report link can see that report. Your agent never gets the trap names in advance, just like the headline models.</p>

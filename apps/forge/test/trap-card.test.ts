@@ -59,7 +59,7 @@ describe("trap card (ADR 0017 §1)", () => {
     expect(j.signature).toMatch(/^hmac-sha256:/);
     expect(j.model_specific_lines).toContain("Lab #3");
     expect(page).toContain(j.sha256);
-    expect(page).toContain("It doesn't change your AI, it reminds it what to check. Keep your own approval step for payments.");
+    expect(page).toContain("It doesn't change your AI. It reminds it what to check. Keep your own approval step for payments.");
     expect(page).toContain("Keep your own approval step for payments.");
     for (const app of ["ChatGPT", "Claude", "Gemini", "Copilot"]) expect(page).toContain(`<h3>${app}</h3>`);
     expect(page).not.toMatch(/protects you|stops fraud/i);

@@ -32,7 +32,22 @@ const differ = (a: DuelCandidate, b: DuelCandidate) => {
   return a.traps.some((t) => tb.has(t.id) && tb.get(t.id) !== t.triggered);
 };
 
-/** Every contrasting pair in one event: same task, seed and attempt; different outcome. A before B by model id. */
+/** Which side of a pair is shown first: fixed by the two run ids (so every page and clip agrees), not by model name or
+ * outcome, so the viewer can't tell from the order which one will fall (Dinike, 20 Oct). */
+export function orient(p: DuelPick): DuelPick {
+  const [x, y] = [p.a.id, p.b.id].sort();
+  let h = 2166136261;
+  for (const ch of `${x}|${y}`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  // The low bit of FNV-1a only tracks character parity, so mix and use a high bit.
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  const aFirst = ((h >>> 15) & 1) === 0;
+  const [lo, hi] = p.a.id === x ? [p.a, p.b] : [p.b, p.a];
+  return aFirst ? { a: lo, b: hi } : { a: hi, b: lo };
+}
+
+/** Every contrasting pair in one event: same task, seed and attempt; different outcome. Sides set by `orient`. */
 export function contrastingPairs(runs: DuelCandidate[]): DuelPick[] {
   const groups = new Map<string, DuelCandidate[]>();
   for (const r of runs) {
@@ -46,7 +61,9 @@ export function contrastingPairs(runs: DuelCandidate[]): DuelPick[] {
       for (let j = i + 1; j < sorted.length; j++) if (sorted[i]!.model !== sorted[j]!.model && differ(sorted[i]!, sorted[j]!)) out.push({ a: sorted[i]!, b: sorted[j]! });
   }
   const taskIdx = (t: string) => TASKS.findIndex((x) => x.id === t);
-  return out.sort((p, q) => taskIdx(p.a.task) - taskIdx(q.a.task) || p.a.seed - q.a.seed || p.a.attempt - q.a.attempt || p.a.model.localeCompare(q.a.model) || p.b.model.localeCompare(q.b.model));
+  return out
+    .sort((p, q) => taskIdx(p.a.task) - taskIdx(q.a.task) || p.a.seed - q.a.seed || p.a.attempt - q.a.attempt || p.a.model.localeCompare(q.a.model) || p.b.model.localeCompare(q.b.model))
+    .map(orient);
 }
 
 /** A pair where one corner fell for a trap the other avoided: the most useful thing to watch (ADR 0019 §1). */
@@ -55,15 +72,41 @@ export const trapContrast = (p: DuelPick) => {
   return p.a.traps.some((t) => tb.has(t.id) && tb.get(t.id) !== t.triggered);
 };
 
-/** The hero's cycling order: today's featured pick first, then trap contrasts before plain pass/fail differences. */
+/**
+ * The hero's cycling order (and the day's clips): today's featured pick first, then trap contrasts before plain
+ * pass/fail differences, spreading the jobs and the models (Dinike, 20 Oct: the clips were all one job), and no model
+ * pair twice in one job.
+ */
 export function heroOrder(runs: DuelCandidate[], day: number, max = 8): DuelPick[] {
   const first = pickFeatured(runs, day);
-  const rest = featuredPool(runs)
+  const pairKey = (p: DuelPick) => `${p.a.task}|${[p.a.model, p.b.model].sort().join("|")}`;
+  const seen = new Set(first ? [pairKey(first)] : []);
+  const left = featuredPool(runs)
     .filter((p) => !(first && p.a.id === first.a.id && p.b.id === first.b.id))
-    .map((p, i) => ({ p, i, k: trapContrast(p) ? 0 : 1 }))
-    .sort((x, y) => x.k - y.k || x.i - y.i)
-    .map((x) => x.p);
-  return [...(first ? [first] : []), ...rest].slice(0, max);
+    .filter((p) => (seen.has(pairKey(p)) ? false : (seen.add(pairKey(p)), true)))
+    .map((p, i) => ({ p, i, k: trapContrast(p) ? 0 : 1 }));
+  const out = first ? [first] : [];
+  const jobs = new Map<string, number>();
+  const models = new Map<string, number>();
+  const use = (p: DuelPick) => {
+    jobs.set(p.a.task, (jobs.get(p.a.task) ?? 0) + 1);
+    for (const m of [p.a.model, p.b.model]) models.set(m, (models.get(m) ?? 0) + 1);
+  };
+  if (first) use(first);
+  // Greedy: trap contrasts first; then the job shown least so far; then the models shown least; then pool order.
+  while (out.length < max && left.length) {
+    const score = (x: (typeof left)[number]) => [x.k, jobs.get(x.p.a.task) ?? 0, (models.get(x.p.a.model) ?? 0) + (models.get(x.p.b.model) ?? 0), x.i];
+    let best = 0;
+    for (let j = 1; j < left.length; j++) {
+      const a = score(left[j]!), b = score(left[best]!);
+      const d = a.findIndex((v, n) => v !== b[n]);
+      if (d >= 0 && a[d]! < b[d]!) best = j;
+    }
+    const [pick] = left.splice(best, 1);
+    out.push(pick!.p);
+    use(pick!.p);
+  }
+  return out;
 }
 
 /** The pool for the rule: headline events if any have a contrasting pair, else practice; the newest such event. */

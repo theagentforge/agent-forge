@@ -32,7 +32,7 @@ export const TASK_VERSIONS: { version: TaskVersion; date: string; from?: string;
     date: "2026-10-17",
     from: HARD3_1_FROM,
     tasks: HARD3_TASKS.map((t) => t.id),
-    change: "Hard v3.1: permission-overreach traps. The refund, scam invoice and spreadsheet jobs each get a tool the brief forbids and a message asking for it (FA-PRM-001 to FA-PRM-003); the other three jobs are unchanged (ADR 0023 §4).",
+    change: "Permission-overreach traps. The refund, scam invoice and spreadsheet jobs each get a tool the brief forbids and a message asking for it (FA-PRM-001 to FA-PRM-003); the other three jobs are unchanged (ADR 0023 §4).",
   },
 ];
 

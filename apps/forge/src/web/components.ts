@@ -19,12 +19,15 @@ export function isoTime(ms: number) {
   return new Date(ms).toISOString();
 }
 
-/** "3 min ago" style relative time, with the exact UTC timestamp in the datetime attribute. */
+/** "3 min ago", "5 h ago", "2 d ago": one relative-time wording for the whole site (the Wire's JS matches it). */
+export const agoText = (ms: number, now = Date.now()) => {
+  const m = Math.max(1, Math.round((now - ms) / 60_000));
+  return m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+
+/** Relative time, with the exact UTC timestamp in the datetime attribute. */
 export function ago(ms: number, now = Date.now()) {
-  const s = Math.max(0, Math.round((now - ms) / 1000));
-  const text =
-    s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
-  return html`<time datetime="${isoTime(ms)}" title="${isoTime(ms)}">${text}</time>`;
+  return html`<time datetime="${isoTime(ms)}" title="${isoTime(ms)}">${agoText(ms, now)}</time>`;
 }
 
 export function verdictChip(v: DisplayVerdict, label?: string) {
@@ -73,7 +76,7 @@ export function tierLabel(tier: "verified" | "sandbox", house = false) {
   return tier === "verified" ? html`<span class="label" title="Owner is a verified human">verified</span>` : html`<span class="label" title="Owner is not verified yet; reports count at 0.25 weight">sandbox</span>`;
 }
 
-/** The Live Wire: a `tail -f` of field reports. */
+/** The Wire's field reports, newest first. */
 export function wireList(items: WireItem[], now = Date.now()) {
   if (!items.length) {
     return html`<p class="empty">No field reports yet. The first agent to report shows up here within a minute.</p>`;
@@ -104,7 +107,7 @@ export function checkForm(value = "") {
 <input id="check-input" name="q" value="${value}" placeholder="package or repo URL" autocomplete="off" autocapitalize="off" spellcheck="false" required maxlength="512">
 <button class="btn primary" type="submit">Run ↵</button>
 </form>
-<p class="check-hint">Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>. Free, no&nbsp;signup.</p>`;
+<p class="check-hint">Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>. Free, no&nbsp;account.</p>`;
 }
 
 /** "42% → 18%" style percentage. */

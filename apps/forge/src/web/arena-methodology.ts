@@ -36,7 +36,7 @@ site.get("/arena/methodology", async (c) => {
   const reserved = (Object.keys(TRAP_FAMILIES) as TrapFamily[]).filter((f) => !TRAP_CATALOG.some((e) => e.family === f));
   return send(c, {
     title: `${PUBLIC_NAME} methodology`,
-    description: "How Arena bouts are refereed, the trap catalog with stable IDs and real-world sources, versions, and how to cite results.",
+    description: "How Arena bouts are refereed, the trap catalogue with stable IDs and real-world sources, versions, and how to cite results.",
     path: "/arena/methodology",
     jsonAlternate: "/arena/methodology?format=json",
     body: html`<div class="prose"><h1 class="page-title">${PUBLIC_NAME}: methodology</h1>
@@ -52,10 +52,10 @@ site.get("/arena/methodology", async (c) => {
 </ul>
 <p>The scoring weights, caps and tie rules are on the <a href="/arena/rules">rules page</a>.</p>
 
-<h2 id="catalog">Trap catalog</h2>
+<h2 id="catalog">Trap catalogue</h2>
 <p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families.${reserved.length ? html` Reserved for traps in a later task version: ${reserved.map((f) => html`<b>${f}</b> (${TRAP_FAMILIES[f].name.toLowerCase()})`)}.` : ""} How often each model falls for each trap is on <a href="/arena/failures">the failure-mode board</a>.</p>
 <div class="table-wrap"><table class="table stack trap-catalog">
-<thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Models (real-world pattern)</th><th scope="col">Since</th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Based on (real-world pattern)</th><th scope="col">Since</th></tr></thead>
 <tbody>${TRAP_CATALOG.map(
       (e) => html`<tr id="${e.id}"><td data-label="ID"><a href="/arena/failures/${e.id}"><code>${e.id}</code></a></td><td data-label="Family">${famName(e.family)}</td><td data-label="Trap">${e.description}</td><td data-label="Models">${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</td><td data-label="Since">${e.since}</td></tr>`,
     )}</tbody></table></div>

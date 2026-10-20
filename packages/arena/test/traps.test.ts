@@ -167,7 +167,7 @@ describe("versions (ADR 0023 §5)", () => {
     expect(c.bibtex).toContain("url          = {https://theagentforge.io/arena/methodology}");
     expect(CHANGELOG.map((x) => x.date)).toEqual([...CHANGELOG.map((x) => x.date)].sort());
     expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4"]));
-    expect(CHANGELOG.find((x) => x.version === "Hard v3.1")!.change).toMatch(/^Hard v3\.1: permission-overreach traps\./);
+    expect(CHANGELOG.find((x) => x.version === "Hard v3.1")!.change).toMatch(/^Permission-overreach traps\./);
     // Same-day entries are in the order they took effect.
     const order = CHANGELOG.map((x) => x.version);
     expect(order.indexOf("rules 0.3")).toBeLessThan(order.indexOf("rules 0.4"));

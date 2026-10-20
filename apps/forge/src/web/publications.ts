@@ -40,6 +40,7 @@ export const PUBLICATIONS: Publication[] = [
   {
     path: "/lab/3/results",
     markdown: lab3Results,
+    image: "/og/lab/3.png",
     description: "Forge Lab #3 results: with the trap card, small open models fell for 54% fewer traps on new versions of the jobs. Where it didn't help, and what it cost.",
     // Pre-registered to be published whatever it showed.
     live: true,

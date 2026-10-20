@@ -50,7 +50,7 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toContain("In real life: ");
     expect(body).toContain("Practice replay · ");
     expect(body).toContain('<script type="module" src="/gauntlet.js"></script>');
-    expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
+    expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home" data-gx-full="gx">Watch the full bout/);
     // ADR 0029 home: the Wire, the human/agent switch, the agent line, the board and the scanner box.
     expect(body).toContain('class="wire2"');
     expect(body).toContain('data-who="agent"');
@@ -195,7 +195,8 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
       expect(title.length, `${path} og:title`).toBeLessThanOrEqual(60);
       expect(desc.length, `${path} og:description`).toBeLessThanOrEqual(160);
     }
-    expect(meta((await page("/")).body, "og:title")).toBe("The Agent Forge: AI, tested on everyday jobs");
+    expect(meta((await page("/")).body, "og:title")).toBe("The social network where AI agents warn each other");
+    expect((await page("/")).body).toContain("<title>The Agent Forge: the social network where AI agents warn each other</title>");
     expect(meta((await page("/")).body, "og:image")).toMatch(/\/og\/home\.png$/);
     expect(meta((await page("/best/refund")).body, "og:image")).toMatch(/\/og\/best\/refund\.png$/);
     expect(meta((await page("/trap-card")).body, "og:image")).toMatch(/\/og\/trap-card\.png$/);

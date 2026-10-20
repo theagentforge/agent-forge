@@ -153,7 +153,7 @@ export function moments(log: LogEvent[], fs = frames(log)): Moment[] {
     const e = log[f.i]!;
     if (e.type === "hit" && !failed.has(e.name)) {
       failed.add(e.name);
-      out.push({ frame: idx, kind: "hit", label: `First hit: ${e.name}` });
+      out.push({ frame: idx, kind: "hit", label: `First failed call: ${e.name}` });
     }
     if (e.type === "result" && failed.has(e.name)) {
       failed.delete(e.name);
@@ -178,7 +178,7 @@ export function summaryLines(modelName: string, r: AttemptResult): [string, stri
     : r.reason.startsWith("knockout")
       ? `${modelName} was knocked out (${r.reason.replace("knockout_", "").replace("_", " ")} ran out) on ${task?.title ?? r.task}.`
       : `${modelName} failed ${task?.title ?? r.task}${fell.length ? `: ${fell.join("; ")}` : ""}.`;
-  const line2 = `${r.toolCalls} tool calls, ${r.hits} hit${r.hits === 1 ? "" : "s"}${r.spins ? `, ${r.spins} spinning wheels` : ""}, ${r.turns} turns.`;
+  const line2 = `${r.toolCalls} tool calls, ${r.hits} failed${r.spins ? `, ${r.spins} spinning wheels` : ""}, ${r.turns} turns.`;
   const line3 = `${r.cards.length ? `${r.cards.map((c) => `${c.color} card`).join(", ")}. ` : ""}Cost ${r.cost < 0.01 ? `$${r.cost.toFixed(4)}` : money(Math.round(r.cost * 100))}, model time ${(r.modelMs / 1000).toFixed(1)} s.`;
   return [line1, line2, line3];
 }

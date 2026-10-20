@@ -13,6 +13,7 @@ import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { channelDuels } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
+import { labTotals } from "./home-wire";
 import { PLAY, robotSvg, stampWord, svgAt } from "../../public/gauntlet.js";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 import { trapBoard } from "../arena/failures";
@@ -234,6 +235,29 @@ site.get("/og/reports/skill-scan-2026-10.png", (c) =>
     ),
   ),
 );
+
+/** Forge Lab #3's card: the three arms as bars, counts summed from the published counts.json (via labTotals). */
+site.get("/og/lab/3.png", (c) => {
+  const t = labTotals();
+  const bar = (label: string, v: number, color: string) =>
+    el("div", { display: "flex", alignItems: "center", gap: "18px", marginBottom: "16px", fontFamily: "JetBrains Mono", fontSize: 26, color: color === C.clear ? C.clear : C.text }, [
+      el("span", { display: "flex", width: "220px" }, label),
+      el("div", { display: "flex", width: "520px", height: "30px", background: C.surface, border: `2px solid ${C.seam}` }, [el("div", { display: "flex", width: `${v}%`, height: "100%", background: color }, "")]),
+      el("span", { display: "flex", width: "160px", justifyContent: "flex-end" }, `${v} in 100`),
+    ]);
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.caution, marginBottom: "14px" }, "FORGE LAB #3 · PRE-REGISTERED"),
+        headline(`${t.fewer}% fewer traps with the free trap card.`, 46),
+        el("div", { display: "flex", flexDirection: "column", marginTop: "6px" }, [bar("No card", t.in100.none, C.insufficient), bar("Placebo text", t.in100.placebo, C.insufficient), bar("Trap card", t.in100.card, C.clear)]),
+        line(`Small open models, new versions of the jobs · ${t.card.n} bouts per arm`, 22),
+      ],
+      "theagentforge.io/lab/3/results",
+    ),
+  );
+});
 
 /** The finished Trap Gauntlet frame (the same drawing the site plays) as an image for a share card. The card renderer
  * draws no text inside an SVG image, so the lane names and verdict stamps are laid over it as real text. */

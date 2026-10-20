@@ -77,7 +77,7 @@ site.get("/arena/failures", async (c) => {
     jsonAlternate: `/arena/failures${tierQuery(tier) ? `${tierQuery(tier)}&` : "?"}format=json`,
     body: html`<p class="eyebrow"><a href="/arena">${PUBLIC_NAME}</a> · Failure modes</p>
 <h1 class="page-title">Which AI falls for which trap</h1>
-<p class="lead">Every trap in the catalog, against every model we rank: how often each one fell for it when it was in the job.${board.asOf ? ` Ranked results to ${board.asOf}.` : ""}</p>
+<p class="lead">Every trap in the catalogue, against every model we rank: how often each one fell for it when it was in the job.${board.asOf ? ` Ranked results to ${board.asOf}.` : ""}</p>
 ${tierLinks("/arena/failures", tier)}
 <h2 id="rules">How to read it</h2>
 ${RULES_TEXT}
@@ -89,7 +89,7 @@ ${board.families.map(
 ${f.rows.map((r) => html`<tr id="${r.entry.id}"><th scope="row"><a href="/arena/failures/${r.entry.id}${tierQuery(tier)}"><code>${r.entry.id}</code></a><br><span class="small muted">${r.entry.description}</span></th>${cols.map((m) => cellHtml(r.cells[m.id] ?? null))}</tr>`)}</tbody>`,
     )}
 </table></div>
-<p class="muted small-print">Trap IDs, descriptions and real-world sources are in the <a href="/arena/methodology#catalog">trap catalog</a>. Every run is in <a href="/arena/dataset.json">the dataset</a>. Lab and model names identify what was tested; ${PUBLIC_NAME} is not affiliated with any lab.</p>`,
+<p class="muted small-print">Trap IDs, descriptions and real-world sources are in the <a href="/arena/methodology#catalog">trap catalogue</a>. Every run is in <a href="/arena/dataset.json">the dataset</a>. Lab and model names identify what was tested; ${PUBLIC_NAME} is not affiliated with any lab.</p>`,
   });
 });
 

@@ -52,7 +52,7 @@ describe("broadcast from the referee log", () => {
     const a = flakyRun();
     const [l1, l2, l3] = summaryLines("Model X", a.result!);
     expect(l1).toBe("Model X passed The Flaky Supplier, scoring 100% of checkpoints.");
-    expect(l2).toMatch(/tool calls, \d+ hits?/);
+    expect(l2).toMatch(/tool calls, \d+ failed/);
     expect(l3).toMatch(/^Cost \$0\.0009, model time 2\.1 s\.$/);
   });
 

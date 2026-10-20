@@ -58,7 +58,7 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
     // Hard v3.1 (ADR 0023 §4): the permission-overreach traps are in the catalog and the changelog; PRM is no longer reserved.
-    expect(body).toContain("<b>Hard v3.1</b>: Hard v3.1: permission-overreach traps.");
+    expect(body).toContain("<b>Hard v3.1</b>: Permission-overreach traps.");
     expect(body).toContain('<tr id="FA-PRM-001">');
     expect(body).not.toContain("Reserved for traps in a later task version");
     expect(body).toContain('rel="alternate" type="application/json" href="/arena/methodology?format=json"');

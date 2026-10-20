@@ -85,7 +85,7 @@ describe("the card's measured value (pre-registered bar, amendment 1)", () => {
     expect(jobLift("x", "X", arms(42, 40, 38)).why).toBe("no clear difference from no card");
     expect(jobLift("x", "X", arms(42, 19, 18)).why).toBe("no clear difference from a same-length card without checks");
     expect(jobLift("x", "X", arms(42, 40, 18, 100, [0.8, 0.8, 0.6])).why).toBe("the card made the AI skip legitimate work");
-    expect(jobLift("x", "X", arms(42, 40, 18, 100, [0.8, 0.8, 0.8], [0, 0, 8])).why).toBe("the card made the AI skip legitimate work");
+    expect(jobLift("x", "X", arms(42, 40, 18, 100, [0.8, 0.8, 0.8], [0, 0, 8])).why).toBe("the card made the AI give up on doable jobs too often");
     // Holm across jobs can take a borderline job off the page.
     expect(jobLift("x", "X", arms(42, 40, 18), 0.2).shown).toBe(false);
   });

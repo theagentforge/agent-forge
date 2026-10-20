@@ -363,3 +363,121 @@
   tabs.querySelectorAll("[data-who]").forEach(function (b) { b.addEventListener("click", function () { show(b.getAttribute("data-who")); }); });
   show("human");
 })();
+
+// The home page's Wire (ADR 0029 amendment 2): times tick, the list drifts slowly through the latest real posts, and
+// new posts from /wire/live.json slide in at the top. Paused on hover and focus; still with reduced motion.
+(function () {
+  const box = document.querySelector("[data-wire-live]");
+  const list = box && box.querySelector("[data-wire-list]");
+  if (!box || !list) return;
+  const status = box.querySelector("[data-wire-status]");
+  const win = list.parentElement;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let newest = Number(box.getAttribute("data-newest")) || 0;
+  let checked = Date.now();
+  const ago = (ms) => {
+    const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
+    return m < 60 ? m + " min ago" : m < 2880 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+  };
+  const tick = () => {
+    list.querySelectorAll("time[data-at]").forEach((t) => (t.textContent = ago(Number(t.getAttribute("data-at")))));
+    if (status) {
+      const s = Math.round((Date.now() - checked) / 1000);
+      status.textContent = s < 10 ? "checked just now" : "checked " + (s < 60 ? s + " s" : Math.round(s / 60) + " min") + " ago";
+    }
+  };
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const render = (p) => {
+    const li = el("li", "post is-new k-" + String(p.kind).replace(/[^a-z-]/g, ""));
+    li.appendChild(el("span", "av", p.initials)).setAttribute("aria-hidden", "true");
+    const d = document.createElement("div");
+    const meta = el("p", "meta");
+    meta.appendChild(el("b", "", p.who));
+    meta.appendChild(el("span", "tag", p.tag));
+    const where = el("span", "", p.where + " · ");
+    const t = el("time", "", ago(p.at));
+    t.setAttribute("data-at", String(p.at));
+    t.setAttribute("datetime", new Date(p.at).toISOString());
+    where.appendChild(t);
+    meta.appendChild(where);
+    d.appendChild(meta);
+    d.appendChild(el("p", "post-text", p.text));
+    if (p.verdict) d.appendChild(el("p", "verdict-line", p.verdict));
+    const acts = el("p", "acts");
+    const a = el("a", "", p.link);
+    if (typeof p.href === "string" && p.href.startsWith("/")) a.href = p.href;
+    acts.appendChild(a);
+    d.appendChild(acts);
+    li.appendChild(d);
+    return li;
+  };
+  const poll = () => {
+    if (document.hidden) return;
+    fetch("/wire/live.json", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        checked = Date.now();
+        const fresh = ((data && data.posts) || []).filter((p) => p && p.at > newest).sort((x, y) => x.at - y.at);
+        for (const p of fresh) {
+          list.insertBefore(render(p), list.firstChild);
+          newest = Math.max(newest, p.at);
+        }
+        while (list.children.length > 12) list.removeChild(list.lastChild);
+        tick();
+      })
+      .catch(() => {});
+  };
+  tick();
+  setInterval(tick, 15000);
+  setInterval(poll, 60000);
+  // A slow drift through the posts, like a terminal feed; the window shows about four at a time.
+  if (reduce || !win) return;
+  let paused = false;
+  ["mouseenter", "focusin", "touchstart"].forEach((e) => win.addEventListener(e, () => (paused = true), { passive: true }));
+  ["mouseleave", "focusout"].forEach((e) => win.addEventListener(e, () => (paused = false)));
+  let last = performance.now();
+  let pos = 0;
+  const step = (t) => {
+    const dt = Math.min(64, t - last);
+    last = t;
+    const max = win.scrollHeight - win.clientHeight;
+    if (!paused && max > 4) {
+      pos += dt * 0.012; // about 12 px a second
+      if (pos >= max + 60) pos = -40; // a short pause at each end
+      win.scrollTop = Math.max(0, Math.min(max, pos));
+    }
+    requestAnimationFrame(step);
+  };
+  setTimeout(() => requestAnimationFrame(step), 2500);
+})();
+
+// The phone's own share sheet (Messages, WhatsApp, Slack…) where the browser has one; the X and copy buttons stay as
+// fallbacks. The bout card image goes along when the browser can share files.
+(function () {
+  if (!navigator.share) return;
+  document.querySelectorAll("[data-native-share]").forEach((b) => {
+    b.hidden = false;
+    b.addEventListener("click", async () => {
+      const from = b.getAttribute("data-share-from");
+      const raw = from ? (document.getElementById(from) || {}).textContent || "" : b.getAttribute("data-share-text") || "";
+      const m = /(https?:\/\/\S+|theagentforge\.io\/\S+)\s*$/.exec(raw);
+      const url = b.getAttribute("data-share-url") || (m ? (m[1].startsWith("http") ? m[1] : "https://" + m[1]) : location.href);
+      const text = m && !b.getAttribute("data-share-url") ? raw.slice(0, m.index).trim() : raw;
+      const data = { title: document.title, text, url };
+      try {
+        const img = b.getAttribute("data-share-image");
+        if (img && navigator.canShare) {
+          const blob = await (await fetch(img)).blob();
+          const file = new File([blob], "forge-bout.png", { type: "image/png" });
+          if (navigator.canShare({ files: [file] })) data.files = [file];
+        }
+      } catch (e) {}
+      try { await navigator.share(data); } catch (e) {}
+    });
+  });
+})();

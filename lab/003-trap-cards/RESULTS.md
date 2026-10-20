@@ -18,7 +18,7 @@
   only as much as the placebo did. Avoiding the trap didn't always mean finishing the job.
 - **Model-specific lines beat the generic card** on the trap rate (H3, p < 0.001). But on two pairs they cost
   something else: one model skipped legitimate work and another gave up too often. We hold them back for now
-  (see "Decision needed").
+  (see "Model-specific lines: held back for now").
 
 ## Per pair: how often the AI fell for a trap
 | Model × job | No card (A) | Placebo (B) | Card (C) | Model lines (D) | Pass rate A → C |
@@ -78,16 +78,16 @@ The other three pairs showed no harm.
     so some of those stops are probably the card doing what it says. The rule is the rule, so the job isn't shown
     as measured.
   - **The Weekend Planner** reads "no clear difference from no card".
-- **H3 holds,** so the pre-registered rule says the model-specific lines go live. See "Decision needed".
+- **H3 holds,** so the pre-registered rule says the model-specific lines go live. We hold them back for now; see "Model-specific lines: held back for now".
 
-## Decision needed (Dinike)
+## Model-specific lines: held back for now
 Model-specific lines (arm D) beat the generic card on traps, but on llama-4-scout they cut legitimate work to 47%,
 and on llama-3.3-70b they raised false stops to 21%. The pre-registration only set harm margins for the generic
-card, so the rule as written lets D go live anyway. **Recommendation:** keep D off and test a revised D in a follow-up
-lab with harm margins of its own. Going live as written is the other option.
+card, so the rule as written would let D go live. Arm D stays off while that is reviewed; a revised D would be tested
+in a follow-up lab with harm margins of its own.
 
 ## Deviations from the plan
-1. **Timing:** it ran before launch (recorded 16 Oct, before any run).
+1. **Timing:** we ran it before launch instead of after; the change was recorded on 16 Oct, before any run.
 2. **Pooled analysis:** the per-job analysis (`lift.ts`) was committed before the runs. The pooled
    Cochran–Mantel–Haenszel part of `analyze.mjs` was written on 18 Oct, after the runs started, and after we had
    looked at interim counts (about 1,300 of 1,968 bouts). It uses the standard methods the plan names. Fisher's test

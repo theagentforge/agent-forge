@@ -84,9 +84,9 @@ site.get("/trap-card", async (c) => {
     jsonAlternate: "/trap-card.json",
     body: html`<article class="prose">
 <p class="eyebrow">Trap card v${m.version} · ${m.date}</p>
-<h1 class="page-title">Give your AI the checks its kind skipped</h1>
+<h1 class="page-title">Give your AI the checks other AIs skipped</h1>
 <p class="lead">We hide traps in everyday jobs, like a fake invoice. These are the checks AIs skipped when they fell for them. Paste once, in about 30 seconds.</p>
-<p class="small muted">It doesn't change your AI, it reminds it what to check. Keep your own approval step for payments.</p>
+<p class="small muted">It doesn't change your AI. It reminds it what to check. Keep your own approval step for payments.</p>
 </article>
 <section class="panel chamfer panel-body trap-card" aria-labelledby="card-title">
 <div class="section-head"><h2 id="card-title">Your trap card</h2><span class="label">${m.chars} characters</span></div>

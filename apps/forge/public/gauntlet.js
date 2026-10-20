@@ -18,7 +18,7 @@ export const TIMES = { T_RUN, T_TRAP, T_FINISH, T_CHECK, T_VERDICT, T_REPLAY, PL
 // Two canvases: wide (desktop, beside the terminal) and compact (phones), so robots and tiles stay big enough to read.
 const GEO = {
   wide: { W: 1000, H: 520, laneY: [150, 390], x0: 70, xf: 900, px: 5, tile: 44, stampX: 560 },
-  compact: { W: 600, H: 600, laneY: [175, 455], x0: 36, xf: 512, px: 5, tile: 38, stampX: 228 },
+  compact: { W: 600, H: 600, laneY: [175, 455], x0: 36, xf: 512, px: 5, tile: 38, stampX: 228, fs: 1.4 },
   // The 9:16 clip: the same course, big enough to read on a phone in a feed.
   clip: { W: 600, H: 520, laneY: [150, 400], x0: 36, xf: 512, px: 6, tile: 40, stampX: 222 },
 };
@@ -189,6 +189,8 @@ export function svgAt(g, t, o = {}) {
   out.push(`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(o.label || "Trap Gauntlet replay")}" class="gx-svg">`);
   out.push(`<defs><radialGradient id="gx-glow"><stop offset="0" stop-color="${C.warn}" stop-opacity=".45"/><stop offset="1" stop-color="${C.fail}" stop-opacity="0"/></radialGradient></defs>`);
   const verdictIn = clamp((t - T_VERDICT) / 0.35);
+  // Small text is scaled up in the phone layout, so labels stay readable at about 13 px on a 390 px screen.
+  const fz = (n) => Math.round(n * (geo.fs || 1));
   g.lanes.forEach((l, k) => {
     const p = P[k];
     const y = LANE_Y[k];
@@ -197,7 +199,7 @@ export function svgAt(g, t, o = {}) {
     const bad = l.fell || l.verdict !== "PASS";
     const laneStroke = t >= T_VERDICT ? (bad ? C.fail : C.pass) : C.seam;
     out.push(`<rect x="16" y="${y - 118}" width="${W - 32}" height="200" rx="8" fill="${C.surface}" stroke="${laneStroke}" stroke-width="${t >= T_VERDICT ? 3 : 1}"/>`);
-    out.push(`<text x="36" y="${y - 90}" fill="${C.text}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="18"><tspan fill="${C.muted}">[${LANE_TAG[k]}]</tspan> ${esc(l.name)}</text>`);
+    out.push(`<text x="36" y="${y - 90}" fill="${C.text}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="${fz(18)}"><tspan fill="${C.muted}">[${LANE_TAG[k]}]</tspan> ${esc(l.name)}</text>`);
     // ground
     out.push(`<path d="M30 ${y + 46}H${W - 30}" stroke="${C.seam}" stroke-width="4" stroke-dasharray="2 10" shape-rendering="crispEdges"/>`);
     // tiles
@@ -210,9 +212,9 @@ export function svgAt(g, t, o = {}) {
       const color = !reached ? C.muted : s.ok ? C.text : C.warn;
       out.push(`<rect x="${x - half}" y="${y + 48 - ts}" width="${ts}" height="${ts}" rx="4" fill="${C.bg}" stroke="${isTrap ? (t >= T_VERDICT && l.trapAt !== null ? C.fail : C.warn) : C.seam}" stroke-width="${isTrap ? 2 : 1}"/>`);
       out.push(icon(s.kind, x - (ts * 0.36), y + 48 - ts + ts * 0.14, (ts * 0.72) / 8, color));
-      if (reached && !s.ok) out.push(`<text x="${x}" y="${y - 2}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="16">!</text>`);
-      if (isTrap && l.trapAt !== null && t >= p.ts[i] && t < T_VERDICT) out.push(`<text x="${x}" y="${y + 70}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="13">click</text>`);
-      if (isTrap && l.scanAt !== null && t >= p.ts[i] - 0.1 && t < p.ts[i] + 0.9) out.push(`<text x="${x}" y="${y - 6}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="18">?</text>`);
+      if (reached && !s.ok) out.push(`<text x="${x}" y="${y - 2}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="${fz(16)}">!</text>`);
+      if (isTrap && l.trapAt !== null && t >= p.ts[i] && t < T_VERDICT) out.push(`<text x="${x}" y="${y + 70}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="${fz(13)}">click</text>`);
+      if (isTrap && l.scanAt !== null && t >= p.ts[i] - 0.1 && t < p.ts[i] + 0.9) out.push(`<text x="${x}" y="${y - 6}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="${fz(18)}">?</text>`);
     }
     // finish line and trapdoor
     const fx = X_FINISH;
@@ -291,7 +293,7 @@ export function svgAt(g, t, o = {}) {
   // the hook, before the run
   if (t < T_RUN + 0.6) {
     const a = 1 - clamp((t - T_RUN) / 0.6);
-    out.push(`<g opacity="${r1(a)}"><rect x="0" y="0" width="${W}" height="${H}" fill="${C.bg}" opacity=".86"/><text x="${W / 2}" y="${H / 2 - 18}" text-anchor="middle" fill="${C.text}" font-family="Archivo, sans-serif" font-weight="900" font-size="${o.compact ? 38 : 44}">Same job. One hidden trap.</text><text x="${W / 2}" y="${H / 2 + 34}" text-anchor="middle" fill="${C.fail}" font-family="Archivo, sans-serif" font-weight="900" font-size="${o.compact ? 38 : 44}">Who falls for it?</text></g>`);
+    out.push(`<g opacity="${r1(a)}"><rect x="0" y="0" width="${W}" height="${H}" fill="${C.bg}" opacity=".86"/><text x="${W / 2}" y="${H / 2 - 18}" text-anchor="middle" fill="${C.text}" font-family="Archivo, sans-serif" font-weight="900" font-size="${W < 700 ? 30 : 44}">Same job. One hidden trap.</text><text x="${W / 2}" y="${H / 2 + 34}" text-anchor="middle" fill="${C.fail}" font-family="Archivo, sans-serif" font-weight="900" font-size="${o.compact ? 38 : 44}">Who falls for it?</text></g>`);
   }
   // referee checking…
   if (t >= T_CHECK && t < T_VERDICT) out.push(`<g><rect x="${W / 2 - 170}" y="${H / 2 - 36}" width="340" height="56" rx="6" fill="${C.bg}" stroke="${C.brand}" stroke-width="3"/><text x="${W / 2}" y="${H / 2 - 1}" text-anchor="middle" fill="${C.brand}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="22">REFEREE CHECKING${".".repeat(1 + (Math.floor(t * 4) % 3))}</text></g>`);
@@ -313,9 +315,10 @@ export function terminalAt(g, t) {
   const lines = shown.map((r) => `<li class="${r.trap && t >= T_VERDICT ? "gx-trapline" : r.scan ? "gx-scanline" : ""}">${r.html}</li>`);
   if (t >= T_VERDICT)
     g.lanes.forEach((l, k) => {
-      const v = l.fell ? `FOUL: ${esc(g.tell || "fell for the trap")}` : l.verdict === "PASS" ? (l.caught ? "PASS · trap caught" : "PASS") : l.verdict === "KO" ? "KNOCKOUT" : "FAIL";
+      const v = l.fell ? `FELL FOR IT: ${esc(g.tell || "the trap")}` : l.verdict === "PASS" ? (l.caught ? "PASS · trap caught" : "PASS") : l.verdict === "KO" ? "KNOCKOUT" : "FAIL";
       lines.push(`<li class="${l.fell || l.verdict !== "PASS" ? "gx-failline" : "gx-passline"}">referee ▸ [${LANE_TAG[k]}] ${esc(l.model)}: ${v}</li>`);
     });
+  if (!lines.length) return `<li class="gx-wait">waiting for the first tool call…</li>`;
   return lines.slice(-8).join("");
 }
 
@@ -341,7 +344,37 @@ if (typeof document !== "undefined") {
     const channel = root.getAttribute("data-mode") === "channel";
     const slot = clipMode ? Infinity : PLAY + HOLD;
     let i = 0, t0 = performance.now(), paused = false, pauseAt = 0, choice = null, visible = true;
+    const q = (sel) => root.querySelector(sel);
+    const setText = (sel, text) => { const e = q(sel); if (e) e.textContent = text; return e; };
     const fill = (d) => {
+      // Everything about the bout changes together when the player moves on: label, job, trap, terminal, costs, stakes.
+      const g = d.gauntlet;
+      setText("[data-gx-label]", `${d.practice ? "Practice replay" : "Replay"} · ${new Date(d.recordedAt).toISOString().slice(0, 10)} · ${d.title}`);
+      setText("[data-gx-job]", (d.captions && d.captions[0] ? d.captions[0].replace(/^The job: /, "") : d.title));
+      setText("[data-gx-trap]", g.tell || "");
+      const tell = q("[data-gx-tell]");
+      if (tell) tell.hidden = !g.tell;
+      setText("[data-gx-termhead]", `$ forge replay --task ${g.task} --seed ${g.seed}`);
+      const stakes = setText("[data-gx-stakes]", d.stakes || "");
+      if (stakes) stakes.hidden = !d.stakes;
+      const foot = q("[data-gx-foot]");
+      if (foot) {
+        foot.querySelectorAll("li[data-lane], li:not(:last-child)").forEach((li) => li.remove());
+        g.lanes.slice().reverse().forEach((l, r) => {
+          const li = document.createElement("li");
+          li.setAttribute("data-lane", "");
+          li.append(`[${LANE_TAG[1 - r]}] `);
+          const a = document.createElement("a");
+          a.href = `/arena/run/${encodeURIComponent(l.id)}`;
+          a.textContent = l.model;
+          li.append(a, `${l.provider ? ` via ${l.provider}` : ""} · ${l.turns} turns · ${Number(l.tokens).toLocaleString("en-US")} tokens · $${Number(l.cost).toFixed(4)}`);
+          foot.insertBefore(li, foot.firstChild);
+        });
+      }
+      const clip = q("[data-clip-link]");
+      if (clip) clip.hidden = list.indexOf(d) !== 0; // the download is for the first bout's clip only
+      const full = document.querySelector(`[data-gx-full="${root.id || "gx"}"]`);
+      if (full) full.setAttribute("href", (full.getAttribute("href") || "").replace(/\/arena\/run\/[^?#]+/, `/arena/run/${encodeURIComponent(g.lanes[0].id)}`));
       if (pick) {
         pick.querySelectorAll("[data-pick]").forEach((b) => { b.textContent = d.gauntlet.lanes[b.getAttribute("data-pick") === "a" ? 0 : 1].name; b.disabled = false; b.setAttribute("aria-pressed", "false"); });
         if (pickOut) pickOut.textContent = "";

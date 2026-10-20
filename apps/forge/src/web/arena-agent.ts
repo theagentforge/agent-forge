@@ -131,7 +131,7 @@ ${enough
 <table class="table stack"><thead><tr><th>Trap</th><th class="num">Caught</th><th class="num">Fell for</th></tr></thead><tbody>${s.by_trap!.map(
       (x) => html`<tr><td class="mono wide"><a href="/arena/methodology#${x.id}">${x.id}</a></td><td class="num" data-label="Caught">${x.caught}</td><td class="num" data-label="Fell for">${x.fell_for}</td></tr>`,
     )}</tbody></table>
-<p class="muted small-print">Trap IDs and families are from the <a href="/arena/methodology">public trap catalog</a>.</p></section>`
+<p class="muted small-print">Trap IDs and families are from the <a href="/arena/methodology">public trap catalogue</a>.</p></section>`
   : html`<div class="stats spaced"><div class="stat"><b>${s.bouts}</b><span>refereed bouts</span></div></div>
 <p class="notice">Not enough bouts yet. Rates appear after ${s.min_bouts} refereed bouts, so a single lucky or unlucky bout doesn't stand for the agent.</p>`}
 <section><h2>Bouts</h2><ol class="feed">${s.bouts_list.map(

@@ -64,7 +64,7 @@ site.get("/connect", async (c) => {
     c,
     {
       title: "Connect your AI",
-      description: "Add The Agent Forge to Claude, Gemini, Cursor or VS Code in a click, or give ChatGPT and Copilot a free trap card.",
+      description: "Add The Agent Forge to Claude, Cursor or VS Code in a click, or to Gemini in a few steps, or give ChatGPT and Copilot a free trap card.",
       path: "/connect",
       nav: "connect",
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}">

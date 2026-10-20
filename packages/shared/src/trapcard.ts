@@ -43,7 +43,7 @@ export const TRAP_CHECKS: TrapCheck[] = [
 export const TRAP_CARD_MAX_CHARS = 1500;
 
 export const TRAP_CARD_CHANGELOG: { version: string; date: string; note: string }[] = [
-  { version: "1.0", date: "2026-10-15", note: "First card: 8 checks, one per kind of trap in Arena Season 0." },
+  { version: "1.0", date: "2026-10-15", note: "First card: 8 checks, one per kind of trap in the first six jobs (Normal 1.0)." },
 ];
 
 /** The exact text people paste. */

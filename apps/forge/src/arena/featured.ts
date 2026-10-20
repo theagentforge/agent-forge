@@ -33,7 +33,7 @@ async function scriptFor(db: Db, pick: DuelPick, all: DuelCandidate[], now: numb
 
 /** Today's featured duel, or null when no event has a contrasting pair yet. Cached in KV for the day. */
 export async function featuredDuel(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<Duel | null> {
-  const key = `arena:featured:v3:${utcDay(now)}`;
+  const key = `arena:featured:v5:${utcDay(now)}`;
   const hit = await env.KV.get<{ duel: Duel | null }>(key, "json");
   if (hit) return hit.duel;
   const all = await candidates(db, now);
@@ -46,7 +46,7 @@ export async function featuredDuel(env: Pick<Env, "KV">, db: Db, now = Date.now(
 
 /** The cycling hero and /arena Now Playing (ADR 0019 §1): today's featured duel first, then the most useful. */
 export async function channelDuels(env: Pick<Env, "KV">, db: Db, now = Date.now(), max = 8): Promise<Duel[]> {
-  const key = `arena:channel:v3:${utcDay(now)}`;
+  const key = `arena:channel:v5:${utcDay(now)}`;
   const hit = await env.KV.get<Duel[]>(key, "json");
   if (hit) return hit;
   const all = await candidates(db, now);

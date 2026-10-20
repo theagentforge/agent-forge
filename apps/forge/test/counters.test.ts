@@ -68,9 +68,9 @@ describe("the proof strip", () => {
     expect(proofStripList(gate({ bouts: 0, models: 0, traps_sprung: 0, tools_checked: 0 }))).toBeNull();
     expect(proofStripList(gate({ bouts: 9, models: 4, traps_sprung: 9, tools_checked: 24 }))).toBeNull();
     const html = await text(proofStripList(gate({ bouts: 12, models: 2, traps_sprung: 10, tools_checked: 24 }), { links: true }));
-    expect(html).toContain('<a href="/arena"><b>12</b> bouts refereed</a>');
-    expect(html).toContain("<b>10</b> traps sprung");
-    expect(html).not.toContain("models tested");
+    expect(html).toContain('<a href="/arena"><b>12</b> ranked bouts refereed</a>');
+    expect(html).toContain("<b>10</b> traps sprung in ranked bouts");
+    expect(html).not.toContain("models ranked");
     expect(html).not.toContain("tools checked");
     expect(html).not.toMatch(/<b>0<\/b>/);
   });

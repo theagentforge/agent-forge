@@ -39,7 +39,7 @@ describe("featured bout rule (ADR 0016 §5)", () => {
 
   it("pairs only the same task, seed and attempt, and only when outcomes differ", () => {
     const pairs = contrastingPairs(runs);
-    expect(pairs.map((p) => `${p.a.id}-${p.b.id}`)).toEqual(["1-2", "2-3", "5-6"]);
+    expect(pairs.map((p) => [p.a.id, p.b.id].sort().join("-"))).toEqual(["1-2", "2-3", "5-6"]);
     for (const p of pairs) {
       expect(p.a.task).toBe(p.b.task);
       expect(p.a.seed).toBe(p.b.seed);
@@ -115,7 +115,38 @@ describe("action feeds (ADR 0019 §2)", () => {
   });
 });
 
+describe("which side is shown first", () => {
+  it("is fixed per pair but not by model name or outcome, so the order doesn't give the result away", () => {
+    const mk = (n: number) => [cand({ id: `a${n}`, model: "alpha", task: "refund", seed: n, passed: true }), cand({ id: `b${n}`, model: "beta", task: "refund", seed: n, passed: false })];
+    const pairs = contrastingPairs(Array.from({ length: 40 }, (_, n) => mk(n)).flat());
+    expect(pairs).toHaveLength(40);
+    const passFirst = pairs.filter((p) => p.a.passed).length;
+    expect(passFirst).toBeGreaterThan(8);
+    expect(passFirst).toBeLessThan(32);
+    // The same pair always comes out the same way round, whatever order the runs arrive in.
+    expect(contrastingPairs(Array.from({ length: 40 }, (_, n) => mk(n)).flat().reverse()).map((p) => p.a.id).sort()).toEqual(pairs.map((p) => p.a.id).sort());
+  });
+});
+
 describe("cycling order (ADR 0019 §1)", () => {
+  it("lets the jobs take turns, so one job never fills the reel", () => {
+    const runs: DuelCandidate[] = [];
+    for (const task of ["refund", "scam-invoice", "weekend"])
+      for (const [i, m] of ["alpha", "beta", "gamma", "delta"].entries())
+        runs.push(cand({ id: `${task}-${m}`, model: m, task, passed: i % 2 === 0, traps: [{ id: "t", triggered: i % 2 === 1 }] }));
+    const order = heroOrder(runs, 5, 4);
+    expect(new Set(order.slice(0, 3).map((p) => p.a.task)).size).toBe(3);
+  });
+
+  it("spreads the models too, so one model doesn't star in every bout", () => {
+    const runs: DuelCandidate[] = [];
+    for (const task of ["refund", "scam-invoice", "weekend", "spreadsheet"])
+      for (const [i, m] of ["star", "m1", "m2", "m3", "m4", "m5"].entries())
+        runs.push(cand({ id: `${task}-${m}`, model: m, task, passed: i < 2, traps: [{ id: "t", triggered: i >= 2 }] }));
+    const order = heroOrder(runs, 3, 4);
+    expect(order.filter((p) => p.a.model === "star" || p.b.model === "star").length).toBeLessThan(4);
+  });
+
   it("starts with today's pick, then trap contrasts before plain pass/fail differences", () => {
     const runs: DuelCandidate[] = [
       cand({ id: "1", model: "alpha", task: "refund", passed: true }),

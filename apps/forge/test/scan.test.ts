@@ -37,9 +37,11 @@ describe("POST /api/v1/scan", () => {
     expect(r.page_url).toMatch(/\/scan\/[0-9a-f]{64}$/);
 
     const page = await (await fetchWorker(new URL(r.page_url).pathname, { headers: { Accept: "text/html" } })).text();
-    expect(page).toContain("Flagged");
+    expect(page).toContain("High-risk pattern");
+    // A scanner match is not a Watchlist flag, and the page says so.
+    expect(page).toContain("it is not a Watchlist flag, which needs three verified people");
     expect(page).toContain("webhook.site"); // people see the excerpt
-    expect(page).toContain("My agent was about to install a skill that");
+    expect(page).toContain("a high-risk pattern, not proof of malice");
     expect(page).toContain("not a judgement of its author");
     expect((await fetchWorker(`/og/scan/${r.fingerprint.slice(7)}.png`, { redirect: "manual" })).status).toBe(200);
   });
@@ -188,8 +190,8 @@ describe("re-audit 19 Oct: result pages that spread and convert", () => {
   it("say what the skill does in plain words, offer share buttons, a rescan and the one-line install", async () => {
     const { shareLine } = await import("../src/web/scan");
     const f = (title: string, severity = "high") => ({ rule: "X", family: "exec", severity, title, why: "", line: 1, column: 1, evidence: "" }) as any;
-    expect(shareLine("flagged", [f("A download piped straight into a shell")], "u")).toBe("My agent was about to install a skill that has a download piped straight into a shell. The Forge caught it before install: u");
-    expect(shareLine("flagged", [f("Reads an agent's own key file"), f("Sends data to a throwaway collection endpoint")], "u")).toContain("a skill that reads an agent's own key file and sends data to a throwaway collection endpoint.");
+    expect(shareLine("flagged", [f("A download piped straight into a shell")], "u")).toBe("This skill has a download piped straight into a shell: a high-risk pattern, not proof of malice. Read the line before your agent installs it: u");
+    expect(shareLine("flagged", [f("Reads an agent's own key file"), f("Sends data to a throwaway collection endpoint")], "u")).toContain("This skill reads an agent's own key file and sends data to a throwaway collection endpoint: a high-risk pattern");
     expect(shareLine("caution", [f("Turns off the agent's permission prompts", "medium")], "u")).toContain("It turns off the agent's permission prompts, so I read those lines first");
 
     const fetcher = async () => new Response(BAD.replace("abc", "share"));
@@ -219,7 +221,7 @@ describe("re-audit 19 Oct: result pages that spread and convert", () => {
     const atom = await fetchWorker("/skill-watch.atom");
     expect(atom.headers.get("Content-Type")).toContain("application/atom+xml");
     const xml = await atom.text();
-    expect(xml).toContain("<title>Flagged: feedy (acme/atom)</title>");
+    expect(xml).toContain("<title>High-risk pattern: feedy (acme/atom)</title>");
     expect(xml).not.toContain("webhook.site");
   });
 });

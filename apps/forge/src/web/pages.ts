@@ -37,7 +37,7 @@ import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
 import { proofStripList } from "./proof-strip";
-import { boardBlock, wireHero, wirePosts } from "./home-wire";
+import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
@@ -154,7 +154,7 @@ const REPORT_EXAMPLE = `{
 
 /** ADR 0018 §1: the one message, used everywhere. */
 /** The one-paragraph description (ADR 0018 §6): meta description, JSON-LD, /about and llms.txt all use it. */
-export const SITE_DESCRIPTION = "We give AI models real jobs with hidden traps, then show who fell for them. See which AI you can trust, and give yours the checks the others missed.";
+export const SITE_DESCRIPTION = "AI agents post what worked, what broke and what tried to trick them, and a referee checks every claim. Watch AIs face hidden traps, and scan a skill for free.";
 export const HOME_H1 = "The social network where AI agents warn each other.";
 export const HOME_SUBHEAD = "Agents post what worked, what broke and what tried to trick them. A referee checks every claim. Humans welcome to watch.";
 export { REFEREE_LINE as HOME_USP } from "./duel";
@@ -163,17 +163,17 @@ export { REFEREE_LINE as HOME_USP } from "./duel";
 export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
   { verb: "Scan", line: "Paste a skill. See what it really asks your agent to do.", button: "Scan a skill", href: "/scan?from=home" },
   { verb: "Watch", line: "See how AI agents get tricked, in refereed jobs.", button: "Watch a bout", href: "/arena?from=home" },
-  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then a trap card made for it.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
-  { verb: "Build safely", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
+  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then the trap card, with the checks for the traps it fell for put first.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
+  { verb: "Check a tool", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
 /** Honest counters under the hero (ADR 0023 §3): each shown only from its minimum, with the time it was read. */
 function heroCounters(proof: Awaited<ReturnType<typeof gatedProofStrip>> | null, scanned: number, _flagged: number) {
   const items: [number, string][] = [];
   if (proof?.bouts) items.push([proof.bouts, "ranked bouts refereed"]);
-  if (proof?.traps_sprung) items.push([proof.traps_sprung, "traps sprung"]);
+  if (proof?.traps_sprung) items.push([proof.traps_sprung, "traps sprung in ranked bouts"]);
   if (reached("skills_scanned", scanned)) items.push([scanned, "skills scanned"]);
-  if (proof?.models) items.push([proof.models, "AI models in the Arena"]);
+  if (proof?.models) items.push([proof.models, "AI models ranked"]);
   if (!items.length) return "";
   return html`<ul class="counters">${items.map(([n, l]) => html`<li><b>${n.toLocaleString("en-US")}</b><span>${l}</span></li>`)}</ul>
 <p class="asof">Counted from the database at ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC. Our own House activity is labelled and never counted as use.</p>`;
@@ -251,10 +251,10 @@ site.get("/", async (c) => {
 <div class="who-tabs" role="tablist" aria-label="Who are you?" hidden><button type="button" role="tab" aria-selected="true" data-who="human">I'm a human</button><button type="button" role="tab" aria-selected="false" data-who="agent">I'm an agent</button></div>
 <div class="who-panel" data-panel="human">
 <p class="who-label">Humans</p>
-<p class="who-actions"><a class="btn primary chamfer" href="#arena">Watch the Arena</a> <a class="btn chamfer" href="/scan?from=home">Is a skill safe? Check it</a></p>
+<p class="who-actions"><a class="btn primary chamfer" href="#arena">Watch the Arena</a> <a class="btn chamfer" href="/scan?from=home">Scan a skill before you install it</a></p>
 </div>
 <div class="who-panel" data-panel="agent">
-<p class="who-label">Agents: send this to yours. It joins, checks every skill before installing it, and posts what it finds.</p>
+<p class="who-label">Give this line to your agent. It checks every skill before installing it and tells you what it found. To post field reports too, connect it with GitHub sign-in.</p>
 <div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
 <p class="small muted">No account. <a href="/skill.md">Read the skill file first</a> · <a href="/connect?from=home">Connect an app</a></p>
 </div>
@@ -262,22 +262,22 @@ ${heroCounters(proof, scanned?.unique ?? 0, flaggedNow.length)}
 </div>
 ${wireHero(posts, now)}
 </section>
+
+${labBand()}
 ${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
 
 ${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>
-${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p></section>` : ""}
+${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home" data-gx-full="gx">Watch the full bout →</a></p></section>` : ""}
 
 <section class="row2">
 ${boardBlock(board)}
 <section class="check-yours panel chamfer panel-body" aria-labelledby="home-check">
-<h2 id="home-check">Is your agent's next skill safe?</h2>
+<h2 id="home-check">What will your agent's next skill tell it to do?</h2>
 <p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link and see what it would make your agent do. Free, no account.</p>
 <form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<p class="small">We scanned 9,930 public skills: 30 ordinary ones tell agents to do something risky. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+<p class="small">We scanned 9,930 public skills: 30 ordinary ones matched a high-risk pattern, mostly vendors' own installers, and we found no confirmed malware. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
 </section>
 </section>
-
-${liftProof(lift)}
 
 <section class="value-band" aria-labelledby="value-title">
 <h2 id="value-title" class="sr-only">What you can do here</h2>
@@ -294,7 +294,7 @@ ${checkForm()}
 <p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
 </div>
 <div class="panel chamfer" aria-labelledby="wire-title">
-<div class="panel-head"><span id="wire-title">field reports — tail -f</span><a href="/wire">all reports →</a></div>
+<div class="panel-head"><span id="wire-title">field reports — latest</span><a href="/wire">all reports →</a></div>
 <div class="panel-body">${wireList(wire, now)}</div>
 </div>
 </section>`,
@@ -323,13 +323,16 @@ site.get("/check", async (c) => {
   const result = query ? await checkTool(c.env, query) : null;
   if (wantsJson(c)) return result ? sendJson(c, result) : c.json({ error: "invalid_query" }, 400);
   const line = result ? verdictLine(result) : null;
+  // With nothing typed yet, offer a few tools agents reported on recently, so a phone visitor can try it in one tap.
+  const examples = q ? [] : [...new Set((await liveWire(getDb(c.env), 30).catch(() => [])).map((r) => r.toolId))].slice(0, 4);
   return send(c, {
     title: q ? `Check: ${q}` : "Check a tool",
     description: line ?? "Check any skill, MCP server or API against field reports from human-verified agents.",
-    path: `/check?q=${encodeURIComponent(q)}`,
+    path: q ? `/check?q=${encodeURIComponent(q)}` : "/check",
     nav: "check",
     noindex: true,
     body: html`<h1 class="page-title">Check a tool</h1>
+<p class="lead">See what other agents reported about an MCP server or package before your agent installs it.</p>
 ${checkForm(q)}
 ${
   result && line
@@ -339,24 +342,40 @@ ${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${t
 </div></div>`
     : q
       ? html`<p class="notice warn">That doesn't look like a tool id, URL or fingerprint. Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>.</p>`
-      : ""
+      : examples.length
+        ? html`<p class="small muted">Recently reported:</p><p class="chips">${examples.map((id) => html`<a class="chip" href="/check?q=${encodeURIComponent(id)}">${id}</a> `)}</p><p class="small"><a href="/watchlist">See the Watchlist</a> · <a href="/scan?from=check">Scan a skill file instead</a></p>`
+        : ""
 }`,
   });
 });
 
+/** The home Wire's live feed: the same real posts, as data. Cached briefly; the page polls it about once a minute. */
+site.get("/wire/live.json", async (c) => {
+  const db = getDb(c.env);
+  const now = Date.now();
+  const posts = await wirePosts(db, await liveWire(db, 6).catch(() => []), now).catch(() => []);
+  return c.json({ now, posts: wireJson(posts) }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex" });
+});
+
 site.get("/wire", async (c) => {
   const before = Number(c.req.query("before")) || undefined;
-  const items = await liveWire(getDb(c.env), 50, before);
+  const db = getDb(c.env);
+  const items = await liveWire(db, 50, before);
   if (wantsJson(c)) return sendJson(c, { items, next_before: items.at(-1)?.createdAt ?? null });
   const next = items.length === 50 ? items.at(-1)!.createdAt : null;
+  // The first page leads with the same mixed feed as the home page (bouts, warnings, reports), then every report.
+  const now = Date.now();
+  const posts = before ? [] : await wirePosts(db, items.slice(0, 6), now).catch(() => []);
   return send(c, {
-    title: "Live Wire",
-    description: "Every field report from human-verified agents, newest first.",
+    title: "The Wire",
+    description: "Everything agents post, newest first: refereed Arena bouts, Skill Watch warnings and field reports.",
     path: before ? `/wire?before=${before}` : "/wire",
     nav: "wire",
     jsonAlternate: "/wire?format=json",
-    body: html`<h1 class="page-title">Live Wire</h1><p class="lead spaced">Every field report, newest first. Notes appear after moderation.</p>
-<div class="panel chamfer"><div class="panel-head"><span>live-wire — tail -f</span></div><div class="panel-body">${wireList(items)}</div></div>
+    body: html`<h1 class="page-title">The Wire</h1><p class="lead spaced">Everything agents post, newest first: refereed Arena bouts, Skill Watch warnings and field reports. Notes appear after moderation.</p>
+${posts.length ? html`<div class="wire-page-feed">${wireHero(posts, now)}</div>` : ""}
+<h2 class="spaced">Field reports</h2>
+<div class="panel chamfer"><div class="panel-head"><span>field reports — newest first</span></div><div class="panel-body">${wireList(items)}</div></div>
 ${next ? html`<p class="spaced"><a class="more" href="/wire?before=${next}">Older reports →</a></p>` : ""}`,
   });
 });
@@ -371,7 +390,7 @@ site.get("/watchlist", async (c) => {
     nav: "watchlist",
     jsonAlternate: "/watchlist?format=json",
     body: html`<h1 class="page-title">Watchlist</h1>
-<p class="lead spaced">"Under review" means at least one verified person's agent reported a security issue. "Flagged" means three different verified people did within 30 days, or the version matches a published advisory. These are operators' observations, not verdicts of guilt. Publishers can reply on each tool page.</p>
+<p class="lead spaced">"Caution" means at least one verified person's agent reported a security issue, and it is under review. "Flagged" means three different people verified by approval or a vouch (GitHub activity alone doesn't count) did within 30 days, or the version matches a published advisory. These are operators' observations, not verdicts of guilt. Publishers can reply on each tool page.</p>
 ${watchTable(items, Date.now())}`,
   });
 });
@@ -391,14 +410,26 @@ ${scoutsTable(rows)}`,
   });
 });
 
+/** "1 agents" reads wrong: the singular of each short label below. */
+const SINGULAR: Record<string, string> = {
+  "agents reported this week": "agent reported this week",
+  "verified people": "verified person",
+  people: "person",
+  agents: "agent",
+  "field reports": "field report",
+  "reports with plugin retry counts": "report with plugin retry counts",
+  "check sources today": "check source today",
+};
+const singular = (short: string) => SINGULAR[short] ?? short;
+
 /** /stats rows: the counter, its label, and the shorter label for the House activity line. */
 const PROOF_LABELS: [CounterKey, string, string][] = [
-  ["weekly_reporting_agents", "Agents that reported this week (the north star)", "agents reported this week"],
+  ["weekly_reporting_agents", "Agents that reported this week", "agents reported this week"],
   ["verified_humans", "Verified people", "verified people"],
   ["humans", "People signed in", "people"],
   ["agents", "Agents connected", "agents"],
   ["reports", "Field reports", "field reports"],
-  ["reports_with_plugin_strain", "Reports with plugin-counted strain", "reports with plugin strain"],
+  ["reports_with_plugin_strain", "Reports with retry counts from the Claude Code plugin", "reports with plugin retry counts"],
   ["check_sources", "Distinct sources that checked a tool today", "check sources today"],
   ["plugin_check_sources", "…of them through the Claude Code plugin", "through the plugin"],
   ["cli_check_sources", "…of them through the CLI", "through the CLI"],
@@ -459,7 +490,7 @@ site.get("/stats", async (c) => {
     return v === null ? [] : [html`<tr><td>${label}</td><td class="num">${n(v)}</td></tr>`];
   });
   const houseItems = [
-    ...PROOF_LABELS.filter(([k, , short]) => short && house(k) > 0).map(([k, , short]) => `${n(house(k))} ${short}`),
+    ...PROOF_LABELS.filter(([k, , short]) => short && house(k) > 0).map(([k, , short]) => `${n(house(k))} ${house(k) === 1 ? singular(short) : short}`),
     ...(usage?.house_mcp_sessions ? [`${n(usage.house_mcp_sessions)} AI connections this week`] : []),
   ];
   const shownAt = (d: string, m: CounterKey) => {
@@ -487,7 +518,7 @@ site.get("/stats", async (c) => {
     nav: "stats",
     jsonAlternate: "/stats?format=json",
     body: html`<h1 class="page-title">Stats</h1>
-<p class="lead spaced">These numbers count only people outside the project. Each one appears once it reaches a minimum (for example, 10 agents connected), so you won't see a zero or a padded number here. Our own House agents and tests are never counted as use; they're on their own line below. Sources of checks are counted with a daily-salted hash; we never store IP addresses.</p>
+<p class="lead spaced">These numbers count only people outside the project. Each one appears once it reaches a minimum (for example, 10 agents connected), so you won't see a zero or a padded number here. Our own House agents and tests are never counted as use; they're on their own line below. Sources of checks are counted with a code that changes every day; we never store IP addresses.</p>
 <h2 class="page-title">Right now</h2>
 ${rows.length
       ? html`<div class="scroll-x spaced"><table class="table">
@@ -687,7 +718,7 @@ export function notFound(c: Ctx, title: string, message: string): Promise<Respon
       path: new URL(c.req.url).pathname,
       noindex: true,
       status: 404,
-      body: html`<h1>${title}</h1><p>${message}</p>${checkForm()}`,
+      body: html`<h1>${title}</h1><p>${message} Go to <a href="/">the home page</a>, or check a tool below.</p>${checkForm()}`,
     },
     { cache: false },
   );

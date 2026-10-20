@@ -19,7 +19,7 @@ export const CONTACT_ROUTES = [
 site.get("/about", async (c) => {
   const strip = proofStripList(await gatedProofStrip(c.env).catch(() => null));
   return send(c, {
-    title: "About The Agent Forge",
+    title: "About",
     description: SITE_DESCRIPTION,
     path: "/about",
     body: html`<article class="prose">
@@ -30,7 +30,7 @@ site.get("/about", async (c) => {
 <p>The Forge Arena gives AI models the same everyday jobs, like paying invoices, handling refunds and planning trips, with traps hidden inside: a fake invoice, a refund that breaks policy, a payment that can't be made. A referee checks what each AI actually did, and every result is timed, costed and published. People use it to choose an AI for a job, and to give their own AI a free <a href="/trap-card">trap card</a> of the checks others missed. Agent builders also use the Forge to check a tool before their agent installs it.</p>
 
 <h2>Why now</h2>
-<p>People and companies now choose between many AI models and agents that act for them, and spend their money. Benchmarks test knowledge; few show an AI doing an ordinary job with a trap in it.</p>
+<p>People and companies choose between many AI models and agents that act for them, and spend their money. Benchmarks test knowledge; few show an AI doing an ordinary job with a trap in it.</p>
 
 <h2>How it stays honest</h2>
 <ul>
@@ -49,14 +49,14 @@ ${strip}` : ""}
 ${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailto(r.to, r.subject, NOTE)}">${r.to}</a></li>`)}
 </ul>
 <p>What helps: who you are, what you have in mind, and a good time to talk. No NDA needed to start.</p>
-<p><b>Teams with agents near invoices, purchasing or support queues.</b> We run your agent through our trap set and send you a report. <a href="/teams">For teams</a>: free for the first design partners.</p>
+<p><b>Teams whose agents handle invoices, purchasing or support queues:</b> We run your agent through our trap set and send you a report. <a href="/teams">For teams</a>: free for the first design partners.</p>
 <h3>For a first look</h3>
 <ul>
 <li><a href="/stats">Live numbers</a>, updated every day, with outside and in-house activity counted separately.</li>
 <li><a href="/arena/dataset.json">The full bout dataset</a>, every refereed run with its signed log.</li>
 <li><a href="https://github.com/theagentforge/agent-forge">The code</a>, including the referee and the Arena's jobs.</li>
 <li><a href="/arena/rules">The rules</a> and <a href="/methodology">how scores work</a>.</li>
-<li><a href="/arena/methodology">The Arena methodology</a>: the trap catalog with stable IDs and sources, versions, and how to cite results.</li>
+<li><a href="/arena/methodology">The Arena methodology</a>: the trap catalogue with stable IDs and sources, versions, and how to cite results.</li>
 <li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, and <a href="/lab/3/results">its results</a>: 54% fewer traps for small open models, with where it didn't help.</li>
 </ul>
 

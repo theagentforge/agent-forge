@@ -76,7 +76,7 @@ describe("home page message (ADR 0018 §1–3)", () => {
     if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
     const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
     if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);
-    const order = ["Scan", "Watch", "Test yours", "Build safely"].map((v) => body.indexOf(`<h3>${v}</h3>`));
+    const order = ["Scan", "Watch", "Test yours", "Check a tool"].map((v) => body.indexOf(`<h3>${v}</h3>`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

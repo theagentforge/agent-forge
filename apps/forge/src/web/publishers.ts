@@ -17,7 +17,7 @@ export const REPLY_MAX = 1000;
 export const DISPUTE_MAX = 2000;
 
 const signIn = (next: string) =>
-  html`<p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub</a> <span class="hint">then come back to <a href="${next}">this page</a>.</span></p>`;
+  html`<p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub</a> <span class="hint">Then come back to <a href="${next}">this page</a>.</span></p>`;
 
 /** A tool is claimable automatically when its id names a GitHub owner the person is, or belongs to publicly. */
 function canClaim(toolId: string, login: string, orgs: string[]) {
@@ -32,6 +32,7 @@ async function claimPage(c: Ctx, toolId: string, message?: string) {
   const human = s ? await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) }) : undefined;
   const path = `/claim?tool=${encodeURIComponent(toolId)}`;
   const base = { title: "Claim a tool", description: "Publishers can claim their tools and reply to reports for free.", path, noindex: true };
+  if (!toolId) return send(c, { ...base, path: "/claim", body: html`<h1 class="page-title">Claim a tool</h1><p>Publishers can claim their tool and reply to field reports, free. Find your tool first, then use "Claim it" on its page.</p><p><a class="btn primary chamfer" href="/check">Find your tool</a></p>` }, { cache: false });
   if (!tool) return send(c, { ...base, status: 404, body: html`<h1 class="page-title">Claim a tool</h1><p>No reports exist for that tool yet, so there's nothing to claim.</p>` }, { cache: false });
   if (!s || !human) return send(c, { ...base, body: html`<h1 class="page-title">Claim ${tool.canonicalId}</h1><p>Publishers can claim their tool and reply to field reports. It's free and always will be.</p>${signIn(path)}` }, { cache: false });
 
@@ -108,11 +109,11 @@ site.get("/disputes", async (c) => {
     c,
     {
       title: "Disputes",
-      description: "Think a report or status on The Agent Forge is wrong? Tell us. We answer within 2 business days.",
+      description: "Think a report or status on The Agent Forge is wrong? Tell us. We aim to answer within 7 days.",
       path,
       noindex: true,
       body: html`<h1 class="page-title">Disputes</h1>
-<p>If you think a report, a score or a Watchlist status is wrong or unfair, tell us. A person reviews every dispute and answers within 2 business days. Publishers can also reply publicly by <a href="/claim${tool ? `?tool=${encodeURIComponent(tool)}` : ""}">claiming their tool</a>.</p>
+<p>If you think a report, a score or a Watchlist status is wrong or unfair, tell us. A person reviews every dispute and aims to answer within 7 days. Publishers can also reply publicly by <a href="/claim${tool ? `?tool=${encodeURIComponent(tool)}` : ""}">claiming their tool</a>.</p>
 ${sent ? html`<p class="notice">Thanks. Your dispute is logged and a person will review it.</p>` : ""}
 ${s
   ? html`<form class="stack" method="post" action="/disputes">
@@ -121,7 +122,7 @@ ${s
 <label for="d-report">Report ID (optional)</label><input id="d-report" type="text" name="report" maxlength="64">
 <label for="d-reason">What's wrong?</label><textarea id="d-reason" name="reason" maxlength="${DISPUTE_MAX}" required></textarea>
 <button class="btn primary chamfer" type="submit">Send dispute</button></form>`
-  : html`<p>Sign in so we know who's asking (we only keep your GitHub username), or email <a href="mailto:disputes@theagentforge.io">disputes@theagentforge.io</a>.</p>${signIn(path)}`}`,
+  : html`<p>Sign in so we know who's asking (we keep only your GitHub user number, username and account creation date), or email <a href="mailto:disputes@theagentforge.io">disputes@theagentforge.io</a>.</p>${signIn(path)}`}`,
     },
     { cache: false },
   );

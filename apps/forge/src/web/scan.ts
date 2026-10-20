@@ -20,13 +20,15 @@ import { send, site } from "./pages";
 export const SKILL_SCAN_ACTION_LIVE = true;
 
 const SEV_LABEL: Record<ScanSeverity, string> = { high: "High", medium: "Medium", low: "Low" };
-const verdictWord = { flagged: "Flagged", caution: "Caution", clear: "No known risky patterns" } as const;
+// Words, not the API enum: "Flagged" means three verified people on the Watchlist, so a scanner match says what it is.
+const verdictWord = { flagged: "High-risk pattern", caution: "Medium-risk pattern", clear: "No known risky patterns" } as const;
+const FLAG_NOTE = `"Flagged" here means the scanner matched a high-risk text pattern; it is not a Watchlist flag, which needs three verified people.`;
 const vClass = { flagged: "flagged", caution: "caution", clear: "clear" } as const;
 
 /** The sentence people share from a result page, with the page link tagged by where it's shared. */
 export function shareLine(verdict: "flagged" | "caution" | "clear", findings: ScanFinding[], url: string) {
   const what = patternPhrase(findings);
-  if (verdict === "flagged") return `My agent was about to install a skill that ${what}. The Forge caught it before install: ${url}`;
+  if (verdict === "flagged") return `This skill ${what}: a high-risk pattern, not proof of malice. Read the line before your agent installs it: ${url}`;
   if (verdict === "caution") return `Checked a skill before my agent installed it. It ${what}, so I read those lines first: ${url}`;
   return `Checked a skill before my agent installed it: no known risky patterns. Free scan, no account: ${url}`;
 }
@@ -44,7 +46,7 @@ function checkYours(origin: string, from: string) {
 
 function shareButtons(text: string, url: string) {
   const enc = encodeURIComponent;
-  return html`<p class="share-buttons small"><a class="btn chamfer" href="https://x.com/intent/post?text=${enc(text)}" target="_blank" rel="noopener">Post on X</a> <a class="btn chamfer" href="https://bsky.app/intent/compose?text=${enc(text)}" target="_blank" rel="noopener">Bluesky</a> <a class="btn chamfer" href="https://www.linkedin.com/sharing/share-offsite/?url=${enc(url)}" target="_blank" rel="noopener">LinkedIn</a></p>`;
+  return html`<p class="share-buttons small"><button type="button" class="btn primary chamfer" data-native-share data-share-text="${text}" data-share-url="${url}" hidden>Share…</button> <a class="btn chamfer" href="https://x.com/intent/post?text=${enc(text)}" target="_blank" rel="noopener">Post on X</a> <a class="btn chamfer" href="https://bsky.app/intent/compose?text=${enc(text)}" target="_blank" rel="noopener">Bluesky</a> <a class="btn chamfer" href="https://www.linkedin.com/sharing/share-offsite/?url=${enc(url)}" target="_blank" rel="noopener">LinkedIn</a></p>`;
 }
 
 function scanForm(prefill: { url?: string; text?: string } = {}) {
@@ -72,6 +74,7 @@ function resultBlock(r: { verdict: "flagged" | "caution" | "clear"; counts: Reco
 <p class="lead">${scanSummary(r)}</p>
 ${findingsTable(r.findings)}
 <p class="small muted mono">${r.fingerprint}</p>
+${r.verdict === "flagged" ? html`<p class="small muted">${FLAG_NOTE}</p>` : ""}
 ${extra}
 </section>`;
 }
@@ -89,9 +92,9 @@ site.get("/scan", async (c) => {
 <h1 class="page-title">Scan a skill before your agent installs it.</h1>
 <p class="lead">Skills are text your agent obeys. We check that text for what virus scanners miss: instructions hidden from you, downloads piped into a shell, reads of your keys, and data sent to throwaway servers.</p>
 ${scanForm()}
-<section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. From then on it checks every skill before installing it, and once a week checks the ones it has. It costs one small request a week.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
+<section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. From then on it checks every skill before installing it, and once a week checks the ones it has. That's one small request a week.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
 <p class="small muted">The <a href="/skill.md">skill file</a> is plain text you can read first. Its fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner, and it never asks your agent to fetch anything and follow it.</p></section>
-${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one calm comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
+${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one short comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
 ${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skills scanned so far · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });
 });
@@ -146,7 +149,7 @@ site.get("/scan/rules", (c) =>
 <table class="table stack"><thead><tr><th>Rule</th><th>Severity</th><th>Pattern</th><th>Why it matters</th></tr></thead><tbody>${SCAN_RULES.map(
       (x) => html`<tr id="${x.id}"><td class="mono">${x.id}</td><td data-label="Severity"><span class="sev sev-${x.severity}">${SEV_LABEL[x.severity]}</span></td><td>${x.title}</td><td class="small muted">${x.why}</td></tr>`,
     )}</tbody></table>
-<p class="small muted">Flagged: at least one high-severity match. Caution: medium only. The scanner reads text; it doesn't run anything, so it can miss attacks that only show when code runs. Found a false match or a pattern we miss? <a href="mailto:hello@theagentforge.io?subject=Scan%20rule">Tell us</a>.</p>`,
+<p class="small muted">High-risk pattern: at least one high-severity match. Medium-risk pattern: medium only. The scanner reads text; it doesn't run anything, so it can miss attacks that only show when code runs. Found a false match or a pattern we miss? <a href="mailto:hello@theagentforge.io?subject=Scan%20rule">Tell us</a>.</p>`,
   }),
 );
 
@@ -176,7 +179,7 @@ ${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity,
 <section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", shareLine(row.verdict, findings, `${page}?from=share`))}</div>
 ${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page}?from=share-li`)}
 ${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Put this badge in its README. It always shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
-${row.sourceUrl && row.verdict !== "clear" ? html`<form method="post" action="/scan?from=rescan"><input type="hidden" name="url" value="${row.sourceUrl.replace(/\/[0-9a-f]{40}\//, "/HEAD/")}"><p>Your skill? Change it, then <button class="btn chamfer" type="submit">Scan the latest version</button> The new version gets its own page.</p></form>` : ""}</section>
+${row.sourceUrl && row.verdict !== "clear" ? html`<form method="post" action="/scan?from=rescan"><input type="hidden" name="url" value="${row.sourceUrl.replace(/\/[0-9a-f]{40}\//, "/HEAD/")}"><p>Your skill? Change it, then <button class="btn chamfer" type="submit">Scan the latest version</button>. The new version gets its own page.</p></form>` : ""}</section>
 <p class="small muted">This page shows text patterns in one exact version of the file (its fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>
 ${checkYours(origin, "result")}`,
   });
@@ -198,8 +201,10 @@ site.get("/skill-watch", async (c) => {
     body: html`<p class="eyebrow">Skill Watch · rules ${SCAN_RULES_VERSION}</p>
 <h1 class="page-title">What skills tell agents to do</h1>
 <p class="lead">Public skills that matched a risky pattern, newest first. Each links to the exact lines. A match is a reason to read, not a verdict on the author.</p>
-${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skills scanned</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> flagged</li><li><b>${stats.caution.toLocaleString("en-US")}</b> caution</li></ul>` : ""}
-${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner test files, which quote attacks on purpose, and results we hold back while their maintainers hear from us. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills were flagged.</p>` : ""}
+<p><a class="btn primary chamfer" href="#check-yours">Scan your own skill, free</a></p>
+${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skills scanned</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> with a high-risk pattern</li><li><b>${stats.caution.toLocaleString("en-US")}</b> with a medium-risk pattern</li></ul>` : ""}
+${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner test files, which quote attacks on purpose, and results we hold back while their maintainers hear from us. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills matched a high-risk pattern.</p>` : ""}
+<p class="small muted">${FLAG_NOTE}</p>
 ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table"><thead><tr><th>Pattern</th><th class="num">Skills</th></tr></thead><tbody>${freq.map(([id, n]) => html`<tr><td><a href="/scan/rules#${id}">${rule(id)?.title ?? id}</a></td><td class="num">${n}</td></tr>`)}</tbody></table></section>` : ""}
 <section><h2>Newest</h2>${
       flagged.length
@@ -210,7 +215,7 @@ ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table">
               return html`<a href="${scanPath(r.fingerprint)}"><b>${l.title}</b></a>${l.where ? html` <span class="small muted mono">${l.where}</span>` : ""}`;
             })()}</td><td data-label="Top pattern">${top?.title ?? "—"}</td><td class="num" data-label="Seen">${new Date(r.lastSeen).toISOString().slice(0, 10)}</td></tr>`;
           })}</tbody></table>`
-        : html`<p class="empty">Nothing flagged yet. <a href="/scan">Scan a skill</a>.</p>`
+        : html`<p class="empty">No high-risk patterns yet. <a href="/scan">Scan a skill</a>.</p>`
     }</section>
 <p class="small muted"><a href="/scan">Scan a skill</a> · <a href="/scan/rules">The rules</a> · <a href="/skill-watch.atom">Follow (Atom feed)</a> · <a href="/skill-watch?format=json">JSON</a></p>
 ${checkYours(c.env.PUBLIC_ORIGIN, "skill-watch")}`,
@@ -227,7 +232,7 @@ site.get("/skill-watch.atom", async (c) => {
   const entries = rows.map((r) => {
     const l = skillLabel(r.sourceUrl, r.name);
     const url = `${origin}${scanPath(r.fingerprint)}`;
-    return `<entry><id>${url}</id><title>${xmlEsc(`Flagged: ${l.title}${l.where ? ` (${l.where})` : ""}`)}</title><link href="${xmlEsc(`${url}?from=atom`)}"/><updated>${new Date(r.lastSeen).toISOString()}</updated><summary>${xmlEsc(`This skill ${patternPhrase(r.findings as ScanFinding[])}. A match is a reason to read the line, not a verdict on the author.`)}</summary></entry>`;
+    return `<entry><id>${url}</id><title>${xmlEsc(`High-risk pattern: ${l.title}${l.where ? ` (${l.where})` : ""}`)}</title><link href="${xmlEsc(`${url}?from=atom`)}"/><updated>${new Date(r.lastSeen).toISOString()}</updated><summary>${xmlEsc(`This skill ${patternPhrase(r.findings as ScanFinding[])}. A match is a reason to read the line, not a verdict on the author.`)}</summary></entry>`;
   });
   const xml = `<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom"><id>${origin}/skill-watch</id><title>Skill Watch: The Agent Forge</title><subtitle>Agent skills that matched a high-risk pattern in the Forge's free scanner.</subtitle><link href="${origin}/skill-watch"/><link rel="self" href="${origin}/skill-watch.atom"/><updated>${updated}</updated><author><name>The Agent Forge</name></author>${entries.join("")}</feed>`;
   return c.body(xml, 200, { "Content-Type": "application/atom+xml; charset=utf-8", "Cache-Control": "public, max-age=900" });

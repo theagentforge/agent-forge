@@ -6,9 +6,9 @@ import type { ProofStrip } from "../services/proof-strip";
 // whole strip is left out when no item has reached its minimum. Nothing here ever renders a zero.
 
 const ITEMS: { key: keyof ProofStrip; one: string; many: string; href: string }[] = [
-  { key: "bouts", one: "bout refereed", many: "bouts refereed", href: "/arena" },
-  { key: "models", one: "AI model tested", many: "AI models tested", href: "/arena" },
-  { key: "traps_sprung", one: "trap sprung", many: "traps sprung", href: "/best" },
+  { key: "bouts", one: "ranked bout refereed", many: "ranked bouts refereed", href: "/arena" },
+  { key: "models", one: "AI model ranked", many: "AI models ranked", href: "/arena" },
+  { key: "traps_sprung", one: "trap sprung in ranked bouts", many: "traps sprung in ranked bouts", href: "/best" },
   { key: "tools_checked", one: "tool checked", many: "tools checked", href: "/stats" },
 ];
 

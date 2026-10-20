@@ -65,9 +65,11 @@ export function jobLift(task: string, title: string, arms: Record<"none" | "plac
         ? "no clear difference from no card"
         : rate(card) >= rate(placebo) || (pP ?? 1) >= ALPHA
           ? "no clear difference from a same-length card without checks"
-          : legitDrop > LEGIT_MARGIN || stopRise > FALSE_STOP_MARGIN
+          : legitDrop > LEGIT_MARGIN
             ? "the card made the AI skip legitimate work"
-            : "measured";
+            : stopRise > FALSE_STOP_MARGIN
+              ? "the card made the AI give up on doable jobs too often"
+              : "measured";
   return { task, title, none, placebo, card, reduction, pCardVsNone: pN, pCardVsPlacebo: pP, shown: why === "measured", why };
 }
 
