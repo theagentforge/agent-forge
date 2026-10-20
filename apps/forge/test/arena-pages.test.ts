@@ -79,7 +79,7 @@ describe("home page Arena hero (ADR 0016)", () => {
   it("with reduced motion nothing animates: the finished frame stays still, and #gx-t freezes a moment", async () => {
     const js = (await import("../public/gauntlet.js?raw")).default as string;
     expect(js).toContain('matchMedia("(prefers-reduced-motion: reduce)")');
-    expect(js).toContain("if (!list.length || reduce) return;");
+    expect(js).toContain("if (!list.length || (reduce && !clipMode)) return;");
     expect(js).toContain("gx-t=");
     // No randomness: every replay of a bout is identical.
     expect(js).not.toContain("Math.random");

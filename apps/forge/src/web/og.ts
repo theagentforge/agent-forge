@@ -13,6 +13,7 @@ import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { channelDuels } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
+import { PLAY, robotSvg, stampWord, svgAt } from "../../public/gauntlet.js";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 import { trapBoard } from "../arena/failures";
 
@@ -206,9 +207,68 @@ export function homeCardLines(duel: Duel | undefined) {
   return { headline: HOME_H1, title, sides, bug: `${title} · ${sides.map((x) => `${x.name}: ${x.stamp}`).join(" · ")}` };
 }
 
+/** The Gauntlet robot on a lighter tile (its dark visor would vanish on the card background). */
+function robotTile(mood: "pass" | "fell" | "alert", border: string, size = 200): Node {
+  const src = `data:image/svg+xml;base64,${btoa(robotSvg(mood, size))}`;
+  return el("div", { display: "flex", padding: "18px", background: "#1C2430", border: `3px solid ${border}`, borderRadius: "6px" }, [el("img", { width: size, height: size }, undefined, { src, width: size, height: size })]);
+}
+
+/** The launch report's card (ADR 0026): the numbers from the report, with the Skill Watch robot mid-check. */
+site.get("/og/reports/skill-scan-2026-10.png", (c) =>
+  respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", alignItems: "center", justifyContent: "space-between" }, [
+          el("div", { display: "flex", flexDirection: "column", width: "780px" }, [
+            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 26, color: C.caution, marginBottom: "18px" }, "SKILL WATCH · REPORT · OCT 2026"),
+            headline("We scanned 9,930 public AI agent skills.", 50),
+            line("14 pipe a download straight into a shell.", 28, C.text),
+            line("8 read the agent's whole key file.", 28, C.text),
+            line("No confirmed malware. The dataset is public.", 26),
+          ]),
+          robotTile("alert", C.caution),
+        ]),
+      ],
+      "theagentforge.io/reports",
+    ),
+  ),
+);
+
+/** The finished Trap Gauntlet frame (the same drawing the site plays) as an image for a share card. The card renderer
+ * draws no text inside an SVG image, so the lane names and verdict stamps are laid over it as real text. */
+export function gauntletImage(duel: Duel, size: number): Node | null {
+  if (!duel.gauntlet) return null;
+  const svg = svgAt(duel.gauntlet, PLAY, { geo: "compact", label: duel.headline ?? duel.title });
+  const src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+  const k = size / 600; // the compact drawing is 600 × 600
+  const laneY = [175, 455];
+  const stampX = 228;
+  const over = duel.gauntlet.lanes.map((lane, i) => {
+    const bad = lane.fell || lane.verdict !== "PASS";
+    const color = bad ? C.flagged : C.clear;
+    const y = laneY[i]!;
+    return [
+      el("div", { position: "absolute", left: 36 * k, top: (y - 106) * k, display: "flex", fontFamily: "JetBrains Mono", fontSize: 18 * k, color: C.text }, `[${i ? "B" : "A"}] ${clip(lane.name, 24)}`),
+      el("div", { position: "absolute", left: (stampX - 150) * k, top: (y - 76) * k, width: 300 * k, height: 60 * k, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Archivo Expanded", fontSize: 26 * k, color }, stampWord(lane)),
+    ];
+  }).flat();
+  return el("div", { display: "flex", position: "relative", width: size, height: size }, [el("img", { width: size, height: size }, undefined, { src, width: size, height: size }), ...over]);
+}
+
 site.get("/og/home.png", async (c) => {
   const duel = (await channelDuels(c.env, getDb(c.env)).catch(() => []))[0];
   const l = homeCardLines(duel);
+  const art = duel ? gauntletImage(duel, 400) : null;
+  // ADR 0029: the headline beside today's Gauntlet, robots and all; the old text score bug only if there's no art.
+  if (art && duel) {
+    const left = el("div", { display: "flex", flexDirection: "column", width: "600px", justifyContent: "center" }, [
+      headline(l.headline, 50),
+      el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.caution, marginBottom: "12px" }, "Same job, same hidden trap."),
+      el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.muted }, clip(duel.headline ?? "Watch who falls for it.", 90)),
+    ]);
+    return respond(c, frame([el("div", { display: "flex", justifyContent: "space-between", alignItems: "center" }, [left, art])], "theagentforge.io"));
+  }
   const bug = l.title
     ? [
         el("div", { display: "flex", flexDirection: "column", borderLeft: `6px solid ${C.brand}`, paddingLeft: "18px" }, [
@@ -249,11 +309,15 @@ async function failCardImage(c: Ctx, id: string) {
   const ok = await verifiedReplay(c.env, r.run.id, r.log, r.run.signature);
   const good = card.kind === "caught" || card.kind === "pass";
   const color = good ? C.clear : card.kind === "knockout" ? C.caution : C.flagged;
-  const size = card.sentence.length <= 44 ? 56 : card.sentence.length <= 80 ? 46 : 38;
+  const size = card.sentence.length <= 44 ? 52 : card.sentence.length <= 80 ? 42 : 34;
+  // ADR 0029: the Gauntlet robot beside the verdict, happy after a pass, sheepish after a fall. No text in it.
+  const bot = robotTile(good ? "pass" : "fell", color);
   return respond(
     c,
     frame(
       [
+        el("div", { display: "flex", alignItems: "center", justifyContent: "space-between" }, [
+        el("div", { display: "flex", flexDirection: "column", width: "800px" }, [
         el("div", { display: "flex", alignItems: "center", gap: "16px", marginBottom: "22px", fontFamily: "JetBrains Mono", fontSize: 26 }, [
           ...(card.practice ? [el("span", { display: "flex", border: `2px solid ${C.caution}`, color: C.caution, padding: "2px 12px" }, "Practice")] : []),
           punch(40, color, good ? ICON.clear : ICON.flagged),
@@ -263,6 +327,9 @@ async function failCardImage(c: Ctx, id: string) {
         el("div", { display: "flex", fontFamily: "Archivo Expanded", fontSize: size, lineHeight: 1.12, marginBottom: "26px" }, clip(card.sentence, 140)),
         line(`${clip(taskTitle, 40)} · ${card.dated}${card.moreTraps ? ` · and ${card.moreTraps} more ${card.moreTraps === 1 ? "trap" : "traps"}` : ""}`),
         line(ok ? "Verified replay" : "Replay not verified", 26, ok ? C.clear : C.muted),
+        ]),
+        bot,
+        ]),
       ],
       card.shortLink,
     ),

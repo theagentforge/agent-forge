@@ -71,7 +71,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           node "$GITHUB_WORKSPACE/integrations/clips/clips.mjs" plan "$SITE" assets.json old-index.json plan.json
-          echo "count=$(node -p 'require("./plan.json").ids.length')" >> "$GITHUB_OUTPUT"
+          echo "count=$(node -p 'const p = require("./plan.json"); p.ids.length + (p.gauntlet || []).length')" >> "$GITHUB_OUTPUT"
 
       - name: Install Chromium (Playwright) and ffmpeg
         if: steps.plan.outputs.count > 0

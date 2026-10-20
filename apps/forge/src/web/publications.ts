@@ -21,6 +21,8 @@ interface Publication {
   path: string;
   markdown: string;
   description: string;
+  /** Share image, when the report has its own (else the site's default). */
+  image?: string;
   /** Off until Dinike has read it (the X posts for it need the page live). */
   live: boolean;
   files?: { name: string; label: string; text: string; type: string }[];
@@ -31,6 +33,7 @@ export const PUBLICATIONS: Publication[] = [
     path: "/reports/skill-scan-2026-10",
     markdown: skillScanReport,
     description: "We scanned 9,930 public agent skills for the instructions virus scanners miss. No malware found by this method; 14 pipe a download into a shell and 8 read the agent's whole key file.",
+    image: "/og/reports/skill-scan-2026-10.png",
     // The launch report (ADR 0026). Reviewed against disclosure practice and approved for Dinike on 19 Oct (v1.1).
     live: true,
   },
@@ -95,6 +98,7 @@ for (const p of PUBLICATIONS) {
     return send(c, {
       title,
       description: p.description,
+      ...(p.image ? { image: p.image } : {}),
       path: p.path,
       body: html`<article class="prose">
 <h1 class="page-title">${title}</h1>

@@ -55,3 +55,20 @@ export async function channelDuels(env: Pick<Env, "KV">, db: Db, now = Date.now(
   await env.KV.put(key, JSON.stringify(duels), { expirationTtl: duels.length ? 2 * 86_400 : 900 });
   return duels;
 }
+
+
+/**
+ * A duel from two named runs (the Gauntlet clip page, ADR 0029): they must be the same task, variant and attempt,
+ * the way the featured-bout rule pairs them, and both public. Returns null otherwise.
+ */
+export async function duelFromRuns(db: Db, aId: string, bId: string, now = Date.now()): Promise<Duel | null> {
+  if (aId === bId) return null;
+  const [ra, rb] = await Promise.all([runWithLog(db, aId, now), runWithLog(db, bId, now)]);
+  if (!ra || !rb) return null;
+  if (ra.run.task !== rb.run.task || ra.run.seed !== rb.run.seed || ra.run.attemptNo !== rb.run.attemptNo || ra.run.eventId !== rb.run.eventId) return null;
+  const side = (r: NonNullable<typeof ra>) => ({ id: r.run.id, model: r.run.modelId, name: modelName(r.run.modelId), result: r.result, log: r.log, attempt: r.run.attemptNo, finishedAt: r.run.finishedAt ?? now });
+  return duelScript(side(ra), side(rb), { rounds: Math.max(ra.run.attemptNo, rb.run.attemptNo), practice: ra.event.kind === "practice" });
+}
+
+/** The Gauntlet clip id for a pair: "gx-" plus the first 8 characters of each run id. */
+export const gauntletClipId = (aId: string, bId: string) => `gx-${aId.slice(0, 8)}-${bId.slice(0, 8)}`;

@@ -29,7 +29,7 @@ import {
   wireList,
   liftProof,
 } from "./components";
-import { channelDuels } from "../arena/featured";
+import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
 import { bump, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
@@ -39,6 +39,7 @@ import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../
 import { proofStripList } from "./proof-strip";
 import { boardBlock, wireHero, wirePosts } from "./home-wire";
 import { gullibilityBoard } from "../arena/board";
+import { clipUrlFor } from "../arena/clips";
 import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
 import type { ScanFinding } from "@forge/shared";
 import { duelPlayer } from "./duel";
@@ -211,6 +212,7 @@ site.get("/", async (c) => {
   const lift = await cardLift(db).catch(() => []);
   const [posts, board] = await Promise.all([wirePosts(db, wire, now).catch(() => []), gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null }))]);
   const duel = duels[0] ?? null;
+  const duelClip = duel ? await clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : null;
   if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
   const origin = c.env.PUBLIC_ORIGIN;
   return send(c, {
@@ -263,7 +265,7 @@ ${wireHero(posts, now)}
 ${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
 
 ${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>
-${duelPlayer(duel, { mode: "cycle", channel: duels })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p></section>` : ""}
+${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home">Watch the full bout →</a></p></section>` : ""}
 
 <section class="row2">
 ${boardBlock(board)}

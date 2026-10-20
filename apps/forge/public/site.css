@@ -631,3 +631,6 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .board li.safe .pct{color:var(--clear)}
 @media (prefers-reduced-motion:reduce){.post,.live-pill i{animation:none}}
 .gx-share code{white-space:pre-wrap}
+.gx-controls{display:flex;gap:var(--s2);flex:none}
+@media (max-width:520px){.gx .duel-top{flex-wrap:wrap}.gx .duel-top .label{flex-basis:100%;text-align:left}}
+.gx-sound[aria-pressed=true]{border-color:var(--brand);color:var(--brand)}
