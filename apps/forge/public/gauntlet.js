@@ -202,7 +202,10 @@ export function svgAt(g, t, o = {}) {
     out.push(`<text x="36" y="${y - 90}" fill="${C.text}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="${fz(18)}"><tspan fill="${C.muted}">[${LANE_TAG[k]}]</tspan> ${esc(l.name)}</text>`);
     // ground
     out.push(`<path d="M30 ${y + 46}H${W - 30}" stroke="${C.seam}" stroke-width="4" stroke-dasharray="2 10" shape-rendering="crispEdges"/>`);
-    // tiles
+    // tiles: as big as the spacing allows, so long bouts never overlap
+    let gap = Infinity;
+    for (let i = 1; i < n; i++) gap = Math.min(gap, p.xs[i] - p.xs[i - 1]);
+    const lts = Math.max(14, Math.min(ts, gap * 0.9));
     for (let i = 0; i < n; i++) {
       const s = l.steps[i];
       const x = p.xs[i];
@@ -210,8 +213,9 @@ export function svgAt(g, t, o = {}) {
       const reached = t >= p.ts[i];
       if (isTrap && t < T_VERDICT + 2) out.push(`<circle cx="${x}" cy="${y + 26}" r="${40 + 4 * Math.sin(t * 4)}" fill="url(#gx-glow)"/>`);
       const color = !reached ? C.muted : s.ok ? C.text : C.warn;
-      out.push(`<rect x="${x - half}" y="${y + 48 - ts}" width="${ts}" height="${ts}" rx="4" fill="${C.bg}" stroke="${isTrap ? (t >= T_VERDICT && l.trapAt !== null ? C.fail : C.warn) : C.seam}" stroke-width="${isTrap ? 2 : 1}"/>`);
-      out.push(icon(s.kind, x - (ts * 0.36), y + 48 - ts + ts * 0.14, (ts * 0.72) / 8, color));
+      out.push(`<rect x="${x - lts / 2}" y="${y + 48 - lts}" width="${lts}" height="${lts}" rx="4" fill="${C.bg}" stroke="${isTrap ? (t >= T_VERDICT && l.trapAt !== null ? C.fail : C.warn) : C.seam}" stroke-width="${isTrap ? 2 : 1}"/>`);
+      out.push(icon(s.kind, x - (lts * 0.36), y + 48 - lts + lts * 0.14, (lts * 0.72) / 8, color));
+      if (s.count > 1) out.push(`<text x="${x}" y="${y + 48 + fz(13)}" text-anchor="middle" fill="${C.muted}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="${fz(11)}">×${s.count}</text>`);
       if (reached && !s.ok) out.push(`<text x="${x}" y="${y - 2}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="${fz(16)}">!</text>`);
       if (isTrap && l.trapAt !== null && t >= p.ts[i] && t < T_VERDICT) out.push(`<text x="${x}" y="${y + 70}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="700" font-size="${fz(13)}">click</text>`);
       if (isTrap && l.scanAt !== null && t >= p.ts[i] - 0.1 && t < p.ts[i] + 0.9) out.push(`<text x="${x}" y="${y - 6}" text-anchor="middle" fill="${C.warn}" font-family="JetBrains Mono, monospace" font-weight="800" font-size="${fz(18)}">?</text>`);
@@ -379,7 +383,7 @@ if (typeof document !== "undefined") {
         pick.querySelectorAll("[data-pick]").forEach((b) => { b.textContent = d.gauntlet.lanes[b.getAttribute("data-pick") === "a" ? 0 : 1].name; b.disabled = false; b.setAttribute("aria-pressed", "false"); });
         if (pickOut) pickOut.textContent = "";
       }
-      if (share) share.textContent = `Same job, one hidden trap (${d.title}):\n${d.gauntlet.lanes.map((l) => `${l.name} ${l.grid}`).join("\n")}\ntheagentforge.io/arena/run/${d.gauntlet.lanes[0].id}`;
+      if (share) share.textContent = `Same job, one hidden trap (${d.title}):\n${d.gauntlet.lanes.map((l) => `${l.grid} ${l.name}`).join("\n")}\ntheagentforge.io/arena/run/${d.gauntlet.lanes[0].id}`;
       choice = null;
     };
     const now = () => (paused ? pauseAt : (performance.now() - t0) / 1000);

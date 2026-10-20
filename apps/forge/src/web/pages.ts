@@ -38,7 +38,7 @@ import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
 import { proofStripList } from "./proof-strip";
 import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
-import { gullibilityBoard } from "../arena/board";
+import { frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
 import type { ScanFinding } from "@forge/shared";
@@ -210,7 +210,11 @@ site.get("/", async (c) => {
     recentPublic(db, ["flagged"], 3).catch(() => []),
   ]);
   const lift = await cardLift(db).catch(() => []);
-  const [posts, board] = await Promise.all([wirePosts(db, wire, now).catch(() => []), gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null }))]);
+  const [posts, board, frontier] = await Promise.all([
+    wirePosts(db, wire, now).catch(() => []),
+    gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null })),
+    frontierHard(c.env, db, now).catch(() => null),
+  ]);
   const duel = duels[0] ?? null;
   const duelClip = duel ? await clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : null;
   if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
@@ -263,7 +267,7 @@ ${heroCounters(proof, scanned?.unique ?? 0, flaggedNow.length)}
 ${wireHero(posts, now)}
 </section>
 
-${labBand()}
+${labBand(frontier)}
 ${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
 
 ${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>

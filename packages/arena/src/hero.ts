@@ -73,6 +73,17 @@ export const trapContrast = (p: DuelPick) => {
 };
 
 /**
+ * How widely each model is used by people who build and run agents (OpenRouter token share, Menlo Ventures, coding
+ * app defaults; researched 20 Oct 2026). 2 = widely used, 1 = some use, 0 = rarely used. Bouts and clips lead with
+ * models people know, because nobody shares a clip of a model they've never heard of (Dinike, 20 Oct).
+ */
+export const MODEL_REACH: [RegExp, 0 | 1 | 2][] = [
+  [/^(claude|gpt-6|gpt-5\.6|deepseek|glm-5\.3-flash|kimi)/, 2],
+  [/^(gemini|qwen3\.8|gemma|nemotron|glm|gpt-oss|minimax)/, 1],
+];
+export const reach = (model: string) => MODEL_REACH.find(([re]) => re.test(model))?.[1] ?? 0;
+
+/**
  * The hero's cycling order (and the day's clips): today's featured pick first, then trap contrasts before plain
  * pass/fail differences, spreading the jobs and the models (Dinike, 20 Oct: the clips were all one job), and no model
  * pair twice in one job.
@@ -93,9 +104,10 @@ export function heroOrder(runs: DuelCandidate[], day: number, max = 8): DuelPick
     for (const m of [p.a.model, p.b.model]) models.set(m, (models.get(m) ?? 0) + 1);
   };
   if (first) use(first);
-  // Greedy: trap contrasts first; then the job shown least so far; then the models shown least; then pool order.
+  // Greedy: trap contrasts first; then the job shown least so far; then the best-known models; then the models
+  // shown least; then pool order.
   while (out.length < max && left.length) {
-    const score = (x: (typeof left)[number]) => [x.k, jobs.get(x.p.a.task) ?? 0, (models.get(x.p.a.model) ?? 0) + (models.get(x.p.b.model) ?? 0), x.i];
+    const score = (x: (typeof left)[number]) => [x.k, jobs.get(x.p.a.task) ?? 0, 4 - reach(x.p.a.model) - reach(x.p.b.model), (models.get(x.p.a.model) ?? 0) + (models.get(x.p.b.model) ?? 0), x.i];
     let best = 0;
     for (let j = 1; j < left.length; j++) {
       const a = score(left[j]!), b = score(left[best]!);
@@ -204,6 +216,21 @@ const KO: Record<string, string> = { knockout_turns: "turns", knockout_tool_call
 export function contrastTrap(task: string, a: AttemptResult, b: AttemptResult): string | null {
   const tb = new Map(b.traps.map((t) => [t.id, t.triggered]));
   return a.traps.find((t) => tb.has(t.id) && tb.get(t.id) !== t.triggered)?.id ?? taskById(task)?.traps[0]?.id ?? null;
+}
+
+/** "refund-hard3" → "refund": Hard jobs share their everyday job's one-line description. */
+export const baseTask = (task: string) => task.replace(/-hard\d*$/, "");
+
+/**
+ * The "Hidden trap" line: the hand-written one for everyday jobs, else (Hard jobs) built from the task's own trap
+ * description, which is our text, never a model's: "Hidden trap: it's easy to refund a gift order to the card…".
+ */
+export function trapTell(task: string, trap: string | null): string | null {
+  if (!trap) return null;
+  const line = TRAP_LINE[task]?.[trap];
+  if (line) return line;
+  const label = taskById(task)?.traps.find((t) => t.id === trap)?.label;
+  return label ? `Hidden trap: it's easy to ${label.charAt(0).toLowerCase()}${label.slice(1).replace(/\.$/, "")}.` : null;
 }
 
 /** One side's caption, from the referee's result and the side's own finish status (never its words). */
@@ -350,9 +377,10 @@ type DuelRun = { id: string; model: string; name: string; result: AttemptResult;
 export function duelScript(a: DuelRun, b: DuelRun, o: { rounds: number; practice: boolean }): Duel {
   const task = a.result.task;
   const trap = contrastTrap(task, a.result, b.result);
+  const tell = trapTell(task, trap);
   const captions = [
-    JOB_LINE[task] ?? `The job: ${taskById(task)?.title ?? task}.`,
-    (trap && TRAP_LINE[task]?.[trap]) ?? "Hidden trap: planted in the job, shown before the bout.",
+    JOB_LINE[task] ?? JOB_LINE[baseTask(task)] ?? `The job: ${taskById(task)?.title ?? task}.`,
+    tell ?? "Hidden trap: planted in the job, shown before the bout.",
     outcomeLine(a.name, a.result, trap, claimOf(a.log)),
     outcomeLine(b.name, b.result, trap, claimOf(b.log)),
   ];
@@ -360,7 +388,7 @@ export function duelScript(a: DuelRun, b: DuelRun, o: { rounds: number; practice
   const sb = distinct(side(b, trap), side(a).house);
   const stakes = trap ? STAKES_LINE[task]?.[trap] : undefined;
   const run = (r: DuelRun, s: DuelSide) => ({ id: r.id, model: r.model, name: r.name, house: s.house, result: r.result, log: r.log, verdict: s.verdict, fell: !!trap && r.result.traps.some((t) => t.id === trap && t.triggered), caught: s.caught });
-  const gauntlet = gauntletScript(run(a, sa), run(b, sb), trap, (trap && TRAP_LINE[task]?.[trap]) ?? null, callLine);
+  const gauntlet = gauntletScript(run(a, sa), run(b, sb), trap, tell, callLine);
   return {
     task,
     title: taskById(task)?.title ?? task,

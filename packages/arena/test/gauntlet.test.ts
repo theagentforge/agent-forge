@@ -49,3 +49,19 @@ describe("the Trap Gauntlet script", () => {
     expect(stepKind("ponder")).toBe("other");
   });
 });
+
+describe("long bouts on the course", () => {
+  it("group neighbouring calls into at most 12 tiles, keeping the trap call on its own tile", async () => {
+    const { compressCourse, MAX_TILES } = await import("../src/gauntlet");
+    const steps = Array.from({ length: 45 }, (_, i) => ({ kind: (i % 3 ? "look" : "act") as "look" | "act", line: `→ call_${i}()`, ok: i !== 7, status: i === 7 ? 500 : null }));
+    const c = compressCourse(steps, 30, null);
+    expect(c.steps.length).toBe(MAX_TILES);
+    expect(c.steps[c.trapAt!]!.line).toBe("→ call_30()");
+    expect(c.steps[c.trapAt!]!.count).toBeUndefined();
+    expect(c.steps.reduce((n, s) => n + (s.count ?? 1), 0)).toBe(45);
+    expect(c.steps.some((s) => !s.ok)).toBe(true);
+    // A claim-time trap stays at the finish; short bouts are untouched.
+    expect(compressCourse(steps, 45, null).trapAt).toBe(MAX_TILES);
+    expect(compressCourse(steps.slice(0, 8), 3, null).steps).toHaveLength(8);
+  });
+});

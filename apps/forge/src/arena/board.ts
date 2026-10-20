@@ -53,3 +53,20 @@ export async function gullibilityBoard(env: Pick<Env, "KV">, db: Db, now = Date.
   await env.KV.put(key, JSON.stringify(board), { expirationTtl: 2 * 86_400 });
   return board;
 }
+
+/** Ranked Hard-tier bouts (each lab's everyday model, no trap card) and how many set off a planted trap. Cached daily. */
+export interface FrontierHard {
+  runs: number;
+  fell: number;
+  models: number;
+}
+
+export async function frontierHard(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<FrontierHard> {
+  const key = `arena:frontier-hard:v1:${utcDay(now)}`;
+  const hit = await env.KV.get<FrontierHard>(key, "json");
+  if (hit) return hit;
+  const runs = await finishedRuns(db, { tier: "hard", kinds: ["card"], now });
+  const out = { runs: runs.length, fell: runs.filter((r) => r.result.traps.some((t) => t.triggered)).length, models: new Set(runs.map((r) => r.summary.model)).size };
+  await env.KV.put(key, JSON.stringify(out), { expirationTtl: 2 * 86_400 });
+  return out;
+}

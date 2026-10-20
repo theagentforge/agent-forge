@@ -38,7 +38,7 @@ function contender(s: DuelSide, slot: "a" | "b") {
  */
 /** The Wordle-style result people paste anywhere: both corners' grids, the job, and a link back to the bout. */
 export const shareGrid = (d: Duel) =>
-  `Same job, one hidden trap (${d.title}):\n${d.gauntlet!.lanes.map((l) => `${l.name} ${l.grid}`).join("\n")}\ntheagentforge.io/arena/run/${d.gauntlet!.lanes[0].id}`;
+  `Same job, one hidden trap (${d.title}):\n${d.gauntlet!.lanes.map((l) => `${l.grid} ${l.name}`).join("\n")}\ntheagentforge.io/arena/run/${d.gauntlet!.lanes[0].id}`;
 
 export function gauntletPlayer(d: Duel, o: { mode: "cycle" | "channel"; channel?: Duel[]; clipUrl?: string | null }) {
   const g = d.gauntlet!;

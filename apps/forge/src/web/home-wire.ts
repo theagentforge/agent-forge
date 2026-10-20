@@ -143,7 +143,32 @@ export function labTotals(rows: { arm: string; n: number; trapped: number; cost:
   return { none, placebo, card, fewer, in100: { none: in100(none), placebo: in100(placebo), card: in100(card) }, extraCost: Math.round((card.cost / none.cost - 1) * 100) };
 }
 
-export function labBand() {
+/**
+ * The kinds of work agents are most used for (LangChain State of Agent Engineering 2025, Gartner finance and service
+ * surveys, Salesforce Agentic Enterprise Index): each everyday job belongs to one, so results read as "your kind of job".
+ */
+export const JOB_CATEGORY: Record<string, string> = {
+  refund: "Customer support",
+  "scam-invoice": "Finance & payments",
+  impossible: "Finance & payments",
+  weekend: "Travel & bookings",
+  spreadsheet: "Data & spreadsheets",
+  "flaky-supplier": "Purchasing & operations",
+};
+export const CATEGORY_ORDER = ["Customer support", "Finance & payments", "Data & spreadsheets", "Travel & bookings", "Purchasing & operations"];
+
+/** Lab #3 per kind of job: "in 100" with no card, placebo and card, the bouts per arm and the models tested. */
+export function labByCategory(rows: { arm: string; model: string; task: string; n: number; trapped: number }[] = lab3Counts) {
+  return CATEGORY_ORDER.map((category) => {
+    const mine = rows.filter((r) => JOB_CATEGORY[r.task] === category);
+    const arm = (a: string) => mine.filter((r) => r.arm === a).reduce((t, r) => ({ n: t.n + r.n, trapped: t.trapped + r.trapped }), { n: 0, trapped: 0 });
+    const none = arm("none"), placebo = arm("placebo"), card = arm("card");
+    const in100 = (x: { n: number; trapped: number }) => (x.n ? Math.round((x.trapped / x.n) * 100) : null);
+    return { category, tested: none.n > 0 && card.n > 0, n: card.n, models: new Set(mine.map((r) => r.model)).size, none: in100(none), placebo: in100(placebo), card: in100(card) };
+  });
+}
+
+export function labBand(frontier?: { runs: number; fell: number; models: number } | null) {
   const t = labTotals();
   if (!t.none.n || !t.card.n) return "";
   const bar = (label: string, v: number, cls: string) => html`<li class="${cls}"><span class="lab-arm">${label}</span><span class="lab-bar" aria-hidden="true">${barSvg(v, "lab-fill")}</span><span class="lab-v">${v} in 100</span></li>`;
@@ -152,9 +177,19 @@ export function labBand() {
 <p class="eyebrow">Forge Lab #3 · pre-registered · 18 Oct 2026</p>
 <h2 id="lab-title"><b>${t.fewer}% fewer traps</b> with the free trap card.</h2>
 <p>Small open models fell for a planted trap in <b>${t.in100.card} of 100</b> new jobs with the card, against ${t.in100.none} of 100 with no card. A placebo text of the same length: ${t.in100.placebo} of 100.</p>
-<p class="small muted">It worked clearly on 3 of 6 model–job pairs and made no difference on 2. It used about ${t.extraCost}% more compute. Frontier models weren't tested. ${t.card.n.toLocaleString("en-US")} bouts per arm; 95% interval 48–59% fewer (Mantel–Haenszel, from the results page).</p>
+${frontier && frontier.runs >= 30 ? html`<p class="small lab-frontier"><b>Frontier models weren't in this test.</b> On our Hard jobs, without the card, they still fell for a planted trap in ${frontier.fell} of ${frontier.runs} ranked bouts (${frontier.models} models). <a href="/arena?tier=hard&amp;from=home-lab">See them</a></p>` : ""}
+<p class="small muted">It worked clearly on 3 of 6 model–job pairs and made no difference on 2. It used about ${t.extraCost}% more compute.${frontier && frontier.runs >= 30 ? "" : html` Frontier models weren't tested.`} ${t.card.n.toLocaleString("en-US")} bouts per arm; 95% interval 48–59% fewer (Mantel–Haenszel, from the results page).</p>
 <p class="small"><a href="/lab/3/results?from=home-lab">Read the method and every result →</a> · <a href="/trap-card?from=home-lab">Get the trap card</a></p>
 </div>
+<div class="lab-side">
 <ol class="lab-bars" aria-label="Share of new jobs where the model fell for the trap">${bar("No card", t.in100.none, "")}${bar("Placebo text", t.in100.placebo, "")}${bar("Trap card", t.in100.card, "is-card")}</ol>
+<table class="lab-cats"><caption>By kind of job: fell for the trap, out of 100</caption>
+<thead><tr><th scope="col">Kind of job</th><th scope="col" class="num">No card</th><th scope="col" class="num">Card</th></tr></thead>
+<tbody>${labByCategory().map((r) =>
+    r.tested
+      ? html`<tr${r.card! < r.none! - 5 ? "" : html` class="flat"`}><th scope="row">${r.category} <span class="muted">${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</span></th><td class="num">${r.none}</td><td class="num is-card">${r.card}${r.card! < r.none! - 5 ? "" : html` <span class="muted">no change</span>`}</td></tr>`
+      : html`<tr class="flat"><th scope="row">${r.category}</th><td class="num muted" colspan="2">not tested yet</td></tr>`,
+  )}</tbody></table>
+</div>
 </section>`;
 }

@@ -1,12 +1,12 @@
-import { duelScript, heroOrder, pickFeatured, utcDay, type Duel, type DuelCandidate, type DuelPick } from "@forge/arena";
+import { contrastingPairs, duelScript, heroOrder, pickFeatured, reach, trapContrast, utcDay, type Duel, type DuelCandidate, type DuelPick } from "@forge/arena";
 import type { Db } from "../services/db";
 import { finishedRuns, modelName, runWithLog } from "./views";
 
 // The home page's featured bout (ADR 0016 §5). Picked once a day by the published rule in @forge/arena, from runs
 // that are public (embargoed "Call it" runs never appear), and cached for the day so every visitor sees the same one.
 
-async function candidates(db: Db, now: number) {
-  const runs = await finishedRuns(db, { limit: 3000, now });
+async function candidates(db: Db, now: number, tier?: "hard") {
+  const runs = await finishedRuns(db, tier ? { tier, kinds: ["card"], limit: 3000, now } : { limit: 3000, now });
   return runs.map(
     ({ summary: s, result }): DuelCandidate => ({
       id: s.id,
@@ -31,6 +31,19 @@ async function scriptFor(db: Db, pick: DuelPick, all: DuelCandidate[], now: numb
   return duelScript(side(pick.a, ra), side(pick.b, rb), { rounds, practice: pick.a.kind === "practice" });
 }
 
+/** Up to `n` ranked Hard-tier pairs with a trap contrast, best-known models first, a different job each, rotating daily. */
+export function frontierPicks(hard: DuelCandidate[], day: number, n: number): DuelPick[] {
+  const events = [...new Set(hard.map((r) => r.event))];
+  const pairs = events.flatMap((e) => contrastingPairs(hard.filter((r) => r.event === e))).filter(trapContrast);
+  if (!pairs.length) return [];
+  const ranked = pairs
+    .map((p, i) => ({ p, s: reach(p.a.model) + reach(p.b.model), r: (i + day * 7) % pairs.length }))
+    .sort((x, y) => y.s - x.s || x.r - y.r);
+  const out: DuelPick[] = [];
+  for (const { p } of ranked) if (out.length < n && !out.some((q) => q.a.task === p.a.task)) out.push(p);
+  return out;
+}
+
 /** Today's featured duel, or null when no event has a contrasting pair yet. Cached in KV for the day. */
 export async function featuredDuel(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<Duel | null> {
   const key = `arena:featured:v5:${utcDay(now)}`;
@@ -46,12 +59,16 @@ export async function featuredDuel(env: Pick<Env, "KV">, db: Db, now = Date.now(
 
 /** The cycling hero and /arena Now Playing (ADR 0019 §1): today's featured duel first, then the most useful. */
 export async function channelDuels(env: Pick<Env, "KV">, db: Db, now = Date.now(), max = 8): Promise<Duel[]> {
-  const key = `arena:channel:v5:${utcDay(now)}`;
+  const key = `arena:channel:v7:${utcDay(now)}`;
   const hit = await env.KV.get<Duel[]>(key, "json");
   if (hit) return hit;
-  const all = await candidates(db, now);
+  const [all, hard] = await Promise.all([candidates(db, now), candidates(db, now, "hard").catch(() => [] as DuelCandidate[])]);
   const picks = heroOrder(all, utcDay(now), max);
-  const duels = (await Promise.all(picks.map((p) => scriptFor(db, p, all, now)))).filter((d): d is Duel => !!d);
+  // Second and third: ranked Hard-tier bouts between each lab's everyday model, where one fell for a trap the other
+  // caught: the models most people use, on the hardest version of the job (Dinike, 20 Oct).
+  const frontier = frontierPicks(hard, utcDay(now), 2);
+  const order = [...picks.slice(0, 1), ...frontier, ...picks.slice(1)].slice(0, max);
+  const duels = (await Promise.all(order.map((p) => scriptFor(db, p, frontier.includes(p) ? hard : all, now)))).filter((d): d is Duel => !!d);
   await env.KV.put(key, JSON.stringify(duels), { expirationTtl: duels.length ? 2 * 86_400 : 900 });
   return duels;
 }

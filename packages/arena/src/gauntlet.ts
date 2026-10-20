@@ -16,6 +16,56 @@ export interface GauntletStep {
   ok: boolean;
   /** HTTP-style status of a failed call, when the sandbox gave one. */
   status: number | null;
+  /** On long bouts, neighbouring calls share one tile; this is how many (absent means 1). */
+  count?: number;
+}
+
+/** Tiles on one course at most; longer bouts (Hard jobs make 40+ calls) group neighbouring calls. */
+export const MAX_TILES = 12;
+
+/**
+ * Groups neighbouring calls so a long bout fits the course: the trap call and the careful corner's check keep their
+ * own tile, and the calls before and after share the remaining tiles in proportion. A group is a "look" only if all
+ * its calls are, "ok" only if all are, and shows its first call with "+N more".
+ */
+export function compressCourse(steps: GauntletStep[], trapAt: number | null, scanAt: number | null, max = MAX_TILES) {
+  if (steps.length <= max) return { steps, trapAt, scanAt };
+  const pivot = trapAt !== null && trapAt < steps.length ? trapAt : scanAt;
+  const chunk = (from: number, to: number, tiles: number): GauntletStep[] => {
+    const len = to - from;
+    if (len <= 0) return [];
+    const k = Math.max(1, Math.min(tiles, len));
+    const out: GauntletStep[] = [];
+    for (let c = 0; c < k; c++) {
+      const a = from + Math.floor((c * len) / k);
+      const b = from + Math.floor(((c + 1) * len) / k);
+      const group = steps.slice(a, b);
+      const n = group.length;
+      out.push({
+        kind: group.every((g) => g.kind === group[0]!.kind) ? group[0]!.kind : group.some((g) => g.kind === "act") ? "act" : "other",
+        line: n > 1 ? `${group[0]!.line} +${n - 1} more` : group[0]!.line,
+        ok: group.every((g) => g.ok),
+        status: group.find((g) => !g.ok)?.status ?? null,
+        ...(n > 1 ? { count: n } : {}),
+      });
+    }
+    return out;
+  };
+  if (pivot === null) return { steps: chunk(0, steps.length, max), trapAt: trapAt === steps.length ? max : trapAt, scanAt };
+  const before = pivot, after = steps.length - pivot - 1;
+  const room = max - 1;
+  let tb = before ? Math.max(1, Math.round((room * before) / (before + after))) : 0;
+  if (after && tb >= room) tb = room - 1;
+  const ta = room - tb;
+  const head = chunk(0, pivot, tb);
+  const tail = chunk(pivot + 1, steps.length, ta);
+  const out = [...head, steps[pivot]!, ...tail];
+  const at = head.length;
+  return {
+    steps: out,
+    trapAt: trapAt === null ? null : trapAt === steps.length ? out.length : at,
+    scanAt: scanAt === null ? null : at,
+  };
 }
 
 export interface GauntletLane {
@@ -129,14 +179,16 @@ function lane(run: Run, trap: string | null, otherTrapFraction: number | null, c
     if (scanAt === null) for (let i = pos; i < steps.length && scanAt === null; i++) if (steps[i]!.kind === "look") scanAt = i;
   }
   const end = run.verdict === "KO" ? "💤" : run.fell ? "🕳️" : run.verdict === "PASS" ? "🏁" : "❌";
+  const shareGrid = grid(steps, trapAt, end);
+  const course = compressCourse(steps, trapAt, scanAt);
   return {
     id: run.id,
     model: run.model,
     name: run.name,
     house: run.house,
-    steps,
-    trapAt,
-    scanAt,
+    steps: course.steps,
+    trapAt: course.trapAt,
+    scanAt: course.scanAt,
     claim,
     verdict: run.verdict,
     fell: run.fell,
@@ -145,7 +197,7 @@ function lane(run: Run, trap: string | null, otherTrapFraction: number | null, c
     tokens,
     cost: Math.round(cost * 1e5) / 1e5,
     provider,
-    grid: grid(steps, trapAt, end),
+    grid: shareGrid,
   };
 }
 

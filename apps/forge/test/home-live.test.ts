@@ -20,7 +20,7 @@ describe("the trap card's measured value on the home page", () => {
     expect(body).toContain("<b>39 of 100</b> new jobs with the card, against 84 of 100 with no card");
     expect(body).toContain("A placebo text of the same length: 73 of 100.");
     expect(body).toContain("made no difference on 2");
-    expect(body).toContain("Frontier models weren't tested.");
+    expect(body).toMatch(/Frontier models weren't (tested\.|in this test\.)/);
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
     // It sits straight after the hero, before the Arena.
     expect(body.indexOf('class="lab-band')).toBeGreaterThan(body.indexOf('class="hero2"'));
@@ -89,5 +89,20 @@ describe("audit fixes (20 Oct)", () => {
     expect(res.status).toBe(200);
     const page = await (await fetchWorker("/lab/3/results", { headers: { Accept: "text/html" } })).text();
     expect(page).toContain("/og/lab/3.png");
+  });
+});
+
+describe("trap card results by kind of job", () => {
+  it("groups Lab #3 by the kinds of work agents do most, and says where it wasn't tested or made no difference", async () => {
+    const { labByCategory } = await import("../src/web/home-wire");
+    const rows = Object.fromEntries(labByCategory().map((r) => [r.category, r]));
+    expect(rows["Customer support"]).toMatchObject({ tested: true, models: 3, none: 89, card: 51 });
+    expect(rows["Finance & payments"]).toMatchObject({ tested: true, none: 100, card: 0 });
+    expect(rows["Travel & bookings"]).toMatchObject({ tested: true, none: 80, card: 79 });
+    expect(rows["Data & spreadsheets"]!.tested).toBe(false);
+    const body = await home();
+    expect(body).toContain("By kind of job: fell for the trap, out of 100");
+    expect(body).toContain("not tested yet");
+    expect(body).toContain("no change");
   });
 });
