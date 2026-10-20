@@ -16,7 +16,7 @@ import { send, site } from "./pages";
 // public result; the rules; and Skill Watch, the public feed of flagged skills. Wording: "matches pattern X at line
 // N", never "malicious". Excerpts are shown to people only (agents get rule ids and lines; services/scans.ts).
 
-/** The skill-scan GitHub Action, published in the skill-scan/ folder of theagentforge/forge-check (20 Oct). */
+/** The skill-scan GitHub Action, published at theagentforge/skill-scan (20 Oct; also in forge-check's skill-scan/ folder). */
 export const SKILL_SCAN_ACTION_LIVE = true;
 
 const SEV_LABEL: Record<ScanSeverity, string> = { high: "High", medium: "Medium", low: "Low" };
@@ -91,7 +91,7 @@ site.get("/scan", async (c) => {
 ${scanForm()}
 <section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. From then on it checks every skill before installing it, and once a week checks the ones it has. It costs one small request a week.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
 <p class="small muted">The <a href="/skill.md">skill file</a> is plain text you can read first. Its fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner, and it never asks your agent to fetch anything and follow it.</p></section>
-${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/forge-check/tree/main/skill-scan#readme">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one calm comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/forge-check/skill-scan@v1")}</section>` : ""}
+${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one calm comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
 ${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skills scanned so far · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });
 });

@@ -86,7 +86,7 @@ describe("/arena tier switch", () => {
     expect(body).toContain('href="/arena/event/crucible-1-hard"');
     expect(body).toContain('href="/best/refund-hard"');
     // The Normal duel and Normal runs aren't here.
-    expect(body).not.toContain("data-duel=");
+    expect(body).not.toContain("data-gauntlet=");
     expect(body).not.toContain("variant 1000001");
   });
 
@@ -207,7 +207,7 @@ describe("Hard bouts, events, the home link and the dataset", () => {
   it("the home page links to the Hard tier once a ranked Hard bout exists, and keeps the Normal duel", async () => {
     const { body } = await page("/");
     expect(body).toContain('<a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a>');
-    expect(body).toContain("data-duel=");
+    expect(body).toContain("data-gauntlet=");
     expect(body).not.toContain("Impossible Ask (Hard)");
     const j = (await (await fetchWorker("/?format=json")).json()) as { hard_tier: string | null; featured_bout: { a: { id: string } } };
     expect(j.hard_tier).toBe("/arena?tier=hard");

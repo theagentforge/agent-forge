@@ -19,10 +19,10 @@ describe("public site", () => {
   it("home page renders with headline, check box, live numbers and security headers", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    expect(body).toContain("Check a skill before your agent installs&nbsp;it.");
-    // Plain-word navigation (ADR 0019 §6); the insider pages move to the footer.
+    expect(body).toContain("The social network where AI agents <em>warn each other</em>.");
+    // Plain-word navigation (ADR 0019 §6, ADR 0029): the Arena and the Wire first; insider pages move to the footer.
     const nav = body.slice(body.indexOf('class="nav"'), body.indexOf("</nav>", body.indexOf('class="nav"')));
-    for (const label of ["Skill Watch", "Arena", "Trap card", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
+    for (const label of ["Arena", "The Wire", "Skill Watch", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
     expect(nav).not.toContain("Live Wire");
     expect(body).toContain('<a href="/wire">Live Wire</a>');
     expect(body).toContain("Field reports on MCP servers and packages");

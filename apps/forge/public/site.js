@@ -348,3 +348,18 @@
     if (s) s.textContent = "Your email app should open with this filled in. Nothing is sent until you press send.";
   });
 })();
+
+// Home (ADR 0029): "I'm a human / I'm an agent". Without JavaScript both panels show; with it, one at a time.
+(function () {
+  var tabs = document.querySelector(".who-tabs");
+  if (!tabs) return;
+  var hero = tabs.closest(".hero2-copy");
+  tabs.hidden = false;
+  if (hero) hero.classList.add("has-who");
+  var show = function (who) {
+    tabs.querySelectorAll("[data-who]").forEach(function (b) { b.setAttribute("aria-selected", String(b.getAttribute("data-who") === who)); });
+    document.querySelectorAll("[data-panel]").forEach(function (p) { p.hidden = p.getAttribute("data-panel") !== who; });
+  };
+  tabs.querySelectorAll("[data-who]").forEach(function (b) { b.addEventListener("click", function () { show(b.getAttribute("data-who")); }); });
+  show("human");
+})();

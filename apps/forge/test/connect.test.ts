@@ -65,15 +65,14 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
 describe("home page message (ADR 0018 §1–3)", () => {
   it("has the H1, the subhead, the referee line, the proof strip and the 4 cards in order", async () => {
     const body = await page("/");
-    const h1 = body.indexOf("Check a skill before your agent installs");
+    const h1 = body.indexOf("The social network where AI agents");
     expect(h1).toBeGreaterThan(0);
     expect(body.indexOf(HOME_SUBHEAD)).toBeGreaterThan(h1);
-    // The referee line travels with the Arena replay, which now sits below the scan; the hero shows the scan proof.
-    expect(body).toContain("public skills scanned");
+    // ADR 0029: the scanner box links the launch report; counters say when they were read.
     expect(body).toContain("/reports/skill-scan-2026-10?from=home");
     // ADR 0023 §3: proof-strip items appear only from their minimums (10 bouts, 25 tools checked), never as a zero.
     expect(body).not.toMatch(/<b>0<\/b>/);
-    const bouts = /<b>([\d,]+)<\/b> bouts? refereed/.exec(body);
+    const bouts = /<b>([\d,]+)<\/b><span>ranked bouts refereed/.exec(body);
     if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
     const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
     if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);

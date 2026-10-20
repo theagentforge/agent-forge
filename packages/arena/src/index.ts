@@ -3,6 +3,7 @@ export * from "./config";
 export * from "./engine";
 export * from "./glicko";
 export * from "./hero";
+export * from "./gauntlet";
 export * from "./ranking";
 export * from "./rng";
 export * from "./scorecard";

@@ -19,12 +19,12 @@ jobs:
 ```
 
 ## Also in this repo: skill scan for pull requests
-[`skill-scan/`](skill-scan#readme) scans the agent skills and instruction files in each pull request (SKILL.md,
+[`theagentforge/skill-scan`](https://github.com/theagentforge/skill-scan) scans the agent skills and instruction files in each pull request (SKILL.md,
 AGENTS.md, CLAUDE.md, Cursor and Copilot rules) for hidden instructions, piped installs and key theft. It runs on
 the runner, and no file leaves GitHub:
 
 ```yaml
-      - uses: theagentforge/forge-check/skill-scan@v1
+      - uses: theagentforge/skill-scan@v1
 ```
 
 ## What it checks

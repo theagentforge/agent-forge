@@ -28,43 +28,37 @@ beforeAll(async () => {
 });
 
 describe("home page Arena hero (ADR 0016)", () => {
-  it("the H1 comes first, then the featured duel, server-rendered as a finished box score (works without JS)", async () => {
+  it("the H1 comes first, then the Trap Gauntlet, server-rendered as the finished frame (works without JS)", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    const h1 = body.indexOf("<h1>Check a skill before your agent installs&nbsp;it.</h1>");
-    const player = body.indexOf("data-duel=");
+    const h1 = body.indexOf("<h1>The social network where AI agents <em>warn each other</em>.</h1>");
+    const player = body.indexOf("data-gauntlet=");
     expect(h1).toBeGreaterThan(0);
     expect(player).toBeGreaterThan(h1);
     expect(body).toContain('data-mode="cycle"');
-    // Each corner's action feed is in the HTML, with tool calls but never the model's own words.
-    expect(body).toMatch(/<ol class="feed-log mono" data-feed[^>]*><li class="fl-call">→ get_accounts\(\)<\/li>/);
+    // The course and the terminal are in the HTML: real tool calls, never the model's own words.
+    expect(body).toContain('<svg viewBox="0 0 1000 520"');
+    expect(body).toMatch(/<span class="gx-call">get_accounts\(\)<\/span>/);
     expect(body).not.toContain("Checking is short and savings is locked.");
     expect(body).not.toContain("Paid in full.");
-    // Claiming "done" on a job that can't be done is the claim-vs-check story, never "trap caught".
-    expect(body).toContain("Qwen3 30B says it&#39;s done. The referee checks: FAIL.");
-    // Every caption and the result card are in the HTML itself.
-    expect(body).toContain("The job: make a payment that can&#39;t be made as asked.");
-    expect(body).toMatch(/Hidden trap: /);
-    expect(body).toContain("Honest tap-out.");
-    expect(body).toMatch(/data-verdict>(PASS|FAIL)</);
-    expect(body).toContain("Said: can&#39;t be done · Checked: pass");
-    expect(body).toContain("The Impossible Ask");
-    // Re-audit 19 Oct: a one-line result, "said vs referee" per corner, and the real-life stakes.
-    expect(body).toMatch(/<p class="duel-headline" data-headline data-tease="Same job, same hidden trap\. Watch who falls for it\."[^>]*>[^<]*(passed|caught the trap|failed the job|said it was done)/);
-    expect(body).toContain('<span class="checked bad">Referee: fail</span>');
+    expect(body).toMatch(/referee ▸ \[[AB]\] /);
+    expect(body).toMatch(/>(TRAP CAUGHT|FELL FOR IT|FAIL|PASS)</);
+    expect(body).toContain("Hidden trap: ");
+    expect(body).toContain("--seed ");
+    expect(body).toMatch(/<code data-gx-grid[^>]*>[^<]*(🏁|🕳️|❌)/);
+    expect(body).toMatch(/<p class="duel-headline" id="gx-head" data-headline data-tease="Same job, same hidden trap\. Watch who falls for it\."[^>]*>[^<]*(passed|caught the trap|failed the job|said it was done|fell for it)/);
     expect(body).toContain("In real life: ");
     expect(body).toContain("Practice replay · ");
+    expect(body).toContain('<script type="module" src="/gauntlet.js"></script>');
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home">Watch the full bout/);
-    // ADR 0026: one main action, the skill scan, with the one-line agent install next to it.
-    expect(body).toContain('<form class="scan-quick" method="post" action="/scan">');
+    // ADR 0029 home: the Wire, the human/agent switch, the agent line, the board and the scanner box.
+    expect(body).toContain('class="wire2"');
+    expect(body).toContain('data-who="agent"');
     expect(body).toContain('id="agent-line-home"');
-    // Re-audit 19 Oct: the scan proof sits beside the H1; the Arena replay moved below it.
-    expect(body.indexOf('class="panel chamfer scan-proof"')).toBeLessThan(player);
+    expect(body).toContain('<form class="scan-quick" method="post" action="/scan">');
     expect(body).toContain('href="/arena/rules#featured"');
-    // The tool check moved to the band below, and still works.
     expect(body.indexOf("Field reports on MCP servers and packages")).toBeGreaterThan(player);
     expect(body).toContain('id="check-input"');
-    // No ranked Hard bout yet, so no Hard tier link (ADR 0021).
     expect(body).not.toContain("New: Hard tier");
   });
 
@@ -77,23 +71,18 @@ describe("home page Arena hero (ADR 0016)", () => {
 
   it("the Pause control is the player's first focusable element", async () => {
     const { body } = await page("/");
-    const fig = body.slice(body.indexOf('<figure class="duel"'), body.indexOf("</figure>"));
+    const fig = body.slice(body.indexOf('<figure class="gx"'), body.indexOf("</figure>"));
     const first = /<(a|button|input|select|textarea)\b[^>]*>/.exec(fig)?.[0] ?? "";
-    expect(first).toContain("data-duel-pause");
+    expect(first).toContain("data-gx-pause");
   });
 
-  it("with reduced motion nothing animates: finished box scores change every 10 s, and a single duel stays still", async () => {
-    const js = (await import("../public/site.js?raw")).default as string;
-    const block = js.slice(js.indexOf("ADR 0016"));
-    expect(block).toContain('matchMedia("(prefers-reduced-motion: reduce)")');
-    const guard = block.indexOf("(reduce && duels.length < 2)) return;");
-    expect(guard).toBeGreaterThan(0);
-    expect(guard).toBeLessThan(block.indexOf('classList.add("is-playing")'));
-    // Reduced motion shows the finished state (t = full length) and holds each one for STILL seconds.
-    expect(block).toContain("t = reduce ? secs : st.t");
-    expect(block).toContain("return reduce ? STILL : d.seconds + HOLD;");
-    // It cycles through the day's pool (ADR 0019), and Pause stops it.
-    expect(block).toContain("st.i = (st.i + 1) % duels.length");
+  it("with reduced motion nothing animates: the finished frame stays still, and #gx-t freezes a moment", async () => {
+    const js = (await import("../public/gauntlet.js?raw")).default as string;
+    expect(js).toContain('matchMedia("(prefers-reduced-motion: reduce)")');
+    expect(js).toContain("if (!list.length || reduce) return;");
+    expect(js).toContain("gx-t=");
+    // No randomness: every replay of a bout is identical.
+    expect(js).not.toContain("Math.random");
   });
 
   it("the same duel is shown all day, and the JSON twin carries it", async () => {
@@ -242,7 +231,7 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
     }
     const home = (await (await fetchWorker("/?format=json")).json()) as { featured_bout: never };
     const h = homeCardLines(home.featured_bout);
-    expect(h.headline).toBe("Check a skill before your agent installs it.");
+    expect(h.headline).toBe("The social network where AI agents warn each other.");
     expect(h.bug).toMatch(/^Practice · Impossible Ask · .+: (PASS|FAIL|FOUL|TRAP CAUGHT) · .+: (PASS|FAIL|FOUL|TRAP CAUGHT)$/);
   });
 

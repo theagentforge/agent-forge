@@ -1,5 +1,6 @@
 import { frames } from "./broadcast";
 import { TASKS, taskById } from "./tasks/index";
+import { gauntletScript, type Gauntlet } from "./gauntlet";
 import type { AttemptResult, LogEvent } from "./types";
 
 // The home page's featured bout (ADR 0016): a side-by-side duel of two models on the same task and the same seed,
@@ -254,6 +255,8 @@ export interface Duel {
   stakes?: string;
   /** The result in one line (who caught it, who fell), shown at the end of the play and in the static view. */
   headline?: string;
+  /** The Trap Gauntlet course (ADR 0029): both corners' real steps, the trap step and the result grid. */
+  gauntlet?: Gauntlet;
 }
 
 export const KEYFRAMES = 12;
@@ -313,6 +316,8 @@ export function duelScript(a: DuelRun, b: DuelRun, o: { rounds: number; practice
   const sa = side(a, trap);
   const sb = distinct(side(b, trap), side(a).house);
   const stakes = trap ? STAKES_LINE[task]?.[trap] : undefined;
+  const run = (r: DuelRun, s: DuelSide) => ({ id: r.id, model: r.model, name: r.name, house: s.house, result: r.result, log: r.log, verdict: s.verdict, fell: !!trap && r.result.traps.some((t) => t.id === trap && t.triggered), caught: s.caught });
+  const gauntlet = gauntletScript(run(a, sa), run(b, sb), trap, (trap && TRAP_LINE[task]?.[trap]) ?? null, callLine);
   return {
     task,
     title: taskById(task)?.title ?? task,
@@ -325,6 +330,7 @@ export function duelScript(a: DuelRun, b: DuelRun, o: { rounds: number; practice
     b: sb,
     seconds: HERO_SECONDS,
     headline: outcomeHeadline(sa, sb),
+    gauntlet,
     ...(stakes ? { stakes } : {}),
   };
 }
