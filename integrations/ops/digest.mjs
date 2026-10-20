@@ -1,5 +1,6 @@
 // Daily Ops Digest (MASTER_PLAN §7.5): reads the public /stats JSON and opens one GitHub issue with the numbers, so
 // they reach Dinike's phone. Closes the previous digest. Usage: node digest.mjs https://theagentforge.io
+import { gatherSocial, learning, learningSection } from "./learning.mjs";
 const LABELS = [
   ["weekly_reporting_agents", "Agents that reported this week (north star)"],
   ["verified_humans", "Verified people"],
@@ -57,7 +58,7 @@ export function releaseIssue(a, date) {
 }
 
 /** The issue body. `history` is /stats' daily snapshots; yesterday's external value gives the change. */
-export function render(stats, date, arena = null, growth = null) {
+export function render(stats, date, arena = null, growth = null, learningText = null) {
   const prev = new Map();
   const days = [...new Set((stats.history ?? []).map((h) => h.date))].sort();
   const before = days.at(-2);
@@ -82,6 +83,7 @@ export function render(stats, date, arena = null, growth = null) {
     "",
     ...(growthLine(growth) ? [growthLine(growth), ""] : []),
     ...(arenaLine(arena) ? [arenaLine(arena), ""] : []),
+    ...(learningText ? [learningText, ""] : []),
     "Live page: https://theagentforge.io/stats",
     "",
     "---",
@@ -107,8 +109,16 @@ async function main() {
   const date = new Date().toISOString().slice(0, 10);
   const arena = await fetch(`${origin}/api/v1/arena/status`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   const growth = await fetch(`${origin}/api/v1/growth`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  // Mondays: the weekly learning report on X posts (social strategy §9.9). A failure here never stops the digest.
+  const now = Date.now();
+  const learningText =
+    new Date(now).getUTCDay() === 1
+      ? await gatherSocial(gh, now)
+          .then((d) => learningSection(learning({ ...d, tags: growth?.arrivals_by_tag_7d ?? [], now })))
+          .catch((e) => `**Weekly learning report (X):** not available today (${e.message}).`)
+      : null;
   const old = await gh("GET", "/issues?state=open&labels=ops-digest&per_page=10");
-  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth), labels: ["ops-digest"] });
+  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText), labels: ["ops-digest"] });
   const rel = releaseIssue(arena, date);
   if (rel) await gh("POST", "/issues", rel);
   // Money rule: at 80% of the Arena budget, ask Dinike once a month (ADR 0012 §2).

@@ -140,3 +140,22 @@ describe("images on posts", () => {
     expect(d).toMatchObject({ ok: false, capped: true });
   });
 });
+
+describe("alt text on images (social strategy §9.6)", () => {
+  const block = (inner) => "```post 2026-10-22T17:00Z\n" + inner + "\n```";
+  it("reads one alt line with the image, keeps it out of the post text and in the approval fingerprint", () => {
+    const [p] = parsePosts(block("Same job, same hidden trap.\nimage: /og/x/arena/run/abc.png\nalt: Two pixel robots; one falls through a trapdoor."));
+    expect(p.text).toBe("Same job, same hidden trap.");
+    expect(p.alt).toBe("Two pixel robots; one falls through a trapdoor.");
+    validatePosts([p]);
+    const [q] = parsePosts(block("Same job, same hidden trap.\nimage: /og/x/arena/run/abc.png"));
+    expect(approvalHash([p])).not.toBe(approvalHash([q]));
+  });
+  it("refuses alt text without an image, or two alt lines", () => {
+    expect(() => parsePosts(block("Hi\nalt: nothing to describe"))).toThrow(/no image/);
+    expect(() => parsePosts(block("Hi\nimage: /og/home.png\nalt: a\nalt: b"))).toThrow(/more than one alt/);
+  });
+  it("allows the new 16:9 feed cards under /og/x/", () => {
+    expect(imageUrl("/og/x/gauntlet/474e8092-aa/dc5f232e-bb.png")).toBe("https://theagentforge.io/og/x/gauntlet/474e8092-aa/dc5f232e-bb.png");
+  });
+});

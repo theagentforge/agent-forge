@@ -10,7 +10,7 @@ import { agentDetail } from "./queries";
 import { HOME_H1, site } from "./pages";
 import { parseWeights, rankModels, summaryLines, taskById, TRAP_FAMILIES, type AttemptResult, type Duel } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
-import { channelDuels } from "../arena/featured";
+import { channelDuels, duelFromRuns } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
 import { labTotals } from "./home-wire";
@@ -112,11 +112,11 @@ function loadFonts(env: Env) {
 }
 
 /** Content-addressed cards are immutable; the page links to the current version with ?v=<hash>. */
-async function respond(c: Ctx, node: Node) {
+async function respond(c: Ctx, node: Node, size: { width: number; height: number } = { width: 1200, height: 630 }) {
   // Cost guard (ADR 0027): in lean mode, no new drawing; the site-wide card is a static file.
   if (await isLean(c.env)) return c.redirect("/og/site.png", 302);
   cache.setExecutionContext(c.executionCtx as unknown as ExecutionContext);
-  const res = await ImageResponse.async(node as never, { width: 1200, height: 630, fonts: loadFonts(c.env) });
+  const res = await ImageResponse.async(node as never, { width: size.width, height: size.height, fonts: loadFonts(c.env) });
   const headers = new Headers(res.headers);
   headers.set("Content-Type", "image/png");
   headers.set("Cache-Control", c.req.query("v") ? "public, max-age=31536000, immutable" : "public, max-age=3600");
@@ -325,7 +325,10 @@ export const CARD_LABEL: Record<CardKind, string> = { trap: "TRAP", caught: "TRA
  * The fail card (ADR 0023 §1): the template sentence, the trap or task id, the date, "Verified replay" and the short
  * link. Served at /og/arena/run/<id>/card.png and, for links already posted, at /og/arena/run/<id>.png.
  */
-async function failCardImage(c: Ctx, id: string) {
+/** X feed cards are 16:9 (1200×675), which X shows uncropped (docs/launch/social-strategy.md §8). */
+const X_FEED = { width: 1200, height: 675 };
+
+async function failCardImage(c: Ctx, id: string, feed = false) {
   const r = await runWithLog(getDb(c.env), id);
   if (!r) return c.redirect("/og/home.png", 302);
   const taskTitle = taskById(r.run.task)?.title ?? r.run.task;
@@ -357,10 +360,37 @@ async function failCardImage(c: Ctx, id: string) {
       ],
       card.shortLink,
     ),
+    feed ? X_FEED : undefined,
   );
 }
 
 site.get("/og/arena/run/:id{[A-Za-z0-9_-]+}/card.png", (c) => failCardImage(c, c.req.param("id")));
+site.get("/og/x/arena/run/:file{[A-Za-z0-9_-]+\\.png}", (c) => failCardImage(c, c.req.param("file").replace(/\.png$/, ""), true));
+
+/** The X feed card for one Gauntlet duel: the outcome headline, the job and the trap, beside the finished frame. */
+site.get("/og/x/gauntlet/:a{[A-Za-z0-9_-]{1,64}}/:file{[A-Za-z0-9_-]{1,64}\\.png}", async (c) => {
+  const duel = await duelFromRuns(getDb(c.env), c.req.param("a"), c.req.param("file").replace(/\.png$/, ""));
+  if (!duel?.gauntlet) return c.redirect("/og/home.png", 302);
+  const art = gauntletImage(duel, 390);
+  const job = (duel.captions[0] ?? "").replace(/^The job: /, "");
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", alignItems: "center", justifyContent: "space-between" }, [
+          el("div", { display: "flex", flexDirection: "column", width: "600px" }, [
+            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 20, color: C.caution, marginBottom: "12px" }, "SAME JOB · SAME HIDDEN TRAP"),
+            headline(clip(duel.headline ?? "Who falls for it?", 90), 40),
+            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 21, color: C.muted }, clip(`${duel.title}: ${job}`, 76)),
+          ]),
+          ...(art ? [art] : []),
+        ]),
+      ],
+      "theagentforge.io",
+    ),
+    X_FEED,
+  );
+});
 site.get("/og/arena/run/:file{[A-Za-z0-9_-]+\\.png}", (c) => failCardImage(c, c.req.param("file").replace(/\.png$/, "")));
 
 site.get("/og/best/:file{[a-z-]+\\.png}", async (c) => {

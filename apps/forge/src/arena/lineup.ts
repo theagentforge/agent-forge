@@ -47,6 +47,15 @@ export const PRACTICE: ArenaModel[] = [
   { id: "nemotron-3-120b", name: "Nemotron 3 120B", lab: "NVIDIA (open weights)", division: "practice", route: { kind: "workers-ai", model: "@cf/nvidia/nemotron-3-120b-a12b", priceIn: 0.5, priceOut: 1.5 } },
   { id: "llama-3.3-70b", name: "Llama 3.3 70B", lab: "Meta (open weights)", division: "practice", route: { kind: "workers-ai", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", priceIn: 0.293, priceOut: 2.253 } },
   { id: "granite-4-micro", name: "Granite 4.0 Micro", lab: "IBM (open weights)", division: "practice", route: { kind: "workers-ai", model: "@cf/ibm-granite/granite-4.0-h-micro", priceIn: 0.017, priceOut: 0.112 } },
+  // Added 20 Oct 2026 (Dinike: "add frontier models"): the low-cost models agent builders use most (OpenRouter token
+  // share and app defaults, researched 20 Oct). Through the OpenRouter key, so they count toward the monthly cap, each
+  // pinned to the lab's own servers (DeepSeek's own API fails our no-data-collection rule, so DeepInfra, which doesn't
+  // train on prompts). Prices from the OpenRouter catalog on 20 Oct, in $ per million tokens: Luna 0.20/1.20,
+  // V4.1 Flash 0.14/0.42, Gemini 3.8 Flash 0.825/4.125, Haiku 5.5 0.10/0.50.
+  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", lab: "OpenAI", division: "practice", route: { kind: "openrouter", model: "openai/gpt-5.6-luna", provider: "openai" } },
+  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", lab: "DeepSeek (open weights)", division: "practice", route: { kind: "openrouter", model: "deepseek/deepseek-v4.1-flash", provider: "deepinfra" } },
+  { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", lab: "Google", division: "practice", route: { kind: "openrouter", model: "google/gemini-3.8-flash", provider: "google-vertex" } },
+  { id: "claude-haiku-5.5", name: "Claude Haiku 5.5", lab: "Anthropic", division: "practice", route: { kind: "openrouter", model: "anthropic/claude-haiku-5.5", provider: "anthropic" } },
   { id: "eurollm-9b", name: "EuroLLM 9B", lab: "EuroLLM project (open weights)", division: "practice", retired: true, route: { kind: "workers-ai", model: "@cf/utter-project/eurollm-9b-it", priceIn: 0.351, priceOut: 0.555 } },
   { id: "apertus-8b", name: "Apertus 8B", lab: "Swiss AI Initiative (open weights)", division: "practice", retired: true, route: { kind: "workers-ai", model: "@cf/swiss-ai/apertus-v1.5-8b", priceIn: 0.351, priceOut: 0.555 } },
 ];

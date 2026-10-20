@@ -38,6 +38,7 @@ import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
 import { proofStripList } from "./proof-strip";
 import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
+import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
@@ -354,6 +355,23 @@ ${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${t
 });
 
 /** The home Wire's live feed: the same real posts, as data. Cached briefly; the page polls it about once a minute. */
+/**
+ * Social drafts for one US Eastern date (docs/launch/social-strategy.md §9.1): structured data for the drafter and
+ * verifier workflows, never instructions. Every number comes from the referee, the board or Skill Watch.
+ */
+site.get("/api/v1/social/drafts", async (c) => {
+  const date = c.req.query("date") ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return c.json({ error: "date must be YYYY-MM-DD (US Eastern)" }, 400);
+  const swap = parseSwap(c.req.query("swap"));
+  const drafts = await draftsFor(c.env, getDb(c.env), date, Date.now(), swap);
+  return c.json({ date, time_zone: "America/New_York", swap, drafts }, 200, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" });
+});
+
+site.get("/api/v1/social/shorts", async (c) => {
+  const shorts = await shortsFor(c.env, getDb(c.env));
+  return c.json({ shorts }, 200, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" });
+});
+
 site.get("/wire/live.json", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();

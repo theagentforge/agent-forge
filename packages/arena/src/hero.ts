@@ -78,7 +78,7 @@ export const trapContrast = (p: DuelPick) => {
  * models people know, because nobody shares a clip of a model they've never heard of (Dinike, 20 Oct).
  */
 export const MODEL_REACH: [RegExp, 0 | 1 | 2][] = [
-  [/^(claude|gpt-6|gpt-5\.6|deepseek|glm-5\.3-flash|kimi)/, 2],
+  [/^(claude|gpt-6|gpt-5\.6|deepseek|glm-5\.3-flash|kimi|gemini-3\.8-flash)/, 2],
   [/^(gemini|qwen3\.8|gemma|nemotron|glm|gpt-oss|minimax)/, 1],
 ];
 export const reach = (model: string) => MODEL_REACH.find(([re]) => re.test(model))?.[1] ?? 0;

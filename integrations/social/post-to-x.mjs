@@ -20,6 +20,22 @@ export const MAX_POSTS_PER_ISSUE = 14;
 
 /** A line inside a post block that names its image, e.g. `image: https://theagentforge.io/og/arena/run/abc.png`. */
 const IMAGE_LINE = /^[ \t]*image:[ \t]*(\S*)[ \t]*$/i;
+/** Alt text for the post's image (social strategy §9.6), e.g. `alt: Two pixel robots ...`. Not posted; up to 1,000 characters. */
+const ALT_LINE = /^[ \t]*alt:[ \t]*(.*?)[ \t]*$/i;
+export const MAX_ALT = 1000;
+/** A Gauntlet clip from the public clips release, uploaded natively (§9.4): `video: gx-<a8>-<b8>.mp4`. */
+const VIDEO_LINE = /^[ \t]*video:[ \t]*(\S*)[ \t]*$/i;
+export const VIDEO_ORIGIN = "https://github.com/theagentforge/agent-forge/releases/download/clips";
+export const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
+/** A native X poll (§9.5): `poll: Option A | Option B | Option C (2100 min)`. No media on polls. */
+const POLL_LINE = /^[ \t]*poll:[ \t]*(.+?)[ \t]*\((\d+) min\)[ \t]*$/i;
+export const POLL_LIMITS = { options: [2, 4], chars: 25, minutes: [5, 10080] };
+
+/** The clip's URL on the clips release; anything else is refused. */
+export function videoUrl(spec, n = "?") {
+  if (!/^gx-[A-Za-z0-9_-]{1,40}\.mp4$/.test(spec ?? "")) throw new Error(`Post ${n} has a video I won't fetch ("${spec}"). Use gx-<a8>-<b8>.mp4 from the clips release.`);
+  return `${VIDEO_ORIGIN}/${spec}`;
+}
 export const IMAGE_ORIGIN = "https://theagentforge.io";
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -57,8 +73,24 @@ export function parsePosts(body) {
     const lines = m[2].replace(/\r\n/g, "\n").split("\n");
     const images = lines.filter((l) => IMAGE_LINE.test(l)).map((l) => IMAGE_LINE.exec(l)[1]);
     if (images.length > 1) throw new Error(`Post ${n} has more than one image line; X posts here take one image.`);
-    const text = lines.filter((l) => !IMAGE_LINE.test(l)).join("\n").trim();
-    out.push(images.length ? { n, at, reply, text, image: images[0] } : { n, at, reply, text });
+    const alts = lines.filter((l) => ALT_LINE.test(l)).map((l) => ALT_LINE.exec(l)[1]);
+    const videos = lines.filter((l) => VIDEO_LINE.test(l)).map((l) => VIDEO_LINE.exec(l)[1]);
+    const polls = lines.filter((l) => POLL_LINE.test(l)).map((l) => POLL_LINE.exec(l));
+    if (videos.length > 1 || polls.length > 1) throw new Error(`Post ${n} has more than one video or poll line.`);
+    if (alts.length > 1) throw new Error(`Post ${n} has more than one alt line.`);
+    if (alts.length && !images.length) throw new Error(`Post ${n} has alt text but no image line.`);
+    const text = lines.filter((l) => !IMAGE_LINE.test(l) && !ALT_LINE.test(l) && !VIDEO_LINE.test(l) && !POLL_LINE.test(l)).join("\n").trim();
+    const poll = polls.length ? { options: polls[0][1].split("|").map((o) => o.trim()).filter(Boolean), duration_minutes: Number(polls[0][2]) } : null;
+    out.push({
+      n,
+      at,
+      reply,
+      text,
+      ...(images.length ? { image: images[0] } : {}),
+      ...(alts.length ? { alt: alts[0] } : {}),
+      ...(videos.length ? { video: videos[0] } : {}),
+      ...(poll ? { poll } : {}),
+    });
   }
   return out;
 }
@@ -77,6 +109,16 @@ export function validatePosts(posts) {
     const w = weightedLength(p.text);
     if (w > MAX_WEIGHT) throw new Error(`Post ${p.n} is ${w} characters as X counts them; the limit is ${MAX_WEIGHT} (${w - MAX_WEIGHT} too many).`);
     if (p.image !== undefined) imageUrl(p.image, p.n);
+    if (p.alt !== undefined && (!p.alt || p.alt.length > MAX_ALT)) throw new Error(`Post ${p.n}'s alt text must be 1–${MAX_ALT} characters.`);
+    if (p.video !== undefined) videoUrl(p.video, p.n);
+    if (p.poll) {
+      const [lo, hi] = POLL_LIMITS.options;
+      const [mlo, mhi] = POLL_LIMITS.minutes;
+      if (p.poll.options.length < lo || p.poll.options.length > hi) throw new Error(`Post ${p.n}'s poll needs ${lo}–${hi} options.`);
+      if (p.poll.options.some((o) => o.length > POLL_LIMITS.chars)) throw new Error(`Post ${p.n}'s poll options must be ${POLL_LIMITS.chars} characters or fewer.`);
+      if (!(p.poll.duration_minutes >= mlo && p.poll.duration_minutes <= mhi)) throw new Error(`Post ${p.n}'s poll must run ${mlo}–${mhi} minutes.`);
+      if (p.image !== undefined || p.video !== undefined) throw new Error(`Post ${p.n} has a poll and media; X polls take no media.`);
+    }
   }
 }
 
@@ -88,7 +130,7 @@ export const approvalHash = (posts) =>
   createHash("sha256")
     .update(
       JSON.stringify(
-        posts.map((p) => [p.at, p.text, ...(p.reply ? ["reply"] : []), ...(p.image !== undefined ? [`image:${p.image}`] : [])]),
+        posts.map((p) => [p.at, p.text, ...(p.reply ? ["reply"] : []), ...(p.image !== undefined ? [`image:${p.image}`] : []), ...(p.alt !== undefined ? [`alt:${p.alt}`] : []), ...(p.video !== undefined ? [`video:${p.video}`] : []), ...(p.poll ? [`poll:${JSON.stringify(p.poll)}`] : [])]),
       ),
     )
     .digest("hex")
@@ -189,8 +231,67 @@ export async function uploadImage({ bytes, type }, env, fetcher = fetch) {
   return String(id);
 }
 
+/** Downloads a Gauntlet clip from the public clips release (MP4, at most 15 MB). */
+export async function fetchVideo(spec, fetcher = fetch) {
+  const res = await fetcher(videoUrl(spec), { redirect: "follow" });
+  if (!res.ok) throw new Error(`the clip returned HTTP ${res.status}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (!bytes.length) throw new Error("the clip is empty");
+  if (bytes.length > MAX_VIDEO_BYTES) throw new Error("the clip is over 15 MB");
+  return bytes;
+}
+
+const CHUNK = 4 * 1024 * 1024;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Chunked video upload with X API v2 (§9.4): initialize, append each chunk (JSON, base64; JSON bodies aren't part of
+ * the OAuth 1.0a signature), finalize, then wait for processing. Returns the media id. See
+ * https://docs.x.com/x-api/media/quickstart/media-upload-chunked
+ */
+export async function uploadVideo(bytes, env, fetcher = fetch, wait = sleep) {
+  xCreds(env);
+  const base = "https://api.x.com/2/media/upload";
+  const call = async (url, body, method = "POST", extra = {}) => {
+    const res = await fetcher(url, {
+      method,
+      headers: { Authorization: signed(env, method, url.split("?")[0], extra), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`X refused the video (${url.split("/").slice(-1)[0].split("?")[0]}: HTTP ${res.status}${data?.title ? `, ${data.title}` : ""})`);
+    return data;
+  };
+  const init = await call(`${base}/initialize`, { media_type: "video/mp4", total_bytes: bytes.length, media_category: "tweet_video" });
+  const id = init?.data?.id;
+  if (!id) throw new Error("X gave no media id for the video");
+  for (let i = 0, seg = 0; i < bytes.length; i += CHUNK, seg++) {
+    await call(`${base}/${id}/append`, { media: Buffer.from(bytes.subarray(i, i + CHUNK)).toString("base64"), segment_index: seg });
+  }
+  let info = (await call(`${base}/${id}/finalize`, null))?.data?.processing_info;
+  for (let tries = 0; info && info.state !== "succeeded"; tries++) {
+    if (info.state === "failed" || tries >= 30) throw new Error(`X couldn't process the video (${info.state})`);
+    await wait(Math.min(10, Number(info.check_after_secs) || 2) * 1000);
+    const q = { command: "STATUS", media_id: id };
+    info = (await call(`${base}?command=STATUS&media_id=${id}`, null, "GET", q))?.data?.processing_info;
+  }
+  return String(id);
+}
+
+/** Sets an uploaded image's alt text (POST /2/media/metadata). A failure never stops the post. */
+export async function setAltText(mediaId, alt, env, fetcher = fetch) {
+  xCreds(env);
+  const url = "https://api.x.com/2/media/metadata";
+  const res = await fetcher(url, {
+    method: "POST",
+    headers: { Authorization: signed(env, "POST", url), "Content-Type": "application/json" },
+    body: JSON.stringify({ id: mediaId, metadata: { alt_text: { text: alt.slice(0, MAX_ALT) } } }),
+  });
+  if (!res.ok) throw new Error(`X refused the alt text (HTTP ${res.status})`);
+}
+
 /** Posts one text to X (as a reply when replyTo is a post id, with images when mediaIds are given) and returns its URL. */
-export async function postText(text, env, fetcher = fetch, replyTo = null, mediaIds = []) {
+export async function postText(text, env, fetcher = fetch, replyTo = null, mediaIds = [], poll = null) {
   xCreds(env);
   const url = "https://api.x.com/2/tweets";
   const res = await fetcher(url, {
@@ -210,6 +311,7 @@ export async function postText(text, env, fetcher = fetch, replyTo = null, media
       text,
       ...(replyTo ? { reply: { in_reply_to_tweet_id: replyTo } } : {}),
       ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}),
+      ...(poll ? { poll: { options: poll.options, duration_minutes: poll.duration_minutes } } : {}),
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -230,6 +332,10 @@ export async function post(env, fetcher = fetch) {
 // --- GitHub side -------------------------------------------------------------------------------------------------
 
 const BOT = "github-actions[bot]";
+/** Facts left by the drafter workflow (draft.mjs). Only a workflow in this repo can write as github-actions[bot]. */
+export const DRAFT_MARK = /<!-- forge-draft (\{[\s\S]*?\}) -->/;
+/** Who may open an auto issue: an admin, or this repo's own drafter workflow (ADR 0010 amendment, 20 Oct 2026). */
+export const trustedAuthor = async (gh, issue) => (issue.user?.login === BOT && DRAFT_MARK.test(issue.body ?? "")) || (await isAdmin(gh, issue.user?.login ?? ""));
 const APPROVED_MARK = /<!-- forge-approved ([0-9a-f]{16}) -->/;
 const POSTED_MARK = /<!-- forge-posted (\d+) -->/g;
 const POSTED_ID = /status\/(\d+) <!-- forge-posted (\d+) -->/g;
@@ -270,6 +376,15 @@ function postedIds(comments) {
  * Sends every post that is due and not yet sent; then labels and closes the issue, or keeps it scheduled. A reply
  * waits until the post before it has gone out, so a thread is never posted out of order.
  */
+/**
+ * Adds ?from=x-post to theagentforge.io links that carry no from tag (social-strategy §9.8), when the post is sent, so
+ * the approval fingerprint is unchanged. The digest counts arrivals by tag; X counts every link as 23 characters.
+ */
+export const tagXLinks = (text) =>
+  text.replace(/https:\/\/theagentforge\.io(\/[^\s?#]*)?(\?[^\s#]*)?/g, (m, path = "", query = "") =>
+    /[?&]from=/.test(query) ? m : `https://theagentforge.io${path}${query ? `${query}&` : "?"}from=x-post`,
+  );
+
 async function sendDue(gh, issue, posts, comments, env, fetcher, now, budget = null) {
   const done = postedNumbers(comments);
   const ids = postedIds(comments);
@@ -282,28 +397,39 @@ async function sendDue(gh, issue, posts, comments, env, fetcher, now, budget = n
     // An image that can't be fetched or uploaded never stops the post: it goes out as text and the comment says so.
     let mediaIds = [];
     let imageNote = "";
-    if (p.image !== undefined) {
+    if (p.video !== undefined) {
+      try {
+        mediaIds = [await uploadVideo(await fetchVideo(p.video, fetcher), env, fetcher)];
+        imageNote = " With the clip.";
+      } catch (e) {
+        imageNote = ` The clip didn't upload (${e.message}), so the card went instead.`;
+      }
+    }
+    if (!mediaIds.length && p.image !== undefined) {
       try {
         mediaIds = [await uploadImage(await fetchImage(p.image, fetcher), env, fetcher)];
+        if (p.alt) await setAltText(mediaIds[0], p.alt, env, fetcher).catch((e) => (imageNote = ` No alt text: ${e.message}.`));
       } catch (e) {
         imageNote = ` Posted without the image: ${e.message}.`;
       }
     }
     let url;
     try {
-      url = await postText(p.text, env, fetcher, parent, mediaIds);
+      url = await postText(tagXLinks(p.text), env, fetcher, parent, mediaIds, p.poll ?? null);
     } catch (e) {
       if (!mediaIds.length) throw e;
       // X refused the post with the image attached: send it as text rather than lose it.
       mediaIds = [];
       imageNote = ` Posted without the image: ${e.message.replace(/\.$/, "")}.`;
-      url = await postText(p.text, env, fetcher, parent);
+      url = await postText(tagXLinks(p.text), env, fetcher, parent, [], p.poll ?? null);
     }
-    const cost = roundCost(postCost(p.text) + (mediaIds.length ? COST_MEDIA_UPLOAD : 0));
+    // A video upload is at least three writes (initialize, append, finalize); an image is one.
+    const videoSent = p.video !== undefined && imageNote === " With the clip.";
+    const cost = roundCost(postCost(p.text) + (mediaIds.length ? (videoSent ? 3 : 1) * COST_MEDIA_UPLOAD : 0));
     if (budget) budget.spent += cost;
     ids.set(p.n, url.split("/").at(-1));
     await gh("POST", `/issues/${issue}/comments`, {
-      body: `Posted ${p.n} of ${posts.length}: ${url} <!-- forge-posted ${p.n} --> <!-- forge-cost ${cost} -->${mediaIds.length ? " With image." : imageNote}`,
+      body: `Posted ${p.n} of ${posts.length}: ${url} <!-- forge-posted ${p.n} --> <!-- forge-cost ${cost} -->${videoSent ? imageNote : mediaIds.length ? ` With image.${imageNote}` : imageNote}`,
     });
     done.add(p.n);
   }
@@ -367,10 +493,12 @@ export const APPROVE_ONLY = [
   /\bflag(ged|s)?\b/i,
   /under review/i,
   /malicious/i,
-  /\bcaught\b/i,
+  // "Caught by agents" stories about a tool (ADR 0010 §2). An Arena bout's "caught the trap" is a referee fact, not one.
+  /\bcaught by (agents|our agents|independent|verified)\b/i,
   /\b(incident|breach|vulnerab\w*|exploit\w*|compromis\w*)\b/i,
   /\b(lawsuit|legal|court|takedown|dispute|dmca|defam\w*)\b/i,
-  /\b(pric(e|es|ing)|paid|payment|subscription|fundrais\w*|investor|revenue)\b/i,
+  // Our money: pricing, payments to us, fundraising. "Paid the fake invoice" in a bout is a referee fact, not money.
+  /\b(pric(e|es|ing)|subscription|fundrais\w*|investor|revenue|payments? to us)\b/i,
   /[$€£]\s?\d/,
 ];
 export const approveOnlyReason = (posts) => {
@@ -445,7 +573,7 @@ export async function autoPublish(env, fetcher = fetch, now = Date.now()) {
       log.push(`#${it.number}: ${e.message}`);
       continue;
     }
-    const d = autoDecision({ issue: it, posts, authorIsAdmin: await isAdmin(gh, it.user?.login ?? ""), postedTypes, autoToday, spentThisMonth: spent, now });
+    const d = autoDecision({ issue: it, posts, authorIsAdmin: await trustedAuthor(gh, it), postedTypes, autoToday, spentThisMonth: spent, now });
     if (!d.ok) {
       log.push(`#${it.number}: ${d.why}`);
       if (d.toApprove) {

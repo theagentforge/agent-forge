@@ -23,9 +23,13 @@ export const NUDGE = "Please continue: use the tools, and call finish when you'r
  * charged unexpectedly"). From November, $10 a month: enough for the weekly headline bout (about $0.40 a week) with
  * room to spare, and nothing else is queued automatically. OpenRouter is prepaid, so it can never bill past its credit.
  */
-export const MONTHLY_CAP_USD = 10;
-/** October 2026: back to the original $30 key limit less the 5.5% fee. Crucible 2: Hard is not run (no top-up needed). */
-export const OCT_2026_CAP_USD = 28.4;
+export const MONTHLY_CAP_USD = 16;
+/**
+ * October 2026: $61.40, a $65 key limit less the 5.5% fee. It was $28.40 ($30); raised on 20 Oct (Dinike: "raise the budget and do
+ * the tests and add frontier models") for Lab #4 (the trap card on frontier models, about $28) and the widely used
+ * practice models. From November $16 a month: the weekly headline bout plus those practice models (about $3-6).
+ */
+export const OCT_2026_CAP_USD = 61.4;
 export const monthlyCap = (now: number) => (now >= Date.UTC(2026, 9, 1) && now < Date.UTC(2026, 10, 1) ? OCT_2026_CAP_USD : MONTHLY_CAP_USD);
 /**
  * Practice runs on Workers AI (estimated at list price). Workers AI bills on the Cloudflare invoice beyond 10,000
