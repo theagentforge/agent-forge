@@ -50,8 +50,8 @@ export interface OidcClaims {
   event_name: string;
 }
 
-/** Verifies a GitHub Actions OIDC token (RS256) and that it came from the House tester workflow on main. */
-export async function verifyHouseToken(token: string, audience: string, fetcher: typeof fetch = fetch, now = Date.now()) {
+/** Verifies a GitHub Actions OIDC token (RS256) for this site, then asks `allowed` whether its workflow may call. */
+export async function verifyActionsToken(token: string, audience: string, allowed: (c: OidcClaims) => boolean, fetcher: typeof fetch = fetch, now = Date.now()) {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
@@ -65,13 +65,31 @@ export async function verifyHouseToken(token: string, audience: string, fetcher:
     const c = JSON.parse(new TextDecoder().decode(b64url(parts[1]!))) as OidcClaims;
     const s = Math.floor(now / 1000);
     if (c.iss !== ISSUER || c.aud !== audience || c.exp < s || c.iat > s + 60) return null;
-    const id = HOUSE_REPOS[c.repository];
-    if (!id || String(c.repository_id) !== id || c.job_workflow_ref !== houseWorkflow(c.repository) || c.ref !== "refs/heads/main") return null;
-    return c;
+    return allowed(c) ? c : null;
   } catch {
     return null;
   }
 }
+
+/** The House tester workflow on main, in one of our two repos. */
+export const verifyHouseToken = (token: string, audience: string, fetcher: typeof fetch = fetch, now = Date.now()) =>
+  verifyActionsToken(
+    token,
+    audience,
+    (c) => {
+      const id = HOUSE_REPOS[c.repository];
+      return !!id && String(c.repository_id) === id && c.job_workflow_ref === houseWorkflow(c.repository) && c.ref === "refs/heads/main";
+    },
+    fetcher,
+    now,
+  );
+
+/** One workflow on main in the private repo only (social posting speaks for the brand, so never the public mirror). */
+export const privateWorkflow = (file: string) => (c: OidcClaims) =>
+  c.repository === "theagentforge/forge" &&
+  String(c.repository_id) === HOUSE_REPOS["theagentforge/forge"] &&
+  c.job_workflow_ref === `theagentforge/forge/.github/workflows/${file}@refs/heads/main` &&
+  c.ref === "refs/heads/main";
 
 /** The House tester agent, owned by the first founder account, which must be marked House. Created on first use. */
 export async function houseAgentProps(env: Env): Promise<AgentProps | null> {

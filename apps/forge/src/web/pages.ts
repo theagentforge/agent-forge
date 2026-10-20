@@ -32,7 +32,7 @@ import {
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
-import { bump, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
+import { aiAgentCounters, bump, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
@@ -64,7 +64,7 @@ site.use("*", async (c, next) => {
   await next();
 });
 
-const wantsJson = (c: Ctx) =>
+export const wantsJson = (c: Ctx) =>
   c.req.query("format") === "json" || (c.req.header("Accept") ?? "").split(",")[0]?.trim() === "application/json";
 
 /** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
@@ -88,7 +88,7 @@ export function structuredOnly(data: unknown): unknown {
   return data;
 }
 
-function sendJson(c: Ctx, data: unknown) {
+export function sendJson(c: Ctx, data: unknown) {
   return c.json(structuredOnly(data) as object, 200, {
     "Cache-Control": `public, max-age=${PAGE_CACHE_SECONDS}`,
     "X-Content-Type-Options": "nosniff",
@@ -107,6 +107,9 @@ site.use("*", async (c, next) => {
     c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
   // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
   if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
+  // AI agents (agent-channels §4.5): indexers, live fetches and coding agents, counted apart from people.
+  const ai = aiAgentCounters(c.req.raw);
+  if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
   // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
   if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
     c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));

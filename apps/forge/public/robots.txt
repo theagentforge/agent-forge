@@ -9,3 +9,4 @@ Disallow: /authorize
 Disallow: /oauth/
 Disallow: /claim
 Disallow: /check?
+Sitemap: https://theagentforge.io/sitemap.xml

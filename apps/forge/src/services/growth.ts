@@ -2,7 +2,7 @@ import { gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { isLean } from "./ops-mode";
-import { usageStats, visitStats, skillStats } from "./usage";
+import { aiAgentStats, usageStats, visitStats, skillStats } from "./usage";
 
 // ADR 0011 leading indicators that the Ops Digest reads: tool claims and sites embedding a Forge badge.
 
@@ -94,7 +94,11 @@ export async function growthStats(env: Env, now = Date.now()) {
       () => ({}),
     )),
     ...(await skillStats(env, now).then(
-      (k) => ({ skill_scans_7d: k.scans, skill_scans_by_channel_7d: k.scans_by_channel, skill_scans_flagged_7d: k.scans_flagged, watch_checkins_7d: k.watch_checkins, watch_fingerprints_7d: k.watch_fingerprints, skill_file_agent_fetches_7d: k.skill_file_agent_fetches, skill_file_browser_views_7d: k.skill_file_browser_views }),
+      (k) => ({ skill_scans_7d: k.scans, skill_scans_by_channel_7d: k.scans_by_channel, skill_scans_flagged_7d: k.scans_flagged, watch_checkins_7d: k.watch_checkins, watch_fingerprints_7d: k.watch_fingerprints, skill_file_agent_fetches_7d: k.skill_file_agent_fetches, skill_file_browser_views_7d: k.skill_file_browser_views, a2a_requests_7d: k.a2a_requests, a2a_by_skill_7d: k.a2a_by_skill }),
+      () => ({}),
+    )),
+    ...(await aiAgentStats(env, now).then(
+      (a) => ({ ai_indexers_7d: a.indexers, ai_live_fetches_7d: a.live_fetches, ai_coding_agents_7d: a.coding_agents }),
       () => ({}),
     )),
     ...(await visitStats(env, now).then(

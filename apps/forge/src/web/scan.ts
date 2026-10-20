@@ -137,6 +137,7 @@ site.post("/scan", async (c) => {
 
 /** The agent skill file, served from static assets; the Worker sees it first only to count fetches (pages.ts). */
 site.get("/skill.md", (c) => c.env.ASSETS.fetch(new Request(new URL("/skill.md", c.req.url), { headers: c.req.raw.headers })));
+site.get("/llms.txt", (c) => c.env.ASSETS.fetch(new Request(new URL("/llms.txt", c.req.url), { headers: c.req.raw.headers })));
 
 site.get("/scan/rules", (c) =>
   send(c, {

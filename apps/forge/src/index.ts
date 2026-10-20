@@ -36,6 +36,10 @@ import "./web/connect";
 import "./web/dashboard";
 import "./web/publishers";
 import "./web/og";
+import "./a2a";
+import "./web/answers";
+import "./web/skills-index";
+import { CARD_PATHS } from "./web/discovery";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
 
@@ -158,6 +162,8 @@ export default {
         return r;
       });
     const copyIfPost = () => (request.method === "POST" ? request.clone() : null);
+    // MCP Server Cards (SEP-2127) live under each endpoint's path but are static pages, answered by the site.
+    if (request.method === "GET" && CARD_PATHS.includes(path)) return app.fetch(request, env, ctx);
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       return counted("public", publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);

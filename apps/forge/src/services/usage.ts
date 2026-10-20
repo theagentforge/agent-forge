@@ -141,10 +141,57 @@ export async function visitStats(env: Env, now = Date.now(), days = 7) {
   return { days, arrivals: Number(rows.find((r) => r.key === "visit:arrivals")?.n ?? 0), by_source: list("visit:src:"), by_tag: list("visit:tag:").slice(0, 10) };
 }
 
+// AI agent traffic (docs/launch/agent-channels.md §4.5): AI user agents are dropped from visit counts as bots, so
+// they're counted here instead, in three groups. Indexers build AI search; live fetches happen while a person waits for
+// an answer; coding agents are tools like Claude Code. Daily totals by group, agent and kind of page; nothing else.
+const AI_AGENTS: [RegExp, "indexer" | "live" | "coding", string][] = [
+  [/OAI-SearchBot/i, "indexer", "openai"],
+  [/Claude-SearchBot/i, "indexer", "anthropic"],
+  [/PerplexityBot/i, "indexer", "perplexity"],
+  [/ChatGPT-User/i, "live", "openai"],
+  [/Claude-User/i, "live", "anthropic"],
+  [/Perplexity-User/i, "live", "perplexity"],
+  [/claude-code|claude-cli/i, "coding", "claude-code"],
+  [/\bcursor\b/i, "coding", "cursor"],
+  [/\bcodex\b/i, "coding", "codex"],
+  [/windsurf|codeium/i, "coding", "windsurf"],
+];
+
+/** The kind of page an AI agent fetched, for the counters. */
+export const aiPageKind = (path: string) =>
+  path.startsWith("/tools/") ? "tools" : path === "/llms.txt" ? "llms" : path === "/skill.md" || path.startsWith("/.well-known/agent-skills/") || path.startsWith("/.well-known/skills/") ? "skills" : path.startsWith("/scan/") ? "scan" : path.startsWith("/.well-known/") ? "discovery" : "other";
+
+export function aiAgentCounters(req: { method: string; url: string; headers: Headers }): string[] {
+  if (req.method !== "GET") return [];
+  const ua = req.headers.get("user-agent") ?? "";
+  const hit = AI_AGENTS.find(([re]) => re.test(ua));
+  if (!hit) return [];
+  const [, group, name] = hit;
+  return [`ai:${group}`, `ai:${group}:${name}`, `ai:${group}:page:${aiPageKind(new URL(req.url).pathname)}`];
+}
+
+/** AI agent traffic over the last `days` days, for the ops digest and /api/v1/growth. */
+export async function aiAgentStats(env: Env, now = Date.now(), days = 7) {
+  const db = getDb(env);
+  const since = day(now - (days - 1) * 86_400_000);
+  const rows = await db
+    .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, since), like(t.usageDaily.key, "ai:%")))
+    .groupBy(t.usageDaily.key);
+  const get = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
+  const group = (g: string) => ({
+    total: get(`ai:${g}`),
+    by_agent: Object.fromEntries(rows.filter((r) => r.key.startsWith(`ai:${g}:`) && !r.key.includes(":page:")).map((r) => [r.key.slice(`ai:${g}:`.length), Number(r.n)])),
+    by_page: Object.fromEntries(rows.filter((r) => r.key.startsWith(`ai:${g}:page:`)).map((r) => [r.key.slice(`ai:${g}:page:`.length), Number(r.n)])),
+  });
+  return { days, indexers: group("indexer"), live_fetches: group("live"), coding_agents: group("coding") };
+}
+
 // Skill checks (ADR 0026), the launch metric: scans by where they came from, weekly-watch check-ins (agents coming
 // back by themselves) and fetches of /skill.md by agents (the nearest thing to an install count). Daily totals only.
 
-export type ScanChannel = "web" | "api" | "mcp";
+export type ScanChannel = "web" | "api" | "mcp" | "a2a";
 export const scanCounters = (channel: ScanChannel, verdict: string) => [`scan:${channel}`, `scan:verdict:${verdict.replace(/[^a-z]/g, "")}`];
 export const watchCounters = (fingerprints: number) => ["watch:calls", ...Array<string>(Math.min(Math.max(fingerprints, 0), 100)).fill("watch:fingerprints")];
 
@@ -162,17 +209,20 @@ export async function skillStats(env: Env, now = Date.now(), days = 7) {
   const rows = await db
     .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
     .from(t.usageDaily)
-    .where(and(gte(t.usageDaily.day, since), sql`(${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'skillmd:%')`))
+    .where(and(gte(t.usageDaily.day, since), sql`(${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'skillmd:%' or ${t.usageDaily.key} like 'a2a:%')`))
     .groupBy(t.usageDaily.key);
   const get = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
   return {
     days,
-    scans: get("scan:web") + get("scan:api") + get("scan:mcp"),
-    scans_by_channel: { web: get("scan:web"), api: get("scan:api"), mcp: get("scan:mcp") },
+    scans: get("scan:web") + get("scan:api") + get("scan:mcp") + get("scan:a2a"),
+    scans_by_channel: { web: get("scan:web"), api: get("scan:api"), mcp: get("scan:mcp"), a2a: get("scan:a2a") },
     scans_flagged: get("scan:verdict:flagged"),
     watch_checkins: get("watch:calls"),
     watch_fingerprints: get("watch:fingerprints"),
     skill_file_agent_fetches: get("skillmd:agent"),
     skill_file_browser_views: get("skillmd:browser"),
+    /** Requests from other agents over A2A (/a2a), and how many asked for each skill. */
+    a2a_requests: get("a2a:requests"),
+    a2a_by_skill: { check_tool: get("a2a:skill:check-tool"), scan_skill: get("a2a:skill:scan-skill"), trap_card: get("a2a:skill:trap-card") },
   };
 }

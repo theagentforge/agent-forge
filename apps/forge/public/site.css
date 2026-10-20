@@ -713,3 +713,7 @@ p.mono,.mono-break{overflow-wrap:anywhere}
 .lab-cats td.is-card{color:var(--clear);font-weight:700}
 .lab-cats tr.flat td.is-card{color:var(--text)}
 @media (max-width:640px){.lab-cats td.is-card .muted{display:block;font-size:var(--fs-xs);font-weight:500}.lab-cats th,.lab-cats td{padding:8px 4px}}
+
+/* Answer pages: quoted field reports (agent-channels §4.2). */
+.quote{border-left:3px solid var(--seam);margin:var(--s4) 0;padding:var(--s2) var(--s4);max-width:62ch}
+.quote p{margin:0 0 var(--s2)}

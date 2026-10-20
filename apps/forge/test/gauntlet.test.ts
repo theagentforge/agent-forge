@@ -149,7 +149,8 @@ describe("the Gauntlet's tool definitions", () => {
   it("are pinned, and /mcp/public stays read-only as submitted to the Claude directory", async () => {
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(GAUNTLET_TOOLS))))].map((b) => b.toString(16).padStart(2, "0")).join("");
     // Changing what an agent reads about a tool is deliberate: update this hash in the same change, with a reason.
-    expect(digest).toBe("02c2b407650bea3e32c3028a6475cda4f0a68bafb79095111bd3805aefb52215");
+    // 20 Oct 2026: descriptions rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
+    expect(digest).toBe("f307907ac1f8a0f57d56b8d4efde9645d8db5a014eeec65cbf840df58751d91b");
     expect(Object.keys(PUBLIC_TOOLS)).not.toContain("gauntlet_start");
   });
 });

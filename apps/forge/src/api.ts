@@ -8,7 +8,10 @@ import { SCAN_MAX_BYTES } from "@forge/shared";
 import { growthStats } from "./services/growth";
 import { mcpHandler } from "./mcp";
 import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
-import { houseAgentProps, houseAlreadyReported, verifyHouseToken } from "./services/house";
+import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsToken, verifyHouseToken } from "./services/house";
+import { postToMoltbook, validatePost } from "./social/moltbook";
+import { DAILY_CAP_USD, PROMPTS, runSelection, SELECTION_MODELS } from "./ops/tool-selection";
+import { CITATION_MODELS, CITATION_QUESTIONS, runCitations } from "./ops/citations";
 import { recordToolCheck } from "./services/feedback";
 import { connectTestSeen } from "./services/connect-test";
 import { storeRun } from "./services/house-report";
@@ -87,6 +90,62 @@ publicApi.post("/api/v1/house/run", async (c) => {
   const r = await storeRun(c.env, body);
   return r.ok ? c.json(r, 201) : c.json({ ok: false, reason: "invalid_run", detail: r.detail }, 422);
 });
+
+/**
+ * POST /api/v1/social/moltbook — one approved Moltbook post from the moltbook.yml workflow in the private repo (GitHub
+ * Actions OIDC, no shared secret). The workflow only calls this after an admin's approve; the Moltbook key never
+ * leaves Cloudflare.
+ */
+publicApi.post("/api/v1/social/moltbook", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("moltbook.yml")))) return c.json({ error: "unauthorized" }, 401);
+  const post = validatePost(await c.req.json().catch(() => null));
+  if (typeof post === "string") return c.json({ ok: false, error: post }, 422);
+  const r = await postToMoltbook(c.env, post);
+  return c.json(r, r.ok ? 201 : r.error === "moltbook_not_connected" ? 409 : r.error.startsWith("too_soon") ? 429 : 502);
+});
+
+/**
+ * POST /api/v1/ops/tool-selection — one slice of the tool-selection test (agent-channels §4.1), from the
+ * tool-selection.yml workflow in the private repo (GitHub OIDC). Body: { model, from, to }, at most 10 prompts a call.
+ * Spend is capped per day in KV, apart from the Arena's budget.
+ */
+publicApi.post("/api/v1/ops/tool-selection", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("tool-selection.yml")))) return c.json({ error: "unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as { model?: unknown; from?: unknown; to?: unknown } | null;
+  const from = Number(b?.from), to = Number(b?.to);
+  if (!SELECTION_MODELS.includes(b?.model as never) || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > PROMPTS.length || to - from < 1 || to - from > 10)
+    return c.json({ error: "give model (one of SELECTION_MODELS) and from/to, at most 10 prompts" }, 422);
+  const key = opsSpendKey();
+  const spent = Number((await c.env.KV.get(key)) ?? 0);
+  if (spent >= DAILY_CAP_USD) return c.json({ error: "daily_cap_reached", spent }, 429);
+  const r = await runSelection(c.env, b!.model as string, from, to);
+  await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
+  return c.json(r, 200);
+});
+
+/**
+ * POST /api/v1/ops/citations — one slice of the weekly "cited in AI search" check (agent-channels §4.5), from the
+ * ai-citations.yml workflow in the private repo (GitHub OIDC). Body: { model, from, to }. Shares the ops daily cap.
+ */
+publicApi.post("/api/v1/ops/citations", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("ai-citations.yml")))) return c.json({ error: "unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as { model?: unknown; from?: unknown; to?: unknown } | null;
+  const from = Number(b?.from), to = Number(b?.to);
+  if (!CITATION_MODELS.some((m) => m.key === b?.model) || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > CITATION_QUESTIONS.length || to - from < 1 || to - from > 5)
+    return c.json({ error: "give model (claude, gpt or perplexity) and from/to, at most 5 questions" }, 422);
+  const key = opsSpendKey();
+  const spent = Number((await c.env.KV.get(key)) ?? 0);
+  if (spent >= DAILY_CAP_USD) return c.json({ error: "daily_cap_reached", spent }, 429);
+  const r = await runCitations(c.env, b!.model as string, from, to);
+  await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
+  return c.json(r, 200);
+});
+
+/** One daily spend total for the ops checks that call models (tool selection, citations). */
+const opsSpendKey = () => `ops:llm-spend:${new Date().toISOString().slice(0, 10)}`;
 
 /** GET /api/v1/connect-test/:code — has a check for npm:forge-test-<code> arrived? (the /connect "Test it" tick) */
 publicApi.get("/api/v1/connect-test/:code", async (c) =>

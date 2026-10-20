@@ -38,30 +38,36 @@ export const checkInput = z.object({
   fingerprint: z.string().max(80).optional().describe("sha256:<64 hex> of the exact version"),
 });
 
-/** The tool definitions, pinned in tests (ADR 0017 §2): any change to a name, title or description is deliberate. */
+/**
+ * The tool definitions, pinned in tests (ADR 0017 §2): any change to a name, title or description is deliberate.
+ * Each description says when the tool fits, what to give and what comes back, and nothing else
+ * (docs/launch/agent-channels.md §2: data, never instructions; no "always", "best" or "prefer").
+ */
 export const PUBLIC_TOOLS = {
   forge_check: {
     title: "Check a tool",
     description:
-      "Before installing or using a skill, MCP server, plugin or API, check what verified agents reported about it. Give exactly one of id, url or fingerprint.",
+      "Use this when a task is about to rely on a specific skill, MCP server, plugin, package or API and the question is whether other agents had problems with it. Give exactly one of id, url or fingerprint. Returns field reports for that exact version: report counts, Forge Score, security status and a page link.",
   },
   forge_traps: {
     title: "Arena trap data",
     description:
-      "How often AI models fell for each planted trap in The Forge Arena's everyday jobs: trap names, fall rates with sample sizes, data date and the trap card version. Optionally for one task or one model.",
+      "Use this when the question is how often AI models fell for planted traps in everyday jobs (fake invoices, refunds over policy, duplicate orders). Give an optional task or model. Returns fall rates per trap with sample sizes, the data date and the trap card version.",
   },
   forge_scan: {
     title: "Scan a skill before installing it",
     description:
-      "Before installing an agent skill, plugin, MCP server or install script, scan its text for hidden instructions, piped installs, credential reads and data sent to throwaway endpoints. Give text (the file's contents) or url (a public code host). Returns rule ids and line numbers; no account needed.",
+      "Use this when an agent skill, plugin, MCP server or install script is about to be installed and its text needs checking for hidden instructions, piped installs, credential reads or data sent to throwaway endpoints. Give text (the file's contents) or url (a public code host). Returns a verdict, rule ids and line numbers; no account.",
   },
   forge_watch: {
     title: "Weekly check of installed skills",
-    description: "Give the sha256 fingerprints of skills and tools already installed (up to 100). Returns which are flagged, which need a fresh scan and which have field reports. Reads only.",
+    description:
+      "Use this when re-checking skills or tools that are already installed. Give up to 100 sha256 fingerprints. Returns which are flagged, which need a fresh scan and which have field reports. Reads only.",
   },
   arena_results: {
     title: "Arena results by task",
-    description: "Per-task results from The Forge Arena: for each model, runs, pass rate, traps avoided and cost per pass, as measured by the referee.",
+    description:
+      "Use this when comparing AI models on an everyday job such as paying invoices, refunds, travel or restocking. Give an optional task. Returns, for each model, runs, pass rate, traps avoided and cost per pass, as measured by the referee.",
   },
 } as const;
 
@@ -70,15 +76,16 @@ export const GAUNTLET_TOOLS = {
   gauntlet_start: {
     title: "Start the Forge Gauntlet",
     description:
-      "Start the Forge Gauntlet: six everyday jobs in invented sandboxes with planted traps, refereed from the end state. No account. Returns a gauntlet_id, the first job's brief and its tools. Give card_from (an earlier gauntlet_id) for a measured re-run with that run's trap card.",
+      "Use this when the user wants their own agent tested on six everyday jobs with planted traps, refereed from the end state. Give card_from (an earlier gauntlet_id) only for a measured re-run with that run's trap card. Returns a gauntlet_id, the first job's brief and its sandbox tools; no account.",
   },
   gauntlet_act: {
     title: "Act in the Forge Gauntlet",
-    description: "Call one sandbox tool in the current Gauntlet job. When a job ends, the response carries its verdict and the next job; after the sixth, the report card.",
+    description:
+      "Use this during a Gauntlet run to call one sandbox tool in the current job. Give gauntlet_id, tool and args. Returns the tool's result; when a job ends, its verdict and the next job; after the sixth, the report card.",
   },
   gauntlet_status: {
     title: "Gauntlet status",
-    description: "The current job of a Gauntlet run (brief, tools, calls left), or its report card once finished.",
+    description: "Use this to see where a Gauntlet run stands. Give gauntlet_id. Returns the current job (brief, tools, calls left), or the report card once finished.",
   },
 } as const;
 
@@ -112,7 +119,7 @@ export function createPublicServer(env: Env, ip: string) {
   const server = new McpServer({ name: "the-agent-forge-public", version: "0.1.0" });
   const limited = async () => !(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success;
 
-  server.registerTool("forge_check", { ...PUBLIC_TOOLS.forge_check, inputSchema: checkInput, annotations: READ_ONLY }, async (args) => {
+  server.registerTool("forge_check", { ...PUBLIC_TOOLS.forge_check, inputSchema: checkInput, annotations: { title: PUBLIC_TOOLS.forge_check.title, ...READ_ONLY } }, async (args) => {
     const q = checkQuerySchema.safeParse(args);
     if (!q.success) return json({ error: "invalid_query", detail: q.error.issues[0]?.message }, true);
     if (await limited()) return json({ error: "rate_limited" }, true);
@@ -130,7 +137,7 @@ export function createPublicServer(env: Env, ip: string) {
         url: z.string().max(2048).optional().describe("Or a public URL: raw.githubusercontent.com, github.com/…/blob/…, gist, gitlab, bitbucket, codeberg, unpkg, jsdelivr"),
         name: z.string().max(80).optional().describe("The skill or tool name, for the result page"),
       }),
-      annotations: { ...READ_ONLY, openWorldHint: true },
+      annotations: { title: PUBLIC_TOOLS.forge_scan.title, ...READ_ONLY, openWorldHint: true },
     },
     async ({ text, url, name }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
@@ -153,7 +160,7 @@ export function createPublicServer(env: Env, ip: string) {
     {
       ...PUBLIC_TOOLS.forge_watch,
       inputSchema: z.object({ fingerprints: z.array(z.string().regex(/^(sha256:)?[0-9a-f]{64}$/)).min(1).max(100).describe("sha256 of each installed skill file, as forge_scan returns it") }),
-      annotations: READ_ONLY,
+      annotations: { title: PUBLIC_TOOLS.forge_watch.title, ...READ_ONLY },
     },
     async ({ fingerprints }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
@@ -167,7 +174,7 @@ export function createPublicServer(env: Env, ip: string) {
     {
       ...PUBLIC_TOOLS.forge_traps,
       inputSchema: z.object({ task: taskEnum.optional().describe("One Arena task; all tasks if omitted"), model: z.string().max(64).optional().describe("One model id; all models if omitted") }),
-      annotations: READ_ONLY,
+      annotations: { title: PUBLIC_TOOLS.forge_traps.title, ...READ_ONLY },
     },
     async ({ task, model }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
@@ -177,7 +184,7 @@ export function createPublicServer(env: Env, ip: string) {
 
   server.registerTool(
     "arena_results",
-    { ...PUBLIC_TOOLS.arena_results, inputSchema: z.object({ task: taskEnum.optional().describe("One Arena task; all tasks if omitted") }), annotations: READ_ONLY },
+    { ...PUBLIC_TOOLS.arena_results, inputSchema: z.object({ task: taskEnum.optional().describe("One Arena task; all tasks if omitted") }), annotations: { title: PUBLIC_TOOLS.arena_results.title, ...READ_ONLY } },
     async ({ task }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
       return json(await arenaResults(getDb(env), task));
@@ -193,7 +200,7 @@ export function createGauntletServer(env: Env, ip: string) {
 
   server.registerTool(
     "gauntlet_start",
-    { ...GAUNTLET_TOOLS.gauntlet_start, inputSchema: z.object({ card_from: gauntletId.optional() }), annotations: GAUNTLET },
+    { ...GAUNTLET_TOOLS.gauntlet_start, inputSchema: z.object({ card_from: gauntletId.optional() }), annotations: { title: GAUNTLET_TOOLS.gauntlet_start.title, ...GAUNTLET } },
     async ({ card_from }) => {
       const r = await startGauntlet(env, ip, { cardFrom: card_from });
       return json(r, "error" in r);
@@ -205,7 +212,7 @@ export function createGauntletServer(env: Env, ip: string) {
     {
       ...GAUNTLET_TOOLS.gauntlet_act,
       inputSchema: z.object({ gauntlet_id: gauntletId, tool: z.string().max(64), args: z.record(z.string(), z.unknown()).default({}) }),
-      annotations: GAUNTLET,
+      annotations: { title: GAUNTLET_TOOLS.gauntlet_act.title, ...GAUNTLET },
     },
     async ({ gauntlet_id, tool, args }) => {
       const r = await gauntletAct(env, gauntlet_id, tool, args);
@@ -215,7 +222,7 @@ export function createGauntletServer(env: Env, ip: string) {
 
   server.registerTool(
     "gauntlet_status",
-    { ...GAUNTLET_TOOLS.gauntlet_status, inputSchema: z.object({ gauntlet_id: gauntletId }), annotations: READ_ONLY },
+    { ...GAUNTLET_TOOLS.gauntlet_status, inputSchema: z.object({ gauntlet_id: gauntletId }), annotations: { title: GAUNTLET_TOOLS.gauntlet_status.title, ...READ_ONLY } },
     async ({ gauntlet_id }) => {
       if (await limited()) return json({ error: "rate_limited" }, true);
       const r = await gauntletStatus(env, gauntlet_id);

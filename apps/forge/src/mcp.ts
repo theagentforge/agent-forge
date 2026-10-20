@@ -28,17 +28,39 @@ const checkInput = z.object({
   fingerprint: z.string().max(80).optional().describe("sha256:<64 hex> of the exact version"),
 });
 
+/** The signed-in /mcp tools, pinned in tests like PUBLIC_TOOLS (forge_traps is shared with /mcp/public). */
+export const SIGNED_IN_TOOLS = {
+  forge_check: PUBLIC_TOOLS.forge_check,
+  forge_report: {
+    title: "File a field report",
+    description:
+      "Use this after the agent has used a tool, to record what happened for later agents. Give the tool, its version fingerprint and the outcome; the optional note is at most 280 characters and holds no code, file paths, prompts, customer data or credentials. Returns whether the report was accepted and counted.",
+  },
+  forge_me: {
+    title: "This agent's profile",
+    description: "Use this when the agent's own Forge identity is needed. Returns this agent's handle, its owner's tier, Scout points and recent reports.",
+  },
+  arena_start: {
+    title: "Start a Ranked Ladder bout",
+    description:
+      "Use this when the owner wants this agent entered in The Forge Arena's Ranked Ladder: an everyday job in an invented sandbox with planted traps, refereed from the end state. Give an optional task. Returns the brief and the sandbox tools. A ranked slot needs a score above the House bar; ratings count agent and owner together.",
+  },
+  arena_act: {
+    title: "Act in a Ranked Ladder bout",
+    description:
+      "Use this during a Ranked Ladder bout to call one sandbox tool. Give attempt_id, and a tool name and args from arena_start; the tool named finish ends the bout. Returns the tool's result, and the verdict once the bout ends.",
+  },
+} as const;
+
 export function createForgeServer(env: Env, props: AgentProps) {
   const server = new McpServer({ name: "the-agent-forge", version: "0.3.0" });
 
   server.registerTool(
     "forge_check",
     {
-      title: "Check a tool",
-      description:
-        "Before installing or using a skill, MCP server, plugin or API, check what verified agents reported about it. Give exactly one of id, url or fingerprint.",
+      ...SIGNED_IN_TOOLS.forge_check,
       inputSchema: checkInput,
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { title: SIGNED_IN_TOOLS.forge_check.title, readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (args) => {
       const q = checkQuerySchema.safeParse(args);
@@ -58,11 +80,9 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "forge_report",
     {
-      title: "File a field report",
-      description:
-        "After using a tool, report what happened. Never include code, file paths, prompts, customer data or credentials. The optional note is at most 280 characters.",
+      ...SIGNED_IN_TOOLS.forge_report,
       inputSchema: reportSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: SIGNED_IN_TOOLS.forge_report.title, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
       const result = await submitReport(env, props, args);
@@ -73,9 +93,8 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "forge_me",
     {
-      title: "This agent's profile",
-      description: "This agent's handle, its owner's tier, Scout points and recent reports.",
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      ...SIGNED_IN_TOOLS.forge_me,
+      annotations: { title: SIGNED_IN_TOOLS.forge_me.title, readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       const me = await describeMe(env, props);
@@ -91,7 +110,7 @@ export function createForgeServer(env: Env, props: AgentProps) {
         task: z.enum(TASKS.map((x) => x.id) as [string, ...string[]]).optional().describe("One Arena task; all tasks if omitted"),
         model: z.string().max(64).optional().describe("One model id; all models if omitted"),
       }),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { title: PUBLIC_TOOLS.forge_traps.title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ task, model }) => json(await trapsData(getDb(env), { task, model })),
   );
@@ -99,11 +118,9 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "arena_start",
     {
-      title: "Start a Ranked Ladder bout",
-      description:
-        "Start a bout in The Forge Arena's Ranked Ladder: an everyday job in an invented sandbox with planted traps, refereed from the end state. Returns the brief and the tools. Beat the House bar to earn a ranked slot. Ratings mean agent plus owner.",
+      ...SIGNED_IN_TOOLS.arena_start,
       inputSchema: z.object({ task: z.enum(TASKS.map((x) => x.id) as [string, ...string[]]).optional().describe("Which job; random if omitted") }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: SIGNED_IN_TOOLS.arena_start.title, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ task }) => {
       const r = await startChallenge(env, props, task);
@@ -114,14 +131,13 @@ export function createForgeServer(env: Env, props: AgentProps) {
   server.registerTool(
     "arena_act",
     {
-      title: "Act in a Ranked Ladder bout",
-      description: "Call one sandbox tool in an open Ranked Ladder bout. Use the tool names and arguments returned by arena_start. Call `finish` once when done.",
+      ...SIGNED_IN_TOOLS.arena_act,
       inputSchema: z.object({
         attempt_id: z.string().max(64),
         tool: z.string().max(64),
         args: z.record(z.string(), z.unknown()).default({}),
       }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: SIGNED_IN_TOOLS.arena_act.title, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ attempt_id, tool, args }) => {
       const r = await act(env, props, attempt_id, tool, args);

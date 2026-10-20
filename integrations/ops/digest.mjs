@@ -33,8 +33,20 @@ export function growthLine(g) {
   const mcp = g.mcp_sessions_7d === undefined ? "" : ` AI connections this week: **${g.mcp_sessions_7d}** (${g.mcp_sessions_signed_in_7d} signed in), **${g.mcp_tool_calls_7d}** tool calls.`;
   const fmt = (xs) => xs.map((x) => `${x.name} ${x.n}`).join(", ");
   const arrivals = g.arrivals_7d === undefined ? "" : ` Visitors arriving this week: **${g.arrivals_7d}**${g.arrivals_by_source_7d?.length ? ` (${fmt(g.arrivals_by_source_7d)})` : ""}${g.arrivals_by_tag_7d?.length ? `; by link tag: ${fmt(g.arrivals_by_tag_7d)}` : ""}.`;
-  const skills = g.skill_scans_7d === undefined ? "" : ` Skill checks this week (ADR 0026): **${g.skill_scans_7d}** scans (web ${g.skill_scans_by_channel_7d?.web ?? 0}, API ${g.skill_scans_by_channel_7d?.api ?? 0}, AI apps ${g.skill_scans_by_channel_7d?.mcp ?? 0}; ${g.skill_scans_flagged_7d} flagged), **${g.skill_file_agent_fetches_7d}** agent fetches of /skill.md, **${g.watch_checkins_7d}** weekly-watch check-ins.`;
+  const skills = g.skill_scans_7d === undefined ? "" : ` Skill checks this week (ADR 0026): **${g.skill_scans_7d}** scans (web ${g.skill_scans_by_channel_7d?.web ?? 0}, API ${g.skill_scans_by_channel_7d?.api ?? 0}, AI apps ${g.skill_scans_by_channel_7d?.mcp ?? 0}, other agents ${g.skill_scans_by_channel_7d?.a2a ?? 0}; ${g.skill_scans_flagged_7d} flagged), **${g.skill_file_agent_fetches_7d}** agent fetches of /skill.md, **${g.watch_checkins_7d}** weekly-watch check-ins.${g.a2a_requests_7d ? ` Other agents asked over A2A **${g.a2a_requests_7d}** times (check ${g.a2a_by_skill_7d?.check_tool ?? 0}, scan ${g.a2a_by_skill_7d?.scan_skill ?? 0}, trap card ${g.a2a_by_skill_7d?.trap_card ?? 0}).` : ""}`;
   return `Growth signals: **${g.claims}** tool claims (${g.claims_verified} verified), Forge badges shown on **${g.badge_sites_7d}** outside sites this week.${skills}${home}${card}${mcp}${arrivals}`;
+}
+
+/** AI agent traffic (agent-channels §4.5), and the latest weekly "cited in AI search" score; null when there's nothing. */
+export function agentLine(g, citations = null) {
+  const parts = [];
+  const fmt = (x) => Object.entries(x?.by_agent ?? {}).map(([k, v]) => `${k} ${v}`).join(", ");
+  if (g?.ai_indexers_7d) parts.push(`AI search indexers **${g.ai_indexers_7d.total}**${fmt(g.ai_indexers_7d) ? ` (${fmt(g.ai_indexers_7d)})` : ""}`);
+  if (g?.ai_live_fetches_7d) parts.push(`live AI fetches for a person **${g.ai_live_fetches_7d.total}**${fmt(g.ai_live_fetches_7d) ? ` (${fmt(g.ai_live_fetches_7d)})` : ""}, answer pages ${g.ai_live_fetches_7d.by_page?.tools ?? 0}`);
+  if (g?.ai_coding_agents_7d) parts.push(`coding agents **${g.ai_coding_agents_7d.total}**${fmt(g.ai_coding_agents_7d) ? ` (${fmt(g.ai_coding_agents_7d)})` : ""}`);
+  if (!parts.length && !citations) return null;
+  const cite = citations ? ` Cited in AI search on ${citations.date}: **${citations.cited} of ${citations.answered}** answers.` : "";
+  return `Agents this week: ${parts.join("; ") || "none counted yet"}.${cite}`;
 }
 
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */
@@ -58,7 +70,7 @@ export function releaseIssue(a, date) {
 }
 
 /** The issue body. `history` is /stats' daily snapshots; yesterday's external value gives the change. */
-export function render(stats, date, arena = null, growth = null, learningText = null) {
+export function render(stats, date, arena = null, growth = null, learningText = null, citations = null) {
   const prev = new Map();
   const days = [...new Set((stats.history ?? []).map((h) => h.date))].sort();
   const before = days.at(-2);
@@ -82,6 +94,7 @@ export function render(stats, date, arena = null, growth = null, learningText = 
     downloads ? `CLI downloads on ${downloads.date}: **${n(downloads.externalValue)}**.` : "CLI downloads: not recorded yet.",
     "",
     ...(growthLine(growth) ? [growthLine(growth), ""] : []),
+    ...(agentLine(growth, citations) ? [agentLine(growth, citations), ""] : []),
     ...(arenaLine(arena) ? [arenaLine(arena), ""] : []),
     ...(learningText ? [learningText, ""] : []),
     "Live page: https://theagentforge.io/stats",
@@ -117,8 +130,18 @@ async function main() {
           .then((d) => learningSection(learning({ ...d, tags: growth?.arrivals_by_tag_7d ?? [], now })))
           .catch((e) => `**Weekly learning report (X):** not available today (${e.message}).`)
       : null;
+  // The latest weekly AI-search citation score (ai-citations.yml), read from its tracking issue's last comment.
+  const citations = await gh("GET", "/issues?state=all&labels=citations&per_page=5")
+    .then(async (list) => {
+      const it = list.find((i) => i.title === "AI search citations");
+      if (!it) return null;
+      const cs = await gh("GET", `/issues/${it.number}/comments?per_page=100`);
+      const m = cs.map((x) => /<!-- forge-citations (\{[^}]*\}) -->/.exec(x.body ?? "")).filter(Boolean).at(-1);
+      return m ? JSON.parse(m[1]) : null;
+    })
+    .catch(() => null);
   const old = await gh("GET", "/issues?state=open&labels=ops-digest&per_page=10");
-  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText), labels: ["ops-digest"] });
+  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations), labels: ["ops-digest"] });
   const rel = releaseIssue(arena, date);
   if (rel) await gh("POST", "/issues", rel);
   // Money rule: at 80% of the Arena budget, ask Dinike once a month (ADR 0012 §2).
