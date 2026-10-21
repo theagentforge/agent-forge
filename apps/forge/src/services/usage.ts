@@ -170,6 +170,24 @@ export function aiAgentCounters(req: { method: string; url: string; headers: Hea
   return [`ai:${group}`, `ai:${group}:${name}`, `ai:${group}:page:${aiPageKind(new URL(req.url).pathname)}`];
 }
 
+/**
+ * Fetches of the files agents discover us by, for the agent funnel's first stage. Counted in the site middleware,
+ * before the edge cache, so cached copies count too. llms.txt read in a browser isn't counted.
+ */
+export function discoveryCounters(req: { method: string; url: string; headers: Headers }): string[] {
+  if (req.method !== "GET") return [];
+  const path = new URL(req.url).pathname;
+  if (path === "/.well-known/agent-card.json" || path === "/.well-known/agent.json") return ["disc:agent-card"];
+  if (path === "/.well-known/ai-catalog.json") return ["disc:ai-catalog"];
+  if (path === "/mcp/public/server-card") return ["disc:server-card-public"];
+  if (path === "/mcp/gauntlet/server-card") return ["disc:server-card-gauntlet"];
+  if (path === "/.well-known/agent-skills/index.json" || path === "/.well-known/skills/index.json") return ["skills:index"];
+  const file = /^\/\.well-known\/(agent-skills|skills)\/([a-z0-9-]+)\/SKILL\.md$/.exec(path);
+  if (file) return [`skills:file:${file[2]}`];
+  if (path === "/llms.txt" && !/text\/html/.test(req.headers.get("accept") ?? "")) return ["disc:llms-txt"];
+  return [];
+}
+
 /** AI agent traffic over the last `days` days, for the ops digest and /api/v1/growth. */
 export async function aiAgentStats(env: Env, now = Date.now(), days = 7) {
   const db = getDb(env);

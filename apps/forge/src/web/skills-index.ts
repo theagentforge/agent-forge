@@ -1,6 +1,5 @@
 import skillMd from "../../public/skill.md";
 import beforeInstallMd from "../../../../integrations/skill/forge-check-before-install/SKILL.md";
-import { bump } from "../services/usage";
 import { site } from "./pages";
 
 // Skills discovery (docs/launch/agent-channels.md §4.3): `npx skills add https://theagentforge.io` and other installers
@@ -36,10 +35,8 @@ export async function agentSkillsIndex() {
 
 const HEADERS = { "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" };
 
-site.get("/.well-known/agent-skills/index.json", async (c) => {
-  c.executionCtx.waitUntil(bump(c.env, ["skills:index"]).catch(() => {}));
-  return c.json(await agentSkillsIndex(), 200, HEADERS);
-});
+// Fetches of the indexes and files are counted in the site middleware, before the cache (usage.ts discoveryCounters).
+site.get("/.well-known/agent-skills/index.json", async (c) => c.json(await agentSkillsIndex(), 200, HEADERS));
 
 // The older layout (used by Mintlify sites and earlier installers): names plus file lists, files under the same path.
 site.get("/.well-known/skills/index.json", (c) =>
@@ -50,6 +47,5 @@ for (const prefix of ["/.well-known/agent-skills", "/.well-known/skills"])
   site.get(`${prefix}/:name/SKILL.md`, (c) => {
     const s = SKILLS.find((x) => x.name === c.req.param("name"));
     if (!s) return c.text("Not found", 404);
-    c.executionCtx.waitUntil(bump(c.env, [`skills:file:${s.name}`]).catch(() => {}));
     return c.body(s.text, 200, { ...HEADERS, "Content-Type": "text/markdown; charset=utf-8", "X-Content-Type-Options": "nosniff" });
   });

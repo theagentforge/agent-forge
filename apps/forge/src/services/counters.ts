@@ -45,6 +45,12 @@ export const COUNTER_MINIMUMS = {
   skill_scans_7d: 25,
   watch_checkins_7d: 10,
   skill_file_agent_fetches_7d: 10,
+  // The agent funnel on /stats, last 7 days (services/agent-funnel.ts): each stage shown once it reaches its minimum.
+  agent_found_7d: 25,
+  agent_connected_7d: 25,
+  agent_used_7d: 25,
+  agent_returned_7d: 10,
+  agent_contributed_7d: 10,
 } as const;
 
 export type CounterKey = keyof typeof COUNTER_MINIMUMS;

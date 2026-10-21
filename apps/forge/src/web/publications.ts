@@ -12,6 +12,12 @@ import lab3Card from "../../../../lab/003-trap-cards/prompts/C-generic-card.txt"
 import lab3Results from "../../../../lab/003-trap-cards/RESULTS.md";
 import lab3Output from "../../../../lab/003-trap-cards/analysis-output.md";
 import lab3Counts from "../../../../lab/003-trap-cards/counts.json";
+import lab4Prereg from "../../../../lab/004-trap-card-frontier/PREREGISTRATION.md";
+import lab4Card from "../../../../lab/004-trap-card-frontier/prompts/C-card.txt";
+import lab4Results from "../../../../lab/004-trap-card-frontier/RESULTS.md";
+import lab4Output from "../../../../lab/004-trap-card-frontier/analysis-output.md";
+import lab4Counts from "../../../../lab/004-trap-card-frontier/counts.json";
+import lab4Selection from "../../../../lab/004-trap-card-frontier/selection.json";
 import { send, site } from "./pages";
 
 // Published reports and Forge Lab write-ups, rendered from the Markdown in docs/ and lab/ (bundled as text, so the
@@ -59,6 +65,28 @@ export const PUBLICATIONS: Publication[] = [
     files: [
       { name: "arm-b-placebo.txt", label: "Arm B: same-length text without checks", text: lab3Placebo, type: "text/plain" },
       { name: "arm-c-card.txt", label: "Arm C: trap card v1.0, frozen", text: lab3Card, type: "text/plain" },
+    ],
+  },
+  {
+    path: "/lab/4/results",
+    markdown: lab4Results,
+    description: "Forge Lab #4 results: on frontier models, the trap card didn't measurably reduce traps (24.8% vs 29.5%, p = 0.51), and it caused no measurable harm.",
+    // Pre-registered to be published whatever it showed.
+    live: true,
+    files: [
+      { name: "analysis-output.md", label: "Full analysis output", text: lab4Output, type: "text/markdown" },
+      { name: "counts.json", label: "Counts per arm, model and job (JSON)", text: JSON.stringify(lab4Counts, null, 1), type: "application/json" },
+      { name: "preregistration.md", label: "Pre-registration", text: lab4Prereg, type: "text/markdown" },
+    ],
+  },
+  {
+    path: "/lab/4",
+    markdown: lab4Prereg,
+    description: "Forge Lab #4, pre-registered: does the trap card help frontier models on the Arena's Hard jobs?",
+    live: true,
+    files: [
+      { name: "arm-c-card.txt", label: "Arm C: trap card v1.0, frozen", text: lab4Card, type: "text/plain" },
+      { name: "selection.json", label: "The 7 model–job pairs, fixed before any run", text: JSON.stringify(lab4Selection, null, 1), type: "application/json" },
     ],
   },
   {

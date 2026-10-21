@@ -32,10 +32,11 @@ import {
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
-import { aiAgentCounters, bump, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
+import { aiAgentCounters, bump, discoveryCounters, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
+import { agentFunnel, FUNNEL_STAGES } from "../services/agent-funnel";
 import { proofStripList } from "./proof-strip";
 import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
@@ -108,7 +109,7 @@ site.use("*", async (c, next) => {
   // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
   if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
   // AI agents (agent-channels §4.5): indexers, live fetches and coding agents, counted apart from people.
-  const ai = aiAgentCounters(c.req.raw);
+  const ai = [...aiAgentCounters(c.req.raw), ...discoveryCounters(c.req.raw)];
   if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
   // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
   if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
@@ -482,6 +483,16 @@ site.get("/stats", async (c) => {
   const checks = skills ? gate({ skill_scans_7d: skills.scans, watch_checkins_7d: skills.watch_checkins, skill_file_agent_fetches_7d: skills.skill_file_agent_fetches }) : null;
   const external = (k: CounterKey) => atMinimum(k, now[k]?.external);
   const house = (k: CounterKey) => now[k]?.house ?? 0;
+  const funnel = await agentFunnel(c.env).catch(() => null);
+  const stages = funnel
+    ? gate({
+        agent_found_7d: funnel.stages.found,
+        agent_connected_7d: funnel.stages.connected,
+        agent_used_7d: funnel.stages.used,
+        agent_returned_7d: funnel.stages.returned,
+        agent_contributed_7d: funnel.stages.contributed,
+      })
+    : null;
   const connections = usage
     ? gate({ mcp_sessions: usage.mcp_sessions, mcp_sessions_signed_in: usage.mcp_sessions_signed_in, mcp_tool_calls: usage.mcp_tool_calls })
     : null;
@@ -506,6 +517,7 @@ site.get("/stats", async (c) => {
             }
           : null,
       skill_checks: checks,
+      agent_funnel: stages ? { days: 7, ...stages } : null,
       house_excluded: true,
       generated_at: new Date().toISOString(),
     });
@@ -527,6 +539,9 @@ site.get("/stats", async (c) => {
     .filter((d) => cols.some(([m]) => shownAt(d, m) !== null))
     .slice(-14)
     .reverse();
+  const funnelShown: [number, string][] = stages
+    ? FUNNEL_STAGES.map(([k, short]) => [stages[`agent_${k}_7d`], short] as [number | null, string]).filter((x): x is [number, string] => x[0] !== null)
+    : [];
   const conn: [number, string][] = connections
     ? (
         [
@@ -550,6 +565,11 @@ ${rows.length
 <thead><tr><th scope="col">People outside the project</th><th scope="col" class="num">Number</th></tr></thead>
 <tbody>${rows}</tbody></table></div>`
       : html`<p class="empty">Nothing has reached its minimum yet. Numbers appear here as people outside the project use the Forge.</p>`}
+<h2 class="page-title" id="agents">AI agents using the Forge, last 7 days</h2>
+${funnelShown.length
+      ? html`<div class="stats spaced">${funnelShown.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>`
+      : html`<p class="empty">Not enough yet. Each step appears once it reaches its minimum.</p>`}
+<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals only, so these count fetches, sessions and calls, not distinct agents. Our House agents and directory health checks are never counted.</p>
 ${conn.length && usage
       ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
 <div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
@@ -588,7 +608,8 @@ ${houseItems.length
 <details class="spaced"><summary>The minimums</summary>
 <ul class="small">${PROOF_LABELS.map(([k, label]) => html`<li>${label}: from ${COUNTER_MINIMUMS[k]}</li>`)}
 <li>AI connections in 7 days: from ${COUNTER_MINIMUMS.mcp_sessions} (tool calls from ${COUNTER_MINIMUMS.mcp_tool_calls}, signed in from ${COUNTER_MINIMUMS.mcp_sessions_signed_in})</li>
-<li>CLI downloads in a day: from ${COUNTER_MINIMUMS.cli_npm_downloads}</li></ul>
+<li>CLI downloads in a day: from ${COUNTER_MINIMUMS.cli_npm_downloads}</li>
+<li>AI agents in 7 days: ${FUNNEL_STAGES.map(([k, short]) => `${short} from ${COUNTER_MINIMUMS[`agent_${k}_7d`]}`).join(", ")}</li></ul>
 </details>`,
   });
 });

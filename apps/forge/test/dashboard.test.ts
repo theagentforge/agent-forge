@@ -117,6 +117,7 @@ describe("dashboard", () => {
     const cookie = await webLogin(founder);
     const { body, csrf } = await dashboard(cookie);
     expect(body).toContain("Approve people (founder only)");
+    expect(body).toContain("AI agents using the Forge (founder only)");
     expect(body).toContain("@design-partner");
     const res = await post("/dashboard/approve", cookie, { csrf: csrf!, github_login: "design-partner" });
     expect(res.headers.get("Location")).toBe("/dashboard?m=approved");
@@ -127,6 +128,7 @@ describe("dashboard", () => {
     const otherCookie = await webLogin(other);
     const page = await dashboard(otherCookie);
     expect(page.body).not.toContain("Approve people");
+    expect(page.body).not.toContain("AI agents using the Forge");
     const denied = await post("/dashboard/approve", otherCookie, { csrf: page.csrf!, github_login: "someone-else" });
     expect(denied.headers.get("Location")).toBe("/dashboard?m=not_admin");
     expect(await getDb(env).query.trustGrants.findFirst({ where: eq(t.trustGrants.githubLogin, "someone-else") })).toBeUndefined();

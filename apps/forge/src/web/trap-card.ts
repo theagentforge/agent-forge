@@ -65,6 +65,7 @@ site.get("/trap-card.json", async (c) =>
       changelog: TRAP_CARD_CHANGELOG,
       model_specific_lines: "off: held after Forge Lab #3 for a harm review (/lab/3/results)",
       lab3: { relative_reduction: 0.536, ci95: [0.481, 0.586], arms_compared: "card vs no card", bouts: 984, models: "small open models", date: "2026-10-18", results: "/lab/3/results" },
+      lab4: { measurable_reduction: false, trap_rate_card: 0.248, trap_rate_none: 0.295, p: 0.51, relative_reduction: 0.161, ci95: [-0.27, 0.446], harm_within_margins: true, bouts: 210, models: "frontier models", date: "2026-10-21", results: "/lab/4/results" },
       measured: await cardLift(getDb(c.env)).catch(() => []),
     },
     200,
@@ -105,7 +106,8 @@ ${copyBlock("trap-card-text", m.text)}
 ${liftTable(jobs)}
 <h2 id="why">Why each check is there</h2>
 <ul>${TRAP_CHECKS.map((ch) => html`<li><b>${ch.text}</b> <span class="muted small">Caught out in: ${ch.traps.map((t, i) => html`${i ? ", " : ""}<a href="/best/${t.split("/")[0]}">${TRAP_NAMES[t.split("/")[0]!]?.[t.split("/")[1]!] ?? t}</a>`)}</span></li>`)}</ul>
-<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs</b> (95% interval 48–59%; 984 bouts, 18 Oct 2026). <a href="/lab/3/results">Forge Lab #3 results</a>, including the jobs where it didn't help and what it cost. Frontier models weren't part of this test.</p>
+<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs</b> (95% interval 48–59%; 984 bouts, 18 Oct 2026). <a href="/lab/3/results">Forge Lab #3 results</a>, including the jobs where it didn't help and what it cost.</p>
+<p><b>In our tests on frontier models, the card didn't measurably reduce traps</b> (they fell for a planted trap in 26 of 105 bouts with the card and 31 of 105 without, a difference that could be chance; 7 model–job pairs, 21 Oct 2026). It didn't cause measurable harm either. <a href="/lab/4/results">Forge Lab #4 results</a>.</p>
 <p>The card is the same for everyone. Lines written for a particular AI beat it on traps in Lab #3 but made two models skip work or give up too early, so they stay off while we review them.</p>
 <h2>Version</h2>
 <p class="small mono">v${m.version} · ${m.date} · ${m.sha256}<br>signature ${m.signature}</p>

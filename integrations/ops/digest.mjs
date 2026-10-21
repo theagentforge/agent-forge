@@ -49,6 +49,29 @@ export function agentLine(g, citations = null) {
   return `Agents this week: ${parts.join("; ") || "none counted yet"}.${cite}`;
 }
 
+const FUNNEL = [
+  ["found", "found us"],
+  ["connected", "connected"],
+  ["used", "used a tool"],
+  ["returned", "came back"],
+  ["contributed", "contributed"],
+];
+
+/**
+ * The agent funnel with exact numbers (apps/forge/src/services/agent-funnel.ts): yesterday and the last 7 days, each
+ * step with its share of the step before. House agents and directory health checks are already left out.
+ */
+export function funnelLine(g) {
+  const f = g?.agent_funnel_7d;
+  if (!f?.stages) return null;
+  const y = g.agent_funnel_yesterday;
+  const steps = FUNNEL.map(([k, label]) => {
+    const rate = f.rates?.[k];
+    return `${label} **${n(f.stages[k])}**${y ? ` (yesterday ${n(y[k])})` : ""}${typeof rate === "number" ? `, ${rate}% of the step before` : ""}`;
+  });
+  return `AI agents using the Forge, last 7 days: ${steps.join(" → ")}. Signed-in outside agents, all time: **${n(f.signed_in_agents_all_time)}**. Left out: ${n(f.detail?.directory_health_checks ?? 0)} directory health checks, ${n(f.detail?.house_mcp_sessions ?? 0)} House sessions.`;
+}
+
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */
 export function releaseIssue(a, date) {
   const rel = a?.new_releases ?? [];
@@ -94,6 +117,7 @@ export function render(stats, date, arena = null, growth = null, learningText = 
     downloads ? `CLI downloads on ${downloads.date}: **${n(downloads.externalValue)}**.` : "CLI downloads: not recorded yet.",
     "",
     ...(growthLine(growth) ? [growthLine(growth), ""] : []),
+    ...(funnelLine(growth) ? [funnelLine(growth), ""] : []),
     ...(agentLine(growth, citations) ? [agentLine(growth, citations), ""] : []),
     ...(arenaLine(arena) ? [arenaLine(arena), ""] : []),
     ...(learningText ? [learningText, ""] : []),

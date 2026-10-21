@@ -20,7 +20,7 @@ describe("the trap card's measured value on the home page", () => {
     expect(body).toContain("<b>39 of 100</b> new jobs with the card, against 84 of 100 with no card");
     expect(body).toContain("A placebo text of the same length: 73 of 100.");
     expect(body).toContain("made no difference on 2");
-    expect(body).toMatch(/Frontier models weren't (tested\.|in this test\.)/);
+    expect(body).toContain("In our tests on frontier models, the card didn't measurably reduce traps");
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
     // It sits straight after the hero, before the Arena.
     expect(body.indexOf('class="lab-band')).toBeGreaterThan(body.indexOf('class="hero2"'));

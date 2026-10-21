@@ -45,6 +45,7 @@ export function aiCatalog(origin: string) {
 const open = { "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" };
 const json = (c: Context<{ Bindings: Env }>, body: unknown, type: string) => c.body(JSON.stringify(body), 200, { ...open, "Content-Type": `${type}; charset=utf-8` });
 
+// Fetches are counted in the site middleware, before the cache (services/usage.ts discoveryCounters).
 site.get("/.well-known/ai-catalog.json", (c) => json(c, aiCatalog(c.env.PUBLIC_ORIGIN), "application/ai-catalog+json"));
 for (const s of SERVERS.filter((x) => x.key !== "signed-in"))
   site.get(`${s.path}/server-card`, (c) => json(c, serverCard(c.env.PUBLIC_ORIGIN, s), "application/mcp-server-card+json"));

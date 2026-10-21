@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { html } from "hono/html";
 import { pgBoutCount, scorecardHref } from "../arena/agent-scorecard";
 import * as t from "../db/schema";
+import { agentFunnel, agentFunnelDaily, FUNNEL_STAGES } from "../services/agent-funnel";
 import { getDb } from "../services/db";
 import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from "../services/github";
 import { canParticipate, isClosed } from "../services/access";
@@ -153,6 +154,8 @@ site.get("/dashboard", async (c) => {
   const house = admin
     ? await db.select({ login: t.humans.githubLogin }).from(t.humans).where(eq(t.humans.isHouse, true)).limit(50)
     : [];
+  const funnel = admin ? await agentFunnel(c.env).catch(() => null) : null;
+  const funnelDays = admin ? await agentFunnelDaily(c.env).catch(() => []) : [];
   const waitingForAccess = isClosed(c.env) && !canParticipate(c.env, human);
   const csrf = await csrfToken(c.env.SESSION_SECRET, s.token);
   const now = Date.now();
@@ -203,6 +206,8 @@ ${human.tier === "verified"
         : html`<p class="muted">Only verified people can vouch.</p>`}
 ${vouches.length ? html`<ul>${vouches.map((v) => html`<li class="mono">@${v.login} <span class="muted">${ago(v.createdAt, now)}</span></li>`)}</ul>` : ""}
 </section>
+
+${admin && funnel ? agentFunnelPanel(funnel, funnelDays) : ""}
 
 ${admin
         ? html`<section aria-labelledby="approve-h"><h2 id="approve-h">Approve people (founder only)</h2>
@@ -356,3 +361,30 @@ site.post("/dashboard/vouch", async (c) => {
   } as const;
   return back(map[r.reason]);
 });
+
+/** Founder-only: the agent funnel with exact numbers (no minimums), the 14-day trend and where each stage comes from. */
+function agentFunnelPanel(f: Awaited<ReturnType<typeof agentFunnel>>, daily: Awaited<ReturnType<typeof agentFunnelDaily>>) {
+  const n = (v: number) => v.toLocaleString("en-US");
+  const rate = (k: string) => {
+    const r = (f.rates as Record<string, number | null>)[k];
+    return r === undefined ? "" : r === null ? "–" : `${r}%`;
+  };
+  const d = f.detail;
+  return html`<section aria-labelledby="funnel-h"><h2 id="funnel-h">AI agents using the Forge (founder only)</h2>
+<p class="small muted">Exact numbers, last 7 days, with no minimums. The public version on <a href="/stats#agents">/stats</a> shows each step once it reaches its minimum. House agents and directory health checks are left out.</p>
+<div class="scroll-x"><table class="table">
+<thead><tr><th scope="col">Step</th><th scope="col" class="num">7 days</th><th scope="col" class="num">Of the step before</th></tr></thead>
+<tbody>${FUNNEL_STAGES.map(([k, short, long]) => html`<tr><td><strong>${short}</strong><br><span class="small muted">${long}</span></td><td class="num">${n(f.stages[k])}</td><td class="num">${rate(k)}</td></tr>`)}</tbody></table></div>
+<p class="small">Signed-in agents of people outside the project, all time: <strong>${n(f.signed_in_agents_all_time)}</strong>.</p>
+<details><summary>Where the numbers come from</summary><ul class="small">
+<li>AI page fetches: ${n(d.ai_fetches)} · discovery files: ${n(d.discovery_file_fetches)} · skill files: ${n(d.skill_file_fetches)}</li>
+<li>MCP sessions: ${n(d.mcp_sessions)} · A2A requests: ${n(d.a2a_requests)} · tool calls: ${n(d.tool_calls)} · API scans: ${n(d.api_scans)}</li>
+<li>Left out: directory health checks ${n(d.directory_health_checks)} · House MCP sessions ${n(d.house_mcp_sessions)}</li>
+</ul></details>
+${daily.length
+    ? html`<h3 class="top-gap">Last 14 days</h3><div class="scroll-x"><table class="table">
+<thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Found us</th><th scope="col" class="num">Connected</th><th scope="col" class="num">Used a tool</th></tr></thead>
+<tbody>${[...daily].reverse().map((x) => html`<tr><td class="mono">${x.day}</td><td class="num">${n(x.found)}</td><td class="num">${n(x.connected)}</td><td class="num">${n(x.used)}</td></tr>`)}</tbody></table></div>`
+    : ""}
+</section>`;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arenaLine, growthLine, releaseIssue, render } from "../digest.mjs";
+import { arenaLine, funnelLine, growthLine, releaseIssue, render } from "../digest.mjs";
 
 describe("ops digest", () => {
   it("shows external and House numbers with the change since the day before", () => {
@@ -48,5 +48,25 @@ describe("ops digest", () => {
     expect(growthLine({ ...g, arrivals_7d: 30, arrivals_by_source_7d: [{ name: "x", n: 20 }, { name: "direct", n: 10 }], arrivals_by_tag_7d: [{ name: "x-launch", n: 5 }] })).toContain(
       "Visitors arriving this week: **30** (x 20, direct 10); by link tag: x-launch 5.",
     );
+  });
+
+  it("gives the agent funnel with exact numbers, yesterday and the share of each step", () => {
+    const g = {
+      agent_funnel_7d: {
+        days: 7,
+        stages: { found: 120, connected: 12, used: 30, returned: 2, contributed: 0 },
+        rates: { connected: 10, used: 250, returned: 6.7, contributed: 0 },
+        detail: { directory_health_checks: 4, house_mcp_sessions: 9 },
+        signed_in_agents_all_time: 1,
+      },
+      agent_funnel_yesterday: { found: 20, connected: 1, used: 3, returned: 0, contributed: 0 },
+    };
+    const line = funnelLine(g);
+    expect(line).toContain("found us **120** (yesterday 20)");
+    expect(line).toContain("connected **12** (yesterday 1), 10% of the step before");
+    expect(line).toContain("contributed **0**");
+    expect(line).toContain("4 directory health checks, 9 House sessions");
+    expect(render({ now: {}, history: [] }, "2026-10-21", null, g)).toContain("AI agents using the Forge, last 7 days");
+    expect(funnelLine({})).toBeNull();
   });
 });

@@ -67,6 +67,8 @@ describe("trap card (ADR 0017 §1)", () => {
     const claim = /<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs<\/b> \(95% interval 48–59%;[^<]*<a href="\/lab\/3\/results">/;
     expect(page).toMatch(claim);
     expect(page.replace(claim, "")).not.toMatch(/\d+\s?%/);
+    // Lab #4's pre-registered sentence (H1 didn't hold), linked to its results.
+    expect(page).toMatch(/<b>In our tests on frontier models, the card didn't measurably reduce traps<\/b>[^<]*<a href="\/lab\/4\/results">/);
   });
 });
 
