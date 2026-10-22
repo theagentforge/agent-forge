@@ -6,7 +6,8 @@ import { site } from "./pages";
 // versions are served, never what the tools are (tools are listed at runtime). Public, read-only, CORS-open.
 
 export const SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json";
-export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+// 2026-07-28 is served by createMcpHandler (agents SDK, MCP SDK v2): stateless, client identity in each request's _meta.
+export const PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"];
 const REPOSITORY = { url: "https://github.com/theagentforge/agent-forge", source: "github" };
 
 /** Our MCP servers: the two without sign-in get hosted cards; the signed-in one is described inline in the catalog. */
