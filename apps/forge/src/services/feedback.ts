@@ -6,23 +6,28 @@ import { findTool } from "./forge";
 import { markConnectTest } from "./connect-test";
 import { day } from "./proof";
 import { canonicalFromUrl, canonicalToolId } from "./tools";
+import { missLabel, recordMiss } from "./misses";
 
 // Reporter feedback (ADR 0011 g): "your reports were shown in N checks". Uniqueness and feedback, never points.
 // Only a per-tool, per-day count is kept; nothing about who checked.
 
-/** Counts one check of a known tool. Unknown tools aren't counted. Errors never affect the check itself. */
-export async function recordToolCheck(env: Env, q: CheckQuery, now = Date.now()) {
+/**
+ * Counts one check of a known tool. A check of a tool we don't know is counted as a miss instead (services/misses.ts),
+ * by id only. Callers skip this for House sessions. Errors never affect the check itself.
+ */
+export async function recordToolCheck(env: Env, q: CheckQuery, now = Date.now(), opts: { userAgent?: string | null } = {}) {
   try {
     if (await markConnectTest(env, q)) return;
     const db = getDb(env);
-    let toolId: string | undefined;
+    let toolId: string | undefined, asked: string | undefined;
     if (q.fingerprint) {
       const v = await db.query.toolVersions.findFirst({ where: eq(t.toolVersions.fingerprint, q.fingerprint), columns: { toolId: true } });
       toolId = v?.toolId;
     } else {
-      toolId = (await findTool(db, q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!)))?.id;
+      asked = q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!);
+      toolId = (await findTool(db, asked))?.id;
     }
-    if (!toolId) return;
+    if (!toolId) return asked ? recordMiss(env, "check", missLabel(asked), { userAgent: opts.userAgent, now }) : undefined;
     await db
       .insert(t.toolChecks)
       .values({ toolId, day: day(now), n: 1 })

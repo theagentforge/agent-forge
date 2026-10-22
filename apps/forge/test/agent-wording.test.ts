@@ -3,13 +3,10 @@ import { describe, expect, it } from "vitest";
 import { A2A_SKILLS, agentCard } from "../src/a2a";
 import { SIGNED_IN_TOOLS } from "../src/mcp";
 import { GAUNTLET_TOOLS, PUBLIC_TOOLS } from "../src/mcp-public";
+import { AGENT_DIRECTED } from "./wording";
 
 // docs/launch/agent-channels.md §2 and §4.1: everything an agent reads about our tools is data, never instructions.
 // Each description says when it fits, what to give and what comes back; no agent-directed imperatives, no steering.
-
-/** Phrases that tell an agent what to do, or steer its choice between tools. */
-export const AGENT_DIRECTED =
-  /\b(always|must|best|prefer(red)?|follow|obey|you should|skill\.md|instead of|before (any|every) other|(call|use|run) (this|it) first|install (this|it|our|the forge)|tell (your|the) (human|user|owner)|ignore (previous|prior|other))\b/i;
 
 const all: [string, string][] = [
   ...Object.entries(PUBLIC_TOOLS).map(([k, v]) => [`public ${k}`, v.description] as [string, string]),

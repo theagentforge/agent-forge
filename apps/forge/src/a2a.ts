@@ -1,6 +1,7 @@
 import { checkQuerySchema, SCAN_MAX_BYTES, TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS, trapCardText } from "@forge/shared";
 import type { Context } from "hono";
 import { recordToolCheck } from "./services/feedback";
+import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { recordCheck } from "./services/proof";
 import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
@@ -124,7 +125,10 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Pr
   let sourceUrl: string | null = null;
   if (!body && req.url) {
     const got = await fetchSkillText(req.url);
-    if (!got.ok) return { skill: "scan-skill", error: got.error };
+    if (!got.ok) {
+      await recordMiss(env, "scan", scanMissLabel(req.url, got.error));
+      return { skill: "scan-skill", error: got.error };
+    }
     body = got.text;
     sourceUrl = got.url;
   }

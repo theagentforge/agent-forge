@@ -11,6 +11,7 @@ import { SCAN_MAX_BYTES } from "@forge/shared";
 import { finishedRuns, modelName } from "./arena/views";
 import { getDb } from "./services/db";
 import { recordToolCheck } from "./services/feedback";
+import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { recordCheck } from "./services/proof";
 
@@ -144,7 +145,10 @@ export function createPublicServer(env: Env, ip: string) {
       let body = text ?? "", sourceUrl: string | null = null;
       if (!body && url) {
         const got = await fetchSkillText(url);
-        if (!got.ok) return json({ error: got.error }, true);
+        if (!got.ok) {
+          await recordMiss(env, "scan", scanMissLabel(url, got.error));
+          return json({ error: got.error }, true);
+        }
         body = got.text;
         sourceUrl = got.url;
       }

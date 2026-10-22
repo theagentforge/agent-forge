@@ -4,6 +4,7 @@ import { html } from "hono/html";
 import { reached } from "../services/counters";
 import { getDb } from "../services/db";
 import { clawhubPage, fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
+import { recordMiss, scanMissLabel } from "../services/misses";
 import { recordBadgeReferrer } from "../services/growth";
 import { bump, scanCounters } from "../services/usage";
 import { AGENT_LINE } from "./agent-line";
@@ -113,6 +114,7 @@ site.post("/scan", async (c) => {
     body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
   } else if (url) {
     const got = await fetchSkillText(url);
+    if (!got.ok) c.executionCtx.waitUntil(recordMiss(c.env, "scan", scanMissLabel(url, got.error), { userAgent: c.req.header("User-Agent") }));
     if (!got.ok)
       body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't one we read from. Use a ClawHub skill page, a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {

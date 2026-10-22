@@ -1,6 +1,7 @@
 // Daily Ops Digest (MASTER_PLAN §7.5): reads the public /stats JSON and opens one GitHub issue with the numbers, so
 // they reach Dinike's phone. Closes the previous digest. Usage: node digest.mjs https://theagentforge.io
 import { gatherSocial, learning, learningSection } from "./learning.mjs";
+import { scoutSection } from "./scout.mjs";
 const LABELS = [
   ["weekly_reporting_agents", "Agents that reported this week (north star)"],
   ["verified_humans", "Verified people"],
@@ -93,7 +94,7 @@ export function releaseIssue(a, date) {
 }
 
 /** The issue body. `history` is /stats' daily snapshots; yesterday's external value gives the change. */
-export function render(stats, date, arena = null, growth = null, learningText = null, citations = null) {
+export function render(stats, date, arena = null, growth = null, learningText = null, citations = null, scoutText = null) {
   const prev = new Map();
   const days = [...new Set((stats.history ?? []).map((h) => h.date))].sort();
   const before = days.at(-2);
@@ -121,6 +122,7 @@ export function render(stats, date, arena = null, growth = null, learningText = 
     ...(agentLine(growth, citations) ? [agentLine(growth, citations), ""] : []),
     ...(arenaLine(arena) ? [arenaLine(arena), ""] : []),
     ...(learningText ? [learningText, ""] : []),
+    ...(scoutText ? [scoutText, ""] : []),
     "Live page: https://theagentforge.io/stats",
     "",
     "---",
@@ -164,8 +166,17 @@ async function main() {
       return m ? JSON.parse(m[1]) : null;
     })
     .catch(() => null);
+  // Forge Scout (ADR 0031): alarms every day, the weekly numbers on Mondays. A failure here never stops the digest.
+  const since = new Date(now - 40 * 86_400_000).toISOString();
+  const scoutText = await Promise.all([
+    gh("GET", "/issues?state=all&labels=brief&per_page=5"),
+    gh("GET", `/issues?state=all&labels=proposal&per_page=100&since=${since}`),
+    gh("GET", `/issues?state=all&labels=agent-reach&per_page=100&since=${since}`),
+  ])
+    .then(([briefs, a, b]) => scoutSection({ briefs, proposals: [...a, ...b.filter((x) => !a.some((y) => y.number === x.number))], now }))
+    .catch((e) => `Forge Scout checks: not available today (${e.message}).`);
   const old = await gh("GET", "/issues?state=open&labels=ops-digest&per_page=10");
-  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations), labels: ["ops-digest"] });
+  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations, scoutText), labels: ["ops-digest"] });
   const rel = releaseIssue(arena, date);
   if (rel) await gh("POST", "/issues", rel);
   // Money rule: at 80% of the Arena budget, ask Dinike once a month (ADR 0012 §2).

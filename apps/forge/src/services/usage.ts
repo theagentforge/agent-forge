@@ -16,9 +16,26 @@ export const clientLabel = (name: unknown) => {
   return s || "unknown";
 };
 
-/** The counters one MCP request adds: a session per `initialize`, a call per `tools/call` (background traffic like tools/list isn't use). */
+/**
+ * The client app named in a request's `_meta` (MCP 2026-07-28 is stateless, so a call can carry the client identity
+ * itself instead of an `initialize`). Any `_meta` key ending in "clientInfo" counts, such as
+ * "io.modelcontextprotocol/clientInfo". Null when there is none.
+ */
+export function metaClient(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  for (const [k, v] of Object.entries(meta).slice(0, 20)) {
+    if (/clientinfo$/i.test(k) && v && typeof v === "object" && typeof (v as { name?: unknown }).name === "string") return clientLabel((v as { name: string }).name);
+  }
+  return null;
+}
+
+/**
+ * The counters one MCP request adds: a session per `initialize`, a call per `tools/call` (background traffic like
+ * tools/list isn't use). A call that names its client in `_meta` also adds `mcp:clientcall:<name>`, so stateless
+ * clients show up too. First-seen client names are worked out from these daily rows (services/scout-signals.ts).
+ */
 export function mcpCounters(endpoint: McpEndpoint, body: unknown): string[] {
-  const msgs = (Array.isArray(body) ? body : [body]).slice(0, 10) as { method?: unknown; params?: { name?: unknown; clientInfo?: { name?: unknown } } }[];
+  const msgs = (Array.isArray(body) ? body : [body]).slice(0, 10) as { method?: unknown; params?: { name?: unknown; clientInfo?: { name?: unknown }; _meta?: unknown } }[];
   const keys: string[] = [];
   for (const m of msgs) {
     if (!m || typeof m !== "object") continue;
@@ -26,7 +43,8 @@ export function mcpCounters(endpoint: McpEndpoint, body: unknown): string[] {
     const house = endpoint === "house";
     if (m.method === "initialize") keys.push(`mcp:${endpoint}:sessions`, ...(house ? [] : [`mcp:client:${clientLabel(m.params?.clientInfo?.name)}`]));
     if (m.method === "tools/call" && typeof m.params?.name === "string" && /^[a-z_]{1,40}$/.test(m.params.name)) {
-      keys.push(`mcp:${endpoint}:calls`, ...(house ? [] : [`mcp:tool:${m.params.name}`]));
+      const meta = house ? null : metaClient(m.params._meta);
+      keys.push(`mcp:${endpoint}:calls`, ...(house ? [] : [`mcp:tool:${m.params.name}`]), ...(meta ? [`mcp:clientcall:${meta}`] : []));
     }
   }
   return keys;

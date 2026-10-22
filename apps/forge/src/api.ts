@@ -13,6 +13,8 @@ import { postToMoltbook, validatePost } from "./social/moltbook";
 import { DAILY_CAP_USD, PROMPTS, runSelection, SELECTION_MODELS } from "./ops/tool-selection";
 import { CITATION_MODELS, CITATION_QUESTIONS, runCitations } from "./ops/citations";
 import { recordToolCheck } from "./services/feedback";
+import { recordMiss, scanMissLabel } from "./services/misses";
+import { scoutSignals } from "./services/scout-signals";
 import { connectTestSeen } from "./services/connect-test";
 import { storeRun } from "./services/house-report";
 import { checkKind, recordCheck } from "./services/proof";
@@ -38,7 +40,7 @@ publicApi.get("/api/v1/check", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5).
   c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip));
-  c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data));
+  c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent") }));
 
   const cache = caches.default;
   const cacheKey = new Request(url.toString(), { method: "GET" });
@@ -103,6 +105,13 @@ publicApi.post("/api/v1/social/moltbook", async (c) => {
   if (typeof post === "string") return c.json({ ok: false, error: post }, 422);
   const r = await postToMoltbook(c.env, post);
   return c.json(r, r.ok ? 201 : r.error === "moltbook_not_connected" ? 409 : r.error.startsWith("too_soon") ? 429 : 502);
+});
+
+/** GET /api/v1/ops/scout-signals — our own daily signals for Forge Scout, from scout-collect.yml (GitHub OIDC, ADR 0031). */
+publicApi.get("/api/v1/ops/scout-signals", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("scout-collect.yml")))) return c.json({ error: "unauthorized" }, 401);
+  return c.json(await scoutSignals(c.env), 200, { "Cache-Control": "no-store" });
 });
 
 /**
@@ -181,6 +190,7 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
     text = input.text;
   } else if (typeof input.url === "string" && input.url.length <= 2048) {
     const got = await fetchSkillText(input.url);
+    if (!got.ok) c.executionCtx.waitUntil(recordMiss(c.env, "scan", scanMissLabel(input.url, got.error), { userAgent: c.req.header("User-Agent") }));
     if (!got.ok) return c.json({ error: got.error, hosts: "clawhub.ai (skill pages), raw.githubusercontent.com, github.com (file, folder or repository links), gist.githubusercontent.com, gitlab.com, bitbucket.org, codeberg.org, unpkg.com, cdn.jsdelivr.net" }, got.error === "too_large" ? 413 : got.error === "not_found" ? 404 : 400);
     text = got.text;
     sourceUrl = got.url;
