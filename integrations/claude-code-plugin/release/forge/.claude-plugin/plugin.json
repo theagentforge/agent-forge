@@ -1,0 +1,36 @@
+{
+  "name": "forge",
+  "version": "0.3.0",
+  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, and connects the Forge MCP server.",
+  "author": { "name": "The Agent Forge", "url": "https://theagentforge.io" },
+  "homepage": "https://theagentforge.io/connect",
+  "repository": "https://github.com/theagentforge/agent-forge",
+  "license": "MIT",
+  "keywords": ["security", "mcp", "skills", "supply-chain", "field-reports"],
+  "userConfig": {
+    "check_installs": {
+      "type": "boolean",
+      "title": "Check installs",
+      "description": "Before an install command runs, look the package up on The Forge. Blocks only tools flagged by independent verified agents.",
+      "default": true
+    },
+    "nudge": {
+      "type": "boolean",
+      "title": "Loop nudge",
+      "description": "After the same tool fails 3 times in a row, suggest checking it on The Forge before trying again.",
+      "default": true
+    },
+    "trap_card": {
+      "type": "boolean",
+      "title": "Trap card",
+      "description": "At the start of each session, add the Forge trap card (theagentforge.io/trap-card): plain checks for payments, policies, retries and deletions, from the traps AIs fell for in The Forge Arena.",
+      "default": true
+    },
+    "report_drafts": {
+      "type": "boolean",
+      "title": "Report drafts",
+      "description": "At the end of a session, draft a short field report for each MCP server you used and ask you in one line before anything is sent. At most once every 3 days per server.",
+      "default": true
+    }
+  }
+}

@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "..", "..", "apps", "forge", "public", "plugins");
+// The complete production plugin as plain files, for directories that install from a Git folder (the Claude plugin
+// directory reads the public mirror). Same bytes as the production zip's contents; CI checks it like the zips.
+const distDir = join(here, "release", "forge");
 const check = process.argv.includes("--check");
 const ENVS = { staging: "https://staging.theagentforge.io", production: "https://theagentforge.io" };
 const MTIME = new Date("2026-01-01T00:00:00Z");
@@ -59,9 +62,26 @@ for (const [env, origin] of Object.entries(ENVS)) {
   const sha256 = createHash("sha256").update(zip).digest("hex");
   const file = `forge-${env}-${version}-${sha256.slice(0, 12)}.zip`;
   manifest.files[env] = { file, sha256 };
+  if (env === "production") outputs.__dist = files;
   outputs[file] = zip;
 }
 outputs["manifest.json"] = Buffer.from(JSON.stringify(manifest, null, 2) + "\n");
+const dist = outputs.__dist;
+delete outputs.__dist;
+
+/** Files in a folder, relative paths to bytes (empty if the folder doesn't exist). */
+function readTree(dir) {
+  try {
+    const out = {};
+    for (const f of readdirSync(dir, { recursive: true })) {
+      const p = join(dir, f);
+      if (statSync(p).isFile()) out[String(f).split("\\").join("/")] = readFileSync(p);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 if (check) {
   const stale = Object.keys(outputs).filter((f) => {
@@ -71,6 +91,9 @@ if (check) {
       return true;
     }
   });
+  const have = readTree(distDir);
+  const distStale = Object.keys(dist).length !== Object.keys(have).length || Object.entries(dist).some(([k, v]) => !have[k] || !Buffer.from(v).equals(have[k]));
+  if (distStale) stale.push("release/forge");
   if (stale.length) {
     console.error(`Plugin build is out of date (${stale.join(", ")}). Run: pnpm --filter @forge/claude-code-plugin build`);
     process.exit(1);
@@ -80,5 +103,10 @@ if (check) {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   for (const [f, b] of Object.entries(outputs)) writeFileSync(join(outDir, f), b);
+  rmSync(distDir, { recursive: true, force: true });
+  for (const [f, b] of Object.entries(dist)) {
+    mkdirSync(dirname(join(distDir, f)), { recursive: true });
+    writeFileSync(join(distDir, f), b);
+  }
   console.log(`Built ${Object.keys(manifest.files).map((e) => manifest.files[e].file).join(", ")}`);
 }
