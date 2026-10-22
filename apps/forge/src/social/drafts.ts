@@ -12,6 +12,7 @@ import * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { labTotals } from "../web/home-wire";
 import { patternPhrase } from "../web/scan-words";
+import { crossed, metricValues, MILESTONE_WINDOW_MS, milestoneTexts } from "./milestones";
 
 // Social posts drafted from live data (docs/launch/social-strategy.md §6 and §9.1). Every number and name comes from
 // the referee, the board or Skill Watch at request time; the wording comes from fixed templates, several per type,
@@ -28,7 +29,8 @@ export type PostType =
   | "bout-teaser"
   | "bout-result"
   | "recap"
-  | "trap-card-tip";
+  | "trap-card-tip"
+  | "milestone";
 
 export interface Draft {
   type: PostType;
@@ -43,6 +45,8 @@ export interface Draft {
   poll?: { options: string[]; duration_minutes: number };
   /** One link reply under the post, at most one a day across all types (§2 links, $0.20 each). */
   reply?: string;
+  /** A milestone post (social/milestones.ts): its id, filed once ever and always approved by hand. */
+  milestone?: string;
   /** What the verifier re-checks, from public pages: runs by id, and every number that appears in the text. */
   facts: { runs?: { id: string; model: string; fell: boolean; passed: boolean }[]; numbers: number[]; names: string[]; sources: string[] };
 }
@@ -315,6 +319,31 @@ async function recap(env: Env, db: Db, now: number, at: string): Promise<Draft |
   return { type: "recap", at, texts, reply: "Every bout, with its replay: https://theagentforge.io/arena?from=x-recap", facts: { numbers: [week.length, traps], names: best ? [best.catcher.name, d!.title] : [], sources: ["/arena?format=json"] } };
 }
 
+/**
+ * Milestones go out Tue–Thu mornings (US Eastern), at least 3 hours from other posts: on Tuesday in the 9 am slot
+ * (instead of the board change), on Wednesday in the 1 pm slot (instead of the trap card tip), on Thursday at 9 am
+ * (3 hours before the bout teaser). The poll and the bout cycle are never moved.
+ */
+export const MILESTONE_SLOTS: Record<number, { hour: number; replaces: PostType | null }> = {
+  2: { hour: 9, replaces: "board-change" },
+  3: { hour: 13, replaces: "trap-card-tip" },
+  4: { hour: 9, replaces: null },
+};
+
+/** The biggest outside-only milestone crossed in the last 7 days, as a draft for `at`; null when there's none. */
+async function milestone(env: Env, db: Db, now: number, at: string): Promise<Draft | null> {
+  const m = crossed(await metricValues(env, db, now, now - MILESTONE_WINDOW_MS))[0];
+  if (!m) return null;
+  return {
+    type: "milestone",
+    at,
+    milestone: m.id,
+    texts: milestoneTexts(m),
+    reply: "Live numbers, outside agents only: https://theagentforge.io/stats?from=x-milestone",
+    facts: { numbers: [m.threshold], names: [], sources: ["/stats?format=json"] },
+  };
+}
+
 const BUILDERS: Record<PostType, (env: Env, db: Db, now: number, at: string) => Promise<Draft | null>> = {
   "trap-of-the-day": trapOfTheDay,
   "catch-card": catchCard,
@@ -326,6 +355,7 @@ const BUILDERS: Record<PostType, (env: Env, db: Db, now: number, at: string) => 
   "bout-teaser": boutTeaser,
   "bout-result": boutResult,
   recap,
+  milestone,
 };
 
 /**
@@ -345,7 +375,11 @@ export function parseSwap(v: string | undefined | null): Swap | null {
 /** Drafts for every slot on a US Eastern date. A type with no fitting data that day is left out, never padded. */
 export async function draftsFor(env: Env, db: Db, date: string, now = Date.now(), swap: Swap | null = null): Promise<Draft[]> {
   const out: Draft[] = [];
+  const mslot = MILESTONE_SLOTS[new Date(`${date}T12:00:00Z`).getUTCDay()];
+  const m = mslot ? await milestone(env, db, now, new Date(easternToUtc(date, mslot.hour)).toISOString()).catch(() => null) : null;
+  if (m) out.push({ ...m, texts: m.texts.map((x) => x.replace(/\n{3,}/g, "\n\n").trim()).filter((x) => x.length <= 275) });
   for (const s of slotsOn(date)) {
+    if (m && s.type === mslot?.replaces) continue;
     const type = swap && s.type === swap.from ? swap.to : s.type;
     if (out.some((d) => d.type === type)) continue;
     const d = await BUILDERS[type](env, db, now, s.at).catch(() => null);

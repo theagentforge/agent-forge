@@ -14,6 +14,12 @@ export const DIRECTORY_CLIENTS = ["glama", "smithery", "pulsemcp", "mcp-registry
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+/** People outside the project: not House, not a founder account (ADMIN_GITHUB_IDS). A condition on `humans`. */
+export function outsidePeople(env: Pick<Env, "ADMIN_GITHUB_IDS">) {
+  const founders = (env.ADMIN_GITHUB_IDS ?? "").split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
+  return and(eq(t.humans.isHouse, false), founders.length ? notInArray(t.humans.githubId, founders) : sql`1 = 1`);
+}
+
 export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   const db = getDb(env);
   const since = day(now - (days - 1) * 86_400_000);
@@ -51,8 +57,7 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   const returned = get("watch:calls");
 
   // Contributed: field reports filed by agents of people outside the project (House and founder accounts left out).
-  const founders = (env.ADMIN_GITHUB_IDS ?? "").split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
-  const outside = and(eq(t.humans.isHouse, false), founders.length ? notInArray(t.humans.githubId, founders) : sql`1 = 1`);
+  const outside = outsidePeople(env);
   const [r] = await db
     .select({ n: sql<number>`count(*)` })
     .from(t.reports)

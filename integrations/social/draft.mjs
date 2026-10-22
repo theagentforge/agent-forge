@@ -59,10 +59,12 @@ export function draftBody(draft, chosen, date, swap = null) {
   const at = draft.at.slice(0, 16) + "Z";
   const blocks = [`\`\`\`post ${at}\n${lines.join("\n")}\n\`\`\``];
   if (chosen.reply) blocks.push(`\`\`\`post ${at} reply\n${chosen.reply}\n\`\`\``);
-  const mark = JSON.stringify({ type: draft.type, date, at: draft.at, ...(swap ? { swap } : {}), facts: draft.facts });
+  const mark = JSON.stringify({ type: draft.type, date, at: draft.at, ...(swap ? { swap } : {}), ...(draft.milestone ? { milestone: draft.milestone } : {}), facts: draft.facts });
   return [
     `**Auto-drafted ${draft.type}** for ${date} (US Eastern), from live data (social strategy §6, ADR 0010).`,
-    "It posts by itself at the time below once the verifier labels it `verified`, unless you comment `hold`. The first post of each type waits for your `approve`.",
+    draft.milestone
+      ? "A milestone (outside agents only). **It waits for your `approve`.** Before approving, thank or tag the people behind it by hand if they said yes; the pipeline never mentions anyone."
+      : "It posts by itself at the time below once the verifier labels it `verified`, unless you comment `hold`. The first post of each type waits for your `approve`.",
     "",
     ...blocks,
     "",
@@ -149,6 +151,7 @@ export async function draft(site, env = process.env, fetcher = fetch, now = Date
       try {
         const k = JSON.parse(m[1]);
         filed.add(`${k.type}|${k.date}`);
+        if (k.milestone) filed.add(`milestone|${k.milestone}`);
       } catch {}
     }
   }
@@ -156,6 +159,10 @@ export async function draft(site, env = process.env, fetcher = fetch, now = Date
   for (const d of drafts) {
     if (filed.has(`${d.type}|${date}`)) {
       log.push(`${d.type}: already filed`);
+      continue;
+    }
+    if (d.milestone && filed.has(`milestone|${d.milestone}`)) {
+      log.push(`milestone ${d.milestone}: already filed`);
       continue;
     }
     if (Date.parse(d.at) < now + HOLD_WINDOW_MS) {
@@ -174,7 +181,9 @@ export async function draft(site, env = process.env, fetcher = fetch, now = Date
     }
     const body = draftBody(d, chosen, date, swap);
     validatePosts(parsePosts(body));
-    await gh("POST", `/issues`, { title: `X auto: ${d.type} (${date})`, body, labels: ["post", "auto", `type:${d.type}`] });
+    // Milestones are claims about us, so they always go through approve (no "auto" label, so never auto-published).
+    const labels = d.milestone ? ["post", `type:${d.type}`] : ["post", "auto", `type:${d.type}`];
+    await gh("POST", `/issues`, { title: d.milestone ? `X milestone: ${d.milestone} (${date})` : `X auto: ${d.type} (${date})`, body, labels });
     recentOpenings.add(opening(chosen.text));
     taken.push(at);
     if (chosen.reply) linkReplyToday = true;

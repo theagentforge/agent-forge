@@ -32,8 +32,13 @@ pnpm test        # tests run inside the Workers runtime
 ```
 
 ## Licence
-No open-source licence has been chosen yet, so the code is © The Agent Forge, all rights reserved: you're welcome to
-read, run and audit it, but not to redistribute it. `packages/cli` is MIT-licensed (see its `package.json`).
+The service code is © The Agent Forge, all rights reserved: you're welcome to read, run and audit it, but not to
+redistribute it. These parts are MIT-licensed:
+- `packages/cli` (see its `package.json`);
+- the Claude Code plugin, `integrations/claude-code-plugin/plugin` (see its `LICENSE`).
+
+The connection files that MCP clients and directories use are MIT-licensed in their own repo,
+[theagentforge/forge-mcp](https://github.com/theagentforge/forge-mcp).
 
 ## Contact
 hello@theagentforge.io. Security reports: see [SECURITY.md](SECURITY.md).
