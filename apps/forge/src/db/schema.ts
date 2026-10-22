@@ -298,7 +298,8 @@ export const arenaEvents = sqliteTable("arena_events", {
   /** Twist of the week, if any (applies equally to every model). */
   twist: text("twist"),
   /** Forge Lab #3 arm (lab/003-trap-cards): what was appended to the system prompt. Null for every normal event. */
-  arm: text("arm", { enum: ["none", "placebo", "card", "model"] }),
+  /** Lab #5 adds "card11" (trap card v1.1, lab/005-trap-card-v11-frontier). */
+  arm: text("arm", { enum: ["none", "placebo", "card", "model", "card11"] }),
   createdAt: createdAt(),
 });
 

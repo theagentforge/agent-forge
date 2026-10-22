@@ -36,8 +36,9 @@ import { aiAgentCounters, bump, discoveryCounters, skillFileCounters, skillStats
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
-import { agentFunnel, FUNNEL_STAGES } from "../services/agent-funnel";
+import { agentFunnel, FUNNEL_STAGES, LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { proofStripList } from "./proof-strip";
+import { markdownResponse, prefersMarkdown } from "./markdown";
 import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { frontierHard, gullibilityBoard } from "../arena/board";
@@ -68,12 +69,24 @@ site.use("*", async (c, next) => {
 export const wantsJson = (c: Ctx) =>
   c.req.query("format") === "json" || (c.req.header("Accept") ?? "").split(",")[0]?.trim() === "application/json";
 
+/**
+ * Where agents find our machine-readable entry points (RFC 8288 Link header, on every page): the API catalog
+ * (RFC 9727), llms.txt, the A2A agent card and the public MCP server card.
+ */
+export const DISCOVERY_LINKS = [
+  '</.well-known/api-catalog>; rel="api-catalog"',
+  '</llms.txt>; rel="describedby"; type="text/plain"',
+  '</.well-known/agent-card.json>; rel="describedby"; type="application/json"',
+  '</mcp/public/server-card>; rel="service-desc"; type="application/mcp-server-card+json"',
+].join(", ");
+
 /** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
 export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean } = {}) {
   const body = await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", ...securityHeaders(o) });
   headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${PAGE_CACHE_SECONDS}`);
   headers.set("Vary", "Accept");
+  headers.set("Link", DISCOVERY_LINKS);
   return new Response(body.toString(), { status: o.status ?? 200, headers });
 }
 
@@ -114,7 +127,11 @@ site.use("*", async (c, next) => {
   // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
   if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
     c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
+  // Markdown for agents (web/markdown.ts): its own cache entry, converted from the HTML page below.
+  const markdown = !wantsJson(c) && prefersMarkdown(c.req.header("Accept"));
+  if (markdown) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
   if (wantsJson(c)) url.searchParams.set("format", "json");
+  else if (markdown) url.searchParams.set("format", "md");
   const key = new Request(url.toString(), { method: "GET" });
   const hit = await caches.default.match(key);
   if (hit) return hit;
@@ -125,6 +142,7 @@ site.use("*", async (c, next) => {
     if (!success) return c.text("Too many requests. Wait a minute and try again.", 429, { "Retry-After": "60", "Cache-Control": "no-store" });
   }
   await next();
+  if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
   if (c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public")) {
     c.executionCtx.waitUntil(caches.default.put(key, c.res.clone()));
   }
@@ -173,6 +191,23 @@ export const VALUE_CARDS: { verb: string; line: string; button: string; href: st
 ];
 
 /** Honest counters under the hero (ADR 0023 §3): each shown only from its minimum, with the time it was read. */
+/**
+ * Live AI agent numbers under the hero (ADR 0030): running totals of all traffic, our own tests and directory health
+ * checks included, and the line says so. site.js refreshes them from /agents/live.json every 30 seconds.
+ */
+function liveAgents(live: Awaited<ReturnType<typeof liveAgentCounts>> | null) {
+  if (!live) return "";
+  const any = LIVE_AGENT_LABELS.some(([k]) => live[k] !== null);
+  return html`<div class="agent-live"${any ? "" : " hidden"} data-agent-live>
+<p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Live</p>
+<ul class="counters">${LIVE_AGENT_LABELS.map(([k, label]) => {
+    const v = live[k];
+    return html`<li data-k="${k}"${v === null ? " hidden" : ""}><b>${v === null ? "" : v.toLocaleString("en-US")}</b><span>${label}</span></li>`;
+  })}</ul>
+<p class="asof">Running totals since 20 Oct 2026. <b>Everything counted, including our own test agents and directories checking that we're up.</b> Visits, sessions and tool calls, not distinct agents. <a href="/stats#agents">Outside agents only</a></p>
+</div>`;
+}
+
 function heroCounters(proof: Awaited<ReturnType<typeof gatedProofStrip>> | null, scanned: number, _flagged: number) {
   const items: [number, string][] = [];
   if (proof?.bouts) items.push([proof.bouts, "ranked bouts refereed"]);
@@ -215,6 +250,7 @@ site.get("/", async (c) => {
     recentPublic(db, ["flagged"], 3).catch(() => []),
   ]);
   const lift = await cardLift(db).catch(() => []);
+  const live = await liveAgentCounts(c.env, now).catch(() => null);
   const [posts, board, frontier] = await Promise.all([
     wirePosts(db, wire, now).catch(() => []),
     gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null })),
@@ -268,6 +304,7 @@ site.get("/", async (c) => {
 <p class="small muted">No account. <a href="/skill.md">Read the skill file first</a> · <a href="/connect?from=home">Connect an app</a></p>
 </div>
 ${heroCounters(proof, scanned?.unique ?? 0, flaggedNow.length)}
+${liveAgents(live)}
 </div>
 ${wireHero(posts, now)}
 </section>
@@ -375,6 +412,11 @@ site.get("/api/v1/social/shorts", async (c) => {
   const shorts = await shortsFor(c.env, getDb(c.env));
   return c.json({ shorts }, 200, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" });
 });
+
+// The home page's live agent numbers, refreshed by site.js: all traffic, labelled as such (ADR 0030).
+site.get("/agents/live.json", async (c) =>
+  c.json({ ...(await liveAgentCounts(c.env)), generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" }),
+);
 
 site.get("/wire/live.json", async (c) => {
   const db = getDb(c.env);

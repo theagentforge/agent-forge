@@ -18,6 +18,10 @@ import lab4Results from "../../../../lab/004-trap-card-frontier/RESULTS.md";
 import lab4Output from "../../../../lab/004-trap-card-frontier/analysis-output.md";
 import lab4Counts from "../../../../lab/004-trap-card-frontier/counts.json";
 import lab4Selection from "../../../../lab/004-trap-card-frontier/selection.json";
+import lab5Prereg from "../../../../lab/005-trap-card-v11-frontier/PREREGISTRATION.md";
+import lab5CardV10 from "../../../../lab/005-trap-card-v11-frontier/prompts/C-card.txt";
+import lab5CardV11 from "../../../../lab/005-trap-card-v11-frontier/prompts/E-card-v1.1.txt";
+import lab5Selection from "../../../../lab/005-trap-card-v11-frontier/selection.json";
 import { send, site } from "./pages";
 
 // Published reports and Forge Lab write-ups, rendered from the Markdown in docs/ and lab/ (bundled as text, so the
@@ -87,6 +91,18 @@ export const PUBLICATIONS: Publication[] = [
     files: [
       { name: "arm-c-card.txt", label: "Arm C: trap card v1.0, frozen", text: lab4Card, type: "text/plain" },
       { name: "selection.json", label: "The 7 model–job pairs, fixed before any run", text: JSON.stringify(lab4Selection, null, 1), type: "application/json" },
+    ],
+  },
+  {
+    path: "/lab/5",
+    markdown: lab5Prereg,
+    description: "Forge Lab #5, pre-registered: on the Hard jobs frontier models fail most often, does a sharper trap card (v1.1) cut traps?",
+    // A pre-registration is published before the runs: that's what makes it one.
+    live: true,
+    files: [
+      { name: "arm-c-card.txt", label: "Arm C: trap card v1.0, frozen", text: lab5CardV10, type: "text/plain" },
+      { name: "arm-e-card-v1.1.txt", label: "Arm E: trap card v1.1, frozen", text: lab5CardV11, type: "text/plain" },
+      { name: "selection.json", label: "The 4 model–job pairs, fixed before any run", text: JSON.stringify(lab5Selection, null, 1), type: "application/json" },
     ],
   },
   {

@@ -717,3 +717,9 @@ p.mono,.mono-break{overflow-wrap:anywhere}
 /* Answer pages: quoted field reports (agent-channels §4.2). */
 .quote{border-left:3px solid var(--seam);margin:var(--s4) 0;padding:var(--s2) var(--s4);max-width:62ch}
 .quote p{margin:0 0 var(--s2)}
+
+/* Home page live AI agent numbers */
+.agent-live{margin-top:var(--s4)}
+.agent-live .eyebrow{margin:0}
+@media (prefers-reduced-motion:no-preference){.agent-live li.bumped b{animation:live-bump .6s ease-out}}
+@keyframes live-bump{0%{color:var(--clear)}100%{color:inherit}}

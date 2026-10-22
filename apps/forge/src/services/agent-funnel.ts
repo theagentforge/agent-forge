@@ -114,3 +114,42 @@ export const FUNNEL_STAGES = [
 ] as const;
 
 export type FunnelStage = (typeof FUNNEL_STAGES)[number][0];
+
+/** The day the agent counters started (the first day in usage_daily for these keys). */
+export const COUNTING_SINCE = "2026-10-20";
+
+/**
+ * The home page's live agent numbers (ADR 0030): running totals since counting started, everything included. Unlike
+ * the funnel above, our own House sessions and directory health checks (Glama and the like) count too, and the
+ * label on the page says so. Each is null at zero, so the page never shows a zero.
+ */
+export async function liveAgentCounts(env: Env, now = Date.now()) {
+  const allDays = Math.ceil((now - Date.parse(`${COUNTING_SINCE}T00:00:00Z`)) / 86_400_000) + 1;
+  const f = await agentFunnel(env, now, Math.max(1, allDays));
+  const d = f.detail;
+  const [h] = await getDb(env)
+    .select({ n: sql<number>`coalesce(sum(${t.usageDaily.n}), 0)` })
+    .from(t.usageDaily)
+    .where(eq(t.usageDaily.key, "mcp:house:calls"));
+  const houseCalls = Number(h?.n ?? 0);
+  const all = {
+    found: f.stages.found,
+    connected: d.mcp_sessions + d.directory_health_checks + d.house_mcp_sessions + d.a2a_requests,
+    used: f.stages.used + houseCalls,
+  };
+  const shown = (v: number) => (v > 0 ? v : null);
+  return {
+    agent_visits_total: shown(all.found),
+    agent_connections_total: shown(all.connected),
+    agent_tool_uses_total: shown(all.used),
+    since: COUNTING_SINCE,
+    includes_house_and_directory_checks: true,
+  };
+}
+
+/** Labels for the home page's live agent numbers (running totals). */
+export const LIVE_AGENT_LABELS = [
+  ["agent_visits_total", "AI agent visits"],
+  ["agent_connections_total", "AI connections"],
+  ["agent_tool_uses_total", "tool uses by AI"],
+] as const;

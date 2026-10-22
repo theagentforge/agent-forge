@@ -50,5 +50,43 @@ site.get("/.well-known/ai-catalog.json", (c) => json(c, aiCatalog(c.env.PUBLIC_O
 for (const s of SERVERS.filter((x) => x.key !== "signed-in"))
   site.get(`${s.path}/server-card`, (c) => json(c, serverCard(c.env.PUBLIC_ORIGIN, s), "application/mcp-server-card+json"));
 
+/**
+ * The API catalog (RFC 9727): one linkset entry per API we offer, each pointing at what describes it. Served at
+ * /.well-known/api-catalog as application/linkset+json, and linked from every page (pages.ts DISCOVERY_LINKS).
+ */
+export function apiCatalog(origin: string) {
+  const entry = (anchor: string, desc: { href: string; type: string }[], doc: string) => ({
+    anchor: `${origin}${anchor}`,
+    "service-desc": desc.map((d) => ({ href: `${origin}${d.href}`, type: d.type })),
+    "service-doc": [{ href: `${origin}${doc}`, type: "text/html" }],
+  });
+  return {
+    linkset: [
+      entry("/mcp/public", [{ href: "/mcp/public/server-card", type: "application/mcp-server-card+json" }], "/connect"),
+      entry("/mcp/gauntlet", [{ href: "/mcp/gauntlet/server-card", type: "application/mcp-server-card+json" }], "/gauntlet"),
+      entry("/a2a", [{ href: "/.well-known/agent-card.json", type: "application/json" }], "/connect"),
+      entry("/api/v1", [{ href: "/llms.txt", type: "text/plain" }], "/methodology"),
+    ],
+  };
+}
+site.get("/.well-known/api-catalog", (c) =>
+  c.body(JSON.stringify(apiCatalog(c.env.PUBLIC_ORIGIN)), 200, {
+    ...open,
+    "Content-Type": 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
+    Link: '</.well-known/api-catalog>; rel="api-catalog"',
+  }),
+);
+
+/**
+ * OpenAI's plugin directory checks domain ownership with a token served here (docs/launch/directory-submissions.md).
+ * The token is shown in Dinike's OpenAI dashboard and isn't secret; it's stored in KV `openai:apps-challenge`.
+ */
+export const OPENAI_CHALLENGE_KEY = "openai:apps-challenge";
+site.get("/.well-known/openai-apps-challenge", async (c) => {
+  const token = (await c.env.KV.get(OPENAI_CHALLENGE_KEY))?.trim();
+  if (!token || !/^[A-Za-z0-9._-]{8,200}$/.test(token)) return c.text("Not found", 404, { "Cache-Control": "no-store" });
+  return c.text(token, 200, { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+});
+
 /** Paths the MCP handlers would otherwise take (index.ts answers these from the site instead). */
 export const CARD_PATHS = SERVERS.filter((x) => x.key !== "signed-in").map((s) => `${s.path}/server-card`);

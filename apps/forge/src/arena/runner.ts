@@ -30,7 +30,14 @@ export const MONTHLY_CAP_USD = 16;
  * practice models. From November $16 a month: the weekly headline bout plus those practice models (about $3-6).
  */
 export const OCT_2026_CAP_USD = 61.4;
-export const monthlyCap = (now: number) => (now >= Date.UTC(2026, 9, 1) && now < Date.UTC(2026, 10, 1) ? OCT_2026_CAP_USD : MONTHLY_CAP_USD);
+/** November 2026: $45 (Dinike, 21 Oct: "raise November to $45"), for Forge Lab #5 (about $24) on top of the usual bouts. */
+export const NOV_2026_CAP_USD = 45;
+export const monthlyCap = (now: number) =>
+  now >= Date.UTC(2026, 9, 1) && now < Date.UTC(2026, 10, 1)
+    ? OCT_2026_CAP_USD
+    : now >= Date.UTC(2026, 10, 1) && now < Date.UTC(2026, 11, 1)
+      ? NOV_2026_CAP_USD
+      : MONTHLY_CAP_USD;
 /**
  * Practice runs on Workers AI (estimated at list price). Workers AI bills on the Cloudflare invoice beyond 10,000
  * neurons a day, so from 19 Oct 2026 practice stays inside that free allocation: $0.10 a day (ADR 0027). The lab and

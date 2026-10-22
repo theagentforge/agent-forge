@@ -179,6 +179,7 @@ export function discoveryCounters(req: { method: string; url: string; headers: H
   const path = new URL(req.url).pathname;
   if (path === "/.well-known/agent-card.json" || path === "/.well-known/agent.json") return ["disc:agent-card"];
   if (path === "/.well-known/ai-catalog.json") return ["disc:ai-catalog"];
+  if (path === "/.well-known/api-catalog") return ["disc:api-catalog"];
   if (path === "/mcp/public/server-card") return ["disc:server-card-public"];
   if (path === "/mcp/gauntlet/server-card") return ["disc:server-card-gauntlet"];
   if (path === "/.well-known/agent-skills/index.json" || path === "/.well-known/skills/index.json") return ["skills:index"];

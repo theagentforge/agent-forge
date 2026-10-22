@@ -219,11 +219,13 @@ describe("arena status", () => {
 });
 
 describe("the cost guard caps (ADR 0027, Dinike 19 Oct 2026: no unexpected charges)", () => {
-  it("OpenRouter: $61.40 in October (raised 20 Oct for Lab #4 and frontier practice), then $16 a month", async () => {
+  it("OpenRouter: $61.40 in October (raised 20 Oct for Lab #4), $45 in November (Lab #5), then $16 a month", async () => {
     const { monthlyCap } = await import("../src/arena/runner");
     expect(monthlyCap(Date.UTC(2026, 9, 19))).toBe(61.4);
     expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(61.4);
-    expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(16);
+    expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(45);
+    expect(monthlyCap(Date.UTC(2026, 10, 30, 23, 59))).toBe(45);
+    expect(monthlyCap(Date.UTC(2026, 11, 1))).toBe(16);
     expect(monthlyCap(Date.UTC(2027, 0, 1))).toBe(16);
   });
 

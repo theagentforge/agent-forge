@@ -34,7 +34,7 @@ describe("Lab #3 arms (lab/003-trap-cards)", () => {
     expect(armText("card", "x")).toBe(trapCardText());
     expect(armText("model", "no-lines-yet")).toBe(trapCardText());
     expect(withArm(SYSTEM_PROMPT, armText("placebo", "x"))).toBe(`${SYSTEM_PROMPT}\n\n${PLACEBO_TEXT}`);
-    expect(ARMS).toEqual(["none", "placebo", "card", "model"]);
+    expect(ARMS).toEqual(["none", "placebo", "card", "model", "card11"]);
   });
 
   it("an arm event sends the card to the model, and its runs never mix into rankings, guides or the home duel", async () => {

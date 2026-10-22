@@ -481,3 +481,27 @@
     });
   });
 })();
+
+// Home page live AI agent numbers (pages.ts liveAgents, ADR 0030): all traffic, refreshed every 30 seconds. A number
+// is null at zero and appears once it's above it.
+(function () {
+  var box = document.querySelector("[data-agent-live]");
+  if (!box || !window.fetch) return;
+  var refresh = function () {
+    if (document.hidden) return;
+    fetch("/agents/live.json").then(function (r) { return r.json(); }).then(function (j) {
+      var any = false;
+      box.querySelectorAll("li[data-k]").forEach(function (li) {
+        var v = j[li.getAttribute("data-k")];
+        if (typeof v !== "number") return;
+        any = true;
+        li.hidden = false;
+        var b = li.querySelector("b");
+        var text = v.toLocaleString("en-US");
+        if (b && b.textContent !== text) { b.textContent = text; li.classList.remove("bumped"); void li.offsetWidth; li.classList.add("bumped"); }
+      });
+      if (any) box.hidden = false;
+    }).catch(function () {});
+  };
+  setInterval(refresh, 30000);
+})();

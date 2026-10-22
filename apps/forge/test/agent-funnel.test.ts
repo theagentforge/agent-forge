@@ -76,3 +76,37 @@ describe("agent funnel (found us → connected → used a tool → came back →
     expect(await (await fetchWorker("/stats?f=at")).text()).toMatch(/<b>\d+<\/b><span>came back<\/span>/);
   });
 });
+
+describe("home page live agent numbers (ADR 0030): everything counted, labelled as such", () => {
+  it("includes our House sessions and directory health checks, hides zeros, and the home page says so", async () => {
+    const { liveAgentCounts } = await import("../src/services/agent-funnel");
+    const before = await liveAgentCounts(env);
+    await bump(env, ["mcp:public:sessions", "mcp:client:glama", "mcp:house:sessions", "mcp:house:calls", "disc:agent-card"]);
+    const after = await liveAgentCounts(env);
+    // Glama's session isn't subtracted, and the House session and call are added.
+    expect((after.agent_connections_total ?? 0) - (before.agent_connections_total ?? 0)).toBe(2);
+    expect((after.agent_tool_uses_total ?? 0) - (before.agent_tool_uses_total ?? 0)).toBe(1);
+    expect((after.agent_visits_total ?? 0) - (before.agent_visits_total ?? 0)).toBe(1);
+    expect(after.includes_house_and_directory_checks).toBe(true);
+    const live = (await (await fetchWorker("/agents/live.json?t=1")).json()) as Record<string, unknown>;
+    expect(live.agent_connections_total).toBeGreaterThan(0);
+    const home = await (await fetchWorker("/?t=live", { headers: { Accept: "text/html" } })).text();
+    expect(home).toContain("data-agent-live");
+    expect(home).toContain("Everything counted, including our own test agents and directories checking that we're up.");
+    expect(home).toMatch(/<li data-k="agent_connections_total"><b>\d+<\/b><span>AI connections<\/span>/);
+  });
+
+  it("are running totals: a visit a month ago still counts, where the 7-day funnel drops it", async () => {
+    const { liveAgentCounts } = await import("../src/services/agent-funnel");
+    const dec1 = Date.UTC(2026, 11, 1, 12);
+    const before = await liveAgentCounts(env, dec1);
+    const weekBefore = (await agentFunnel(env, dec1)).stages.found;
+    await bump(env, ["disc:ai-catalog", "a2a:requests"], Date.UTC(2026, 10, 1, 12));
+    const after = await liveAgentCounts(env, dec1);
+    expect((after.agent_visits_total ?? 0) - (before.agent_visits_total ?? 0)).toBe(1);
+    expect((after.agent_connections_total ?? 0) - (before.agent_connections_total ?? 0)).toBe(1);
+    expect(after.since).toBe("2026-10-20");
+    expect((await agentFunnel(env, dec1)).stages.found).toBe(weekBefore);
+  });
+});
+

@@ -1,12 +1,16 @@
 import { trapCardText } from "@forge/shared";
 import modelLines from "../../../../lab/003-trap-cards/prompts/D-model-lines.json";
+import cardV11 from "../../../../lab/005-trap-card-v11-frontier/prompts/E-card-v1.1.txt";
 
 // Forge Lab #3 arms (lab/003-trap-cards/PREREGISTRATION.md). The text is appended to the harness system prompt for a
 // whole event, the way a user's custom instructions are. The arm texts are published in the lab folder; tests check
 // that these match them exactly.
 
-export type Arm = "none" | "placebo" | "card" | "model";
-export const ARMS: Arm[] = ["none", "placebo", "card", "model"];
+export type Arm = "none" | "placebo" | "card" | "model" | "card11";
+export const ARMS: Arm[] = ["none", "placebo", "card", "model", "card11"];
+
+/** Forge Lab #5 arm E: trap card v1.1, frozen in lab/005-trap-card-v11-frontier/prompts/E-card-v1.1.txt. */
+export const CARD_V11_TEXT = cardV11.trim();
 
 /** Arm B: same length as the card, no checks in it. Identical to lab/003-trap-cards/prompts/B-placebo.txt. */
 export const PLACEBO_TEXT = `Notes on how I like answers from my AI assistant (style card v1.0, 2026-10-15):
@@ -26,6 +30,7 @@ const MODEL_LINES = modelLines as Record<string, string[]>;
 export function armText(arm: Arm | null | undefined, modelId: string): string | null {
   if (!arm || arm === "none") return null;
   if (arm === "placebo") return PLACEBO_TEXT;
+  if (arm === "card11") return CARD_V11_TEXT;
   const card = trapCardText();
   if (arm === "card") return card;
   const lines = MODEL_LINES[modelId] ?? [];
