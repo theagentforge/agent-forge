@@ -43,8 +43,68 @@ export function compute(a: number, op: string, b: number): string | null {
   return Number.isFinite(v) ? v.toFixed(2) : null;
 }
 
-/** Reads the question with Workers AI (two numbers, one operation) and computes the answer in code. */
+const UNITS: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
+const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const SCALES: Record<string, number> = { hundred: 100, thousand: 1000 };
+const squeeze = (w: string) => w.replace(/(.)\1+/g, "$1");
+const WORDS = new Map<string, [string, number]>();
+for (const [k, v] of Object.entries(UNITS)) WORDS.set(squeeze(k), ["u", v]);
+for (const [k, v] of Object.entries(TENS)) WORDS.set(squeeze(k), ["t", v]);
+for (const [k, v] of Object.entries(SCALES)) WORDS.set(squeeze(k), ["s", v]);
+const OPS: [RegExp, string][] = [
+  [/\b(times|multipl\w*|product|doubl\w*)\b/, "*"],
+  [/\b(divid\w*|split\w*|shar\w* equally|per each)\b/, "/"],
+  [/\b(slow\w*|los\w*|minus|subtract\w*|decreas\w*|drop\w*|reduc\w*|fewer|less|remov\w*|gave away|eat\w*|left)\b/, "-"],
+  [/\b(plus|add\w*|gain\w*|increas\w*|speed\w* up|more|total|combin\w*|sum|together|join\w*|grow\w*|accelerat\w*)\b/, "+"],
+];
+
+/**
+ * Reads Moltbook's scrambled question without a model when it can: number words (letters doubled or split, as in
+ * "tW]eNn-Tyy") and digits become numbers, and the operation comes from its verb. Null when unsure.
+ */
+export function solveDeterministic(challenge: string): string | null {
+  const words = cleanChallenge(challenge).replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter(Boolean);
+  const nums: number[] = [];
+  let cur: number | null = null;
+  const flush = () => {
+    if (cur !== null) nums.push(cur);
+    cur = null;
+  };
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    if (/^\d+(\.\d+)?$/.test(w)) {
+      flush();
+      nums.push(Number(w));
+      continue;
+    }
+    // Words split by the scrambler ("tw enty"): try this word joined with the next one.
+    let hit = WORDS.get(squeeze(w));
+    if (!hit && words[i + 1]) {
+      const joined = WORDS.get(squeeze(w + words[i + 1]));
+      if (joined) {
+        hit = joined;
+        i++;
+      }
+    }
+    if (!hit) {
+      flush();
+      continue;
+    }
+    const [kind, v] = hit;
+    if (kind === "s") cur = (cur ?? 1) * v;
+    else cur = (cur ?? 0) + v;
+  }
+  flush();
+  const text = squeeze(words.join(" "));
+  const op = OPS.find(([re]) => re.test(text) || re.test(words.join(" ")))?.[1];
+  if (nums.length !== 2 || !op) return null;
+  return compute(nums[0]!, op, nums[1]!);
+}
+
+/** Reads the question in code first, then with Workers AI (two numbers, one operation); the arithmetic is always in code. */
 export async function solveChallenge(ai: Ai, challenge: string): Promise<string | null> {
+  const direct = solveDeterministic(challenge);
+  if (direct) return direct;
   const out = (await ai.run(CHALLENGE_MODEL as keyof AiModels, {
     messages: [
       {
@@ -83,8 +143,13 @@ export async function postToMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, p
   const key = await moltbookKey(env);
   if (!key) return { ok: false, error: "moltbook_not_connected" };
   const hash = await hashOf(post);
-  const seen = await env.KV.get<{ post_id: string; url: string }>(`moltbook:posted:${hash}`, "json");
-  if (seen) return { ok: true, ...seen, verified: true, already: true };
+  const seen = await env.KV.get<{ post_id: string; url: string; verified?: boolean }>(`moltbook:posted:${hash}`, "json");
+  if (seen?.verified) return { ok: true, post_id: seen.post_id, url: seen.url, verified: true, already: true };
+  // A copy that never passed Moltbook's check is hidden: delete it before posting again, so there is never a duplicate.
+  if (seen) {
+    await fetcher(`${MOLTBOOK_API}/posts/${seen.post_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${key}` } }).catch(() => undefined);
+    await env.KV.delete(`moltbook:posted:${hash}`);
+  }
   const now = Date.now();
   const first = Number((await env.KV.get("moltbook:first-post")) ?? 0);
   const last = Number((await env.KV.get("moltbook:last-post")) ?? 0);
@@ -105,16 +170,23 @@ export async function postToMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, p
   const url = `https://www.moltbook.com/post/${id}`;
   let verified = true;
   const v = body.post.verification;
-  if (body.verification_required && v?.verification_code && v.challenge_text) {
+  // Moltbook's own docs: a `verification` object on the post means it is hidden until answered, whether or not the
+  // response also says verification_required (23 Oct: it didn't, and the first post stayed pending).
+  if ((body.verification_required || v) && v?.verification_code && v.challenge_text) {
     const answer = await solveChallenge(env.AI, v.challenge_text);
     verified = false;
     if (answer) {
       const r = await fetcher(`${MOLTBOOK_API}/verify`, { method: "POST", headers: auth, body: JSON.stringify({ verification_code: v.verification_code, answer }) });
       verified = r.ok && ((await r.json().catch(() => ({}))) as { success?: boolean }).success === true;
     }
+    console.log("moltbook_verify", verified ? "ok" : answer ? "wrong_answer" : "unsolved");
   }
-  // Recorded even when unverified: the post exists (hidden until verified), and re-sending would create a duplicate.
-  await env.KV.put(`moltbook:posted:${hash}`, JSON.stringify({ post_id: id, url }), { expirationTtl: POSTED_TTL });
+  if (!verified) {
+    // Hidden posts help nobody: delete it and leave the approval open, so the same text can go out again later.
+    await fetcher(`${MOLTBOOK_API}/posts/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${key}` } }).catch(() => undefined);
+    return { ok: false, error: "verification_failed: Moltbook's anti-spam question wasn't answered correctly, so the post was deleted; approve again to retry" };
+  }
+  await env.KV.put(`moltbook:posted:${hash}`, JSON.stringify({ post_id: id, url, verified: true }), { expirationTtl: POSTED_TTL });
   return { ok: true, post_id: id, url, verified };
 }
 

@@ -214,7 +214,7 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     be_first: reportCount === 0,
     contribute: {
       ...contributeFor(env.PUBLIC_ORIGIN),
-      report_url: version ? reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", version: version.version, fp: version.fingerprint }) : null,
+      report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", version: version?.version ?? "", fp: version?.fingerprint ?? "" }),
       reports_needed: reportsNeeded(score?.distinctOwners ?? 0, score?.verifiedOwners ?? 0, score?.successScore != null),
     },
     verdict: displayVerdict({ security_status: verdictFor(inherited ?? ownStatus), forge_score: score?.successScore ?? null }),

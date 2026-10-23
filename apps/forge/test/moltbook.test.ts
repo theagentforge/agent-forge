@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { privateWorkflow, resetJwksCache, verifyActionsToken } from "../src/services/house";
-import { CLAIM_KV, ERROR_KV, cleanChallenge, compute, KEY_KV, moltbookKey, moltbookStatus, postToMoltbook, registerMoltbook, solveChallenge, validatePost } from "../src/social/moltbook";
+import { CLAIM_KV, ERROR_KV, cleanChallenge, solveDeterministic, compute, KEY_KV, moltbookKey, moltbookStatus, postToMoltbook, registerMoltbook, solveChallenge, validatePost } from "../src/social/moltbook";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -158,5 +158,39 @@ describe("registering the agent from /admin/moltbook", () => {
     const press = await fetchWorker("/admin/moltbook/register", { method: "POST", redirect: "manual", headers: { Origin: env.PUBLIC_ORIGIN, "Content-Type": "application/x-www-form-urlencoded" }, body: "csrf=x" });
     expect(press.status).toBe(302);
     expect(await env.KV.get(KEY_KV)).toBeNull();
+  });
+});
+
+describe("Moltbook's anti-spam question", () => {
+  it("is read in code: scrambled number words, digits and the operation from its verb", () => {
+    expect(solveDeterministic("A] lO^bSt-Er S[wImS aT/ tW]eNn-Tyy mE^tE[rS aNd] SlO/wS bY^ fI[vE, wH-aTs] ThE/ nEw^ SpE[eD?")).toBe("15.00");
+    expect(solveDeterministic("A lObStEr HaS tHiRtY tWo ClAwS aNd GaInS sEvEn MoRe, hOw MaNy?")).toBe("39.00");
+    expect(solveDeterministic("a lobster swims 12 meters times 3, what is the distance")).toBe("36.00");
+    expect(solveDeterministic("one hundred shells divided between four lobsters")).toBe("25.00");
+    expect(solveDeterministic("a lobster swims fast")).toBeNull();
+  });
+
+  it("answers the question even when the response doesn't say verification_required, and deletes a post it couldn't verify", async () => {
+    const e = { ...env, MOLTBOOK_API_KEY: "test-key" };
+    await env.KV.delete("moltbook:last-post");
+    await env.KV.put("moltbook:first-post", String(Date.now() - 3 * 86_400_000));
+    const calls: string[] = [];
+    let verifyOk = true;
+    const fetcher = (async (u: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${u.split("/api/v1")[1]}`);
+      if (u.endsWith("/posts")) return Response.json({ success: true, post: { id: "p9", verification_status: "pending", verification: { verification_code: "c1", challenge_text: "a lobster has ten claws and gains five more" } } });
+      if (u.endsWith("/verify")) return Response.json({ success: verifyOk });
+      return Response.json({ success: true });
+    }) as typeof fetch;
+    const p = { ...post, title: `Verify ${crypto.randomUUID()}` };
+    expect(await postToMoltbook(e, p, fetcher)).toMatchObject({ ok: true, verified: true });
+    expect(calls).toEqual(["POST /posts", "POST /verify"]);
+
+    calls.length = 0;
+    verifyOk = false;
+    await env.KV.delete("moltbook:last-post");
+    const q = { ...post, title: `Fails ${crypto.randomUUID()}` };
+    expect(await postToMoltbook(e, q, fetcher)).toMatchObject({ ok: false });
+    expect(calls).toEqual(["POST /posts", "POST /verify", "DELETE /posts/p9"]);
   });
 });

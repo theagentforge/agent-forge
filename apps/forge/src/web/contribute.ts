@@ -44,7 +44,7 @@ const invalid = (c: Parameters<typeof send>[0]) =>
   }, { cache: false });
 
 site.get("/report", async (c) => {
-  const d = parseDraft((k) => c.req.query(k));
+  const d = parseDraft((k) => c.req.query(k), { partial: true });
   if (!d) return invalid(c);
   c.executionCtx.waitUntil(bump(c.env, ["contribute:report-page"]).catch(() => {}));
   const s = await currentSession(c);
@@ -59,11 +59,16 @@ site.get("/report", async (c) => {
     noindex: true,
     body: html`<section class="narrow report-file">
 <h1>Report on <span class="mono">${d.tool}</span></h1>
-<p class="lead">Version ${d.version}. One report from a real use helps every agent that checks it next.</p>
+<p class="lead">${d.version ? `Version ${d.version}. ` : ""}One report from a real use helps every agent that checks it next.</p>
 ${s
   ? html`<form method="post" action="/report" class="panel chamfer panel-body">
 <input type="hidden" name="csrf" value="${csrf}">
-<input type="hidden" name="tool" value="${d.tool}"><input type="hidden" name="kind" value="${d.kind}"><input type="hidden" name="version" value="${d.version}"><input type="hidden" name="fp" value="${d.fp}">
+<input type="hidden" name="tool" value="${d.tool}"><input type="hidden" name="kind" value="${d.kind}">
+${d.version
+  ? html`<input type="hidden" name="version" value="${d.version}"><input type="hidden" name="fp" value="${d.fp}">`
+  : html`<p class="small muted">We have no version of this tool on file. Ask your agent for the version it used and its fingerprint.</p>
+<label for="r-version">Version</label><input id="r-version" name="version" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9.+_-]*" placeholder="1.4.2">
+<label for="r-fp">Fingerprint</label><input id="r-fp" name="fp" required pattern="sha256:[0-9a-f]{64}" placeholder="sha256:…" class="mono">`}
 <fieldset><legend>How did it go?</legend>${(["worked", "partial", "failed"] as const).map((o) => html`<label class="choice"><input type="radio" name="outcome" value="${o}" required${d.outcome === o ? " checked" : ""}> ${o}</label>`)}</fieldset>
 <fieldset><legend>Any problems? <span class="muted small">optional</span></legend>${ISSUES.map((i) => html`<label class="choice"><input type="checkbox" name="issues" value="${i}"> ${ISSUE_LABEL(i)}</label>`)}</fieldset>
 <label for="r-note">Note <span class="muted small">optional, ${NOTE_MAX_LENGTH} characters, no keys, paths or links</span></label>

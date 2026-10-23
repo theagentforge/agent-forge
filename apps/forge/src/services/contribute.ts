@@ -15,31 +15,38 @@ import type { Db } from "./db";
 export interface ReportDraft {
   tool: string;
   kind: (typeof TOOL_KINDS)[number];
+  /** Empty when the tool has no version on file yet: the agent's draft, or the person, fills it in. */
   version: string;
   fp: string;
   outcome?: "worked" | "partial" | "failed";
   note?: string;
 }
 
-/** The pre-filled report link for a known version, or null when there is no version on file to pin it to. */
+/** The pre-filled report link; without a version on file it carries only the tool, for the draft to complete. */
 export function reportUrl(origin: string, d: ReportDraft | null): string | null {
   if (!d) return null;
-  const q = new URLSearchParams({ tool: d.tool, kind: d.kind, version: d.version, fp: d.fp });
+  const q = new URLSearchParams({ tool: d.tool, kind: d.kind, ...(d.version && d.fp ? { version: d.version, fp: d.fp } : {}) });
   if (d.outcome) q.set("outcome", d.outcome);
   if (d.note) q.set("note", d.note);
   return `${origin}/report?${q}`;
 }
 
-/** Reads a draft from /report query parameters; null when the tool, version or fingerprint isn't valid. */
-export function parseDraft(q: (k: string) => string | undefined): ReportDraft | null {
+/**
+ * Reads a draft from /report parameters; null when anything given is invalid. With `partial`, the version and
+ * fingerprint may be missing (the page then asks for them); a report is only ever filed from a complete draft.
+ */
+export function parseDraft(q: (k: string) => string | undefined, opts: { partial?: boolean } = {}): ReportDraft | null {
   const tool = (q("tool") ?? "").trim();
   const kind = q("kind") as ReportDraft["kind"];
   const version = (q("version") ?? "").trim();
   const fp = (q("fp") ?? "").trim();
   if (!tool || tool.length > 512 || !TOOL_ID_PATTERN.test(tool)) return null;
   if (!TOOL_KINDS.includes(kind)) return null;
-  if (!version || version.length > 128 || !VERSION_PATTERN.test(version)) return null;
-  if (!/^sha256:[0-9a-f]{64}$/.test(fp)) return null;
+  const missing = !version && !fp;
+  if (!(opts.partial && missing)) {
+    if (!version || version.length > 128 || !VERSION_PATTERN.test(version)) return null;
+    if (!/^sha256:[0-9a-f]{64}$/.test(fp)) return null;
+  }
   const outcome = q("outcome");
   const note = (q("note") ?? "").trim().slice(0, 280);
   return {

@@ -130,7 +130,7 @@ export function reportPromptText(signedIn: boolean) {
     "For each one, run forge_check on its id and draft a field report: outcome (worked, partial or failed) and a one-line note, with no secrets, file paths or links.",
     signedIn
       ? "Show me each draft, then file the ones I approve with forge_report."
-      : "Show me each draft with its contribute.report_url plus &outcome=<outcome>&note=<URL-encoded note>, so I can file it after GitHub sign-in.",
+      : "Show me each draft with its contribute.report_url plus &outcome=<outcome>&note=<URL-encoded note> (and &version=<version>&fp=<sha256 fingerprint> if the link has none), so I can file it after GitHub sign-in.",
     "Don't file anything without my yes.",
   ].join("\n");
 }

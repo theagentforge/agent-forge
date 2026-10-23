@@ -56,6 +56,22 @@ describe("contribute: data in every check", () => {
     expect((await checkTool(env, { id: "npm:contrib-unknown-xyz" })).contribute.report_url).toBeUndefined();
   });
 
+  it("a known tool with no version on file still gets a link, for the draft to complete", async () => {
+    const db = getDb(env);
+    await db.insert(t.tools).values({ id: crypto.randomUUID(), kind: "mcp_server", canonicalId: "npm:contrib-noversion" });
+    const c = await checkTool(env, { id: "npm:contrib-noversion" });
+    expect(c.contribute.report_url).toBe(`${origin}/report?tool=npm%3Acontrib-noversion&kind=mcp_server`);
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill" })[k as "tool"], { partial: true })).toMatchObject({ version: "", fp: "" });
+    // Filing still needs both: a partial draft is never accepted on submit.
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill" })[k as "tool"])).toBeNull();
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill", version: "1.0.0" })[k as "tool"], { partial: true })).toBeNull();
+    const p = profile();
+    const { cookie } = await webLogin(p);
+    const form = await (await fetchWorker("/report?tool=npm%3Acontrib-noversion&kind=mcp_server", { headers: { Cookie: cookie } })).text();
+    expect(form).toContain('name="version" required');
+    expect(form).toContain('name="fp" required');
+  });
+
   it("counts what's missing for a score, and nothing once there is one", () => {
     expect(reportsNeeded(3, 0, false)).toEqual({ people: 2, verified: 2 });
     expect(reportsNeeded(4, 1, false)).toEqual({ people: 1, verified: 1 });
