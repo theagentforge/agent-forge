@@ -111,7 +111,8 @@ export async function growthStats(env: Env, now = Date.now()) {
       () => ({}),
     )),
     ...(await visitStats(env, now).then(
-      (v) => ({ arrivals_7d: v.arrivals, arrivals_by_source_7d: v.by_source, arrivals_by_tag_7d: v.by_tag }),
+      // Gross page views only: the people-only breakdown stays internal (Dinike, 23 Oct), in /api/v1/ops/scout-signals.
+      (v) => ({ page_views_7d: v.page_views }),
       () => ({}),
     )),
   };

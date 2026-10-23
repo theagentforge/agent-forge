@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { clientLabel, mcpCounters, recordMcp, sourceLabel, usageStats, visitCounters } from "../src/services/usage";
+import { clientLabel, mcpCounters, recordMcp, sourceLabel, usageStats, visitCounters, visitStats } from "../src/services/usage";
 import { fetchWorker } from "./helpers";
 
 const init = (name: string) => ({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name, version: "1" } } });
@@ -75,21 +75,28 @@ describe("where visitors come from (daily totals only)", () => {
     expect(sourceLabel("https://www.google.com/", origin)).toBe("search");
     expect(sourceLabel("https://theagentforge.io/arena", origin)).toBe("internal");
     expect(sourceLabel("https://someblog.example/post", origin)).toBe("other");
-    expect(visitCounters(req(`${origin}/arena?from=X-Launch!`, { referer: "https://t.co/x", "user-agent": "Mozilla/5.0" }), origin)).toEqual(["visit:arrivals", "visit:src:x", "visit:tag:x-launch"]);
+    expect(visitCounters(req(`${origin}/arena?from=X-Launch!`, { referer: "https://t.co/x", "user-agent": "Mozilla/5.0" }), origin)).toEqual(["visit:all", "visit:arrivals", "visit:src:x", "visit:tag:x-launch"]);
+    expect(visitCounters(req(`${origin}/connect`, { "user-agent": "Mozilla/5.0", referer: `${origin}/` }), origin)).toEqual(["visit:all", "visit:connect"]);
   });
   it("doesn't count bots, link previews or moving between our own pages", () => {
-    expect(visitCounters(req(`${origin}/`, { "user-agent": "Twitterbot/1.0" }), origin)).toEqual([]);
-    expect(visitCounters(req(`${origin}/`, { "user-agent": "Mozilla/5.0", referer: `${origin}/arena` }), origin)).toEqual([]);
+    expect(visitCounters(req(`${origin}/`, { "user-agent": "Twitterbot/1.0" }), origin)).toEqual(["visit:all", "visit:crawler"]);
+    expect(visitCounters(req(`${origin}/`, { "user-agent": "Mozilla/5.0", referer: `${origin}/arena` }), origin)).toEqual(["visit:all"]);
     expect(visitCounters({ ...req(`${origin}/`), method: "POST" }, origin)).toEqual([]);
   });
   it("a page view is counted (cached or not) and shows in /api/v1/growth", async () => {
     const headers = { "user-agent": "Mozilla/5.0", referer: "https://news.ycombinator.com/" };
     await fetchWorker("/about?from=hn-launch", { headers });
     await fetchWorker("/about?from=hn-launch", { headers });
+    await fetchWorker("/about", { headers: { "user-agent": "Mozilla/5.0 (compatible; GoogleOther)" } });
     await vi.waitFor(async () => {
-      const g = (await (await fetchWorker("/api/v1/growth")).json()) as { arrivals_7d: number; arrivals_by_source_7d: { name: string; n: number }[]; arrivals_by_tag_7d: { name: string; n: number }[] };
-      expect(g.arrivals_by_source_7d.find((s) => s.name === "hn")?.n).toBe(2);
-      expect(g.arrivals_by_tag_7d).toContainEqual({ name: "hn-launch", n: 2 });
+      const g = (await (await fetchWorker("/api/v1/growth")).json()) as Record<string, unknown>;
+      // Public: the gross number only. The people-only breakdown is internal (scout signals).
+      expect(g.page_views_7d as number).toBeGreaterThanOrEqual(3);
+      for (const k of ["arrivals_7d", "arrivals_by_source_7d", "arrivals_by_tag_7d", "crawler_page_views_7d"]) expect(g, k).not.toHaveProperty(k);
+      const v = await visitStats(env);
+      expect(v.by_source.find((s) => s.name === "hn")?.n).toBe(2);
+      expect(v.by_tag).toContainEqual({ name: "hn-launch", n: 2 });
+      expect(v.crawler_page_views).toBeGreaterThanOrEqual(1);
     });
   });
 });

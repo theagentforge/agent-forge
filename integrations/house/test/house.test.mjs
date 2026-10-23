@@ -143,4 +143,15 @@ describe("ranking pool", () => {
     expect(all).toHaveLength(pages);
     expect(all.at(-1).pkg).toBe(`pkg-${pages - 1}`);
   });
+
+  it("puts the well-known servers people check first at the top of the plan, without duplicates", async () => {
+    const { withPriority, PRIORITY } = await import("../probe.mjs");
+    const plan = [{ registryName: "x", pkg: "@upstash/context7-mcp", version: null, rank: 1 }, { registryName: "y", pkg: "other-mcp", version: null, rank: 2 }];
+    const out = withPriority(plan, 50);
+    expect(out[0]).toMatchObject({ pkg: "@modelcontextprotocol/server-filesystem", args: ["."], priority: 1 });
+    expect(out.filter((c) => c.pkg === "@upstash/context7-mcp")).toHaveLength(1);
+    expect(out.at(-1).pkg).toBe("other-mcp");
+    expect(out).toHaveLength(PRIORITY.length + 1);
+    expect(withPriority(plan, 3)).toHaveLength(3);
+  });
 });

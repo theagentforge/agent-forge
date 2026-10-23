@@ -9,4 +9,5 @@ Disallow: /authorize
 Disallow: /oauth/
 Disallow: /claim
 Disallow: /check?
+Disallow: /disputes?
 Sitemap: https://theagentforge.io/sitemap.xml

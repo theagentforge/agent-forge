@@ -24,6 +24,7 @@ import * as t from "./db/schema";
 import { getDb } from "./services/db";
 import { countsAsHouse } from "./services/identity";
 import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
+import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -35,7 +36,7 @@ export const publicApi = new Hono<{ Bindings: Env }>();
 publicApi.get("/api/v1/check", async (c) => {
   const url = new URL(c.req.url);
   const parsed = checkQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-  if (!parsed.success) return c.json({ error: "invalid_query", detail: parsed.error.issues[0]?.message }, 400);
+  if (!parsed.success) return c.json({ error: "invalid_query", detail: parsed.error.issues[0]?.message, ...CHECK_QUERY_HELP }, 400);
 
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5).
@@ -48,7 +49,7 @@ publicApi.get("/api/v1/check", async (c) => {
   if (hit) return hit;
 
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
-  if (!success) return c.json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
 
   const res = c.json(await checkTool(c.env, parsed.data), 200, {
     "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}`,
@@ -183,7 +184,7 @@ const FP = /^(sha256:)?[0-9a-f]{64}$/;
 async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknown; url?: unknown; name?: unknown }) {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `scan:${ip}` });
-  if (!success) return c.json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
   let text: string, sourceUrl: string | null = null;
   if (typeof input.text === "string" && input.text.length) {
     if (input.text.length > SCAN_MAX_BYTES) return c.json({ error: "too_large", max_bytes: SCAN_MAX_BYTES }, 413);
@@ -218,7 +219,7 @@ publicApi.get("/api/v1/scan/:fp", async (c) => {
 publicApi.post("/api/v1/watch", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `watch:${ip}` });
-  if (!success) return c.json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
   const body = await bodyOf(c);
   const raw = Array.isArray(body.fingerprints) ? body.fingerprints : [];
   if (!raw.length || raw.length > 100) return c.json({ error: "give 1 to 100 fingerprints" }, 400);

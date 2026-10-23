@@ -1,4 +1,10 @@
 // Small progressive enhancements. Every page works without this file.
+// One empty beacon per page load, so we can count real people against crawlers (internal; nothing about you is sent).
+(function () {
+  try {
+    if (navigator.sendBeacon && !navigator.webdriver) navigator.sendBeacon("/v");
+  } catch (e) {}
+})();
 (function () {
   var root = document.documentElement;
   var toggle = document.querySelector("[data-theme-toggle]");
@@ -315,18 +321,35 @@
   tabs.forEach(function (t) {
     t.querySelectorAll(".btn.primary, .btn").forEach(function (b) { b.addEventListener("click", function () { progress(2); }); });
   });
-  var code = box.getAttribute("data-test-code"), status = box.querySelector("[data-test-status]"), tries = 0;
+  var code = box.getAttribute("data-test-code"), status = box.querySelector("[data-test-status]");
+  var help = box.querySelector("[data-test-help]"), again = box.querySelector("[data-test-again]");
   if (!code || !status || !window.fetch) return;
-  var poll = setInterval(function () {
-    if (++tries > 200) { clearInterval(poll); return; }
+  // Keep one code per visit for up to an hour, so it survives a trip to Claude and back (the page isn't cached).
+  try {
+    var saved = JSON.parse(sessionStorage.getItem("forge-test") || "null");
+    if (saved && /^[a-z0-9]{6}$/.test(saved.code) && Date.now() - saved.at < 3300000) code = saved.code;
+    else sessionStorage.setItem("forge-test", JSON.stringify({ code: code, at: Date.now() }));
+  } catch (err) {}
+  var tp = document.getElementById("test-prompt");
+  if (tp) tp.textContent = tp.textContent.replace(/forge-test-[a-z0-9]{6}/, "forge-test-" + code);
+  var poll = null, tries = 0, seen = false;
+  function check() {
+    if (++tries > 200) { stop(); if (help) help.hidden = false; status.textContent = "Still waiting for your first check."; return; }
     fetch("/api/v1/connect-test/" + code, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j.seen) return;
-      clearInterval(poll);
+      seen = true;
+      stop();
+      if (help) help.hidden = true;
       status.textContent = "✓ First check received. Your AI is connected to The Forge.";
       status.classList.add("ok");
       progress(3);
     }).catch(function () {});
-  }, 3000);
+  }
+  function stop() { if (poll) clearInterval(poll); poll = null; }
+  function start() { if (seen || poll) return; tries = 0; status.textContent = "Waiting for your first check…"; poll = setInterval(check, 3000); check(); }
+  if (again) again.addEventListener("click", start);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") start(); });
+  start();
 })();
 
 // /teams (ADR 0023 §7): turn the intake form into a prefilled email. Nothing is sent to or stored by the Forge.
@@ -485,23 +508,87 @@
 // Home page live AI agent numbers (pages.ts liveAgents, ADR 0030): all traffic, refreshed every 30 seconds. A number
 // is null at zero and appears once it's above it.
 (function () {
+  // ADR 0030 agent numbers and ADR 0034 "work done" totals: real numbers from /agents/live.json, re-read every 30 s.
+  // A number changes only when the database did; the "ago" times are recomputed from real timestamps.
+  // One band carries both sets of numbers (ADR 0034); each payload updates only the keys it has.
   var box = document.querySelector("[data-agent-live]");
-  if (!box || !window.fetch) return;
+  var work = document.querySelector("[data-work-live]");
+  if ((!box && !work) || !window.fetch) return;
+  var agoText = function (ms) {
+    var m = Math.max(1, Math.round((Date.now() - ms) / 60000));
+    return m < 60 ? m + " min ago" : m < 2880 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+  };
+  var update = function (root, j) {
+    var any = false;
+    if (!root || !j) return any;
+    root.querySelectorAll("li[data-k]").forEach(function (li) {
+      var v = j[li.getAttribute("data-k")];
+      if (typeof v !== "number") return;
+      any = true;
+      li.hidden = false;
+      var b = li.querySelector("b");
+      var text = v.toLocaleString("en-US");
+      var sr = li.querySelector(".sr-only");
+      if (sr) sr.textContent = text;
+      if (b && (b.getAttribute("data-final") || b.textContent) !== text) { b.setAttribute("data-final", text); b.textContent = text; li.classList.remove("bumped"); void li.offsetWidth; li.classList.add("bumped"); }
+    });
+    // The inline tools figure in the footnote.
+    root.querySelectorAll("[data-k-inline]").forEach(function (el) {
+      var v = j[el.getAttribute("data-k-inline")];
+      if (typeof v === "number") el.textContent = v.toLocaleString("en-US");
+    });
+    root.querySelectorAll("time[data-ago]").forEach(function (t) {
+      var k = t.getAttribute("data-ago-k");
+      var ms = k && typeof j[k] === "number" ? j[k] : Number(t.getAttribute("data-ago"));
+      if (ms) { t.setAttribute("data-ago", String(ms)); t.textContent = agoText(ms); }
+    });
+    return any;
+  };
   var refresh = function () {
     if (document.hidden) return;
     fetch("/agents/live.json").then(function (r) { return r.json(); }).then(function (j) {
-      var any = false;
-      box.querySelectorAll("li[data-k]").forEach(function (li) {
-        var v = j[li.getAttribute("data-k")];
-        if (typeof v !== "number") return;
-        any = true;
-        li.hidden = false;
-        var b = li.querySelector("b");
-        var text = v.toLocaleString("en-US");
-        if (b && b.textContent !== text) { b.textContent = text; li.classList.remove("bumped"); void li.offsetWidth; li.classList.add("bumped"); }
-      });
-      if (any) box.hidden = false;
+      if (update(box, j)) box.hidden = false;
+      update(work, j.work);
     }).catch(function () {});
   };
   setInterval(refresh, 30000);
+})();
+
+// ADR 0034 amendment 2 (Dinike's call): on each load the band's numbers count up from zero to the real figure, once,
+// in about 1.2 s. The HTML already holds the real numbers (crawlers, link previews and no-JS readers see them), screen
+// readers get only the final number, reduced-motion users see it at once, and each number's width is held so nothing
+// shifts while it counts.
+(function () {
+  var band = document.querySelector("[data-work-live]");
+  if (!band || !window.requestAnimationFrame) return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  var items = [];
+  band.querySelectorAll("li[data-k]:not([hidden]) > b").forEach(function (b) {
+    var text = b.textContent.trim();
+    var n = Number(text.replace(/,/g, ""));
+    if (!text || !isFinite(n) || n <= 0) return;
+    var sr = document.createElement("span");
+    sr.className = "sr-only";
+    sr.textContent = text;
+    b.parentNode.insertBefore(sr, b);
+    b.setAttribute("aria-hidden", "true");
+    b.setAttribute("data-final", text);
+    b.style.minWidth = b.getBoundingClientRect().width + "px";
+    b.textContent = "0";
+    items.push({ b: b, text: text, n: n });
+  });
+  if (!items.length) return;
+  var start = null, ms = 1200;
+  var step = function (t) {
+    if (start === null) start = t;
+    var p = Math.min(1, (t - start) / ms);
+    var e = 1 - Math.pow(1 - p, 3);
+    items.forEach(function (it) {
+      // A live refresh during the count wins: it has already written the newer real number.
+      if (it.b.getAttribute("data-final") !== it.text) return;
+      it.b.textContent = p < 1 ? Math.round(it.n * e).toLocaleString("en-US") : it.text;
+    });
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 })();

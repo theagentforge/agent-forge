@@ -46,7 +46,11 @@ describe("ops digest", () => {
     expect(growthLine({ ...g, trap_card_copies_7d: 4, trap_card_downloads_7d: 9 })).toContain("Trap card this week: **4** copies, **9** downloads.");
     expect(growthLine({ ...g, mcp_sessions_7d: 12, mcp_sessions_signed_in_7d: 3, mcp_tool_calls_7d: 40 })).toContain("AI connections this week: **12** (3 signed in), **40** tool calls.");
     expect(growthLine({ ...g, arrivals_7d: 30, arrivals_by_source_7d: [{ name: "x", n: 20 }, { name: "direct", n: 10 }], arrivals_by_tag_7d: [{ name: "x-launch", n: 5 }] })).toContain(
-      "Visitors arriving this week: **30** (x 20, direct 10); by link tag: x-launch 5.",
+      "People arriving this week: **30** (x 20, direct 10); by link tag: x-launch 5.",
+    );
+    // Gross page views, crawlers included, come first (Dinike, 23 Oct).
+    expect(growthLine({ ...g, page_views_7d: 25000, crawler_page_views_7d: 24500, arrivals_7d: 30, arrivals_by_source_7d: [] })).toContain(
+      "Page views this week, crawlers included: **25000** (crawlers 24500). People arriving this week: **30**.",
     );
   });
 

@@ -1,3 +1,4 @@
+import { pingIndexNow } from "./services/indexnow";
 import { OAuthProvider, type OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
 import { API_VERSION } from "@forge/shared";
 import { Hono } from "hono";
@@ -6,6 +7,7 @@ import { auth } from "./auth";
 import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { seedRun } from "./seed/mcp-registry";
+import { seedReferenceServers } from "./seed/reference-servers";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
 import { refreshClipIndex } from "./arena/clips";
@@ -120,6 +122,18 @@ export default {
         ),
       );
     }
+    ctx.waitUntil(
+      pingIndexNow(env, controller.scheduledTime).then(
+        (r) => console.log("indexnow", JSON.stringify(r)),
+        (e) => console.error("indexnow_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
+      seedReferenceServers(env).then(
+        (n) => n && console.log("seed_reference", n),
+        (e) => console.error("seed_reference_failed", String(e)),
+      ),
+    );
     ctx.waitUntil(
       seedRun(env).then(
         (r) => console.log("seed_run", JSON.stringify(r)),

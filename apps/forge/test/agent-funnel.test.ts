@@ -32,8 +32,12 @@ describe("agent funnel (found us → connected → used a tool → came back →
     await bump(env, ["a2a:requests", "mcp:public:calls", "mcp:public:calls", "mcp:signed_in:calls", "scan:api", "watch:calls", "mcp:house:sessions"], now);
     // A day outside the 7-day window is never counted.
     await bump(env, ["ai:indexer", "mcp:public:sessions", "mcp:public:calls"], now - 8 * 86_400_000);
+    // One client app on two days counts as a repeat client; a directory check on one day doesn't.
+    await bump(env, ["mcp:client:cursor"], now);
+    await bump(env, ["mcp:client:cursor"], now - 86_400_000);
     const f = await agentFunnel(env, now);
     expect(f.stages).toMatchObject({ found: 8, connected: 3, used: 5, returned: 1 });
+    expect(f.detail).toMatchObject({ found_with_intent: 5, mcp_client_apps_on_2plus_days: 1 });
     expect(f.detail).toMatchObject({ mcp_sessions: 2, directory_health_checks: 2, a2a_requests: 1, tool_calls: 3, api_scans: 1, house_mcp_sessions: 1 });
     expect(f.rates).toMatchObject({ connected: 37.5, used: 166.7, returned: 20 });
     const daily = await agentFunnelDaily(env, now);
@@ -81,8 +85,14 @@ describe("home page live agent numbers (ADR 0030): everything counted, labelled 
   it("includes our House sessions and directory health checks, hides zeros, and the home page says so", async () => {
     const { liveAgentCounts } = await import("../src/services/agent-funnel");
     const before = await liveAgentCounts(env);
-    await bump(env, ["mcp:public:sessions", "mcp:client:glama", "mcp:house:sessions", "mcp:house:calls", "disc:agent-card"]);
+    await bump(env, ["mcp:public:sessions", "mcp:client:glama", "mcp:house:sessions", "mcp:house:calls", "disc:agent-card", "visit:all", "visit:all"]);
     const after = await liveAgentCounts(env);
+    // Gross page views, crawlers included, are the first number in the row.
+    expect((after.page_views_total ?? 0) - (before.page_views_total ?? 0)).toBe(2);
+    // On production, 15–23 Oct from Cloudflare's own counts are included (72,176 HTML views before the Worker counted).
+    const { PAGE_VIEWS_BACKFILL } = await import("../src/services/agent-funnel");
+    expect(Object.values(PAGE_VIEWS_BACKFILL).reduce((a, b) => a + b, 0)).toBe(72176);
+    if (env.ENVIRONMENT === "production") expect(after.page_views_total).toBeGreaterThanOrEqual(72178);
     // Glama's session isn't subtracted, and the House session and call are added.
     expect((after.agent_connections_total ?? 0) - (before.agent_connections_total ?? 0)).toBe(2);
     expect((after.agent_tool_uses_total ?? 0) - (before.agent_tool_uses_total ?? 0)).toBe(1);
@@ -94,6 +104,8 @@ describe("home page live agent numbers (ADR 0030): everything counted, labelled 
     expect(home).toContain("data-agent-live");
     expect(home).toContain("Everything counted, including our own test agents and directories checking that we're up.");
     expect(home).toMatch(/<li data-k="agent_connections_total"><b>\d+<\/b><span>AI connections<\/span>/);
+    expect(home).toMatch(/<li data-k="page_views_total"><b>[\d,]+<\/b><span>page views<\/span>/);
+    expect(home).not.toMatch(/people arriving|human visits/i);
   });
 
   it("are running totals: a visit a month ago still counts, where the 7-day funnel drops it", async () => {

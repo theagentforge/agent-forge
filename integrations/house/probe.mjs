@@ -129,6 +129,30 @@ export async function weeklyDownloads(pkgs, fetcher = fetch) {
   return out;
 }
 
+/**
+ * Well-known servers people check first but the registry ranking misses: not listed there as npm stdio packages, or
+ * needing a start argument (filesystem needs a folder: the scratch directory). Our own data, 22-23 Oct: checks of
+ * `@modelcontextprotocol/server-filesystem`, the reference `fetch` server and `context7` found nothing. Each starts
+ * with no credentials; one that asks for configuration is skipped (needs_config), never reported as failed.
+ */
+export const PRIORITY = [
+  { pkg: "@modelcontextprotocol/server-filesystem", args: ["."] },
+  { pkg: "@modelcontextprotocol/server-memory" },
+  { pkg: "@modelcontextprotocol/server-sequential-thinking" },
+  { pkg: "@modelcontextprotocol/server-everything" },
+  { pkg: "@upstash/context7-mcp" },
+  { pkg: "@playwright/mcp" },
+  { pkg: "chrome-devtools-mcp" },
+  { pkg: "@browsermcp/mcp" },
+];
+
+/** The plan with the priority servers first (no duplicates), still at most `count` entries. */
+export function withPriority(plan, count, priority = PRIORITY) {
+  const first = priority.map((p, i) => ({ registryName: null, pkg: p.pkg, version: null, ...(p.args ? { args: p.args } : {}), priority: i + 1 }));
+  const seen = new Set(first.map((p) => p.pkg));
+  return [...first, ...plan.filter((c) => !seen.has(c.pkg))].slice(0, count);
+}
+
 /** The `count` most-downloaded candidates, busiest first (ties by name, so the plan is stable). */
 export function rankTop(candidates, downloads, count) {
   return candidates
@@ -172,11 +196,12 @@ export function classify(r) {
 export const skipReason = (r) => (NEEDS_CONFIG.test(r.stderr) ? "needs_config" : "no_answer");
 
 /** Starts one server with npx and speaks just enough MCP to list its tools. */
-export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS) {
+export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = []) {
   return new Promise((resolve) => {
     const dir = mkdtempSync(join(tmpdir(), "house-"));
     const started = Date.now();
-    const child = spawn("npx", ["-y", `${pkg}@${version}`], {
+    // Start arguments come only from PRIORITY (constants in this file), never from the registry.
+    const child = spawn("npx", ["-y", `${pkg}@${version}`, ...args.filter((x) => typeof x === "string" && /^[\w./-]{1,64}$/.test(x))], {
       cwd: dir,
       // A clean environment: no tokens or secrets reach the server. Proxy settings pass through where they exist.
       env: {
@@ -275,7 +300,7 @@ async function probeAll(candidates) {
     try {
       const v = await npmVersion(c.pkg, c.version);
       if (v.missing) return { ...c, outcome: "skip", why: "not_on_npm" };
-      const r = await handshake(c.pkg, v.version);
+      const r = await handshake(c.pkg, v.version, PROBE_TIMEOUT_MS, Array.isArray(c.args) ? c.args : []);
       const verdict = classify(r);
       console.log(`${c.pkg}@${v.version}: ${verdict ? `${verdict.outcome} (${r.toolsListed ?? 0} tools, ${r.ms} ms)` : `skipped (${skipReason(r)})`}`);
       return verdict
@@ -299,7 +324,7 @@ async function main() {
     const count = Number(rest[0] ?? 500);
     const candidates = await allCandidates();
     const downloads = await weeklyDownloads(candidates.map((c) => c.pkg));
-    const plan = rankTop(candidates, downloads, count);
+    const plan = withPriority(rankTop(candidates, downloads, count), count);
     writeFileSync("plan.json", JSON.stringify(plan, null, 2));
     console.log(`Planned ${plan.length} of ${candidates.length} candidates`);
     return;

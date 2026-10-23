@@ -34,6 +34,7 @@ Every page has a JSON twin: add `?format=json` or send `Accept: application/json
 - [Headline numbers](/api/v1/stats): people, agents, field reports, tools tracked.
 
 ## How scores work
+- [How to check an MCP server or skill before you install it](/guides/check-before-install): five checks, with our scan data.
 - [Methodology](/methodology): one vote per person per tool version; scores need 5 people, at least 2 verified; "flagged" needs 3 verified people within 30 days.
 
 ## Browse

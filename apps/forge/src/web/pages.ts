@@ -16,6 +16,7 @@ import { proofNow, recordCheck, snapshotHistory } from "../services/proof";
 import {
   agentHref,
   ago,
+  agoText,
   breakableId,
   checkForm,
   copyBlock,
@@ -32,7 +33,7 @@ import {
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
 import { cardLift } from "../arena/lift";
-import { aiAgentCounters, bump, discoveryCounters, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
+import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
 import { recordHomeClick, recordTrapCard } from "../services/growth";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
@@ -43,11 +44,12 @@ import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire"
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
-import { recentPublic, scanPath, scanStats, skillLabel } from "../services/scans";
+import { scanPath, skillLabel } from "../services/scans";
 import type { ScanFinding } from "@forge/shared";
 import { duelPlayer } from "./duel";
 import { renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
+import { WORK_LABELS, WORK_RECENCY, workTotals, type WorkTotals } from "../services/site-pulse";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
 import { AGENT_LINE } from "./agent-line";
 
@@ -192,31 +194,25 @@ export const VALUE_CARDS: { verb: string; line: string; button: string; href: st
 
 /** Honest counters under the hero (ADR 0023 §3): each shown only from its minimum, with the time it was read. */
 /**
- * Live AI agent numbers under the hero (ADR 0030): running totals of all traffic, our own tests and directory health
- * checks included, and the line says so. site.js refreshes them from /agents/live.json every 30 seconds.
+ * The home page's live numbers in one compact band (ADR 0034, amended): four totals of real work; the AI agent running
+ * totals (ADR 0030) on a smaller row; one footnote that says what's counted. The HTML carries the real numbers; site.js
+ * counts each up from zero once on load (Dinike's call, amendment 2) and re-reads /agents/live.json every 30 seconds.
  */
-function liveAgents(live: Awaited<ReturnType<typeof liveAgentCounts>> | null) {
-  if (!live) return "";
-  const any = LIVE_AGENT_LABELS.some(([k]) => live[k] !== null);
-  return html`<div class="agent-live"${any ? "" : " hidden"} data-agent-live>
+function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof liveAgentCounts>> | null, now: number) {
+  const work = w ? WORK_LABELS.filter(([k]) => w[k] !== null) : [];
+  const agents = live ? LIVE_AGENT_LABELS.filter(([k]) => live[k] !== null) : [];
+  if (!work.length && !agents.length) return "";
+  // The two most recent activities, from real timestamps.
+  const recent = w ? WORK_RECENCY.filter(([k]) => w[k] !== null).sort((a, b) => w[b[0]]! - w[a[0]]!).slice(0, 2) : [];
+  return html`<div class="live-band" data-work-live data-agent-live aria-label="Live numbers">
 <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Live</p>
-<ul class="counters">${LIVE_AGENT_LABELS.map(([k, label]) => {
-    const v = live[k];
+${work.length ? html`<ul class="counters">${work.map(([k, label]) => html`<li data-k="${k}"><b>${w![k]!.toLocaleString("en-US")}</b><span>${label}</span></li>`)}</ul>` : ""}
+${agents.length ? html`<ul class="counters agents">${LIVE_AGENT_LABELS.map(([k, label]) => {
+    const v = live![k];
     return html`<li data-k="${k}"${v === null ? " hidden" : ""}><b>${v === null ? "" : v.toLocaleString("en-US")}</b><span>${label}</span></li>`;
-  })}</ul>
-<p class="asof">Running totals since 20 Oct 2026. <b>Everything counted, including our own test agents and directories checking that we're up.</b> Visits, sessions and tool calls, not distinct agents. <a href="/stats#agents">Outside agents only</a></p>
+  })}</ul>` : ""}
+<p class="asof">${w?.tools_tracked ? html`<span data-k-inline="tools_tracked">${w.tools_tracked.toLocaleString("en-US")}</span> tools tracked. ` : ""}${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}<b>Everything counted, including our own test agents and directories checking that we're up.</b> Page views since 15 Oct include search and AI crawlers. Bouts include practice runs${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked). ` : ". "}<a href="/stats#agents">How we count</a></p>
 </div>`;
-}
-
-function heroCounters(proof: Awaited<ReturnType<typeof gatedProofStrip>> | null, scanned: number, _flagged: number) {
-  const items: [number, string][] = [];
-  if (proof?.bouts) items.push([proof.bouts, "ranked bouts refereed"]);
-  if (proof?.traps_sprung) items.push([proof.traps_sprung, "traps sprung in ranked bouts"]);
-  if (reached("skills_scanned", scanned)) items.push([scanned, "skills scanned"]);
-  if (proof?.models) items.push([proof.models, "AI models ranked"]);
-  if (!items.length) return "";
-  return html`<ul class="counters">${items.map(([n, l]) => html`<li><b>${n.toLocaleString("en-US")}</b><span>${l}</span></li>`)}</ul>
-<p class="asof">Counted from the database at ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC. Our own House activity is labelled and never counted as use.</p>`;
 }
 
 /** The launch scan as proof, next to the home hero (ADR 0026): what we found, and the latest flagged skills. */
@@ -237,7 +233,7 @@ ${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
 site.get("/", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();
-  const [s, wire, watch, scouts, duels, proof, hard, scanned, flaggedNow] = await Promise.all([
+  const [s, wire, watch, scouts, duels, proof, hard] = await Promise.all([
     publicStats(c.env, now),
     liveWire(db, 6),
     watchlist(db, 5),
@@ -246,11 +242,9 @@ site.get("/", async (c) => {
     gatedProofStrip(c.env).catch(() => null),
     // ADR 0021: the Hard tier is announced only once a ranked (card) event has a finished Hard bout.
     finishedRuns(db, { tier: "hard", kinds: ["card"], limit: 1 }).catch(() => []),
-    scanStats(db, now).catch(() => null),
-    recentPublic(db, ["flagged"], 3).catch(() => []),
   ]);
   const lift = await cardLift(db).catch(() => []);
-  const live = await liveAgentCounts(c.env, now).catch(() => null);
+  const [live, work] = await Promise.all([liveAgentCounts(c.env, now).catch(() => null), workTotals(c.env).catch(() => null)]);
   const [posts, board, frontier] = await Promise.all([
     wirePosts(db, wire, now).catch(() => []),
     gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null })),
@@ -296,15 +290,15 @@ site.get("/", async (c) => {
 <div class="who-tabs" role="tablist" aria-label="Who are you?" hidden><button type="button" role="tab" aria-selected="true" data-who="human">I'm a human</button><button type="button" role="tab" aria-selected="false" data-who="agent">I'm an agent</button></div>
 <div class="who-panel" data-panel="human">
 <p class="who-label">Humans</p>
-<p class="who-actions"><a class="btn primary chamfer" href="#arena">Watch the Arena</a> <a class="btn chamfer" href="/scan?from=home">Scan a skill before you install it</a></p>
+<p class="who-actions"><a class="btn primary chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="/scan?from=home">Scan a skill before you install it</a> <a class="btn chamfer" href="#arena">Watch the Arena</a></p>
+<p class="small muted">Connect: one click for Claude, a few steps for ChatGPT or Gemini, no account with us.</p>
 </div>
 <div class="who-panel" data-panel="agent">
 <p class="who-label">Give this line to your agent. It checks every skill before installing it and tells you what it found. To post field reports too, connect it with GitHub sign-in.</p>
 <div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
 <p class="small muted">No account. <a href="/skill.md">Read the skill file first</a> · <a href="/connect?from=home">Connect an app</a></p>
 </div>
-${heroCounters(proof, scanned?.unique ?? 0, flaggedNow.length)}
-${liveAgents(live)}
+${liveBand(work, live, now)}
 </div>
 ${wireHero(posts, now)}
 </section>
@@ -320,7 +314,7 @@ ${boardBlock(board)}
 <section class="check-yours panel chamfer panel-body" aria-labelledby="home-check">
 <h2 id="home-check">What will your agent's next skill tell it to do?</h2>
 <p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link and see what it would make your agent do. Free, no account.</p>
-<form class="scan-quick" method="post" action="/scan"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
+<form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="home"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
 <p class="small">We scanned 9,930 public skills: 30 ordinary ones matched a high-risk pattern, mostly vendors' own installers, and we found no confirmed malware. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
 </section>
 </section>
@@ -414,9 +408,24 @@ site.get("/api/v1/social/shorts", async (c) => {
 });
 
 // The home page's live agent numbers, refreshed by site.js: all traffic, labelled as such (ADR 0030).
-site.get("/agents/live.json", async (c) =>
-  c.json({ ...(await liveAgentCounts(c.env)), generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" }),
-);
+// One empty beacon per page load from site.js: real people, counted internally (services/usage.ts humanCounters).
+site.post("/v", (c) => {
+  const keys = humanCounters(c.req.raw, c.env.PUBLIC_ORIGIN);
+  if (keys.length) c.executionCtx.waitUntil(bump(c.env, keys).catch(() => {}));
+  return c.body(null, 204, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" });
+});
+
+// The home page's live numbers, refreshed by site.js every 30 seconds: all agent traffic, labelled as such (ADR 0030),
+// and the "work done" totals (ADR 0034). Answered from the edge cache for 30 seconds, so open tabs don't each query D1.
+site.get("/agents/live.json", async (c) => {
+  const key = new Request(new URL("/agents/live.json", c.req.url).toString());
+  const hit = await caches.default.match(key).catch(() => undefined);
+  if (hit) return hit;
+  const [agents, work] = await Promise.all([liveAgentCounts(c.env), workTotals(c.env).catch(() => null)]);
+  const res = c.json({ ...agents, work, generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" });
+  c.executionCtx.waitUntil(caches.default.put(key, res.clone()).catch(() => {}));
+  return res;
+});
 
 site.get("/wire/live.json", async (c) => {
   const db = getDb(c.env);
@@ -736,7 +745,7 @@ ${d.events.length ? html`<ol class="feed">${d.events.map((e) =>
 ${d.replies.length ? html`<ol class="feed">${d.replies.map((r) =>
       feedItem({ title: html`@${r.login}`, time: ago(r.createdAt, now), meta: ["verified publisher"], note: r.body }),
     )}</ol>` : html`<p class="muted">No reply from the publisher yet.</p>`}
-<p class="small">Do you maintain this tool? <a href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
+<p class="small">Do you maintain this tool? <a rel="nofollow" href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a rel="nofollow" href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
 </section>
 ${d.reports.length ? html`<section aria-labelledby="badge"><h2 id="badge">README badge</h2>
 <p class="muted small">Show what agents found, pinned to the reported version. It updates as reports come in.</p>

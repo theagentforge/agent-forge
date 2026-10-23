@@ -7,6 +7,7 @@ import { recordCheck } from "./services/proof";
 import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
 import { bump, scanCounters } from "./services/usage";
 import { site } from "./web/pages";
+import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 
 // Agent-to-agent discovery (A2A protocol, a2a-protocol.org, v1.0 and the still-common v0.3). Other agents and agent
 // platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The three
@@ -109,14 +110,14 @@ export function readRequest(parts: unknown): A2ARequest | null {
 /** Runs one request. Always structured data; errors are data too, so a calling agent can branch on them. */
 export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Promise<Record<string, unknown>> {
   if (!req) return { error: "unrecognized_request", skills: A2A_SKILLS.map((s) => ({ id: s.id, description: s.description })) };
-  if (!(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success) return { skill: req.skill, error: "rate_limited" };
+  if (!(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
   await bump(env, ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
   if (req.skill === "trap-card") {
     return { skill: "trap-card", version: TRAP_CARD_VERSION, date: TRAP_CARD_DATE, text: trapCardText(), checks: TRAP_CHECKS.map((c) => c.text), url: `${env.PUBLIC_ORIGIN}/trap-card` };
   }
   if (req.skill === "check-tool") {
     const q = checkQuerySchema.safeParse(Object.fromEntries(Object.entries(req.query).filter(([, v]) => v !== undefined)));
-    if (!q.success) return { skill: "check-tool", error: "invalid_query", detail: q.error.issues[0]?.message ?? null };
+    if (!q.success) return { skill: "check-tool", error: "invalid_query", detail: q.error.issues[0]?.message ?? null, ...CHECK_QUERY_HELP };
     await recordCheck(env, "api", ip);
     await recordToolCheck(env, q.data);
     return { skill: "check-tool", result: await checkTool(env, q.data) };

@@ -29,7 +29,7 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
     .where(
       and(
         gte(t.usageDaily.day, since),
-        sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} like 'skillmd:%' or ${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%')`,
+        sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} like 'skillmd:%' or ${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'connect:%')`,
       ),
     )
     .groupBy(t.usageDaily.key);
@@ -67,6 +67,16 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   // Signed-in agents of people outside the project: the one count of distinct agents we have.
   const [a] = await db.select({ n: sql<number>`count(*)` }).from(t.agents).innerJoin(t.humans, eq(t.agents.humanId, t.humans.id)).where(outside);
 
+  // Two sharper reads of the soft stages (research 23 Oct): "found" without search crawlers and bare discovery-file
+  // fetches (often scanners), and MCP client apps (by name, not agents) seen on 2+ days of the window. Detail only.
+  const foundWithIntent = get("ai:live") + get("ai:coding") + skillFiles;
+  const clientDays = await db
+    .select({ key: t.usageDaily.key, days: sql<number>`count(distinct ${t.usageDaily.day})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, since), sql`${t.usageDaily.key} like 'mcp:client:%'`))
+    .groupBy(t.usageDaily.key);
+  const repeatClients = clientDays.filter((c) => Number(c.days) >= 2 && !DIRECTORY_CLIENTS.includes(c.key.slice("mcp:client:".length))).length;
+
   const rate = (x: number, of: number) => (of > 0 ? Math.round((x / of) * 1000) / 10 : null);
   return {
     days,
@@ -83,6 +93,10 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
       api_scans: apiScans,
       directory_health_checks: directoryChecks,
       house_mcp_sessions: get("mcp:house:sessions"),
+      found_with_intent: foundWithIntent,
+      mcp_client_apps_on_2plus_days: repeatClients,
+      /** People who finished /connect: their AI checked the page's one-time test code. */
+      connect_tests_passed: get("connect:test-passed"),
     },
     signed_in_agents_all_time: Number(a?.n ?? 0),
   };
@@ -120,6 +134,25 @@ export const FUNNEL_STAGES = [
 
 export type FunnelStage = (typeof FUNNEL_STAGES)[number][0];
 
+/** The first day of the gross page-view count. */
+export const PAGE_VIEWS_SINCE = "2026-10-15";
+
+/**
+ * Page views before the Worker counted them (released 23 Oct, 03:12 UTC): Cloudflare's count of HTML responses on
+ * theagentforge.io, crawlers included, read through the zone analytics API on 23 Oct. Added to visit:all.
+ */
+export const PAGE_VIEWS_BACKFILL: Record<string, number> = {
+  "2026-10-15": 2171,
+  "2026-10-16": 2423,
+  "2026-10-17": 1319,
+  "2026-10-18": 8222,
+  "2026-10-19": 6566,
+  "2026-10-20": 25889,
+  "2026-10-21": 10129,
+  "2026-10-22": 14958,
+  "2026-10-23": 499, // 00:00–03:12 UTC
+};
+
 /** The day the agent counters started (the first day in usage_daily for these keys). */
 export const COUNTING_SINCE = "2026-10-20";
 
@@ -137,6 +170,12 @@ export async function liveAgentCounts(env: Env, now = Date.now()) {
     .from(t.usageDaily)
     .where(eq(t.usageDaily.key, "mcp:house:calls"));
   const houseCalls = Number(h?.n ?? 0);
+  // Gross page views, crawlers included (Dinike, 23 Oct: "the full gross large number"), since 15 Oct. 15–22 Oct come
+  // from Cloudflare's HTML request counts (PAGE_VIEWS_BACKFILL, production only); later views are counted as they happen.
+  const [pv] = await getDb(env)
+    .select({ n: sql<number>`coalesce(sum(${t.usageDaily.n}), 0)` })
+    .from(t.usageDaily)
+    .where(and(eq(t.usageDaily.key, "visit:all"), gte(t.usageDaily.day, PAGE_VIEWS_SINCE)));
   const all = {
     found: f.stages.found,
     connected: d.mcp_sessions + d.directory_health_checks + d.house_mcp_sessions + d.a2a_requests,
@@ -144,6 +183,7 @@ export async function liveAgentCounts(env: Env, now = Date.now()) {
   };
   const shown = (v: number) => (v > 0 ? v : null);
   return {
+    page_views_total: shown(Number(pv?.n ?? 0) + (env.ENVIRONMENT === "production" ? Object.values(PAGE_VIEWS_BACKFILL).reduce((a, b) => a + b, 0) : 0)),
     agent_visits_total: shown(all.found),
     agent_connections_total: shown(all.connected),
     agent_tool_uses_total: shown(all.used),
@@ -154,6 +194,7 @@ export async function liveAgentCounts(env: Env, now = Date.now()) {
 
 /** Labels for the home page's live agent numbers (running totals). */
 export const LIVE_AGENT_LABELS = [
+  ["page_views_total", "page views"],
   ["agent_visits_total", "AI agent visits"],
   ["agent_connections_total", "AI connections"],
   ["agent_tool_uses_total", "tool uses by AI"],

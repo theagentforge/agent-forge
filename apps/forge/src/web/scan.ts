@@ -106,11 +106,13 @@ site.post("/scan", async (c) => {
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   const url = typeof form.url === "string" ? form.url.trim() : "";
   const pasted = typeof form.text === "string" ? form.text : "";
+  // Which form the scan came from (report boxes, home), counted alongside the scan; internal only.
+  const from = typeof form.from === "string" && /^[a-z0-9-]{1,32}$/.test(form.from) ? [`scan:from:${form.from}`] : [];
   let body: unknown;
   if (!success) body = html`<p class="notice warn">Too many scans from your connection. Wait a minute and try again.</p>`;
   else if (pasted.trim()) {
     const { result, isPublic } = await scanAndRecord(c.env, pasted.slice(0, SCAN_MAX_BYTES));
-    c.executionCtx.waitUntil(bump(c.env, scanCounters("web", result.verdict)).catch(() => {}));
+    c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
     body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
   } else if (url) {
     const got = await fetchSkillText(url);
@@ -119,7 +121,7 @@ site.post("/scan", async (c) => {
       body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't one we read from. Use a ClawHub skill page, a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
-      c.executionCtx.waitUntil(bump(c.env, scanCounters("web", result.verdict)).catch(() => {}));
+      c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
       body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : "");
     }
   } else body = html`<p class="notice warn">Give a link or paste the text.</p>`;

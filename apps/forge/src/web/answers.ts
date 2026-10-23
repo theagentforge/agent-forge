@@ -160,7 +160,7 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
 
 // The sitemap (agent-channels §4.2): static pages, an answer page for every public scan with a GitHub source, and every
 // tool with field reports. Built from the database, edge-cached for 6 hours.
-export const SITEMAP_STATIC = ["/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/connect", "/methodology", "/about", "/stats", "/wire", "/watchlist", "/reports/skill-scan-2026-10"];
+export const SITEMAP_STATIC = ["/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/connect", "/methodology", "/about", "/stats", "/wire", "/watchlist", "/reports/skill-scan-2026-10", "/guides/check-before-install"];
 const SITEMAP_MAX = 45_000;
 const xml = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
 
@@ -180,6 +180,13 @@ export async function sitemapPaths(db: Db): Promise<{ path: string; lastmod?: nu
   for (const r of reported) if (!byId.has(r.id)) byId.set(r.id, 0);
   return [...SITEMAP_STATIC.map((path) => ({ path })), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined }))].slice(0, SITEMAP_MAX);
 }
+
+// The IndexNow key file (services/indexnow.ts): search engines fetch it to confirm our pings are ours.
+site.get("/:file{[a-f0-9]{32}\\.txt}", async (c) => {
+  const key = await c.env.KV.get("indexnow:key");
+  if (!key || c.req.param("file") !== `${key}.txt`) return c.notFound();
+  return c.text(key, 200, { "Cache-Control": "public, max-age=86400" });
+});
 
 site.get("/sitemap.xml", async (c) => {
   const cache = caches.default;

@@ -80,7 +80,7 @@ interface SeedState {
   passStartedAt: string | null;
 }
 
-export async function upsertSeedTools(db: Db, items: SeedTool[], now: number) {
+export async function upsertSeedTools(db: Db, items: SeedTool[], now: number, source = "mcp-registry") {
   if (!items.length) return 0;
   const ids = items.map((i) => i.canonicalId);
   const existing = await db.select().from(t.tools).where(inArray(t.tools.canonicalId, ids));
@@ -105,7 +105,7 @@ export async function upsertSeedTools(db: Db, items: SeedTool[], now: number) {
   });
   stmts.push(db.delete(t.publicSignals).where(inArray(t.publicSignals.toolId, toolIds)));
   items.forEach((it, i) =>
-    stmts.push(db.insert(t.publicSignals).values({ id: newId(), toolId: toolIds[i]!, source: "mcp-registry", payload: it.signal, fetchedAt: now })),
+    stmts.push(db.insert(t.publicSignals).values({ id: newId(), toolId: toolIds[i]!, source, payload: it.signal, fetchedAt: now })),
   );
   await db.batch(stmts as [(typeof stmts)[number], ...(typeof stmts)[number][]]);
   return items.length;

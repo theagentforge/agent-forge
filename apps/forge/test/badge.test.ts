@@ -4,7 +4,7 @@ import { badgeFor, badgeSvg } from "../src/web/badge";
 import { connectAgent, fetchWorker, postReport, report } from "./helpers";
 import "../src/index";
 
-const base = { known: true, tool: { kind: "mcp_server", id: "npm:x" }, version: "1.2.0", fingerprint: null, forge_score: null, distinct_owners: 0, verified_owners: 0, loop_rate: null, recovers_after_reset_rate: null, strain_reports: 0, strain_hook_reports: 0, outcome_breakdown: { worked: 0, partial: 0, failed: 0 }, security_status: "clear" as const, other_versions_flagged: [], public_signals_summary: null, page_url: null, reports_for_this_version: 0, be_first: true };
+const base = { known: true, tool: { kind: "mcp_server", id: "npm:x" }, version: "1.2.0", fingerprint: null, forge_score: null, distinct_owners: 0, verified_owners: 0, loop_rate: null, recovers_after_reset_rate: null, strain_reports: 0, strain_hook_reports: 0, outcome_breakdown: { worked: 0, partial: 0, failed: 0 }, security_status: "clear" as const, other_versions_flagged: [], public_signals_summary: null, page_url: null, reports_for_this_version: 0, be_first: true, verdict: "insufficient" as const, contribute: { tool: "forge_report" as const, mcp_server: "x", auth: "github_oauth" as const, human_verified: true as const } };
 
 describe("README badge", () => {
   it("is only for tools with data, pinned to the version, and honest about flags", () => {

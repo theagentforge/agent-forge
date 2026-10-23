@@ -33,10 +33,18 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
     expect(links.claude).toBe(
       `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=The%20Agent%20Forge&connectorUrl=${encodeURIComponent(`${env.PUBLIC_ORIGIN}/mcp/public`)}`,
     );
-    expect(JSON.parse(atob(new URL(links.cursor.replace("cursor://", "https://")).searchParams.get("config")!))).toEqual({ url: `${env.PUBLIC_ORIGIN}/mcp` });
-    expect(JSON.parse(decodeURIComponent(links.vscode.slice("vscode:mcp/install?".length)))).toEqual({ name: "forge", type: "http", url: `${env.PUBLIC_ORIGIN}/mcp` });
+    // One-click links open the no-sign-in address; sign-in is the later step for filing reports.
+    const pub = `${env.PUBLIC_ORIGIN}/mcp/public`;
+    expect(JSON.parse(atob(new URL(links.cursor.replace("cursor://", "https://")).searchParams.get("config")!))).toEqual({ url: pub });
+    expect(JSON.parse(decodeURIComponent(links.vscode.slice("vscode:mcp/install?".length)))).toEqual({ name: "forge", type: "http", url: pub });
+    expect(JSON.parse(atob(new URL(links.lmstudio.replace("lmstudio://", "https://x/")).searchParams.get("config")!))).toEqual({ url: pub });
+    const goose = new URL(links.goose.replace("goose://", "https://x/"));
+    expect(Object.fromEntries(goose.searchParams)).toMatchObject({ url: pub, type: "streamable_http", id: "forge" });
     const body = await page("/connect");
     expect(body).toContain(links.claude.replace(/&/g, "&amp;"));
+    expect(body).toContain(`claude mcp add --scope user --transport http forge ${pub}`);
+    expect(body).toContain("Then test it below");
+    expect(body).toContain("data-test-again");
   });
 
   it("opens the right tab from where the visitor came from", () => {
@@ -56,6 +64,10 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
     expect(await seen(code)).toBe(false);
     await fetchWorker(`/api/v1/check?id=npm:forge-test-${code}`, { headers: { "CF-Connecting-IP": "203.0.113.9" } });
     expect(await seen(code)).toBe(true);
+    // Counted once per code, as a conversion.
+    await fetchWorker(`/api/v1/check?id=npm:forge-test-${code}`, { headers: { "CF-Connecting-IP": "203.0.113.9" } });
+    const { agentFunnel } = await import("../src/services/agent-funnel");
+    await expect.poll(async () => (await agentFunnel(env)).detail.connect_tests_passed).toBe(1);
     expect(await seen("zzzzzz")).toBe(false);
     // Each visit gets its own code (the page isn't cached).
     expect(/data-test-code="([a-z0-9]{6})"/.exec(await page("/connect"))![1]).not.toBe(code);

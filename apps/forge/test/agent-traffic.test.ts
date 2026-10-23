@@ -19,8 +19,21 @@ describe("AI agent counters", () => {
   });
 
   it("people are still counted as visits, and AI agents aren't", () => {
-    expect(visitCounters(req("PerplexityBot/1.0"), "https://theagentforge.io")).toEqual([]);
+    expect(visitCounters(req("PerplexityBot/1.0"), "https://theagentforge.io")).toEqual(["visit:all", "visit:crawler"]);
     expect(visitCounters(req("Mozilla/5.0 (Macintosh) Safari/605"), "https://theagentforge.io")).toContain("visit:arrivals");
+    expect(visitCounters(req("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"), "https://theagentforge.io")).toContain("visit:arrivals");
+  });
+
+  it("crawlers that don't say \"bot\" count in the gross total, never as people (seen in our logs, 18–22 Oct)", () => {
+    for (const ua of [
+      "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.52 Mobile Safari/537.36 (compatible; GoogleOther)",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 (compatible; meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler))",
+      "Ziwei-Seat/1.0",
+      "",
+    ])
+      expect(visitCounters(req(ua), "https://theagentforge.io"), ua).toEqual(["visit:all", "visit:crawler"]);
+    // Our own internal navigation counts in the gross total only.
+    expect(visitCounters({ ...req("Mozilla/5.0 (Macintosh) Safari/605"), headers: new Headers({ "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", referer: "https://theagentforge.io/arena" }) }, "https://theagentforge.io")).toEqual(["visit:all"]);
   });
 });
 

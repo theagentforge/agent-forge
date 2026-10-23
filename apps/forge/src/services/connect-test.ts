@@ -1,4 +1,5 @@
 import type { CheckQuery } from "@forge/shared";
+import { bump } from "./usage";
 
 // The "Test it" step on /connect (ADR 0017 §4): the page shows a one-time code, the visitor asks their AI to check
 // `npm:forge-test-<code>`, and the page ticks when that check arrives, from any app. Only the code is stored, for an hour.
@@ -9,9 +10,11 @@ const key = (code: string) => `connect-test:${code}`;
 export const newTestCode = () => [...crypto.getRandomValues(new Uint8Array(6))].map((b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
 
 /** Called from every check path. True when the check was a connect test (it is then not a real tool check). */
-export async function markConnectTest(env: Pick<Env, "KV">, q: CheckQuery): Promise<boolean> {
+export async function markConnectTest(env: Env, q: CheckQuery): Promise<boolean> {
   const m = q.id ? TEST_ID.exec(q.id.trim().toLowerCase()) : null;
   if (!m) return false;
+  // The first check for a code is one person finishing /connect: the conversion we optimise (daily count only).
+  if ((await env.KV.get(key(m[1]!))) !== "1") await bump(env, ["connect:test-passed"]).catch(() => {});
   await env.KV.put(key(m[1]!), "1", { expirationTtl: 3600 });
   return true;
 }

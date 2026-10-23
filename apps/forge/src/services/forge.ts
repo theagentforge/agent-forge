@@ -1,16 +1,18 @@
 import {
+  displayVerdict,
   reportSchema,
   scanNote,
   scoreToolVersion,
   verdictFor,
   type CheckQuery,
   type CheckVerdict,
+  type DisplayVerdict,
   type HumanTier,
   type Report,
   type ScoredReport,
   type SecurityStatus,
 } from "@forge/shared";
-import { and, count, countDistinct, desc, eq, gte, ne } from "drizzle-orm";
+import { and, count, countDistinct, desc, eq, gte, like, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
@@ -53,6 +55,51 @@ export interface CheckResult {
   reports_for_this_version: number;
   /** True when no one has reported on this version yet: a report from this agent would be the first (ADR 0011 g). */
   be_first: boolean;
+  /**
+   * The one-word answer, as the site shows it: "insufficient" until a version has a Forge Score (also for tools we
+   * don't know), then "clear", "caution", "flagged" or "confirmed_malicious". security_status alone says only whether
+   * anything is flagged, so "clear" there never means "checked and fine" (issue: unknown tools read as clear).
+   */
+  verdict: DisplayVerdict;
+  /** Where a field report on this tool goes: data only (MASTER_PLAN §6.8), for agents whose owner has signed in. */
+  contribute: { tool: "forge_report"; mcp_server: string; auth: "github_oauth"; human_verified: true };
+  /** For a tool we don't know: up to 5 known tools whose id contains the asked name, so a bare name isn't a dead end. */
+  candidates?: { id: string; page_url: string }[];
+}
+
+export const contributeFor = (origin: string) =>
+  ({ tool: "forge_report", mcp_server: `${origin}/mcp`, auth: "github_oauth", human_verified: true }) as const;
+
+/** The searchable part of an id: "npm:@scope/name" → "name", "github.com/owner/repo" → "repo". */
+export function nameTerm(asked: string): string | null {
+  const parts = asked
+    .toLowerCase()
+    .replace(/^(npm|pypi|mcp-registry):/, "")
+    .replace(/^https?:\/\//, "")
+    .split(/[/@]/)
+    .filter(Boolean);
+  const term = parts.filter((p) => !["github.com", "tree", "main", "blob", "src", "www.npmjs.com", "package"].includes(p)).pop() ?? "";
+  const clean = term.replace(/[^a-z0-9._-]/g, "");
+  return clean.length >= 3 ? clean : null;
+}
+
+/** Up to 5 known tools whose id or alias contains the term. Never throws. */
+export async function toolCandidates(db: Db, origin: string, term: string | null) {
+  if (!term) return [];
+  try {
+    const pat = `%${term}%`; // term holds only [a-z0-9._-]; "_" matching any one character is harmless here
+    const rows = await db
+      .selectDistinct({ id: t.tools.canonicalId })
+      .from(t.tools)
+      .leftJoin(t.toolAliases, eq(t.toolAliases.toolId, t.tools.id))
+      .where(or(like(t.tools.canonicalId, pat), like(t.toolAliases.alias, pat)))
+      // Shortest ids first: the package itself ("npm:@upstash/context7-mcp") before forks and wrappers.
+      .orderBy(sql`length(${t.tools.canonicalId})`, t.tools.canonicalId)
+      .limit(5);
+    return rows.map((r) => ({ id: r.id, page_url: toolPageUrl(origin, r.id) }));
+  } catch {
+    return [];
+  }
 }
 
 const STATUS_RANK: Record<SecurityStatus, number> = { clear: 0, under_review: 1, flagged: 2, confirmed_malicious: 3 };
@@ -71,6 +118,7 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   const db = getDb(env);
   let version: typeof t.toolVersions.$inferSelect | undefined;
   let tool: typeof t.tools.$inferSelect | undefined;
+  let canonical: string | null = null;
 
   if (q.fingerprint) {
     version = await db.query.toolVersions.findFirst({
@@ -79,7 +127,7 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     });
     if (version) tool = await db.query.tools.findFirst({ where: eq(t.tools.id, version.toolId) });
   } else {
-    const canonical = q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!);
+    canonical = q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!);
     tool = await findTool(db, canonical);
     if (tool)
       version = await db.query.toolVersions.findFirst({
@@ -108,6 +156,9 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
       page_url: null,
       reports_for_this_version: 0,
       be_first: true,
+      verdict: "insufficient",
+      contribute: contributeFor(env.PUBLIC_ORIGIN),
+      candidates: await toolCandidates(db, env.PUBLIC_ORIGIN, canonical ? nameTerm(canonical) : null),
     };
   }
 
@@ -148,6 +199,8 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     page_url: toolPageUrl(env.PUBLIC_ORIGIN, tool.canonicalId),
     reports_for_this_version: reportCount,
     be_first: reportCount === 0,
+    contribute: contributeFor(env.PUBLIC_ORIGIN),
+    verdict: displayVerdict({ security_status: verdictFor(inherited ?? ownStatus), forge_score: score?.successScore ?? null }),
   };
 }
 

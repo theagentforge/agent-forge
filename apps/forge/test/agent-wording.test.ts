@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { A2A_SKILLS, agentCard } from "../src/a2a";
-import { SIGNED_IN_TOOLS } from "../src/mcp";
-import { GAUNTLET_TOOLS, PUBLIC_TOOLS } from "../src/mcp-public";
+import { SIGNED_IN_INSTRUCTIONS, SIGNED_IN_TOOLS } from "../src/mcp";
+import { GAUNTLET_INSTRUCTIONS, GAUNTLET_TOOLS, PUBLIC_INSTRUCTIONS, PUBLIC_TOOLS } from "../src/mcp-public";
 import { AGENT_DIRECTED } from "./wording";
 
 // docs/launch/agent-channels.md §2 and §4.1: everything an agent reads about our tools is data, never instructions.
@@ -27,6 +27,15 @@ describe("what agents read about our tools", () => {
       expect(text, where).toMatch(/\bReturns\b/);
       expect(text.length, where).toBeLessThanOrEqual(420);
     }
+  });
+
+  it("server instructions describe the server's scope, steer nothing and fit the 4,096-character cut-off", () => {
+    for (const [where, text] of [["public", PUBLIC_INSTRUCTIONS], ["gauntlet", GAUNTLET_INSTRUCTIONS], ["signed-in", SIGNED_IN_INSTRUCTIONS]]) {
+      expect(AGENT_DIRECTED.exec(text!)?.[0] ?? null, where).toBeNull();
+      expect(text!.length, where).toBeLessThanOrEqual(1200);
+    }
+    // The words a task uses come first, so tool search finds the server.
+    for (const w of ["skills", "MCP servers", "install", "prompt injection", "field reports"]) expect(PUBLIC_INSTRUCTIONS).toContain(w);
   });
 
   it("the phrase check catches what it should", () => {

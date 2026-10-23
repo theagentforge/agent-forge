@@ -127,7 +127,10 @@ const SOURCES: [RegExp, string][] = [
   [/(^|\.)(google|bing|duckduckgo|yahoo|ecosia|brave)\.[a-z.]+$|(^|\.)search\.brave\.com$/, "search"],
   [/(^|\.)(chatgpt\.com|claude\.ai|perplexity\.ai|gemini\.google\.com|copilot\.microsoft\.com)$/, "ai-chat"],
 ];
-const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|curl|wget|python|go-http|headless|lighthouse|monitor/i;
+// Crawlers that don't say "bot" are listed by name (seen in our Cloudflare logs, 18–22 Oct 2026: GoogleOther,
+// meta-externalagent, Ziwei-Seat), so "visitors" means people again.
+const BOT_UA =
+  /bot|crawl|spider|slurp|preview|facebookexternalhit|externalagent|externalfetcher|googleother|google-extended|google-inspectiontool|embedly|curl|wget|python|go-http|headless|lighthouse|monitor|scrap|fetcher|httpclient|axios|node-fetch|okhttp|java\/|libwww|-seat\/|^$/i;
 
 /** Source label for a Referer header: "direct" when there is none, "internal" for our own pages, "other" otherwise. */
 export function sourceLabel(referer: string | null | undefined, origin: string) {
@@ -142,15 +145,58 @@ export function sourceLabel(referer: string | null | undefined, origin: string) 
   return SOURCES.find(([re]) => re.test(host))?.[1] ?? "other";
 }
 
-/** The counters one page view adds, or none for bots, non-GET and our own internal navigation. */
+/**
+ * The counters one page view adds. Every GET page view counts in the gross total, `visit:all` (Dinike, 23 Oct: "I want
+ * to see the full gross large number"), and crawlers also in `visit:crawler`. People arriving from outside the site
+ * (not crawlers, not our own internal navigation) also count as `visit:arrivals`, by source and link tag.
+ */
 export function visitCounters(req: { method: string; url: string; headers: Headers }, origin: string): string[] {
-  if (req.method !== "GET" || BOT_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  if (req.method !== "GET") return [];
+  if (BOT_UA.test(req.headers.get("user-agent") ?? "")) return ["visit:all", "visit:crawler"];
+  // People opening /connect, from anywhere (our own pages included): the step before an AI connects.
+  const connect = new URL(req.url).pathname === "/connect" ? ["visit:connect"] : [];
   const source = sourceLabel(req.headers.get("referer"), origin);
-  if (source === "internal") return [];
+  if (source === "internal") return ["visit:all", ...connect];
   const q = new URL(req.url).searchParams;
   const tag = (q.get("from") ?? q.get("ref") ?? q.get("utm_source") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
-  return ["visit:arrivals", `visit:src:${source}`, ...(tag ? [`visit:tag:${tag}`] : [])];
+  return ["visit:all", ...connect, "visit:arrivals", `visit:src:${source}`, ...(tag ? [`visit:tag:${tag}`] : [])];
 }
+
+/**
+ * People, measured the only way crawlers rarely fake (Dinike, 23 Oct: the site shows every visit; internally we measure
+ * real people against crawlers): site.js sends one empty beacon per page load, and the Worker counts it per day as
+ * `visit:human` and by kind of page. Browsers driven by automation (navigator.webdriver) don't send it; bot user agents
+ * and other sites' pages aren't counted. Nothing about the person is kept.
+ */
+export function humanCounters(req: { method: string; headers: Headers }, origin: string): string[] {
+  if (req.method !== "POST" || BOT_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  const site = req.headers.get("sec-fetch-site");
+  const from = req.headers.get("origin") ?? req.headers.get("referer") ?? "";
+  if (site ? site !== "same-origin" : !from.startsWith(origin)) return [];
+  let path = "/";
+  try {
+    path = new URL(req.headers.get("referer") ?? origin).pathname;
+  } catch {
+    // no page known: counted as "other"
+  }
+  return ["visit:human", `visit:human:${humanPageKind(path)}`];
+}
+
+/** The kind of page a person was on, for `visit:human:<kind>`. */
+export const humanPageKind = (path: string) =>
+  path === "/"
+    ? "home"
+    : path.startsWith("/reports/")
+      ? "report"
+      : path === "/connect"
+        ? "connect"
+        : path.startsWith("/scan") || path === "/skill-watch"
+          ? "scan"
+          : /^\/(arena|best|gauntlet|trap-card|lab)(\/|$)/.test(path)
+            ? "arena"
+            : /^\/(t|tools)\//.test(path)
+              ? "tool"
+              : "other";
 
 /** Arrivals by source and by link tag over the last `days` days, for the ops digest and /api/v1/growth. */
 export async function visitStats(env: Env, now = Date.now(), days = 7) {
@@ -166,7 +212,8 @@ export async function visitStats(env: Env, now = Date.now(), days = 7) {
       .filter((r) => r.key.startsWith(prefix))
       .map((r) => ({ name: r.key.slice(prefix.length), n: Number(r.n) }))
       .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
-  return { days, arrivals: Number(rows.find((r) => r.key === "visit:arrivals")?.n ?? 0), by_source: list("visit:src:"), by_tag: list("visit:tag:").slice(0, 10) };
+  const n = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
+  return { days, page_views: n("visit:all"), crawler_page_views: n("visit:crawler"), arrivals: n("visit:arrivals"), by_source: list("visit:src:"), by_tag: list("visit:tag:").slice(0, 10) };
 }
 
 // AI agent traffic (docs/launch/agent-channels.md §4.5): AI user agents are dropped from visit counts as bots, so

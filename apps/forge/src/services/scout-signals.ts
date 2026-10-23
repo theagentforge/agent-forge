@@ -42,6 +42,7 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     topMisses(env, weekStart, yesterday, 50),
     agentFunnel(env, now - 86_400_000, 7),
   ]);
+  const conversion = await conversionDaily(env, now);
 
   // One entry per client name, whether it said hello with `initialize` or named itself in a call's `_meta`.
   const name = (key: string) => key.replace(/^mcp:client(call)?:/, "");
@@ -73,6 +74,57 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     new_clients: [...clients.values()].filter((c) => c.first_seen === yesterday).map((c) => c.name).sort(),
     discovery_fetches: Object.fromEntries(discRows.map((r) => [r.key.slice(5), Number(r.n)])),
     funnel_7d: funnel,
+    conversion,
     excludes: ["house", "crawlers (misses)", "founder accounts (funnel contributions)"],
   };
+}
+
+/**
+ * The conversion KPI (Dinike, 23 Oct): page visits → AI agents connected, per day for the last 14 full days, oldest
+ * first. Internal only (OIDC): it holds the people-only numbers the public site doesn't show.
+ * - page_views: every page view, crawlers included (visit:all); people: arrivals from outside, crawlers left out;
+ * - connect_page: people opening /connect; connect_tests_passed: people whose AI checked the /connect test code;
+ * - connections: MCP sessions on our three endpoints (directory health checks and House left out) plus A2A requests;
+ * - humans: browsers that ran site.js (the honest people count; `people` is inflated by crawlers posing as browsers);
+ * - per_1k_page_views, per_100_people and per_100_humans: connections per 1,000 page views, per 100 people and per
+ *   100 humans (null when 0).
+ */
+export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
+  const db = getDb(env);
+  const first = day(now - days * 86_400_000), last = day(now - 86_400_000);
+  const rows = await db
+    .select({ day: t.usageDaily.day, key: t.usageDaily.key, n: t.usageDaily.n })
+    .from(t.usageDaily)
+    .where(
+      and(
+        gte(t.usageDaily.day, first),
+        sql`${t.usageDaily.day} <= ${last}`,
+        sql`(${t.usageDaily.key} in ('visit:all', 'visit:crawler', 'visit:arrivals', 'visit:human', 'scan:web', 'visit:connect', 'connect:test-passed', 'a2a:requests', 'mcp:public:sessions', 'mcp:gauntlet:sessions', 'mcp:signed_in:sessions', 'mcp:public:calls', 'mcp:gauntlet:calls', 'mcp:signed_in:calls') or ${t.usageDaily.key} like 'mcp:client:%')`,
+      ),
+    );
+  const rate = (x: number, of: number, per: number) => (of > 0 ? Math.round((x / of) * per * 10) / 10 : null);
+  return Array.from({ length: days }, (_, i) => {
+    const d = day(now - (days - i) * 86_400_000);
+    const r = rows.filter((x) => x.day === d);
+    const get = (k: string) => r.filter((x) => x.key === k).reduce((a, x) => a + x.n, 0);
+    const directory = DIRECTORY_CLIENTS.reduce((a, c) => a + get(`mcp:client:${c}`), 0);
+    const connections = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directory) + get("a2a:requests");
+    const pageViews = get("visit:all"), people = get("visit:arrivals");
+    return {
+      day: d,
+      page_views: pageViews,
+      crawler_page_views: get("visit:crawler"),
+      people,
+      /** Real people: browsers that ran site.js and sent its beacon (visit:human), the honest count. */
+      humans: get("visit:human"),
+      web_scans: get("scan:web"),
+      connect_page: get("visit:connect"),
+      connect_tests_passed: get("connect:test-passed"),
+      connections,
+      tool_uses: get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls") + get("a2a:requests"),
+      per_1k_page_views: rate(connections, pageViews, 1000),
+      per_100_people: rate(connections, people, 100),
+      per_100_humans: rate(connections, get("visit:human"), 100),
+    };
+  });
 }

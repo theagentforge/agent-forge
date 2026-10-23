@@ -5,7 +5,7 @@ import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { recordToolCheck } from "../src/services/feedback";
 import { MISS_KEYS_PER_DAY, missLabel, recordMiss, scanMissLabel, topMisses } from "../src/services/misses";
-import { scoutSignals } from "../src/services/scout-signals";
+import { conversionDaily, scoutSignals } from "../src/services/scout-signals";
 import { bump, mcpCounters, metaClient } from "../src/services/usage";
 import { fetchWorker } from "./helpers";
 import "../src/index";
@@ -93,5 +93,32 @@ describe("scout signals", () => {
   it("needs the scout-collect workflow's GitHub token", async () => {
     expect((await fetchWorker("/api/v1/ops/scout-signals")).status).toBe(401);
     expect((await fetchWorker("/api/v1/ops/scout-signals", { headers: { Authorization: "Bearer a.b.c" } })).status).toBe(401);
+  });
+
+  it("reports the conversion KPI per day: page views and people against AI connections (internal only)", async () => {
+    const now = Date.UTC(2027, 2, 10, 12);
+    const y = now - 86_400_000;
+    await bump(env, [...Array(2000).fill("visit:all"), ...Array(1900).fill("visit:crawler"), ...Array(50).fill("visit:arrivals"), ...Array(10).fill("visit:connect"), "connect:test-passed", "connect:test-passed"], y);
+    await bump(env, ["mcp:public:sessions", "mcp:public:sessions", "mcp:public:sessions", "mcp:client:glama", "a2a:requests", "mcp:public:calls"], y);
+    await bump(env, [...Array(12).fill("visit:human"), "scan:web"], y);
+    const days = await conversionDaily(env, now);
+    expect(days).toHaveLength(14);
+    expect(days.at(-1)).toEqual({
+      day: dayOf(y),
+      page_views: 2000,
+      crawler_page_views: 1900,
+      people: 50,
+      humans: 12,
+      web_scans: 1,
+      connect_page: 10,
+      connect_tests_passed: 2,
+      connections: 3, // 3 sessions less 1 directory check, plus 1 A2A request
+      tool_uses: 2,
+      per_1k_page_views: 1.5,
+      per_100_people: 6,
+      per_100_humans: 25,
+    });
+    expect(days[0]!.per_1k_page_views).toBeNull();
+    expect((await scoutSignals(env, now)).conversion).toHaveLength(14);
   });
 });

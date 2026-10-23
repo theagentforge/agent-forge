@@ -2,6 +2,7 @@ import { html, raw } from "hono/html";
 import { marked } from "marked";
 import census from "../../../../docs/reports/2026-10-mcp-registry-census.md";
 import skillScanReport from "../../../../docs/reports/2026-10-skill-scan.md";
+import checkGuide from "../../../../docs/guides/check-before-install.md";
 import labNotes from "../../../../lab/001-calm-vs-cheating/results/NOTES.md";
 import labRuns from "../../../../lab/001-calm-vs-cheating/results/runs.csv";
 import labPrereg from "../../../../lab/001-calm-vs-cheating/PREREGISTRATION.md";
@@ -36,9 +37,31 @@ interface Publication {
   /** Off until Dinike has read it (the X posts for it need the page live). */
   live: boolean;
   files?: { name: string; label: string; text: string; type: string }[];
+  /** A scan box placed before these "## " headings, each tagged so we can see which one people use. */
+  scanBoxes?: { before: string; from: string }[];
+}
+
+/**
+ * The report's own call to action, where readers are (23 Oct traffic: 320 views of the launch report, 1 scan, and the
+ * only form was at the very end). Posts to /scan with a `from` tag, counted as scan:from:<tag> (internal).
+ */
+export function reportScanBox(from: string) {
+  return html`<aside class="panel chamfer report-scan" aria-label="Scan a skill">
+<p><b>Check a skill before your agent installs it.</b> Paste a GitHub or ClawHub link. Free, no account, same 34 rules as this report.</p>
+<form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="${from}"><label class="sr-only" for="scan-${from}">Link to a skill file</label><input id="scan-${from}" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo/…/SKILL.md" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
+</aside>`;
 }
 
 export const PUBLICATIONS: Publication[] = [
+  {
+    // The question people search for (23 Oct: the search results for it are Snyk, SkillScan, Backslash), answered
+    // first, with our own data. Published by Claude for Dinike's "go ahead with all" (23 Oct).
+    path: "/guides/check-before-install",
+    markdown: checkGuide,
+    description: "How to check an MCP server or agent skill before you install it: who publishes it, what it can reach, what its words tell your agent, what other agents reported on that version, and a first run with no secrets.",
+    live: true,
+    scanBoxes: [{ before: "1. Who publishes it", from: "guide-top" }],
+  },
   {
     path: "/reports/skill-scan-2026-10",
     markdown: skillScanReport,
@@ -46,6 +69,10 @@ export const PUBLICATIONS: Publication[] = [
     image: "/og/reports/skill-scan-2026-10.png",
     // The launch report (ADR 0026). Reviewed against disclosure practice and approved for Dinike on 19 Oct (v1.1).
     live: true,
+    scanBoxes: [
+      { before: "Why we looked", from: "report-top" },
+      { before: "The flagged ordinary skills", from: "report-found" },
+    ],
   },
   {
     path: "/lab/3/results",
@@ -74,7 +101,7 @@ export const PUBLICATIONS: Publication[] = [
   {
     path: "/lab/4/results",
     markdown: lab4Results,
-    description: "Forge Lab #4 results: on frontier models, the trap card didn't measurably reduce traps (24.8% vs 29.5%, p = 0.51), and it caused no measurable harm.",
+    description: "Forge Lab #4 results: on frontier models, a safety checklist in the prompt (the trap card) didn't measurably reduce traps (24.8% vs 29.5%, p = 0.51), and it caused no measurable harm.",
     // Pre-registered to be published whatever it showed.
     live: true,
     files: [
@@ -139,7 +166,10 @@ export function renderMarkdown(md: string) {
 for (const p of PUBLICATIONS) {
   site.get(p.path, (c) => {
     if (!p.live) return c.notFound();
-    const { title, body } = renderMarkdown(p.markdown);
+    const rendered = renderMarkdown(p.markdown);
+    const { title } = rendered;
+    let body = rendered.body;
+    for (const b of p.scanBoxes ?? []) body = body.replace(`<h2>${b.before}</h2>`, `${reportScanBox(b.from)}\n<h2>${b.before}</h2>`);
     return send(c, {
       title,
       description: p.description,
