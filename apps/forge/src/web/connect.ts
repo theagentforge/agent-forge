@@ -17,7 +17,7 @@ export const TABS: { id: AppTab; label: string }[] = [
   { id: "chatgpt", label: "ChatGPT" },
   { id: "claude", label: "Claude" },
   { id: "gemini", label: "Gemini" },
-  { id: "other", label: "Other apps" },
+  { id: "other", label: "Grok, Perplexity, Le Chat" },
   { id: "developers", label: "Developers" },
 ];
 
@@ -30,6 +30,7 @@ export function defaultTab(referer: string | undefined, userAgent: string | unde
   if (/(^|\.)(chatgpt\.com|openai\.com)$/.test(host)) return "chatgpt";
   if (/(^|\.)claude\.ai$|(^|\.)anthropic\.com$/.test(host)) return "claude";
   if (/(^|\.)gemini\.google\.com$/.test(host)) return "gemini";
+  if (/(^|\.)(grok\.com|x\.ai|perplexity\.ai|mistral\.ai)$/.test(host)) return "other";
   if (/(^|\.)(github\.com|cursor\.com|code\.visualstudio\.com|npmjs\.com|modelcontextprotocol\.io)$/.test(host)) return "developers";
   if (/Mobi|Android|iPhone|iPad/i.test(userAgent ?? "")) return "chatgpt";
   return "claude";
@@ -69,7 +70,7 @@ site.get("/connect", async (c) => {
     c,
     {
       title: "Connect your AI",
-      description: "Add The Agent Forge to Claude, Cursor, VS Code, LM Studio or Goose in a click, or to ChatGPT and Gemini in a few steps. No sign-in needed.",
+      description: "Add The Agent Forge to Claude, Cursor, VS Code, LM Studio or Goose in a click, or to ChatGPT, Gemini, Grok, Perplexity and Le Chat in a few steps. No sign-in.",
       path: "/connect",
       nav: "connect",
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}">
@@ -120,12 +121,18 @@ ${copyBlock("url-gemini", links.pub)}${testNext}
 )}
 ${section(
   "other",
-  "Copilot and other apps",
-  html`<p>Most chat apps can't add tools yet, but all take custom instructions. Give yours the trap card.</p>
-<p><a class="btn primary chamfer" href="/trap-card#copilot">Get the trap card</a></p>
-<p class="small muted">If your app supports remote MCP servers, add this address (no sign-in):</p>
+  "Grok, Perplexity, Le Chat and other apps",
+  html`<p>These apps take a custom connector: paste the address below, with no sign-in. Menu names change often; look for "Connectors".</p>
 ${copyBlock("url-other", links.pub)}
-<p class="actions"><a class="btn chamfer" href="${links.lmstudio}">Add to LM Studio</a><a class="btn chamfer" href="${links.goose}">Add to Goose</a></p>${testNext}`,
+<ul class="small app-steps">
+<li><b>Grok</b> (grok.com): open <b>Connectors</b> → <b>New Connector</b> → <b>Custom</b>, and paste the address. May need a paid plan.</li>
+<li><b>Perplexity</b> (Pro, Max or Enterprise): Settings → <b>Connectors</b> → <b>+ Custom connector</b> → <b>Remote</b>. Paste the address and choose no authentication.</li>
+<li><b>Le Chat</b> (Mistral): <b>Connectors</b> → add a custom MCP connector and paste the address. In a workspace, an admin adds it.</li>
+</ul>
+${testNext}
+<p>Copilot, or an app with no connectors: <a class="btn primary chamfer" href="/trap-card#copilot">Get the trap card</a></p>
+<p class="small muted">Any app that supports remote MCP servers takes the same address.</p>
+<p class="actions"><a class="btn chamfer" href="${links.lmstudio}">Add to LM Studio</a><a class="btn chamfer" href="${links.goose}">Add to Goose</a></p>`,
 )}
 ${section(
   "developers",
@@ -152,7 +159,7 @@ ${copyBlock("cc-signed", `claude mcp add --scope user --transport http forge ${l
 <p>Once it's added, ask your AI:</p>
 ${copyBlock("test-prompt", testPrompt)}
 <p class="test-status" data-test-status aria-live="polite">Waiting for your first check…</p>
-<div class="test-help" data-test-help hidden><p class="small">Nothing yet. Common fixes: in Claude, press <b>+</b> → <b>Connectors</b> and switch The Agent Forge on; in ChatGPT, pick it from Developer mode in the <b>+</b> menu; in Gemini, type <b>@</b> and pick it. Then ask again.</p>
+<div class="test-help" data-test-help hidden><p class="small">Nothing yet. Common fixes: in Claude, press <b>+</b> → <b>Connectors</b> and switch The Agent Forge on; in ChatGPT, pick it from Developer mode in the <b>+</b> menu; in Gemini, type <b>@</b> and pick it; in Grok, Perplexity or Le Chat, check the connector is switched on for the chat. Then ask again.</p>
 <p><button class="btn chamfer" type="button" data-test-again>Check again</button></p></div>
 <p class="small muted">Using the trap card instead? Ask your AI "What will you check before paying an invoice?"</p>
 </section>

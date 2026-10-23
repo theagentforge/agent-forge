@@ -29,11 +29,8 @@ describe("the Agent Card", () => {
       skills: { id: string; name: string; description: string; tags: string[] }[];
     };
     expect(card.name).toBe("The Agent Forge");
-    expect(card.supportedInterfaces.map((i) => i.protocolVersion)).toEqual(["1.0", "0.3"]);
-    for (const i of card.supportedInterfaces) {
-      expect(i.protocolBinding).toBe("JSONRPC");
-      expect(i.url.endsWith("/a2a")).toBe(true);
-    }
+    expect(card.supportedInterfaces.map((i) => `${i.protocolBinding} ${i.protocolVersion}`)).toEqual(["JSONRPC 1.0", "JSONRPC 0.3", "HTTP+JSON 1.0"]);
+    for (const i of card.supportedInterfaces) expect(i.url.endsWith("/a2a")).toBe(true);
     expect(card.url.endsWith("/a2a")).toBe(true);
     expect(card.capabilities.streaming).toBe(false);
     expect(card.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card"]);
@@ -106,6 +103,23 @@ describe("POST /a2a", () => {
     expect(await code({ jsonrpc: "2.0", id: 1, method: "SendMessage", params: { message: { parts: [] } } }, { "A2A-Version": "9.9" })).toBe(-32009);
     const bad = await fetchWorker("/a2a", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{not json" });
     expect(((await bad.json()) as { error: { code: number } }).error.code).toBe(-32700);
-    expect((await fetchWorker("/a2a")).status).toBe(405);
+  });
+
+  it("answers registry probes: the card beside the endpoint and on GET, a trailing slash, and the v1.0 REST binding", async () => {
+    for (const p of ["/a2a", "/a2a/", "/a2a/.well-known/agent-card.json", "/a2a/.well-known/agent.json", "/a2a/agent-card.json", "/a2a/v1/card"]) {
+      const res = await fetchWorker(p);
+      expect(res.status, p).toBe(200);
+      expect(((await res.json()) as { name: string }).name, p).toBe("The Agent Forge");
+    }
+    const slash = await fetchWorker("/a2a/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "SendMessage", params: { message: { parts: [{ text: "trap card" }] } } }) });
+    expect(((await slash.json()) as { result: { message: { parts: { data: { skill: string } }[] } } }).result.message.parts[0]!.data.skill).toBe("trap-card");
+    const rest = await fetchWorker("/a2a/v1/message:send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: { role: "ROLE_USER", messageId: "m1", contextId: "ctx-1", parts: [{ text: "trap card" }] } }) });
+    expect(rest.status).toBe(200);
+    const msg = ((await rest.json()) as { message: { role: string; contextId: string; parts: { data: { skill: string } }[] } }).message;
+    expect(msg).toMatchObject({ role: "ROLE_AGENT", contextId: "ctx-1" });
+    expect(msg.parts[0]!.data.skill).toBe("trap-card");
+    expect((await fetchWorker("/a2a/v1/message:send", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(400);
+    expect((await fetchWorker("/a2a/v1/tasks/abc")).status).toBe(404);
+    expect((await fetchWorker("/a2a/v1/message:stream", { method: "POST", body: "{}" })).status).toBe(501);
   });
 });

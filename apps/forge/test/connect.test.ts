@@ -18,7 +18,7 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
 
   it("shows the app tiles, a checklist that starts at 1 of 3, and one primary button per app", async () => {
     const body = await page("/connect");
-    for (const label of ["ChatGPT", "Claude", "Gemini", "Other apps", "Developers"]) expect(body).toContain(`>${label}</a>`);
+    for (const label of ["ChatGPT", "Claude", "Gemini", "Grok, Perplexity, Le Chat", "Developers"]) expect(body).toContain(`>${label}</a>`);
     expect(body).toContain("You found the Forge");
     expect(body).toContain("1 of 3 done.");
     for (const id of ["claude", "chatgpt", "gemini", "other", "developers"]) {
@@ -26,6 +26,16 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
       expect((sec.match(/class="btn primary chamfer"/g) ?? []).length, id).toBe(1);
     }
     expect(body).toContain("Get the trap card");
+  });
+
+  it("gives steps for Grok, Perplexity and Le Chat with the no-sign-in address, and opens that tab for their visitors", async () => {
+    const body = await page("/connect");
+    const sec = body.slice(body.indexOf('id="tab-other"'), body.indexOf("</section>", body.indexOf('id="tab-other"')));
+    for (const app of ["Grok", "Perplexity", "Le Chat"]) expect(sec).toContain(`<b>${app}</b>`);
+    expect(sec).toContain(`${env.PUBLIC_ORIGIN}/mcp/public`);
+    expect(defaultTab("https://grok.com/chat/1", undefined)).toBe("other");
+    expect(defaultTab("https://www.perplexity.ai/search/x", undefined)).toBe("other");
+    expect(defaultTab("https://chat.mistral.ai/chat", undefined)).toBe("other");
   });
 
   it("uses the pre-filled Claude link to the no-sign-in endpoint, and Cursor and VS Code install links", async () => {

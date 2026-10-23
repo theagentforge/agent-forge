@@ -60,6 +60,8 @@ export function agentCard(origin: string) {
     supportedInterfaces: [
       { url: `${origin}${A2A_ROUTE}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" },
       { url: `${origin}${A2A_ROUTE}`, protocolBinding: "JSONRPC", protocolVersion: "0.3" },
+      // The v1.0 HTTP+JSON binding: POST {url}/v1/message:send with { message } (probed by registries, 23 Oct).
+      { url: `${origin}${A2A_ROUTE}`, protocolBinding: "HTTP+JSON", protocolVersion: "1.0" },
     ],
     // A2A v0.3 clients read these three.
     protocolVersion: "0.3.0",
@@ -171,33 +173,65 @@ export async function handleRpc(env: Env, ip: string, body: unknown, version: st
   if (!SEND.has(method)) return rpcError(id, -32601, "Method not found");
   const message = params?.message;
   if (!message || typeof message !== "object" || !Array.isArray(message.parts)) return rpcError(id, -32602, "Invalid parameters: params.message.parts is required");
+  const reply = await answer(env, ip, message);
+  // v0.3 used a "kind" discriminator and lower-case roles; v1.0 wraps the reply as { message } and uses ROLE_AGENT.
+  if (method === "message/send") return { jsonrpc: "2.0", id: id ?? null, result: { kind: "message", messageId: reply.messageId, contextId: reply.contextId, role: "agent", parts: [{ kind: "data", data: reply.data }] } };
+  return { jsonrpc: "2.0", id: id ?? null, result: { message: v1Message(reply) } };
+}
+
+/** One direct reply: the skill's structured data, in the caller's context when it gave one. */
+async function answer(env: Env, ip: string, message: { parts?: unknown; contextId?: unknown }) {
   const data = await runSkill(env, ip, readRequest(message.parts));
   const contextId = typeof message.contextId === "string" && message.contextId.length <= 128 ? message.contextId : crypto.randomUUID();
-  const messageId = crypto.randomUUID();
-  // v0.3 used a "kind" discriminator and lower-case roles; v1.0 wraps the reply as { message } and uses ROLE_AGENT.
-  if (method === "message/send") return { jsonrpc: "2.0", id: id ?? null, result: { kind: "message", messageId, contextId, role: "agent", parts: [{ kind: "data", data }] } };
-  return { jsonrpc: "2.0", id: id ?? null, result: { message: { messageId, contextId, role: "ROLE_AGENT", parts: [{ data, mediaType: "application/json" }] } } };
+  return { data, contextId, messageId: crypto.randomUUID() };
 }
+const v1Message = (r: Awaited<ReturnType<typeof answer>>) => ({ messageId: r.messageId, contextId: r.contextId, role: "ROLE_AGENT", parts: [{ data: r.data, mediaType: "application/json" }] });
+
+/** v1.0 HTTP+JSON errors, shaped like google.rpc.Status. */
+const restError = (status: number, code: string, message: string) => ({ error: { code: status, status: code, message } });
 
 const CARD_HEADERS = { "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" };
 const card = (c: Context<{ Bindings: Env }>) => c.json(agentCard(c.env.PUBLIC_ORIGIN), 200, CARD_HEADERS);
 site.get("/.well-known/agent-card.json", card);
 // The v0.2 path, still probed by some clients.
 site.get("/.well-known/agent.json", card);
+// Registries also look beside the endpoint, and a GET of the endpoint itself (23 Oct logs: 404s and 405s). Each
+// answers with the same card, so a probe always finds what the agent does and how to call it.
+for (const p of [A2A_ROUTE, `${A2A_ROUTE}/`, `${A2A_ROUTE}/.well-known/agent-card.json`, `${A2A_ROUTE}/.well-known/agent.json`, `${A2A_ROUTE}/agent-card.json`, `${A2A_ROUTE}/v1/card`]) site.get(p, card);
 
-site.post(A2A_ROUTE, async (c) => {
-  if (Number(c.req.header("content-length") ?? 0) > MAX_BODY) return c.json(rpcError(null, -32600, "Request too large"), 413);
+/** Reads a JSON body within the size limit; null when it's too large, undefined when it isn't JSON. */
+async function readBody(c: Context<{ Bindings: Env }>): Promise<{ tooLarge: true } | { body: unknown } | null> {
+  if (Number(c.req.header("content-length") ?? 0) > MAX_BODY) return { tooLarge: true };
   const raw = await c.req.text();
-  if (raw.length > MAX_BODY) return c.json(rpcError(null, -32600, "Request too large"), 413);
-  let body: unknown;
+  if (raw.length > MAX_BODY) return { tooLarge: true };
   try {
-    body = JSON.parse(raw);
+    return { body: JSON.parse(raw) };
   } catch {
-    return c.json(rpcError(null, -32700, "Invalid JSON payload"), 200);
+    return null;
   }
-  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  return c.json(await handleRpc(c.env, ip, body, c.req.header("A2A-Version")), 200, { "Cache-Control": "no-store" });
-});
+}
 
-site.get(A2A_ROUTE, (c) => c.json({ error: "use POST with JSON-RPC 2.0; the agent card is at /.well-known/agent-card.json" }, 405, { Allow: "POST" }));
+const rpc = async (c: Context<{ Bindings: Env }>) => {
+  const got = await readBody(c);
+  if (got && "tooLarge" in got) return c.json(rpcError(null, -32600, "Request too large"), 413);
+  if (!got) return c.json(rpcError(null, -32700, "Invalid JSON payload"), 200);
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  return c.json(await handleRpc(c.env, ip, got.body, c.req.header("A2A-Version")), 200, { "Cache-Control": "no-store" });
+};
+site.post(A2A_ROUTE, rpc);
+site.post(`${A2A_ROUTE}/`, rpc);
+
+// v1.0 HTTP+JSON binding: SendMessage is POST /v1/message:send with { message }, answered with { message }.
+site.post(`${A2A_ROUTE}/v1/message:send`, async (c) => {
+  const got = await readBody(c);
+  if (got && "tooLarge" in got) return c.json(restError(413, "INVALID_ARGUMENT", "Request too large"), 413);
+  const message = got && typeof got.body === "object" && got.body ? (got.body as { message?: { parts?: unknown; contextId?: unknown } }).message : undefined;
+  if (!message || typeof message !== "object" || !Array.isArray(message.parts)) return c.json(restError(400, "INVALID_ARGUMENT", "message.parts is required"), 400);
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  return c.json({ message: v1Message(await answer(c.env, ip, message)) }, 200, { "Cache-Control": "no-store" });
+});
+// No tasks are kept: every request gets one direct message.
+site.get(`${A2A_ROUTE}/v1/tasks/*`, (c) => c.json(restError(404, "NOT_FOUND", "Task not found: this agent answers with direct messages and keeps no tasks"), 404));
+site.get(`${A2A_ROUTE}/v1/tasks`, (c) => c.json({ tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0 }));
+site.post(`${A2A_ROUTE}/v1/message:stream`, (c) => c.json(restError(501, "UNIMPLEMENTED", "Unsupported operation: no streaming"), 501));
 
