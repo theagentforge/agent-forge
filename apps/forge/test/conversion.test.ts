@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
-import { indexNowKey, pingIndexNow } from "../src/services/indexnow";
+import { INDEXNOW_FIRST, indexNowKey, pingIndexNow } from "../src/services/indexnow";
 import { humanCounters, humanPageKind } from "../src/services/usage";
 import { fetchWorker } from "./helpers";
 import "../src/index";
@@ -107,5 +107,45 @@ describe("IndexNow", () => {
       throw new Error("offline");
     }) as unknown as typeof fetch;
     expect(await pingIndexNow(prod, now + 2 * 86_400_000, broken)).toMatchObject({ error: expect.stringContaining("offline") });
+    // A failed try waits a day too, instead of retrying every hour.
+    expect(await pingIndexNow(prod, now + 2 * 86_400_000 + 3_600_000, fetcher)).toEqual({ skipped: "too_soon" });
+    await env.KV.delete("indexnow:tried");
+  });
+
+  it("starts small, with the static pages and the newest pages first, and waits a day after a 429", async () => {
+    const prod = { ...env, ENVIRONMENT: "production" } as Env;
+    await env.KV.delete("indexnow:last");
+    await env.KV.delete("indexnow:tried");
+    const db = getDb(env);
+    const base = Date.UTC(2026, 9, 1);
+    for (let i = 0; i < INDEXNOW_FIRST + 30; i += 8)
+      await db.insert(t.skillScans).values(
+        Array.from({ length: 8 }, (_, j) => ({
+          fingerprint: `sha256:${(i + j).toString(16).padStart(64, "a")}`,
+          sourceUrl: `https://raw.githubusercontent.com/many/repo${i + j}/main/x/SKILL.md`,
+          public: true,
+          firstSeen: base,
+          lastSeen: base + (i + j) * 60_000,
+          verdict: "clear" as const,
+          findings: [],
+          counts: {},
+          rulesVersion: "test",
+          bytes: 10,
+        })),
+      );
+    const lists: string[][] = [];
+    const refuse = (async (_u: string, init: RequestInit) => {
+      lists.push(JSON.parse(String(init.body)).urlList);
+      return new Response(null, { status: 429 });
+    }) as unknown as typeof fetch;
+    const now = Date.UTC(2026, 9, 30, 1);
+    expect(await pingIndexNow(prod, now, refuse)).toMatchObject({ sent: INDEXNOW_FIRST, status: 429 });
+    expect(lists[0]![0]).toBe(`${origin}/`);
+    expect(lists[0]).toContain(`${origin}/guides/check-before-install`);
+    expect(lists[0]!.some((u) => u.endsWith("/many/repo135/x"))).toBe(true);
+    expect(lists[0]!.some((u) => u.endsWith("/many/repo0/x"))).toBe(false);
+    expect(await pingIndexNow(prod, now + 3_600_000, refuse)).toEqual({ skipped: "too_soon" });
+    expect(lists).toHaveLength(1);
+    await env.KV.delete("indexnow:tried");
   });
 });

@@ -8,9 +8,17 @@ import { sitemapPaths } from "../web/answers";
 
 const KEY = "indexnow:key";
 const LAST = "indexnow:last";
+/** When we last tried, sent or not: a refused send (429 on 23 Oct, for 10,000 URLs at once) waits a day too. */
+const TRIED = "indexnow:tried";
 const ENDPOINT = "https://api.indexnow.org/indexnow";
-/** IndexNow takes up to 10,000 URLs per request. */
-export const INDEXNOW_MAX = 10_000;
+/**
+ * IndexNow allows 10,000 URLs per request, but a new key that sends thousands at once is refused as possible spam
+ * (429). So the first send is the static pages and the newest answer pages, and later sends are the pages changed
+ * since, newest first, capped. The sitemap covers the rest.
+ */
+export const INDEXNOW_FIRST = 100;
+export const INDEXNOW_MAX = 1_000;
+const DAY = 20 * 3_600_000;
 
 /** Our IndexNow key (32 hex characters), made once and kept in KV. */
 export async function indexNowKey(env: Pick<Env, "KV">) {
@@ -22,17 +30,23 @@ export async function indexNowKey(env: Pick<Env, "KV">) {
 }
 
 /**
- * Sends the sitemap's pages that are new since the last send (all of them the first time; pages without a date are
- * sent once), at most once every 20 hours. Returns what it did. Never throws.
+ * Sends the sitemap's pages that are new since the last send (the first time, the static pages and the newest answer
+ * pages), at most one try every 20 hours, sent or refused. Returns what it did. Never throws.
  */
 export async function pingIndexNow(env: Env, now = Date.now(), fetcher: typeof fetch = fetch) {
   try {
     if (env.ENVIRONMENT !== "production") return { skipped: "not_production" };
     const last = Number((await env.KV.get(LAST)) ?? 0);
-    if (now - last < 20 * 3_600_000) return { skipped: "too_soon" };
+    const tried = Number((await env.KV.get(TRIED)) ?? 0);
+    if (now - Math.max(last, tried) < DAY) return { skipped: "too_soon" };
+    await env.KV.put(TRIED, String(now));
     const origin = env.PUBLIC_ORIGIN;
     const rows = await sitemapPaths(getDb(env));
-    const urls = rows.filter((r) => !last || (r.lastmod ?? 0) > last).map((r) => origin + r.path).slice(0, INDEXNOW_MAX);
+    // Static pages (no date) first, then the newest.
+    const at = (r: { lastmod?: number }) => r.lastmod ?? Number.MAX_SAFE_INTEGER;
+    const newest = (a: { lastmod?: number }, b: { lastmod?: number }) => at(b) - at(a);
+    const pick = last ? rows.filter((r) => (r.lastmod ?? 0) > last) : rows;
+    const urls = [...pick].sort(newest).slice(0, last ? INDEXNOW_MAX : INDEXNOW_FIRST).map((r) => origin + r.path);
     if (!urls.length) {
       await env.KV.put(LAST, String(now));
       return { sent: 0 };
@@ -44,7 +58,7 @@ export async function pingIndexNow(env: Env, now = Date.now(), fetcher: typeof f
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({ host, key, keyLocation: `${origin}/${key}.txt`, urlList: urls }),
     });
-    // 200 and 202 are success; anything else is logged and retried tomorrow.
+    // 200 and 202 are success; anything else is logged and tried again in a day.
     if (res.status === 200 || res.status === 202) await env.KV.put(LAST, String(now));
     return { sent: urls.length, status: res.status };
   } catch (e) {

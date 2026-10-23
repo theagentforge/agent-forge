@@ -101,8 +101,21 @@ describe("trap card results by kind of job", () => {
     expect(rows["Travel & bookings"]).toMatchObject({ tested: true, none: 80, card: 79 });
     expect(rows["Data & spreadsheets"]!.tested).toBe(false);
     const body = await home();
-    expect(body).toContain("By kind of job: fell for the trap, out of 100");
+    expect(body).toContain("By kind of job: traps fallen for, out of 100");
     expect(body).toContain("not tested yet");
     expect(body).toContain("no change");
+  });
+
+  it("leads each job with the cut in percent, keeps the in-100 counts beside it, and puts the biggest cut first", async () => {
+    const { labJobRows } = await import("../src/web/home-wire");
+    const rows = labJobRows();
+    expect(rows.map((r) => r.category)).toEqual(["Finance & payments", "Purchasing & operations", "Customer support", "Travel & bookings", "Data & spreadsheets"]);
+    expect(rows.map((r) => r.fewer)).toEqual([100, 98, 43, null, null]);
+    expect(rows[3]).toMatchObject({ tested: true, changed: false });
+    const body = await home();
+    expect(body).toContain("<b>43% fewer</b>");
+    expect(body).toContain("89 → 51 in 100");
+    expect(body).toContain('class="lab-db is-on"');
+    expect(body).not.toContain("NaN");
   });
 });

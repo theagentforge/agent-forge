@@ -164,8 +164,27 @@ export function labByCategory(rows: { arm: string; model: string; task: string; 
     const arm = (a: string) => mine.filter((r) => r.arm === a).reduce((t, r) => ({ n: t.n + r.n, trapped: t.trapped + r.trapped }), { n: 0, trapped: 0 });
     const none = arm("none"), placebo = arm("placebo"), card = arm("card");
     const in100 = (x: { n: number; trapped: number }) => (x.n ? Math.round((x.trapped / x.n) * 100) : null);
-    return { category, tested: none.n > 0 && card.n > 0, n: card.n, models: new Set(mine.map((r) => r.model)).size, none: in100(none), placebo: in100(placebo), card: in100(card) };
+    const tested = none.n > 0 && card.n > 0;
+    const c = in100(card), o = in100(none);
+    // "Made a difference" keeps the old rule (more than 5 in 100 fewer); the relative figure is from the raw counts.
+    const changed = tested && c! < o! - 5;
+    const fewer = changed && none.trapped ? Math.round((1 - card.trapped / card.n / (none.trapped / none.n)) * 100) : null;
+    return { category, tested, changed, fewer, n: card.n, models: new Set(mine.map((r) => r.model)).size, none: o, placebo: in100(placebo), card: c };
   });
+}
+
+/**
+ * The per-job dumbbell (ADR 0036): one 0–100 track, a hollow dot for no card, a solid dot for the card, and the gap
+ * between them. The SVG keeps its aspect ratio so the dots stay round; it is decorative, the numbers sit beside it.
+ */
+const W = 200, R = 6, x100 = (v: number) => R + (v / 100) * (W - 2 * R);
+const dumbbell = (none: number, card: number, changed: boolean) =>
+  html`<svg class="lab-db${changed ? " is-on" : ""}" viewBox="0 0 ${W} 16" aria-hidden="true" focusable="false"><line class="db-track" x1="${R}" x2="${W - R}" y1="8" y2="8"/><line class="db-gap" x1="${x100(Math.min(none, card))}" x2="${x100(Math.max(none, card))}" y1="8" y2="8"/><circle class="db-none" cx="${x100(none)}" cy="8" r="${R - 1}"/><circle class="db-card" cx="${x100(card)}" cy="8" r="${R - 1}"/></svg>`;
+
+/** Biggest cut first, then the jobs where the card made no difference, then the untested ones (Dinike, 23 Oct). */
+export function labJobRows(rows = labByCategory()) {
+  const rank = (r: (typeof rows)[number]) => (r.fewer !== null ? 0 : r.tested ? 1 : 2);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || (b.fewer ?? 0) - (a.fewer ?? 0));
 }
 
 export function labBand(frontier?: { runs: number; fell: number; models: number } | null) {
@@ -183,13 +202,14 @@ export function labBand(frontier?: { runs: number; fell: number; models: number 
 </div>
 <div class="lab-side">
 <ol class="lab-bars" aria-label="Share of new jobs where the model fell for the trap">${bar("No card", t.in100.none, "")}${bar("Placebo text", t.in100.placebo, "")}${bar("Trap card", t.in100.card, "is-card")}</ol>
-<table class="lab-cats"><caption>By kind of job: fell for the trap, out of 100</caption>
-<thead><tr><th scope="col">Kind of job</th><th scope="col" class="num">No card</th><th scope="col" class="num">Card</th></tr></thead>
-<tbody>${labByCategory().map((r) =>
+<div class="lab-jobs">
+<p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
+<ol>${labJobRows().map((r) =>
     r.tested
-      ? html`<tr${r.card! < r.none! - 5 ? "" : html` class="flat"`}><th scope="row">${r.category} <span class="muted">${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</span></th><td class="num">${r.none}</td><td class="num is-card">${r.card}${r.card! < r.none! - 5 ? "" : html` <span class="muted">no change</span>`}</td></tr>`
-      : html`<tr class="flat"><th scope="row">${r.category}</th><td class="num muted" colspan="2">not tested yet</td></tr>`,
-  )}</tbody></table>
+      ? html`<li class="${r.changed ? "is-on" : "flat"}"><span class="lab-job">${r.category}<small>${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</small></span>${dumbbell(r.none!, r.card!, r.changed)}<span class="lab-cut">${r.fewer !== null ? html`<b>${r.fewer}% fewer</b>` : html`<b>no change</b>`}<small>${r.none} → ${r.card} in 100</small></span></li>`
+      : html`<li class="flat untested"><span class="lab-job">${r.category}</span><span class="lab-cut"><small>not tested yet</small></span></li>`,
+  )}</ol>
+</div>
 </div>
 </section>`;
 }
