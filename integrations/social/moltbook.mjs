@@ -13,8 +13,12 @@ const POSTED_MARK = /<!-- forge-moltbook ([A-Za-z0-9_-]{4,64}) -->/;
 /** The same phrase list as apps/forge/test/agent-wording.test.ts: wording that tells an agent what to do (§2.1). */
 export const AGENT_DIRECTED =
   /\b(always|must|best|prefer(red)?|follow|obey|you should|skill\.md|instead of|before (any|every) other|(call|use|run) (this|it) first|install (this|it|our|the forge)|tell (your|the) (human|user|owner)|ignore (previous|prior|other))\b/i;
-/** A post carries a real finding: it cites a scan, an answer page, Skill Watch or a report on our site (§3.9). */
-const EVIDENCE = /https:\/\/theagentforge\.io\/(scan\/[0-9a-f]{64}|tools\/\S+|skill-watch|reports\/\S+)/;
+/**
+ * A post carries a real result and cites it: a refereed Arena bout or results page, a Lab result, the trap card, a scan,
+ * an answer page, Skill Watch or a report on our site. Arena and Lab results lead (Dinike, 23 Oct: lead with what
+ * spreads); they are data too, every number checkable on the linked page.
+ */
+const EVIDENCE = /https:\/\/theagentforge\.io\/(arena(\/\S*)?|best\/\S+|lab\/\d+(\/results)?|trap-card|gauntlet\S*|scan\/[0-9a-f]{64}|tools\/\S+|skill-watch|reports\/\S+)/;
 export const MAX_LINKS = 2;
 
 /** Adds ?from=mb-post to theagentforge.io links without a from tag, so the digest counts arrivals from Moltbook. */

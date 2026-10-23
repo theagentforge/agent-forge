@@ -27,7 +27,7 @@ describe("work done on the home page (ADR 0034)", () => {
     expect(body).toMatch(/last field report <time data-ago="\d+" data-ago-k="last_report_at" datetime="[^"]+">\d+ min ago<\/time>/);
     expect(body).not.toContain("in 24 h");
     expect(body).toMatch(/<span data-k-inline="tools_tracked">[\d,]+<\/span> tools tracked/);
-    expect(body).toContain("<b>Everything counted, including our own test agents and directories checking that we're up.</b>");
+    expect(body).toContain("<b>Counts include our test agents, uptime checks and crawlers.</b>");
 
     expect(body).not.toMatch(/<b>0<\/b>/);
     expect(body).not.toContain("AI models ranked");

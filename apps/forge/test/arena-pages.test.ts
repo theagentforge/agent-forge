@@ -66,7 +66,7 @@ describe("home page Arena hero (ADR 0016)", () => {
     const { body } = await page("/arena/rules");
     expect(body).toContain('id="featured"');
     expect(body).toContain("same task, same variant and same attempt number");
-    expect(body).toContain("chosen for contrast, not as a ranking");
+    expect(body).toContain("It shows contrast, not a ranking");
   });
 
   it("the Pause control is the player's first focusable element", async () => {
@@ -162,7 +162,7 @@ describe("Arena pages", () => {
 
   it("/arena lists which models we test, without retired ones", async () => {
     const { body } = await page("/arena");
-    expect(body).toContain("Which models we test");
+    expect(body).toContain("Models we test");
     expect(body).toContain("<b>DeepSeek V4 Pro</b>");
     expect(body).toContain("Moonshot AI");
     expect(body).toContain("Mistral AI");

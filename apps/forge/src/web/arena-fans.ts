@@ -39,7 +39,7 @@ ${s && !mine[p.kind] ? html`<form class="inline-form" method="post" action="/are
       path: "/arena/vote",
       body: html`<p class="eyebrow">${week} · closes Sunday 23:59 UTC</p>
 <h1 class="page-title">You pick what's tested next</h1>
-<p class="lead">Choose next week's task and the twist every model will face. One vote per person, results honoured. Fans choose <em>what</em> is tested, never <em>how</em> it's scored.</p>
+<p class="lead">Next week's task and the twist every model faces. One vote per person, results honoured. Fans choose <em>what</em> is tested, never <em>how</em> it's scored.</p>
 ${m && VOTE_MESSAGES[m] ? html`<p class="notice">${VOTE_MESSAGES[m]}</p>` : ""}
 ${s ? "" : html`<p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub to vote</a></p>`}
 ${poll(task, "Next week's task")}
@@ -70,14 +70,14 @@ site.get("/arena/call-it", async (c) => {
     path: "/arena/call-it",
     body: html`<p class="eyebrow">Daily · points and streaks only</p>
 <h1 class="page-title">Call it</h1>
-<p class="lead">Who does better on today's job? Pick before the premiere, then watch the replay. Your picks stay on this device; we only count totals.</p>
+<p class="lead">Who does better on today's job? Pick before the premiere, then watch the replay. Picks stay on this device; we only count totals.</p>
 <section class="panel call-it" data-call-it>
 ${next
   ? html`<p class="muted">${next.day === today ? "Today" : next.day} · premieres ${new Date(next.premiereAt).toISOString().slice(11, 16)} UTC</p>
 <h2>${next.a.name} vs ${next.b.name}</h2><p>${next.taskTitle}: who scores higher on the official scorecard?</p>
 <div class="presets" data-fixture="${next.id}"><button class="btn chamfer" type="button" data-pick="a">${next.a.name}</button><button class="btn chamfer" type="button" data-pick="tie">Too close to call</button><button class="btn chamfer" type="button" data-pick="b">${next.b.name}</button></div>
 <p class="muted" data-pick-status></p>`
-  : html`<p class="empty">No bout scheduled to premiere yet. The first daily premieres start with Crucible 1.</p>`}
+  : html`<p class="empty">No bout scheduled yet. Daily premieres start with Crucible 1.</p>`}
 </section>
 <section><h2>Your streak</h2><p data-streak class="muted">Make a pick to start a streak.</p><button class="btn chamfer" type="button" data-share hidden>Copy share grid</button></section>
 <section><h2>Recent results</h2>${past.length ? html`<ul class="runs">${past.map((f) => html`<li data-result="${f.id}" data-outcome="${f.result ?? ""}">${f.day}: ${f.a.name} vs ${f.b.name} (${f.taskTitle}) → <b>${f.result === "a" ? f.a.name : f.result === "b" ? f.b.name : f.result === "tie" ? "too close to call" : "pending"}</b> <span class="muted">· picks ${f.picks.a}/${f.picks.tie}/${f.picks.b}</span></li>`)}</ul>` : html`<p class="empty">No results yet.</p>`}</section>`,

@@ -187,6 +187,9 @@ export function labJobRows(rows = labByCategory()) {
   return [...rows].sort((a, b) => rank(a) - rank(b) || (b.fewer ?? 0) - (a.fewer ?? 0));
 }
 
+/** Lab #3's pre-registered interval (Mantel–Haenszel, lab/003-trap-cards/RESULTS.md). */
+const LAB3_INTERVAL = "48–59%";
+
 export function labBand(frontier?: { runs: number; fell: number; models: number } | null) {
   const t = labTotals();
   if (!t.none.n || !t.card.n) return "";
@@ -195,10 +198,10 @@ export function labBand(frontier?: { runs: number; fell: number; models: number 
 <div class="lab-copy">
 <p class="eyebrow">Forge Lab #3 · pre-registered · 18 Oct 2026</p>
 <h2 id="lab-title"><b>${t.fewer}% fewer traps</b> with the free trap card.</h2>
-<p>Small open models fell for a planted trap in <b>${t.in100.card} of 100</b> new jobs with the card, against ${t.in100.none} of 100 with no card. A placebo text of the same length: ${t.in100.placebo} of 100.</p>
-<p class="small lab-frontier"><b>In our tests on frontier models, the card didn't measurably reduce traps</b> (<a href="/lab/4/results?from=home-lab">Forge Lab #4</a>, 210 bouts, 21 Oct 2026).${frontier && frontier.runs >= 30 ? html` On our Hard jobs, without the card, they fell for a planted trap in ${frontier.fell} of ${frontier.runs} ranked bouts (${frontier.models} models). <a href="/arena?tier=hard&amp;from=home-lab">See them</a>` : ""}</p>
-<p class="small muted">On small open models it worked clearly on 3 of 6 model–job pairs and made no difference on 2. It used about ${t.extraCost}% more compute. ${t.card.n.toLocaleString("en-US")} bouts per arm; 95% interval 48–59% fewer (Mantel–Haenszel, from the results page).</p>
-<p class="small"><a href="/lab/3/results?from=home-lab">Read the method and every result →</a> · <a href="/trap-card?from=home-lab">Get the trap card</a></p>
+<p>Small open models fell for <b>${t.in100.card} in 100</b> traps with the card, ${t.in100.none} without. A placebo text: ${t.in100.placebo}.</p>
+<p class="small lab-frontier"><b>In our tests on frontier models, the card didn't measurably reduce traps</b> (<a href="/lab/4/results?from=home-lab">Lab #4</a>, 210 bouts).${frontier && frontier.runs >= 30 ? html` Without it, they fell for ${frontier.fell} of ${frontier.runs} Hard traps. <a href="/arena?tier=hard&amp;from=home-lab">See them</a>` : ""}</p>
+<p class="small muted">Clear effect on 3 of 6 model–job pairs · ${t.card.n.toLocaleString("en-US")} bouts per arm · 95% interval ${LAB3_INTERVAL} fewer · ${t.extraCost}% more compute</p>
+<p class="small"><a href="/lab/3/results?from=home-lab">Method and results →</a> · <a href="/trap-card?from=home-lab">Get the trap card</a></p>
 </div>
 <div class="lab-side">
 <ol class="lab-bars" aria-label="Share of new jobs where the model fell for the trap">${bar("No card", t.in100.none, "")}${bar("Placebo text", t.in100.placebo, "")}${bar("Trap card", t.in100.card, "is-card")}</ol>

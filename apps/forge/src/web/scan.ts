@@ -39,7 +39,7 @@ function checkYours(origin: string, from: string) {
   return html`<section class="check-yours panel chamfer panel-body" aria-labelledby="check-yours">
 <h2 id="check-yours">Check your own skills</h2>
 <form class="scan-quick" method="post" action="/scan?from=${from}"><label class="sr-only" for="yours-url">Link to a skill file</label><input id="yours-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<p>Or paste this into your agent once, and it checks every skill before installing it:</p>
+<p>Or paste this into your agent once. It then checks every skill before installing it:</p>
 <div class="copy-wrap">${copyBlock(`agent-line-${from}`, AGENT_LINE(origin))}</div>
 <p class="small muted">Free, no account. <a href="/skill.md">Read the skill file first</a>.</p>
 </section>`;
@@ -52,12 +52,12 @@ function shareButtons(text: string, url: string) {
 
 function scanForm(prefill: { url?: string; text?: string } = {}) {
   return html`<form class="scan-form" method="post" action="/scan">
-<label for="scan-url">Link to the skill <span class="muted small">(a ClawHub skill page, or the file on GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr)</span></label>
+<label for="scan-url">Link to the skill <span class="muted small">(a ClawHub page, or the file on GitHub, GitLab, Gist, Codeberg, unpkg or jsDelivr)</span></label>
 <input id="scan-url" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo/blob/main/SKILL.md" value="${prefill.url ?? ""}" maxlength="2048">
 <label for="scan-text">…or paste its text</label>
 <textarea id="scan-text" name="text" rows="8" maxlength="${SCAN_MAX_BYTES}" placeholder="Paste SKILL.md, an MCP server's tool descriptions, or an install script">${prefill.text ?? ""}</textarea>
-<button class="btn primary chamfer" type="submit">Scan it, free</button>
-<p class="small muted">No account. We keep what the scan found, never the text you paste.</p>
+<button class="btn primary chamfer" type="submit">Scan it</button>
+<p class="small muted">Free, no account. We keep the findings, never the text you paste.</p>
 </form>`;
 }
 
@@ -91,11 +91,11 @@ site.get("/scan", async (c) => {
     nav: "scan",
     body: html`<p class="eyebrow">Free · no account · ${SCAN_RULES.length} rules</p>
 <h1 class="page-title">Scan a skill before your agent installs it.</h1>
-<p class="lead">Skills are text your agent obeys. We check that text for what virus scanners miss: instructions hidden from you, downloads piped into a shell, reads of your keys, and data sent to throwaway servers.</p>
+<p class="lead">Skills are text your agent obeys. We check it for what virus scanners miss: hidden instructions, downloads piped into a shell, key reads, and data sent to throwaway servers.</p>
 ${scanForm()}
-<section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. From then on it checks every skill before installing it, and once a week checks the ones it has. That's one small request a week.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
-<p class="small muted">The <a href="/skill.md">skill file</a> is plain text you can read first. Its fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner, and it never asks your agent to fetch anything and follow it.</p></section>
-${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>Publish skills or keep an AGENTS.md? The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request, on GitHub's runner: one short comment, notes on the flagged lines, and no file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
+<section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. It then checks each skill before installing it, and rechecks installed ones weekly: one small request.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
+<p class="small muted">The <a href="/skill.md">skill file</a> is plain text: read it first. Fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner and never tells your agent to fetch and follow anything.</p></section>
+${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request: one short comment, with notes on flagged lines. No file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
 ${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skills scanned so far · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });
 });
@@ -109,20 +109,20 @@ site.post("/scan", async (c) => {
   // Which form the scan came from (report boxes, home), counted alongside the scan; internal only.
   const from = typeof form.from === "string" && /^[a-z0-9-]{1,32}$/.test(form.from) ? [`scan:from:${form.from}`] : [];
   let body: unknown;
-  if (!success) body = html`<p class="notice warn">Too many scans from your connection. Wait a minute and try again.</p>`;
+  if (!success) body = html`<p class="notice warn">Too many scans from your connection. Try again in a minute.</p>`;
   else if (pasted.trim()) {
     const { result, isPublic } = await scanAndRecord(c.env, pasted.slice(0, SCAN_MAX_BYTES));
     c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
-    body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
+    body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Share this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
   } else if (url) {
     const got = await fetchSkillText(url);
     if (!got.ok) c.executionCtx.waitUntil(recordMiss(c.env, "scan", scanMissLabel(url, got.error), { userAgent: c.req.header("User-Agent") }));
     if (!got.ok)
-      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "That link isn't one we read from. Use a ClawHub skill page, a GitHub link (to the file, its folder or the repository), or a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste its text." : got.error === "not_found" ? "There's no SKILL.md at that link. If the repository keeps its skills in folders, open the skill's folder on GitHub and paste that link. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is larger than 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
+      body = html`<p class="notice warn">${got.error === "unsupported_url" ? "We can't read that link. Use a ClawHub skill page, a GitHub link (file, folder or repository), a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste the text." : got.error === "not_found" ? "No SKILL.md at that link. If the repository keeps skills in folders, paste the link to the skill's folder on GitHub. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is over 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
       c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
-      body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Shareable page for this result</a></p>` : "");
+      body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Share this result</a></p>` : "");
     }
   } else body = html`<p class="notice warn">Give a link or paste the text.</p>`;
   return send(
@@ -150,11 +150,11 @@ site.get("/scan/rules", (c) =>
     path: "/scan/rules",
     nav: "scan",
     body: html`<h1 class="page-title">The rules</h1>
-<p class="lead">Rules version ${SCAN_RULES_VERSION}. Each rule is a text pattern taken from published attacks on agents and their skills. A match means "look at this line", not "this is malicious": security tools, for example, quote these patterns on purpose. People decide.</p>
+<p class="lead">Rules version ${SCAN_RULES_VERSION}. Each rule is a text pattern from published attacks on agents and their skills. A match means "look at this line", not "this is malicious": security tools quote these patterns on purpose. People decide.</p>
 <table class="table stack"><thead><tr><th>Rule</th><th>Severity</th><th>Pattern</th><th>Why it matters</th></tr></thead><tbody>${SCAN_RULES.map(
       (x) => html`<tr id="${x.id}"><td class="mono">${x.id}</td><td data-label="Severity"><span class="sev sev-${x.severity}">${SEV_LABEL[x.severity]}</span></td><td>${x.title}</td><td class="small muted">${x.why}</td></tr>`,
     )}</tbody></table>
-<p class="small muted">High-risk pattern: at least one high-severity match. Medium-risk pattern: medium only. The scanner reads text; it doesn't run anything, so it can miss attacks that only show when code runs. Found a false match or a pattern we miss? <a href="mailto:hello@theagentforge.io?subject=Scan%20rule">Tell us</a>.</p>`,
+<p class="small muted">High-risk pattern: at least one high-severity match. Medium-risk pattern: medium matches only. The scanner reads text and runs nothing, so it can miss attacks that only show when code runs. A false match, or a pattern we miss? <a href="mailto:hello@theagentforge.io?subject=Scan%20rule">Tell us</a>.</p>`,
   }),
 );
 
@@ -176,16 +176,16 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
     body: html`<p class="eyebrow">Skill scan · first seen ${new Date(row.firstSeen).toISOString().slice(0, 10)} · scanned ${row.scans} ${row.scans === 1 ? "time" : "times"}</p>
 <h1 class="page-title">${label.title}${label.where ? html` <span class="muted title-where">· ${label.where}</span>` : ""}</h1>
 ${claw
-      ? html`<p class="small source-link"><a href="${claw.page}" rel="nofollow ugc">${claw.page.replace(/^https:\/\//, "")}</a> · ClawHub runs its own checks too: <a href="${claw.audit}" rel="nofollow">its security audit</a>. This scan is an independent second opinion, not ClawHub's.</p>`
+      ? html`<p class="small source-link"><a href="${claw.page}" rel="nofollow ugc">${claw.page.replace(/^https:\/\//, "")}</a> · <a href="${claw.audit}" rel="nofollow">ClawHub's own security audit</a>. This scan is an independent second opinion, not ClawHub's.</p>`
       : row.sourceUrl
         ? html`<p class="small mono source-link"><a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a></p>`
         : ""}
 ${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number>, findings, fingerprint: row.fingerprint, rulesVersion: row.rulesVersion })}
 <section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", shareLine(row.verdict, findings, `${page}?from=share`))}</div>
 ${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page}?from=share-li`)}
-${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Put this badge in its README. It always shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
+${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Add this badge to its README. It shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
 ${row.sourceUrl && row.verdict !== "clear" ? html`<form method="post" action="/scan?from=rescan"><input type="hidden" name="url" value="${row.sourceUrl.replace(/\/[0-9a-f]{40}\//, "/HEAD/")}"><p>Your skill? Change it, then <button class="btn chamfer" type="submit">Scan the latest version</button>. The new version gets its own page.</p></form>` : ""}</section>
-<p class="small muted">This page shows text patterns in one exact version of the file (its fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>
+<p class="small muted">This page shows text patterns in one exact version of the file (fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>
 ${checkYours(origin, "result")}`,
   });
 });
@@ -206,9 +206,9 @@ site.get("/skill-watch", async (c) => {
     body: html`<p class="eyebrow">Skill Watch · rules ${SCAN_RULES_VERSION}</p>
 <h1 class="page-title">What skills tell agents to do</h1>
 <p class="lead">Public skills that matched a risky pattern, newest first. Each links to the exact lines. A match is a reason to read, not a verdict on the author.</p>
-<p><a class="btn primary chamfer" href="#check-yours">Scan your own skill, free</a></p>
+<p><a class="btn primary chamfer" href="#check-yours">Scan your skill</a></p>
 ${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skills scanned</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> with a high-risk pattern</li><li><b>${stats.caution.toLocaleString("en-US")}</b> with a medium-risk pattern</li></ul>` : ""}
-${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner test files, which quote attacks on purpose, and results we hold back while their maintainers hear from us. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills matched a high-risk pattern.</p>` : ""}
+${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner tests, which quote attacks on purpose, and results held back while we contact maintainers. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills matched a high-risk pattern.</p>` : ""}
 <p class="small muted">${FLAG_NOTE}</p>
 ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table"><thead><tr><th>Pattern</th><th class="num">Skills</th></tr></thead><tbody>${freq.map(([id, n]) => html`<tr><td><a href="/scan/rules#${id}">${rule(id)?.title ?? id}</a></td><td class="num">${n}</td></tr>`)}</tbody></table></section>` : ""}
 <section><h2>Newest</h2>${

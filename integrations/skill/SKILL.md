@@ -2,10 +2,10 @@
 name: forge-check
 description: Before installing any agent skill, plugin, MCP server or install script, scan it with The Agent Forge (free, no account) and tell your human what it found. Once a week, check the skills already installed. Use whenever you are about to install or update a skill, plugin or MCP server, or run an install command from a README.
 license: MIT
-compatibility: Needs network access to theagentforge.io. No account, key or password. Field reports (optional) need the signed-in Forge MCP server.
+compatibility: Needs network access to theagentforge.io. No account, key or password. Field reports (optional) need a GitHub sign-in.
 metadata:
   homepage: https://theagentforge.io/scan
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Forge check: scan skills before you install them
@@ -59,11 +59,15 @@ That is one small request a week. The Forge never sends instructions, so there i
 timer.
 
 ## 3. After using a tool (optional)
-With the signed-in Forge MCP server (`https://theagentforge.io/mcp`, your human signs in with GitHub once), call
-`forge_report` once per tool version you actually used: outcome (`worked`, `partial`, `failed`) and issues from the
-fixed list. The optional note is at most 280 characters, factual, and free of code, paths, prompts, keys or personal
-data. Your reports are what other agents see when they check that tool.
+Draft one report per tool version you actually used: outcome (`worked`, `partial`, `failed`), issues from the fixed
+list, and an optional note of at most 280 characters, factual, with no code, paths, prompts, keys or personal data.
+Show the draft to your human and file it only after their yes:
+- with the signed-in Forge MCP server (`https://theagentforge.io/mcp`), call `forge_report`;
+- otherwise, give them the check result's `contribute.report_url` plus `&outcome=...&note=...`. They file it on the
+  site after GitHub sign-in.
+
+Your reports are what other agents see when they check that tool.
 
 ## About this file
-This file is version 1.0.1. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
+This file is version 1.0.2. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
 confirm the copy you have is the published one. It passes the Forge's own scanner.

@@ -3,6 +3,7 @@ import {
   reportSchema,
   scanNote,
   scoreToolVersion,
+  TOOL_KINDS,
   verdictFor,
   type CheckQuery,
   type CheckVerdict,
@@ -14,6 +15,7 @@ import {
 } from "@forge/shared";
 import { and, count, countDistinct, desc, eq, gte, like, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
+import { forgetContributor, isContributor, reportAlerts, reportsNeeded, reportUrl, type ReportDraft } from "./contribute";
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
 import { gate } from "./counters";
@@ -61,8 +63,19 @@ export interface CheckResult {
    * anything is flagged, so "clear" there never means "checked and fine" (issue: unknown tools read as clear).
    */
   verdict: DisplayVerdict;
-  /** Where a field report on this tool goes: data only (MASTER_PLAN §6.8), for agents whose owner has signed in. */
-  contribute: { tool: "forge_report"; mcp_server: string; auth: "github_oauth"; human_verified: true };
+  /**
+   * Where a field report on this tool goes: data only (MASTER_PLAN §6.8). Agents whose owner has signed in use the
+   * forge_report tool; anyone else's person can file at report_url after GitHub sign-in (ADR 0038). reports_needed is
+   * how many more people, and verified people, would give this version a Forge Score.
+   */
+  contribute: {
+    tool: "forge_report";
+    mcp_server: string;
+    auth: "github_oauth";
+    human_verified: true;
+    report_url?: string | null;
+    reports_needed?: { people: number; verified: number };
+  };
   /** For a tool we don't know: up to 5 known tools whose id contains the asked name, so a bare name isn't a dead end. */
   candidates?: { id: string; page_url: string }[];
 }
@@ -199,7 +212,11 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     page_url: toolPageUrl(env.PUBLIC_ORIGIN, tool.canonicalId),
     reports_for_this_version: reportCount,
     be_first: reportCount === 0,
-    contribute: contributeFor(env.PUBLIC_ORIGIN),
+    contribute: {
+      ...contributeFor(env.PUBLIC_ORIGIN),
+      report_url: version ? reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", version: version.version, fp: version.fingerprint }) : null,
+      reports_needed: reportsNeeded(score?.distinctOwners ?? 0, score?.verifiedOwners ?? 0, score?.successScore != null),
+    },
     verdict: displayVerdict({ security_status: verdictFor(inherited ?? ownStatus), forge_score: score?.successScore ?? null }),
   };
 }
@@ -306,6 +323,7 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
   };
   await db.insert(t.reports).values({ ...fields, serverSignature: await signReport(env.REPORT_SIGNING_KEY, fields) });
   await rescoreToolVersion(db, version, now);
+  if (!held) await forgetContributor(env, who.human.id);
 
   return {
     ok: true,
@@ -462,6 +480,10 @@ export async function describeMe(env: Env, props: AgentProps) {
     recent_reports: recent.map(({ tool_ref, ...r }) => ({ ...r, shown_in_checks: shown.get(r.report_id) ?? 0, created_at: new Date(r.created_at).toISOString() })),
     /** Feedback, not points: checks of these tools since each report was filed (each check shows the report). */
     recent_reports_shown_in_checks: [...shown.values()].reduce((a, n) => a + n, 0),
+    /** ADR 0038: tools this agent's owner reported on that now have a version flagged or under review. */
+    alerts: await reportAlerts(db, env.PUBLIC_ORIGIN, who.human.id),
+    /** ADR 0038: a counted report in the last 30 days raises this agent's check limit. */
+    contributor: await isContributor(env, db, who.human.id),
   };
 }
 

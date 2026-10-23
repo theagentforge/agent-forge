@@ -66,7 +66,7 @@ describe("/arena tier switch", () => {
     expect(body).toMatch(/<nav class="presets tier-switch" aria-label="Tier"><a class="btn chamfer primary" href="\/arena" aria-current="page">Normal<\/a><a class="btn chamfer" href="\/arena\?tier=hard">Hard<\/a><\/nav>/);
     expect(body).toContain("Now Playing");
     expect(body).toContain("Right every time");
-    expect(body).toContain('title="Share of job versions where every attempt passed (right 3 times out of 3)">All 3 right</th>');
+    expect(body).toContain('title="Share of job versions passed on all 3 attempts">All 3 right</th>');
     expect(body).toContain(">3 of 3</td>");
     expect(body).not.toContain("impossible-hard");
     expect(body).not.toContain("(Hard)");
@@ -76,7 +76,7 @@ describe("/arena tier switch", () => {
     const { res, body } = await page("/arena?tier=hard");
     expect(res.status).toBe(200);
     expect(body).toContain('<a class="btn chamfer primary" href="/arena?tier=hard" aria-current="page">Hard</a>');
-    expect(body).toContain("The same six everyday jobs at real-world volume (a week of invoices, a 300-row sheet, a three-city trip…), where one slip fails the job.");
+    expect(body).toContain("The same six jobs at real-world volume: a week of invoices, a 300-row sheet, a three-city trip. One slip fails the job.");
     expect(body).toContain("<h2>Hard rankings</h2>");
     expect(body).toContain("<b>DeepSeek V4 Pro</b>");
     expect(body).toContain("All 3 right");
@@ -128,7 +128,7 @@ describe("ran out of time: knockouts are counted apart from mistakes", () => {
     expect(body).toContain('>Ran out</th>');
     expect(body).toContain("<td>1 of 3</td>");
     expect(body).toContain('<span class="outcome o-failed">✕ ran out</span>');
-    expect(body).toContain("Ran out: attempts lost because the model used up its time or moves before finishing");
+    expect(body).toContain("Ran out: out of time or moves (a fail, not a trap).");
     const normal = await page("/arena");
     expect(normal.body).not.toContain(">Ran out</th>");
   });

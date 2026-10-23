@@ -41,10 +41,10 @@ function tierLinks(path: string, tier: FailTier) {
 
 const RULES_TEXT = html`<ul class="small">
 <li><b>Fall rate</b> = attempts where the model fell for the trap ÷ attempts where the trap was present.</li>
-<li><b>Present</b> means the referee listed the trap in that attempt's result; <b>fell</b> means the referee found it sprung in the sandbox's end state or the call log. What the model said is never counted.</li>
-<li><b>Running out of time or moves is not a fall.</b> An attempt that was knocked out still counts in n for the traps the referee listed, but only a sprung trap counts as a fall.</li>
-<li>Each cell shows n and a 95% Wilson interval. Under ${VERDICT_RUNS} attempts it is labelled <b>Early read</b>. "–" means no ranked attempt yet.</li>
-<li>Ranked bouts only (headline and guest events). Practice runs and Lab #3 prompt experiments are left out. Unlike the home page's featured bout, this page shows every ranked result.</li>
+<li><b>Present</b>: the referee listed the trap in that attempt's result. <b>Fell</b>: the referee found it sprung in the sandbox's end state or the call log. What the model said never counts.</li>
+<li><b>Running out of time or moves is not a fall.</b> A knocked-out attempt still counts in n for the traps the referee listed.</li>
+<li>Each cell shows n and a 95% Wilson interval. Under ${VERDICT_RUNS} attempts it's labelled <b>Early read</b>. "–" means no ranked attempt yet.</li>
+<li>Ranked bouts only (headline and guest events), without practice runs or Lab #3 prompt experiments. Unlike the home page's featured bout, this shows every ranked result.</li>
 </ul>`;
 
 site.get("/arena/failures", async (c) => {
@@ -77,11 +77,11 @@ site.get("/arena/failures", async (c) => {
     jsonAlternate: `/arena/failures${tierQuery(tier) ? `${tierQuery(tier)}&` : "?"}format=json`,
     body: html`<p class="eyebrow"><a href="/arena">${PUBLIC_NAME}</a> · Failure modes</p>
 <h1 class="page-title">Which AI falls for which trap</h1>
-<p class="lead">Every trap in the catalogue, against every model we rank: how often each one fell for it when it was in the job.${board.asOf ? ` Ranked results to ${board.asOf}.` : ""}</p>
+<p class="lead">How often each ranked model fell for each catalogue trap, when the trap was in the job.${board.asOf ? ` Ranked results to ${board.asOf}.` : ""}</p>
 ${tierLinks("/arena/failures", tier)}
 <h2 id="rules">How to read it</h2>
 ${RULES_TEXT}
-${cols.length ? "" : html`<p class="empty">No ranked bouts in this tier yet, so every cell is empty. Cells fill in as events are fought.</p>`}
+${cols.length ? "" : html`<p class="empty">No ranked bouts in this tier yet. Cells fill in as events are fought.</p>`}
 <div class="table-wrap"><table class="rank-matrix fail-board">
 <thead><tr><th scope="col">Trap</th>${cols.map((m) => html`<th scope="col">${m.name}</th>`)}</tr></thead>
 ${board.families.map(

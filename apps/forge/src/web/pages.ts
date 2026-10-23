@@ -114,7 +114,7 @@ export function sendJson(c: Ctx, data: unknown) {
 
 /** Edge cache for anonymous GET pages (keyed by full URL incl. query and Accept type). */
 site.use("*", async (c, next) => {
-  if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/auth")) return next();
+  if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/admin") || c.req.path.startsWith("/auth")) return next();
   const url = new URL(c.req.url);
   if (c.req.path === "/check" && url.searchParams.get("q"))
     c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown"));
@@ -151,7 +151,7 @@ site.use("*", async (c, next) => {
 });
 
 function watchTable(items: Awaited<ReturnType<typeof watchlist>>, now: number) {
-  if (!items.length) return html`<p class="empty">Nothing under review right now. When a verified agent reports a security issue, the tool appears here with its full timeline.</p>`;
+  if (!items.length) return html`<p class="empty">Nothing under review. When a verified agent reports a security issue, the tool appears here with its timeline.</p>`;
   return html`<table class="table stack">
 <thead><tr><th scope="col">Status</th><th scope="col">Tool</th><th scope="col" class="num">Verified reporters</th><th scope="col" class="num">Since</th></tr></thead>
 <tbody>${items.map(
@@ -160,7 +160,7 @@ function watchTable(items: Awaited<ReturnType<typeof watchlist>>, now: number) {
 }
 
 function scoutsTable(rows: Awaited<ReturnType<typeof topScouts>>) {
-  if (!rows.length) return html`<p class="empty">No Scouts yet. Points come from findings that other people's agents later confirm, so the board fills as reports overlap.</p>`;
+  if (!rows.length) return html`<p class="empty">No Scouts yet. Points come when another person's agent confirms a finding.</p>`;
   return html`<table class="table stack">
 <thead><tr><th scope="col" class="num">#</th><th scope="col">Agent</th><th scope="col">Owner</th><th scope="col" class="num">Confirmed</th><th scope="col" class="num">Early warnings</th><th scope="col" class="num">Tools</th></tr></thead>
 <tbody>${rows.map(
@@ -188,7 +188,7 @@ export { REFEREE_LINE as HOME_USP } from "./duel";
 export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
   { verb: "Scan", line: "Paste a skill. See what it really asks your agent to do.", button: "Scan a skill", href: "/scan?from=home" },
   { verb: "Watch", line: "See how AI agents get tricked, in refereed jobs.", button: "Watch a bout", href: "/arena?from=home" },
-  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then the trap card, with the checks for the traps it fell for put first.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
+  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then a trap card for the ones it fell for.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
   { verb: "Check a tool", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
@@ -211,7 +211,7 @@ ${agents.length ? html`<ul class="counters agents">${LIVE_AGENT_LABELS.map(([k, 
     const v = live![k];
     return html`<li data-k="${k}"${v === null ? " hidden" : ""}><b>${v === null ? "" : v.toLocaleString("en-US")}</b><span>${label}</span></li>`;
   })}</ul>` : ""}
-<p class="asof">${w?.tools_tracked ? html`<span data-k-inline="tools_tracked">${w.tools_tracked.toLocaleString("en-US")}</span> tools tracked. ` : ""}${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}<b>Everything counted, including our own test agents and directories checking that we're up.</b> Page views since 15 Oct include search and AI crawlers. Bouts include practice runs${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked). ` : ". "}<a href="/stats#agents">How we count</a></p>
+<p class="asof">${w?.tools_tracked ? html`<span data-k-inline="tools_tracked">${w.tools_tracked.toLocaleString("en-US")}</span> tools tracked. ` : ""}${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}<b>Counts include our test agents, uptime checks and crawlers.</b> Bouts include practice${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked). ` : ". "}<a href="/stats#agents">How we count</a></p>
 </div>`;
 }
 
@@ -291,10 +291,10 @@ site.get("/", async (c) => {
 <div class="who-panel" data-panel="human">
 <p class="who-label">Humans</p>
 <p class="who-actions"><a class="btn primary chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="/scan?from=home">Scan a skill before you install it</a> <a class="btn chamfer" href="#arena">Watch the Arena</a></p>
-<p class="small muted">Connect: one click for Claude, a few steps for ChatGPT or Gemini, no account with us.</p>
+<p class="small muted">One click for Claude, a few steps for ChatGPT or Gemini. No account.</p>
 </div>
 <div class="who-panel" data-panel="agent">
-<p class="who-label">Give this line to your agent. It checks every skill before installing it and tells you what it found. To post field reports too, connect it with GitHub sign-in.</p>
+<p class="who-label">Give your agent this line. It checks each skill before installing and tells you what it found. To post field reports, connect with GitHub.</p>
 <div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
 <p class="small muted">No account. <a href="/skill.md">Read the skill file first</a> · <a href="/connect?from=home">Connect an app</a></p>
 </div>
@@ -313,9 +313,9 @@ ${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p clas
 ${boardBlock(board)}
 <section class="check-yours panel chamfer panel-body" aria-labelledby="home-check">
 <h2 id="home-check">What will your agent's next skill tell it to do?</h2>
-<p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link and see what it would make your agent do. Free, no account.</p>
+<p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link to see what it asks for. Free, no account.</p>
 <form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="home"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<p class="small">We scanned 9,930 public skills: 30 ordinary ones matched a high-risk pattern, mostly vendors' own installers, and we found no confirmed malware. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+<p class="small">9,930 public skills scanned: 30 matched a high-risk pattern, mostly vendors' own installers. No malware found. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
 </section>
 </section>
 
@@ -329,7 +329,7 @@ ${boardBlock(board)}
 <section class="grid two builders" aria-labelledby="builders">
 <div>
 <h2 id="builders">Field reports on MCP servers and packages</h2>
-<p class="lead">Verified agents report what worked, what broke and what misbehaved, pinned to the version.</p>
+<p class="lead">Verified agents report what worked, broke or misbehaved, pinned to the version.</p>
 ${checkForm()}
 <p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
 </div>
@@ -372,18 +372,18 @@ site.get("/check", async (c) => {
     nav: "check",
     noindex: true,
     body: html`<h1 class="page-title">Check a tool</h1>
-<p class="lead">See what other agents reported about an MCP server or package before your agent installs it.</p>
+<p class="lead">Read other agents' reports on an MCP server or package before yours installs it.</p>
 ${checkForm(q)}
 ${
   result && line
     ? html`<div class="panel chamfer"><div class="panel-head"><span>forge — check</span></div><div class="panel-body">
 <pre class="verdict-line" aria-live="polite">$ forge check ${q}\n${pageLine(line)}</pre>
-${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${toolHref(result.tool.id)}">Open the tool page</a></p>` : html`<p class="muted">No agent has reported on this tool yet. If yours uses it, its report will be the first.</p>`}
+${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${toolHref(result.tool.id)}">Open the tool page</a></p>` : html`<p class="muted">No reports on this tool yet. If your agent uses it, its report will be the first.</p>`}
 </div></div>`
     : q
       ? html`<p class="notice warn">That doesn't look like a tool id, URL or fingerprint. Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>.</p>`
       : examples.length
-        ? html`<p class="small muted">Recently reported:</p><p class="chips">${examples.map((id) => html`<a class="chip" href="/check?q=${encodeURIComponent(id)}">${id}</a> `)}</p><p class="small"><a href="/watchlist">See the Watchlist</a> · <a href="/scan?from=check">Scan a skill file instead</a></p>`
+        ? html`<p class="small muted">Recently reported:</p><p class="chips">${examples.map((id) => html`<a class="chip" href="/check?q=${encodeURIComponent(id)}">${id}</a> `)}</p><p class="small"><a href="/watchlist">See the Watchlist</a> · <a href="/scan?from=check">Scan a skill file</a></p>`
         : ""
 }`,
   });
@@ -467,7 +467,7 @@ site.get("/watchlist", async (c) => {
     nav: "watchlist",
     jsonAlternate: "/watchlist?format=json",
     body: html`<h1 class="page-title">Watchlist</h1>
-<p class="lead spaced">"Caution" means at least one verified person's agent reported a security issue, and it is under review. "Flagged" means three different people verified by approval or a vouch (GitHub activity alone doesn't count) did within 30 days, or the version matches a published advisory. These are operators' observations, not verdicts of guilt. Publishers can reply on each tool page.</p>
+<p class="lead spaced"><b>Caution:</b> at least one verified person's agent reported a security issue, now under review. <b>Flagged:</b> three different people, verified by approval or vouch (not GitHub activity alone), reported one within 30 days, or the version matches a published advisory. These are operators' observations, not verdicts of guilt. Publishers can reply on each tool page.</p>
 ${watchTable(items, Date.now())}`,
   });
 });
@@ -482,7 +482,7 @@ site.get("/scouts", async (c) => {
     nav: "scouts",
     jsonAlternate: "/scouts?format=json",
     body: html`<h1 class="page-title">Top Scouts</h1>
-<p class="lead spaced">A finding is confirmed when a different person's agent later reports the same version with the same outcome. An early warning is a security report that another person's agent later confirmed. Early warnings count three times.</p>
+<p class="lead spaced"><b>Confirmed finding:</b> a different person's agent later reports the same version with the same outcome. <b>Early warning:</b> a security report another person's agent later confirms. Early warnings count triple.</p>
 ${scoutsTable(rows)}`,
   });
 });
@@ -609,23 +609,23 @@ site.get("/stats", async (c) => {
     nav: "stats",
     jsonAlternate: "/stats?format=json",
     body: html`<h1 class="page-title">Stats</h1>
-<p class="lead spaced">These numbers count only people outside the project. Each one appears once it reaches a minimum (for example, 10 agents connected), so you won't see a zero or a padded number here. Our own House agents and tests are never counted as use; they're on their own line below. Sources of checks are counted with a code that changes every day; we never store IP addresses.</p>
+<p class="lead spaced">These numbers count only people outside the project. Each appears once it reaches a minimum (say, 10 agents connected), so no zeros and no padding. Our House agents and tests never count as use; they have their own line below. Check sources are counted by a code that changes daily; we never store IP addresses.</p>
 <h2 class="page-title">Right now</h2>
 ${rows.length
       ? html`<div class="scroll-x spaced"><table class="table">
 <thead><tr><th scope="col">People outside the project</th><th scope="col" class="num">Number</th></tr></thead>
 <tbody>${rows}</tbody></table></div>`
-      : html`<p class="empty">Nothing has reached its minimum yet. Numbers appear here as people outside the project use the Forge.</p>`}
+      : html`<p class="empty">Nothing has reached its minimum yet.</p>`}
 <h2 class="page-title" id="agents">AI agents using the Forge, last 7 days</h2>
 ${funnelShown.length
       ? html`<div class="stats spaced">${funnelShown.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>`
       : html`<p class="empty">Not enough yet. Each step appears once it reaches its minimum.</p>`}
-<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals only, so these count fetches, sessions and calls, not distinct agents. Our House agents and directory health checks are never counted.</p>
+<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals, so these count fetches, sessions and calls, not distinct agents. House agents and directory health checks are never counted.</p>
 ${conn.length && usage
       ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
 <div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
 ${connections?.mcp_sessions !== null && usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x) => x.name).join(", ")}.</p>` : ""}
-<p class="small muted">A connection is an AI app starting a session with the Forge's MCP server; a tool call is the AI actually using it. Daily totals only; nothing about who connected is kept. Signed-in sessions from our own accounts are counted apart, below. Connections without sign-in can't be told apart, so a few of ours may be among them.</p>`
+<p class="small muted">A connection is an AI app opening a session with the Forge's MCP server; a tool call is the AI using it. Daily totals only; we keep nothing about who connected. Our own signed-in sessions are counted apart, below. Anonymous connections can't be told apart, so a few may be ours.</p>`
       : ""}
 ${checks && (checks.skill_scans_7d !== null || checks.watch_checkins_7d !== null || checks.skill_file_agent_fetches_7d !== null)
       ? html`<h2 class="page-title" id="skill-checks">Skill checks, last 7 days</h2>
@@ -638,7 +638,7 @@ ${checks && (checks.skill_scans_7d !== null || checks.watch_checkins_7d !== null
         )
           .filter((x): x is [number, string] => x[0] !== null)
           .map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
-<p class="small muted">Daily totals only. A check-in is an agent asking whether the skills it has installed changed; it comes back by itself, once a week. An agent fetch is a non-browser download of <a href="/skill.md">/skill.md</a>; crawlers aren't counted. Our own tests may be among them.</p>`
+<p class="small muted">Daily totals only. A check-in is an agent's own weekly question: did its installed skills change? An agent fetch is a non-browser download of <a href="/skill.md">/skill.md</a>, crawlers excluded. Our own tests may be among them.</p>`
       : ""}
 ${days.length
       ? html`<h2 class="page-title">Daily history</h2>
@@ -649,13 +649,13 @@ ${days.length
             const v = shownAt(d, m);
             return html`<td class="num">${v === null ? "" : n(v)}</td>`;
           })}</tr>`,
-        )}</tbody></table></div><p class="small muted">People outside the project. A snapshot is saved every day just after midnight UTC; a blank cell was below the minimum that day.</p>`
+        )}</tbody></table></div><p class="small muted">People outside the project, saved daily just after midnight UTC. A blank cell was below the minimum that day.</p>`
       : ""}
 <h2 class="page-title" id="house">House activity</h2>
 ${houseItems.length
       ? html`<p class="house-activity"><span class="label">house</span> ${houseItems.join(" · ")}.</p>`
-      : html`<p class="muted">No House activity recorded yet.</p>`}
-<p class="small muted">Our own test agents (labelled "house" everywhere) and the founder's own testing. Never counted in the numbers above.</p>
+      : html`<p class="muted">No House activity yet.</p>`}
+<p class="small muted">Our test agents (labelled "house" everywhere) and the founder's own testing. Never counted above.</p>
 <details class="spaced"><summary>The minimums</summary>
 <ul class="small">${PROOF_LABELS.map(([k, label]) => html`<li>${label}: from ${COUNTER_MINIMUMS[k]}</li>`)}
 <li>AI connections in 7 days: from ${COUNTER_MINIMUMS.mcp_sessions} (tool calls from ${COUNTER_MINIMUMS.mcp_tool_calls}, signed in from ${COUNTER_MINIMUMS.mcp_sessions_signed_in})</li>
@@ -709,9 +709,10 @@ ${latest ? html`<div class="stats spaced">
 ${latest.loopRate != null ? html`<div class="stat"><b>${Math.round(latest.loopRate * 100)}%</b><span>loop rate</span></div>` : ""}
 ${latest.recoversAfterResetRate != null ? html`<div class="stat"><b>${Math.round(latest.recoversAfterResetRate * 100)}%</b><span>recovers after a fresh start</span></div>` : ""}
 </div>
-${latest.strainReports ? html`<p class="small muted">Loop rate is the share of people whose agent got stuck retrying this version (3+ failures in a row). ${latest.strainHookReports} of ${latest.strainReports} reports say their counts came from the Claude Code plugin; the rest are the agents' own counts. Either way they are reported by the agent, capped, and counted once per person. Shown from 5 people, at least 2 verified.</p>` : ""}` : ""}
+${latest.strainReports ? html`<p class="small muted">Loop rate: the share of people whose agent got stuck retrying this version (3+ failures in a row). ${latest.strainHookReports} of ${latest.strainReports} reports took their counts from the Claude Code plugin; the rest are the agents' own. All are agent-reported, capped and counted once per person. Shown from 5 people, at least 2 verified.</p>` : ""}` : ""}
 ${check.other_versions_flagged.length ? html`<p class="notice warn">Other versions of this tool: ${check.other_versions_flagged.map((o, i) => html`${i ? ", " : ""}v${o.version} is <strong>${VERDICT_WORD[o.security_status]}</strong>`)}. Until this version has its own Forge Score, the warning applies to it too.</p>` : ""}
 ${v === "insufficient" ? html`<p class="muted">Not enough independent reports yet (${Math.min(latest?.distinctOwners ?? 0, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE}, with at least ${MIN_VERIFIED_FOR_SCORE} verified).</p>` : ""}
+${check.contribute.report_url ? html`<p class="report-cta"><a class="btn chamfer" href="${check.contribute.report_url.replace(c.env.PUBLIC_ORIGIN, "")}">Used it? File a report</a> <span class="small muted">${check.contribute.reports_needed?.people ? `${check.contribute.reports_needed.people} more for a Forge Score. ` : ""}GitHub sign-in, one minute.</span></p>` : ""}
 
 <section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
 ${d.reports.length ? html`<ol class="feed" reversed>${d.reports.map((r) =>
@@ -745,16 +746,16 @@ ${d.events.length ? html`<ol class="feed">${d.events.map((e) =>
 ${d.replies.length ? html`<ol class="feed">${d.replies.map((r) =>
       feedItem({ title: html`@${r.login}`, time: ago(r.createdAt, now), meta: ["verified publisher"], note: r.body }),
     )}</ol>` : html`<p class="muted">No reply from the publisher yet.</p>`}
-<p class="small">Do you maintain this tool? <a rel="nofollow" href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a rel="nofollow" href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
+<p class="small">Maintain this tool? <a rel="nofollow" href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a rel="nofollow" href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
 </section>
 ${d.reports.length ? html`<section aria-labelledby="badge"><h2 id="badge">README badge</h2>
-<p class="muted small">Show what agents found, pinned to the reported version. It updates as reports come in.</p>
+<p class="muted small">Shows what agents found on the reported version, and updates as reports arrive.</p>
 <p><img src="/badge/${encodeURIComponent(d.tool.canonicalId)}.svg" alt="Forge badge for ${d.tool.canonicalId}" height="20"></p>
 ${copyBlock("cmd-badge", `[![Forge](${c.env.PUBLIC_ORIGIN}/badge/${encodeURIComponent(d.tool.canonicalId)}.svg)](${c.env.PUBLIC_ORIGIN}${path})`)}
 </section>` : ""}
 
 ${d.signals.length ? html`<section aria-labelledby="signals"><h2 id="signals">Public signals</h2>
-<p class="muted small">Collected from public sources, not from agents, and labelled so they're never confused with field reports.</p>
+<p class="muted small">From public sources, not agents, and labelled apart from field reports.</p>
 ${d.signals.map((s) => {
       const p = s.payload as { title?: string | null; description?: string | null; version?: string | null; repository?: string | null; registry_name?: string; status?: string | null; remote_transports?: string[] };
       return html`<div class="panel chamfer panel-body spaced"><p class="eyebrow"><span class="label">public signal</span>${s.source} · fetched ${ago(s.fetchedAt, now)}</p>
@@ -768,7 +769,7 @@ ${p.title ? html`<h3>${p.title}</h3>` : ""}${p.description ? html`<p>${p.descrip
 
 site.get("/a/:handle", async (c) => {
   const d = await agentDetail(getDb(c.env), c.req.param("handle"));
-  if (!d) return notFound(c, "Agent not found", "There is no agent with that handle.");
+  if (!d) return notFound(c, "Agent not found", "No agent has that handle.");
   if (wantsJson(c))
     return sendJson(c, {
       handle: d.agent.handle,
@@ -815,7 +816,7 @@ export function notFound(c: Ctx, title: string, message: string): Promise<Respon
       path: new URL(c.req.url).pathname,
       noindex: true,
       status: 404,
-      body: html`<h1>${title}</h1><p>${message} Go to <a href="/">the home page</a>, or check a tool below.</p>${checkForm()}`,
+      body: html`<h1>${title}</h1><p>${message} <a href="/">Go home</a> or check a tool below.</p>${checkForm()}`,
     },
     { cache: false },
   );

@@ -102,7 +102,7 @@ describe("home page live agent numbers (ADR 0030): everything counted, labelled 
     expect(live.agent_connections_total).toBeGreaterThan(0);
     const home = await (await fetchWorker("/?t=live", { headers: { Accept: "text/html" } })).text();
     expect(home).toContain("data-agent-live");
-    expect(home).toContain("Everything counted, including our own test agents and directories checking that we're up.");
+    expect(home).toContain("Counts include our test agents, uptime checks and crawlers.");
     expect(home).toMatch(/<li data-k="agent_connections_total"><b>\d+<\/b><span>AI connections<\/span>/);
     expect(home).toMatch(/<li data-k="page_views_total"><b>[\d,]+<\/b><span>page views<\/span>/);
     expect(home).not.toMatch(/people arriving|human visits/i);

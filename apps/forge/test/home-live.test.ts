@@ -17,9 +17,10 @@ describe("the trap card's measured value on the home page", () => {
     expect(t.fewer).toBe(54);
     const body = await home();
     expect(body).toContain("54% fewer traps</b> with the free trap card.");
-    expect(body).toContain("<b>39 of 100</b> new jobs with the card, against 84 of 100 with no card");
-    expect(body).toContain("A placebo text of the same length: 73 of 100.");
-    expect(body).toContain("made no difference on 2");
+    expect(body).toContain("<b>39 in 100</b> traps with the card, 84 without");
+    expect(body).toContain("A placebo text: 73.");
+    expect(body).toContain("Clear effect on 3 of 6 model–job pairs");
+    expect(body).toContain("95% interval 48–59% fewer");
     expect(body).toContain("In our tests on frontier models, the card didn't measurably reduce traps");
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
     // It sits straight after the hero, before the Arena.

@@ -110,6 +110,8 @@ describe("scout signals", () => {
       people: 50,
       humans: 12,
       web_scans: 1,
+      report_page_views: 0,
+      web_reports: 0,
       connect_page: 10,
       connect_tests_passed: 2,
       connections: 3, // 3 sessions less 1 directory check, plus 1 A2A request

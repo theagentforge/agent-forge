@@ -4,7 +4,10 @@ import { html } from "hono/html";
 import { pgBoutCount, scorecardHref } from "../arena/agent-scorecard";
 import * as t from "../db/schema";
 import { agentFunnel, agentFunnelDaily, FUNNEL_STAGES } from "../services/agent-funnel";
+import { isContributor, reportAlerts } from "../services/contribute";
 import { getDb } from "../services/db";
+import { shownInChecks } from "../services/feedback";
+import { toolPageUrl } from "../services/tools";
 import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from "../services/github";
 import { canParticipate, isClosed } from "../services/access";
 import { approveLogin, isAdmin, MAX_AGENTS_PER_HUMAN, upsertHuman, vouch, vouchesRemaining } from "../services/identity";
@@ -47,7 +50,7 @@ const MESSAGES = {
   not_admin: "Only the founder can approve people.",
   scorecard_on: "Score page is public. Anyone with the link can see it, and the badge works in READMEs.",
   scorecard_off: "Score page is private again. Its page, JSON and badge now show \"not found\".",
-  scorecard_no_bouts: "That agent has no refereed Ranked Ladder bouts yet, so there's nothing to publish.",
+  scorecard_no_bouts: "Nothing to publish: that agent has no refereed Ranked Ladder bouts yet.",
 } as const;
 type MessageKey = keyof typeof MESSAGES;
 
@@ -70,10 +73,14 @@ export async function guardPost(c: Ctx) {
   return { ...s, form };
 }
 
+/** Where to go after sign-in: a path on this site only (ADR 0038: back to the /report draft). */
+export const safeNext = (next: string | undefined) => (next && /^\/(?![/\\])[\x21-\x7e]{0,1023}$/.test(next) ? next : "/dashboard");
+
 site.get("/auth/login", async (c) => {
   const verifier = crypto.randomUUID() + crypto.randomUUID();
   const state = `${WEB_STATE_PREFIX}${crypto.randomUUID()}`;
-  const login = await sign(c.env.SESSION_SECRET, { state, verifier, exp: Math.floor(Date.now() / 1000) + 600 });
+  const next = safeNext(c.req.query("next"));
+  const login = await sign(c.env.SESSION_SECRET, { state, verifier, next, exp: Math.floor(Date.now() / 1000) + 600 });
   return new Response(null, {
     status: 302,
     headers: {
@@ -85,7 +92,7 @@ site.get("/auth/login", async (c) => {
 });
 
 site.get("/callback/web", async (c) => {
-  const pending = await verify<{ state: string; verifier: string }>(
+  const pending = await verify<{ state: string; verifier: string; next?: string }>(
     c.env.SESSION_SECRET,
     readCookie(c.req.header("Cookie"), LOGIN_COOKIE),
   );
@@ -100,7 +107,7 @@ site.get("/callback/web", async (c) => {
     return new Response("GitHub sign-in failed. Please try again.", { status: 502 });
   }
   const human = await upsertHuman(getDb(c.env), identity.profile, Date.now());
-  const headers = new Headers({ Location: "/dashboard", "Cache-Control": "no-store" });
+  const headers = new Headers({ Location: safeNext(pending.next), "Cache-Control": "no-store" });
   headers.append("Set-Cookie", cookie(SESSION_COOKIE, await newSession(c.env.SESSION_SECRET, human.id, identity.orgs), SESSION_TTL_SECONDS));
   headers.append("Set-Cookie", cookie(LOGIN_COOKIE, "", 0));
   return new Response(null, { status: 302, headers });
@@ -126,7 +133,7 @@ site.get("/dashboard", async (c) => {
       {
         ...base,
         body: html`<h1 class="page-title">Your agents</h1>${message ? html`<p class="notice">${message}</p>` : ""}
-<p>Sign in with GitHub to rename or revoke your agents and vouch for people. We keep only your GitHub user number, username and account creation date.</p>
+<p>Sign in to rename or revoke your agents and vouch for people. We keep only your GitHub user number, username and account creation date.</p>
 <p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub</a></p>`,
       },
       { cache: false },
@@ -160,6 +167,7 @@ site.get("/dashboard", async (c) => {
   const csrf = await csrfToken(c.env.SESSION_SECRET, s.token);
   const now = Date.now();
   const active = agents.filter((a) => a.status === "active").length;
+  const yours = await yourReports(c.env, db, human.id, now);
 
   return send(
     c,
@@ -170,9 +178,10 @@ ${message ? html`<p class="notice">${message}</p>` : ""}
 <p>Signed in as <strong class="mono">@${human.githubLogin}</strong> ${tierLabel(human.tier)} ${
         human.verifiedVia ? html`<span class="muted small">(via ${human.verifiedVia})</span>` : ""
       }</p>
-${waitingForAccess ? html`<p class="notice warn"><strong>You're on the list.</strong> The Agent Forge is invite-only until launch: connecting agents and filing reports open once the founder approves you. You can check any tool now.</p>` : ""}
+${waitingForAccess ? html`<p class="notice warn"><strong>You're on the list.</strong> The Forge is invite-only until launch. Connecting agents and filing reports open once the founder approves you; checking tools works now.</p>` : ""}
 ${human.tier === "sandbox" && !waitingForAccess ? html`<p class="notice warn">You're in the sandbox: your agents' reports are shown and counted, but weigh less in scores. Ask a verified person to vouch for you, or see the <a href="/methodology">methodology</a>.</p>` : ""}
 
+${yours}
 <section aria-labelledby="agents-h"><h2 id="agents-h">Agents (${active} of ${MAX_AGENTS_PER_HUMAN})</h2>
 ${agents.length === 0 ? html`<p class="empty">No agents yet. <a href="/connect">Connect one</a>.</p>` : ""}
 ${agents.map(
@@ -196,7 +205,7 @@ ${scorecardPanel(a, bouts.get(a.id) ?? 0, csrf)}
 
 <section aria-labelledby="vouch-h"><h2 id="vouch-h">Vouch for someone</h2>
 ${human.tier === "verified"
-        ? html`<p>Vouching makes another developer verified. Only vouch for people you know are real and honest. You have <strong>${remaining}</strong> vouches left.</p>
+        ? html`<p>Vouching makes someone verified. Vouch only for people you know are real and honest. <strong>${remaining}</strong> vouches left.</p>
 <form class="stack" method="post" action="/dashboard/vouch">
 <input type="hidden" name="csrf" value="${csrf}">
 <label for="vouch-login">Their GitHub username</label>
@@ -214,7 +223,7 @@ ${admin
 <p>Approved people count fully, can help flag a tool, and can vouch for 5 others. Approve people you've talked to, such as design partners.</p>
 <form class="stack" method="post" action="/dashboard/approve">
 <input type="hidden" name="csrf" value="${csrf}">
-<label for="approve-login">GitHub username (they don't need to have signed in yet)</label>
+<label for="approve-login">GitHub username (sign-in not needed yet)</label>
 <input id="approve-login" type="text" name="github_login" pattern="@?[A-Za-z0-9-]{1,39}" required autocomplete="off">
 <button class="btn primary chamfer" type="submit">Approve</button>
 </form>
@@ -245,14 +254,14 @@ ${house.length ? html`<ul>${house.map((h) => html`<li class="mono">@${h.login}</
 /** ADR 0023 §6: the owner's switch for the agent's Proving Ground score page. Private by default. */
 function scorecardPanel(a: typeof t.agents.$inferSelect, bouts: number, csrf: string) {
   if (bouts === 0)
-    return html`<p class="hint top-gap">Score page: none yet. It becomes available after this agent takes a <a href="/arena/proving-ground">Ranked Ladder</a> bout through the Forge MCP.</p>`;
+    return html`<p class="hint top-gap">Score page: none yet. It opens after this agent's first <a href="/arena/proving-ground">Ranked Ladder</a> bout through the Forge MCP.</p>`;
   const href = scorecardHref(a.handle);
   return html`<form class="actions top-gap" method="post" action="/dashboard/agents/${a.id}/scorecard">
 <input type="hidden" name="csrf" value="${csrf}">
 ${a.scorecardPublic
     ? html`<span>Score page: <strong>public</strong> at <a href="${href}">${href}</a></span><button class="btn chamfer" type="submit" name="public" value="off">Make private</button>`
     : html`<span>Score page: <strong>private</strong></span><button class="btn chamfer" type="submit" name="public" value="on">Make public</button>`}
-<span class="hint">Making it public shows, to anyone: this agent's name, your GitHub username, your verified status, its ${bouts} refereed Ranked Ladder ${bouts === 1 ? "bout" : "bouts"} with links to each replay, the traps it caught and fell for, and a signed summary and README badge. You can turn it off at any time.</span>
+<span class="hint">Making it public shows, to anyone: this agent's name, your GitHub username, your verified status, its ${bouts} refereed Ranked Ladder ${bouts === 1 ? "bout" : "bouts"} with links to each replay, the traps it caught and fell for, and a signed summary and README badge. Turn it off any time.</span>
 </form>`;
 }
 
@@ -371,7 +380,7 @@ function agentFunnelPanel(f: Awaited<ReturnType<typeof agentFunnel>>, daily: Awa
   };
   const d = f.detail;
   return html`<section aria-labelledby="funnel-h"><h2 id="funnel-h">AI agents using the Forge (founder only)</h2>
-<p class="small muted">Exact numbers, last 7 days, with no minimums. The public version on <a href="/stats#agents">/stats</a> shows each step once it reaches its minimum. House agents and directory health checks are left out.</p>
+<p class="small muted">Exact numbers, last 7 days, no minimums; <a href="/stats#agents">/stats</a> shows each step from its minimum. House agents and directory health checks are left out.</p>
 <div class="scroll-x"><table class="table">
 <thead><tr><th scope="col">Step</th><th scope="col" class="num">7 days</th><th scope="col" class="num">Of the step before</th></tr></thead>
 <tbody>${FUNNEL_STAGES.map(([k, short, long]) => html`<tr><td><strong>${short}</strong><br><span class="small muted">${long}</span></td><td class="num">${n(f.stages[k])}</td><td class="num">${rate(k)}</td></tr>`)}</tbody></table></div>
@@ -386,5 +395,35 @@ ${daily.length
 <thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Found us</th><th scope="col" class="num">Connected</th><th scope="col" class="num">Used a tool</th></tr></thead>
 <tbody>${[...daily].reverse().map((x) => html`<tr><td class="mono">${x.day}</td><td class="num">${n(x.found)}</td><td class="num">${n(x.connected)}</td><td class="num">${n(x.used)}</td></tr>`)}</tbody></table></div>`
     : ""}
+</section>`;
+}
+
+/**
+ * ADR 0038: what contributing gives back. Alerts when a tool you reported on is flagged, each report's reach (checks
+ * that showed it), and whether your agents have the contributor check limit. Shown only to the signed-in owner.
+ */
+async function yourReports(env: Env, db: ReturnType<typeof getDb>, humanId: string, now: number) {
+  const rows = await db
+    .select({ id: t.reports.id, toolRef: t.tools.id, tool: t.tools.canonicalId, version: t.toolVersions.version, outcome: t.reports.outcome, createdAt: t.reports.createdAt, held: t.reports.held })
+    .from(t.reports)
+    .innerJoin(t.toolVersions, eq(t.reports.toolVersionId, t.toolVersions.id))
+    .innerJoin(t.tools, eq(t.toolVersions.toolId, t.tools.id))
+    .where(eq(t.reports.humanId, humanId))
+    .orderBy(desc(t.reports.createdAt))
+    .limit(20);
+  const [shown, alerts, contributor] = await Promise.all([
+    shownInChecks(db, rows.map((r) => ({ id: r.id, toolId: r.toolRef, createdAt: r.createdAt }))),
+    reportAlerts(db, env.PUBLIC_ORIGIN, humanId),
+    isContributor(env, db, humanId, now),
+  ]);
+  const reach = [...shown.values()].reduce((a, n) => a + n, 0);
+  return html`<section aria-labelledby="reports-h"><h2 id="reports-h">Your reports</h2>
+${alerts.length ? html`<div class="notice warn"><strong>Alerts:</strong> ${alerts.length === 1 ? "a tool" : `${alerts.length} tools`} you reported on now ${alerts.length === 1 ? "has" : "have"} a flagged version.<ul>${alerts.map((a) => html`<li><a class="mono" href="${a.page_url}">${a.tool_id}</a> ${a.version}: ${a.security_status}</li>`)}</ul></div>` : ""}
+${rows.length
+  ? html`<p><b>${reach.toLocaleString("en-US")}</b> checks showed your reports.${contributor ? " Your agents get 5× the check limit as a contributor." : ""}</p>
+<table class="table"><thead><tr><th scope="col">Tool</th><th scope="col">Outcome</th><th scope="col" class="num">Shown in checks</th><th scope="col">Filed</th></tr></thead><tbody>${rows.map(
+      (r) => html`<tr><td class="mono"><a href="${toolPageUrl(env.PUBLIC_ORIGIN, r.tool)}">${r.tool}</a> ${r.version}</td><td>${r.outcome}${r.held ? html` <span class="muted small">held for review</span>` : ""}</td><td class="num">${(shown.get(r.id) ?? 0).toLocaleString("en-US")}</td><td>${ago(r.createdAt, now)}</td></tr>`,
+    )}</tbody></table>`
+  : html`<p class="empty">No reports yet. Every check result your agent gets has a <code>report_url</code>; open it after you use a tool to file in one tap. Contributors' agents get 5× the check limit, and alerts here if a tool they reported on is flagged.</p>`}
 </section>`;
 }

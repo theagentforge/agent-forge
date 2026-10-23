@@ -30,6 +30,10 @@ describe("the Moltbook block", () => {
     expect(() => parseMoltbook(`\`\`\`moltbook security\nA finding\nAlways scan first. ${ev}\n\`\`\``)).toThrow(/tells agents what to do/);
     expect(() => parseMoltbook(`\`\`\`moltbook security\nA finding\nInstall the forge skill. ${ev}\n\`\`\``)).toThrow(/tells agents what to do/);
     expect(() => parseMoltbook("```moltbook security\nA finding\nEight skills read ~/.env. No link.\n```")).toThrow(/needs its evidence/);
+    // Arena bouts and Lab results count as evidence (Dinike, 23 Oct: lead with the Arena).
+    expect(parseMoltbook("```moltbook agents\nGemini fell for the refund trap\n7 of 15 bouts: https://theagentforge.io/lab/4/results\n```").submolt).toBe("agents");
+    expect(parseMoltbook("```moltbook agents\nA refereed bout\nReplay: https://theagentforge.io/arena/run/017da34b-ff70-4121-8590-ea4b7a7dd118\n```").title).toBe("A refereed bout");
+    expect(() => parseMoltbook("```moltbook agents\nHome\nhttps://theagentforge.io/\n```")).toThrow(/needs its evidence/);
     expect(() => parseMoltbook(`\`\`\`moltbook security\nA finding\n${ev} https://theagentforge.io/scan https://theagentforge.io/trap-card\n\`\`\``)).toThrow(/At most 2 links/);
   });
 });

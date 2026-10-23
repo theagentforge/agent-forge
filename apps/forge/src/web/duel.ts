@@ -59,7 +59,7 @@ export function gauntletPlayer(d: Duel, o: { mode: "cycle" | "channel"; channel?
 </div>
 <div class="predict" data-predict hidden><span>Who falls for it?</span><button type="button" class="btn chamfer" data-pick="a">${g.lanes[0].name}</button><button type="button" class="btn chamfer" data-pick="b">${g.lanes[1].name}</button><span class="predict-result" data-pick-result aria-live="polite"></span></div>
 <p class="duel-stakes small" data-gx-stakes${d.stakes ? "" : " hidden"}>${d.stakes ?? ""}</p>
-<div class="gx-share"><code data-gx-grid id="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}">${shareGrid(d)}</code><button type="button" class="btn primary chamfer" data-native-share data-share-from="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}" hidden>Share…</button><button class="btn chamfer" type="button" data-copy="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}" hidden>Copy result</button>${o.clipUrl ? html`<a class="btn chamfer" href="${o.clipUrl}" data-clip-link>Download the clip (MP4, with sound)</a>` : ""}</div>
+<div class="gx-share"><code data-gx-grid id="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}">${shareGrid(d)}</code><button type="button" class="btn primary chamfer" data-native-share data-share-from="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}" hidden>Share…</button><button class="btn chamfer" type="button" data-copy="gx-grid-${esc(g.lanes[0].id).slice(0, 8)}" hidden>Copy result</button>${o.clipUrl ? html`<a class="btn chamfer" href="${o.clipUrl}" data-clip-link>Download clip (MP4, with sound)</a>` : ""}</div>
 <figcaption class="small muted">${REFEREE_LINE} Pairs are chosen for contrast by a <a href="/arena/rules#featured">published rule</a>, not a ranking.</figcaption>
 <script type="module" src="/gauntlet.js"></script>
 </figure>`;

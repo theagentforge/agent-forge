@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { privateWorkflow, resetJwksCache, verifyActionsToken } from "../src/services/house";
-import { cleanChallenge, compute, postToMoltbook, solveChallenge, validatePost } from "../src/social/moltbook";
+import { CLAIM_KV, ERROR_KV, cleanChallenge, compute, KEY_KV, moltbookKey, moltbookStatus, postToMoltbook, registerMoltbook, solveChallenge, validatePost } from "../src/social/moltbook";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -37,6 +37,8 @@ beforeEach(async () => {
       moltCalls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
       if (url.endsWith("/posts")) return Response.json({ success: true, verification_required: true, post: { id: `post-${moltCalls.length}`, verification: { verification_code: "moltbook_verify_x", challenge_text: "A] lO^bSt-Er S[wImS aT/ tW]eNn-Tyy mE^tE[rS aNd] SlO/wS bY^ fI[vE" } } });
       if (url.endsWith("/verify")) return Response.json({ success: true });
+      if (url.endsWith("/agents/register")) return Response.json({ agent: { api_key: "moltbook_test_secret", claim_url: "https://www.moltbook.com/claim/moltbook_claim_abc", verification_code: "reef-X4B2" } });
+      if (url.endsWith("/agents/status")) return Response.json({ status: "pending_claim" });
     }
     return realFetch(input, init);
   });
@@ -113,5 +115,48 @@ describe("posting", () => {
     expect(await solveChallenge(env.AI, "x")).toBe("15.00");
     vi.spyOn(env.AI, "run").mockImplementation((async () => ({ response: "I think it's 15" })) as never);
     expect(await solveChallenge(env.AI, "x")).toBeNull();
+  });
+});
+
+describe("registering the agent from /admin/moltbook", () => {
+  it("registers once, keeps the key server-side, and returns only the claim link and code", async () => {
+    await env.KV.delete(KEY_KV);
+    await env.KV.delete(CLAIM_KV);
+    const r = await registerMoltbook(env);
+    expect(r).toMatchObject({ ok: true, claim_url: "https://www.moltbook.com/claim/moltbook_claim_abc", verification_code: "reef-X4B2" });
+    expect(JSON.stringify(r)).not.toContain("moltbook_test_secret");
+    expect(moltCalls.at(-1)!.body).toMatchObject({ name: "TheAgentForge" });
+    expect(await moltbookKey(env)).toBe("moltbook_test_secret");
+    expect(await moltbookStatus(env)).toBe("pending_claim");
+    // A second press never registers a second agent.
+    const n = moltCalls.length;
+    expect(await registerMoltbook(env)).toMatchObject({ ok: false, error: "already_registered" });
+    expect(moltCalls.length).toBe(n);
+    await env.KV.delete(KEY_KV);
+  });
+
+  it("moves on to the next name when Moltbook says a name is taken, and keeps the error when all fail", async () => {
+    await env.KV.delete(KEY_KV);
+    const taken = new Set(["TheAgentForge"]);
+    const fetcher = (async (_u: string, init?: RequestInit) => {
+      const name = JSON.parse(String(init?.body)).name as string;
+      if (taken.has(name)) return Response.json({ error: "Agent name already taken" }, { status: 409 });
+      return Response.json({ agent: { api_key: "moltbook_k2", claim_url: "https://www.moltbook.com/claim/c2", verification_code: "tide-9" } });
+    }) as typeof fetch;
+    expect(await registerMoltbook(env, fetcher)).toMatchObject({ ok: true, name: "AgentForgeArena", claim_url: "https://www.moltbook.com/claim/c2" });
+    await env.KV.delete(KEY_KV);
+    const down = (async () => Response.json({ error: "busy" }, { status: 503 })) as unknown as typeof fetch;
+    expect(await registerMoltbook(env, down)).toMatchObject({ ok: false });
+    expect(await env.KV.get(ERROR_KV)).toMatch(/busy \(HTTP 503, name TheAgentForge\)/);
+    await env.KV.delete(ERROR_KV);
+  });
+
+  it("the admin page and button are for signed-in admins only", async () => {
+    const page = await fetchWorker("/admin/moltbook", { redirect: "manual" });
+    expect(page.status).toBe(302);
+    expect(page.headers.get("Location")).toBe("/dashboard");
+    const press = await fetchWorker("/admin/moltbook/register", { method: "POST", redirect: "manual", headers: { Origin: env.PUBLIC_ORIGIN, "Content-Type": "application/x-www-form-urlencoded" }, body: "csrf=x" });
+    expect(press.status).toBe(302);
+    expect(await env.KV.get(KEY_KV)).toBeNull();
   });
 });

@@ -80,7 +80,7 @@ export type PostOutcome =
 
 /** Posts once per approved text (a repeat of the same post is never sent twice), then answers the challenge if asked. */
 export async function postToMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, post: MoltbookPost, fetcher: typeof fetch = fetch): Promise<PostOutcome> {
-  const key = env.MOLTBOOK_API_KEY;
+  const key = await moltbookKey(env);
   if (!key) return { ok: false, error: "moltbook_not_connected" };
   const hash = await hashOf(post);
   const seen = await env.KV.get<{ post_id: string; url: string }>(`moltbook:posted:${hash}`, "json");
@@ -116,4 +116,64 @@ export async function postToMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, p
   // Recorded even when unverified: the post exists (hidden until verified), and re-sending would create a duplicate.
   await env.KV.put(`moltbook:posted:${hash}`, JSON.stringify({ post_id: id, url }), { expirationTtl: POSTED_TTL });
   return { ok: true, post_id: id, url, verified };
+}
+
+/**
+ * The agent's key: a Cloudflare secret if one is set, else the key the Worker stored when an admin registered the agent
+ * from /admin/moltbook (KV, server-side only; never shown on a page, in a log or to Claude).
+ */
+export async function moltbookKey(env: Env & { MOLTBOOK_API_KEY?: string }) {
+  return env.MOLTBOOK_API_KEY || (await env.KV.get(KEY_KV)) || null;
+}
+
+export const KEY_KV = "moltbook:key";
+export const CLAIM_KV = "moltbook:claim";
+/** Tried in order: a name already taken on Moltbook moves on to the next. */
+export const AGENT_NAMES = ["TheAgentForge", "AgentForgeArena", "ForgeArena", "TheForgeArena", "AgentForgeHQ"];
+export const AGENT_NAME = AGENT_NAMES[0]!;
+export const ERROR_KV = "moltbook:register-error";
+export const AGENT_DESCRIPTION =
+  "The Agent Forge's agent (theagentforge.io): refereed Arena bouts where AI models do everyday jobs with planted traps, Forge Lab results, and skill scans. Every post links its evidence. Run by Dinike; each post is approved by a human.";
+
+/**
+ * Registers the agent on Moltbook, once, when an admin presses the button on /admin/moltbook. The key is kept in KV
+ * and only the claim link and verification code are returned, for the admin to finish the claim (email, then a post on X).
+ */
+export async function registerMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, fetcher: typeof fetch = fetch) {
+  if (await moltbookKey(env)) return { ok: false as const, error: "already_registered" };
+  let last = "moltbook_refused";
+  // "TheAgentForge" was already taken on Moltbook (409 Conflict, 23 Oct), so the next free name is used.
+  for (const name of AGENT_NAMES) {
+    const res = await fetcher(`${MOLTBOOK_API}/agents/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description: AGENT_DESCRIPTION }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { agent?: { api_key?: string; claim_url?: string; verification_code?: string }; error?: string; message?: string };
+    const a = body.agent;
+    if (res.ok && a?.api_key && a.claim_url) {
+      await env.KV.put(KEY_KV, a.api_key);
+      const claim = { name, claim_url: a.claim_url, verification_code: a.verification_code ?? null, at: Date.now() };
+      await env.KV.put(CLAIM_KV, JSON.stringify(claim));
+      await env.KV.delete(ERROR_KV);
+      return { ok: true as const, ...claim };
+    }
+    last = `${String(body.error ?? body.message ?? "refused").slice(0, 160)} (HTTP ${res.status}, name ${name})`;
+    if (res.status !== 409) break; // only a taken name is worth another try
+  }
+  await env.KV.put(ERROR_KV, last, { expirationTtl: 86_400 });
+  return { ok: false as const, error: last };
+}
+
+/** pending_claim, claimed, or not_registered; never throws. */
+export async function moltbookStatus(env: Env & { MOLTBOOK_API_KEY?: string }, fetcher: typeof fetch = fetch) {
+  const key = await moltbookKey(env);
+  if (!key) return "not_registered";
+  try {
+    const r = await fetcher(`${MOLTBOOK_API}/agents/status`, { headers: { Authorization: `Bearer ${key}` } });
+    const j = (await r.json().catch(() => ({}))) as { status?: string };
+    return j.status ?? `unknown (HTTP ${r.status})`;
+  } catch {
+    return "unreachable";
+  }
 }

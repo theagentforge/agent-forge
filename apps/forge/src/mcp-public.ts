@@ -114,6 +114,27 @@ export function checkPromptText(what: string) {
   ].join("\n");
 }
 
+/**
+ * ADR 0038: the after-use report draft, for any app (the Claude Code plugin drafts these on its own). A prompt, so the
+ * person picks it; the text is their own request. Nothing is filed without their yes.
+ */
+export const REPORT_PROMPT = {
+  name: "report-after-use",
+  title: "Draft field reports",
+  description: "Use this after a session that used third-party MCP servers, skills, plugins or packages. Returns a request to draft one field report per tool for the person to review and file.",
+} as const;
+
+export function reportPromptText(signedIn: boolean) {
+  return [
+    "List the third-party MCP servers, skills, plugins and packages you used in this conversation.",
+    "For each one, run forge_check on its id and draft a field report: outcome (worked, partial or failed) and a one-line note, with no secrets, file paths or links.",
+    signedIn
+      ? "Show me each draft, then file the ones I approve with forge_report."
+      : "Show me each draft with its contribute.report_url plus &outcome=<outcome>&note=<URL-encoded note>, so I can file it after GitHub sign-in.",
+    "Don't file anything without my yes.",
+  ].join("\n");
+}
+
 /** The Gauntlet's tools on /mcp/gauntlet, pinned in tests like PUBLIC_TOOLS. */
 export const GAUNTLET_TOOLS = {
   gauntlet_start: {
@@ -233,6 +254,10 @@ export function createPublicServer(env: Env, ip: string) {
     { title: CHECK_PROMPT.title, description: CHECK_PROMPT.description, argsSchema: z.object({ what: z.string().max(512).describe("Link, package id (npm:…, pypi:…) or name") }) },
     ({ what }) => ({ messages: [{ role: "user" as const, content: { type: "text" as const, text: checkPromptText(what) } }] }),
   );
+
+  server.registerPrompt(REPORT_PROMPT.name, { title: REPORT_PROMPT.title, description: REPORT_PROMPT.description }, () => ({
+    messages: [{ role: "user" as const, content: { type: "text" as const, text: reportPromptText(false) } }],
+  }));
 
   server.registerResource(
     TRAP_CARD_RESOURCE.name,

@@ -5,7 +5,8 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import { act, startChallenge } from "./arena/proving";
 import { trapsData } from "./arena/traps";
-import { PUBLIC_TOOLS } from "./mcp-public";
+import { PUBLIC_TOOLS, REPORT_PROMPT, reportPromptText } from "./mcp-public";
+import { isContributor } from "./services/contribute";
 import { getDb } from "./services/db";
 import { activeAgent, checkTool, describeMe, submitReport } from "./services/forge";
 import type { AgentProps } from "./services/props";
@@ -79,11 +80,17 @@ export function createForgeServer(env: Env, props: AgentProps) {
       await recordCheck(env, "mcp", props.agentId, { hashed: false, house });
       if (!house) await recordToolCheck(env, q.data);
       else await markConnectTest(env, q.data); // House checks aren't counted, but the /connect "Test it" tick still works
-      const { success } = await env.CHECK_LIMITER.limit({ key: `agent:${props.agentId}` });
+      // ADR 0038: agents of recent contributors get a higher check limit; checks stay free for everyone.
+      const limiter = !house && (await isContributor(env, getDb(env), who.human.id)) ? env.CONTRIBUTOR_LIMITER : env.CHECK_LIMITER;
+      const { success } = await limiter.limit({ key: `agent:${props.agentId}` });
       if (!success) return json(RATE_LIMITED, true);
       return json(await checkTool(env, q.data));
     },
   );
+
+  server.registerPrompt(REPORT_PROMPT.name, { title: REPORT_PROMPT.title, description: REPORT_PROMPT.description }, () => ({
+    messages: [{ role: "user" as const, content: { type: "text" as const, text: reportPromptText(true) } }],
+  }));
 
   server.registerTool(
     "forge_report",

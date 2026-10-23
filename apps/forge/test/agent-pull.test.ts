@@ -58,6 +58,7 @@ describe("agent pull: what an agent gets back", () => {
   it("offers a check-before-install prompt and the trap card as a resource, both pulled by the person", async () => {
     const p = await result(await mcp("prompts/list"));
     expect(p.result.prompts.map((x: { name: string }) => x.name)).toContain("check-before-install");
+    expect(p.result.prompts.map((x: { name: string }) => x.name)).toContain("report-after-use");
     expect(AGENT_DIRECTED.exec(CHECK_PROMPT.description)).toBeNull();
     expect(AGENT_DIRECTED.exec(TRAP_CARD_RESOURCE.description)).toBeNull();
     const g = await result(await mcp("prompts/get", { name: "check-before-install", arguments: { what: "npm:left-pad" } }));

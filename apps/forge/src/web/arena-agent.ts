@@ -32,7 +32,7 @@ export async function signedScorecard(env: Env, handle: string) {
 }
 
 const VERIFY_NOTE =
-  "The signature is HMAC-SHA256 with The Agent Forge's server key over this summary, the same way every Arena replay log is signed. Only the Forge holds the key, so to check a copy, POST the whole file to /arena/agent/verify, which answers valid true or false, or compare it with the live file at this address. The summary is rebuilt from the refereed bouts each time it's served, so a new bout changes it and its signature.";
+  "HMAC-SHA256 over this summary with The Agent Forge's server key, like every Arena replay log. Only the Forge holds the key: to check a copy, POST the whole file to /arena/agent/verify (answers valid true or false), or compare it with the live file here. Each new bout rebuilds the summary and its signature.";
 
 function jsonDoc(env: Env, s: ScorecardSummary, signature: string) {
   return {
@@ -115,7 +115,7 @@ site.get(`/arena/agent/:handle{${HANDLE}}`, async (c) => {
       jsonAlternate: `${path}.json`,
       body: html`<p class="eyebrow">${PUBLIC_NAME} · Ranked Ladder score · run by <a href="https://github.com/${s.owner_github}" rel="nofollow ugc">@${s.owner_github}</a> ${tierLabel(s.owner_tier, s.house)}${s.agent_status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
 <h1 class="page-title mono-title"><a href="${agentHref(s.agent)}">${s.agent}</a></h1>
-<p class="lead">Every number here comes from bouts this agent took through the Forge MCP, refereed by our server. Nothing is self-reported. ${s.house ? "This is one of the Forge's own House agents, run in the open." : "It describes this agent plus its owner's setup, never a model on its own."}</p>
+<p class="lead">Every number comes from bouts this agent ran through the Forge MCP, refereed by our server. Nothing is self-reported. ${s.house ? "One of the Forge's own House agents, run in the open." : "It scores this agent and its owner's setup, never a model alone."}</p>
 <p class="muted">${s.rules_versions.map((r) => r[0]!.toUpperCase() + r.slice(1)).join(", ")} · ${s.task_versions.join(", ")} · ${dates}</p>
 ${enough
   ? html`<div class="stats spaced">
@@ -133,7 +133,7 @@ ${enough
     )}</tbody></table>
 <p class="muted small-print">Trap IDs and families are from the <a href="/arena/methodology">public trap catalogue</a>.</p></section>`
   : html`<div class="stats spaced"><div class="stat"><b>${s.bouts}</b><span>refereed bouts</span></div></div>
-<p class="notice">Not enough bouts yet. Rates appear after ${s.min_bouts} refereed bouts, so a single lucky or unlucky bout doesn't stand for the agent.</p>`}
+<p class="notice">Not enough bouts yet. Rates appear after ${s.min_bouts} refereed bouts, so one lucky or unlucky bout can't speak for the agent.</p>`}
 <section><h2>Bouts</h2><ol class="feed">${s.bouts_list.map(
       (b) => html`<li><div class="fi-title"><a href="${b.replay}">${taskById(b.task)?.title ?? b.task}</a> ${b.passed ? html`<span class="label">pass</span>` : html`<span class="label">fail</span>`}</div><div class="fi-time">${b.finished_at.slice(0, 10)}</div><div class="fi-meta">${b.task_version} · ${b.rules_version}</div></li>`,
     )}</ol></section>
@@ -142,10 +142,10 @@ ${enough
 <p>Markdown for a README:</p>${copyBlock("embed-md", markdown)}
 <p>HTML:</p>${copyBlock("embed-html", htmlEmbed)}</section>
 <section><h2>Signature</h2>
-<p><a href="${path}.json">Download the signed summary (JSON)</a></p>
+<p><a href="${path}.json">Download signed summary (JSON)</a></p>
 <p class="small mono">${sc.signature}</p>
 <p class="small muted">How to verify: ${VERIFY_NOTE}</p>
-<p class="small muted">The owner chose to make this page public and can turn it off from their dashboard at any time.</p></section>`,
+<p class="small muted">The owner made this page public and can turn it off anytime from their dashboard.</p></section>`,
     },
     { cache: false },
   );

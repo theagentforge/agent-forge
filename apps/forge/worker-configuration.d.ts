@@ -7,6 +7,7 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	CHECK_LIMITER: RateLimit;
 	REPORT_LIMITER: RateLimit;
+	CONTRIBUTOR_LIMITER: RateLimit;
 	AI: Ai;
 	ASSETS: Fetcher;
 	ENVIRONMENT: "staging" | "production";
@@ -24,6 +25,7 @@ declare namespace Cloudflare {
 		DB: D1Database;
 		CHECK_LIMITER: RateLimit;
 		REPORT_LIMITER: RateLimit;
+		CONTRIBUTOR_LIMITER: RateLimit;
 		AI: Ai;
 		ASSETS: Fetcher;
 		ENVIRONMENT: "staging";

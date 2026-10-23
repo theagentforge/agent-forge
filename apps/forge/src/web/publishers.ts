@@ -32,8 +32,8 @@ async function claimPage(c: Ctx, toolId: string, message?: string) {
   const human = s ? await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) }) : undefined;
   const path = `/claim?tool=${encodeURIComponent(toolId)}`;
   const base = { title: "Claim a tool", description: "Publishers can claim their tools and reply to reports for free.", path, noindex: true };
-  if (!toolId) return send(c, { ...base, path: "/claim", body: html`<h1 class="page-title">Claim a tool</h1><p>Publishers can claim their tool and reply to field reports, free. Find your tool first, then use "Claim it" on its page.</p><p><a class="btn primary chamfer" href="/check">Find your tool</a></p>` }, { cache: false });
-  if (!tool) return send(c, { ...base, status: 404, body: html`<h1 class="page-title">Claim a tool</h1><p>No reports exist for that tool yet, so there's nothing to claim.</p>` }, { cache: false });
+  if (!toolId) return send(c, { ...base, path: "/claim", body: html`<h1 class="page-title">Claim a tool</h1><p>Publishers can claim their tool and reply to field reports, free. Find your tool, then use "Claim it" on its page.</p><p><a class="btn primary chamfer" href="/check">Find your tool</a></p>` }, { cache: false });
+  if (!tool) return send(c, { ...base, status: 404, body: html`<h1 class="page-title">Claim a tool</h1><p>That tool has no reports yet, so there's nothing to claim.</p>` }, { cache: false });
   if (!s || !human) return send(c, { ...base, body: html`<h1 class="page-title">Claim ${tool.canonicalId}</h1><p>Publishers can claim their tool and reply to field reports. It's free and always will be.</p>${signIn(path)}` }, { cache: false });
 
   const claim = await db.query.publisherClaims.findFirst({
@@ -53,13 +53,13 @@ ${claim
 <input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="tool" value="${tool.canonicalId}">
 <label for="reply">Your reply (up to ${REPLY_MAX} characters)</label>
 <textarea id="reply" name="body" maxlength="${REPLY_MAX}" required></textarea>
-<p class="hint">Plain text. Don't include secrets or personal data.</p>
+<p class="hint">Plain text. No secrets or personal data.</p>
 <button class="btn primary chamfer" type="submit">Publish reply</button></form>`
   : eligible
     ? html`<p>Your GitHub account <strong>@${human.githubLogin}</strong> owns this tool's repository, so you can claim it now.</p>
 <form method="post" action="/claim"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="tool" value="${tool.canonicalId}">
 <button class="btn primary chamfer" type="submit">Claim this tool</button></form>`
-    : html`<p>We couldn't match <strong>@${human.githubLogin}</strong> or your public GitHub organisations to this tool. If your organisation membership is private, make it public and sign in again, or write to <a href="mailto:disputes@theagentforge.io">disputes@theagentforge.io</a> and we'll verify you by hand.</p>`}`,
+    : html`<p>We couldn't match <strong>@${human.githubLogin}</strong> or your public GitHub organisations to this tool. If your organisation membership is private, make it public and sign in again. Or email <a href="mailto:disputes@theagentforge.io">disputes@theagentforge.io</a> and we'll verify you by hand.</p>`}`,
     },
     { cache: false },
   );

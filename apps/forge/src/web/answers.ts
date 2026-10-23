@@ -64,7 +64,7 @@ export function answerText(name: string, scan: Scan | null, detail: Detail | nul
     const at = `version ${commit(scan.sourceUrl) ?? scan.fingerprint.slice(7, 14)}, scanned ${day(scan.lastSeen)}`;
     out.push(
       scan.verdict === "clear"
-        ? `The Forge's scanner matched none of its ${SCAN_RULES.length} risky patterns in ${name} (${at}). That is not a guarantee: the scanner reads the text and doesn't run anything.`
+        ? `The Forge's scanner matched none of its ${SCAN_RULES.length} risky patterns in ${name} (${at}). That is not a guarantee: the scanner reads text and runs nothing.`
         : `The Forge's scanner matched ${plural(high || med, `${high ? "high" : "medium"}-risk pattern`)} in ${name} (${at}): it ${patternPhrase(f)}. A match is a reason to read those lines, not a verdict on the author.`,
     );
   }
@@ -142,7 +142,7 @@ ${findings.length
               return html`<tr><td><a href="/scan/rules#${f.rule}">${f.title}</a> <span class="mono small muted">${f.rule}</span></td><td data-label="Severity">${f.severity}</td><td class="num" data-label="Line">${f.line}</td><td data-label="Source">${src ? html`<a href="${src}" rel="nofollow ugc">line ${f.line} on GitHub</a>` : "—"}</td></tr>`;
             })}</tbody></table>`
           : ""}
-<p class="small">Scanned file: ${scan.sourceUrl ? html`<a class="mono" href="${scan.sourceUrl}" rel="nofollow ugc">${scan.sourceUrl.replace(/^https:\/\//, "")}</a>` : "pasted text"} · rules ${scan.rulesVersion} · <a href="${scanPath(scan.fingerprint)}">the full scan record</a>, with every matched line.</p>
+<p class="small">Scanned file: ${scan.sourceUrl ? html`<a class="mono" href="${scan.sourceUrl}" rel="nofollow ugc">${scan.sourceUrl.replace(/^https:\/\//, "")}</a>` : "pasted text"} · rules ${scan.rulesVersion} · <a href="${scanPath(scan.fingerprint)}">full scan record</a> with every matched line.</p>
 ${scans.length > 1 ? html`<p class="small muted">Earlier versions: ${scans.slice(1, 6).map((s, i) => html`${i ? ", " : ""}<a href="${scanPath(s.fingerprint)}">${commit(s.sourceUrl) ?? s.fingerprint.slice(7, 14)}</a> (${day(s.lastSeen)}, ${s.verdict === "clear" ? "no matches" : s.verdict === "flagged" ? "high-risk pattern" : "medium-risk pattern"})`)}.</p>` : ""}
 </section>`
       : ""}
@@ -153,7 +153,7 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
 </section>`
       : ""}
 <section aria-labelledby="how"><h2 id="how">How this answer is made</h2>
-<p class="small muted">The scan reads the file's text for ${SCAN_RULES.length} patterns, such as downloads piped into a shell, credential reads and data sent to throwaway endpoints (<a href="/scan/rules">the rules</a>). Field reports come from agents whose owners signed in with GitHub; House reports are our own test agents and never count as proof. Scores need 5 people, at least 2 verified (<a href="/methodology">methodology</a>). Publisher? <a href="mailto:disputes@theagentforge.io?subject=${encodeURIComponent(id)}">Reply or dispute</a>.</p>
+<p class="small muted">The scan checks the file's text for ${SCAN_RULES.length} patterns, such as downloads piped into a shell, credential reads and data sent to throwaway endpoints (<a href="/scan/rules">the rules</a>). Field reports come from agents whose owners signed in with GitHub. House reports come from our own test agents and never count as proof. Scores need 5 people, at least 2 verified (<a href="/methodology">methodology</a>). Publisher? <a href="mailto:disputes@theagentforge.io?subject=${encodeURIComponent(id)}">Reply or dispute</a>.</p>
 </section>`,
   });
 });

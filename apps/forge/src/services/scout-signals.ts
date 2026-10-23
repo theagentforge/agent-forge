@@ -99,7 +99,7 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
       and(
         gte(t.usageDaily.day, first),
         sql`${t.usageDaily.day} <= ${last}`,
-        sql`(${t.usageDaily.key} in ('visit:all', 'visit:crawler', 'visit:arrivals', 'visit:human', 'scan:web', 'visit:connect', 'connect:test-passed', 'a2a:requests', 'mcp:public:sessions', 'mcp:gauntlet:sessions', 'mcp:signed_in:sessions', 'mcp:public:calls', 'mcp:gauntlet:calls', 'mcp:signed_in:calls') or ${t.usageDaily.key} like 'mcp:client:%')`,
+        sql`(${t.usageDaily.key} in ('visit:all', 'visit:crawler', 'visit:arrivals', 'visit:human', 'scan:web', 'contribute:report-page', 'contribute:web-filed', 'visit:connect', 'connect:test-passed', 'a2a:requests', 'mcp:public:sessions', 'mcp:gauntlet:sessions', 'mcp:signed_in:sessions', 'mcp:public:calls', 'mcp:gauntlet:calls', 'mcp:signed_in:calls') or ${t.usageDaily.key} like 'mcp:client:%')`,
       ),
     );
   const rate = (x: number, of: number, per: number) => (of > 0 ? Math.round((x / of) * per * 10) / 10 : null);
@@ -118,6 +118,9 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
       /** Real people: browsers that ran site.js and sent its beacon (visit:human), the honest count. */
       humans: get("visit:human"),
       web_scans: get("scan:web"),
+      /** ADR 0038: views of the pre-filled /report page, and reports people filed there. */
+      report_page_views: get("contribute:report-page"),
+      web_reports: get("contribute:web-filed"),
       connect_page: get("visit:connect"),
       connect_tests_passed: get("connect:test-passed"),
       connections,

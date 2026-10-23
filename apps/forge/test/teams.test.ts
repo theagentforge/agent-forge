@@ -96,6 +96,6 @@ describe("/teams", () => {
 
   it("is linked from the site footer and from /about", async () => {
     expect((await page("/?teams=1")).body).toContain('<a href="/teams">For teams</a>');
-    expect((await page("/about?teams=1")).body).toMatch(/<a href="\/teams">For teams<\/a>: free for the first design partners/);
+    expect((await page("/about?teams=1")).body).toMatch(/free for the first design partners\. <a href="\/teams">For teams<\/a>/);
   });
 });

@@ -136,13 +136,13 @@ describe("pending.json", () => {
 describe("the Share block", () => {
   it("offers the clip only when one exists", async () => {
     const withClip = await (await fetchWorker(`/arena/run/${ids.clipped}`)).text();
-    expect(withClip).toContain(`<a class="btn chamfer" href="${clipFileUrl(ids.clipped!)}" data-clip-link>Download the clip (MP4)</a>`);
+    expect(withClip).toContain(`<a class="btn chamfer" href="${clipFileUrl(ids.clipped!)}" data-clip-link>Download clip (MP4)</a>`);
     expect(clipFileUrl(ids.clipped!)).toBe(`https://github.com/theagentforge/agent-forge/releases/download/clips/${ids.clipped}.mp4`);
     const without = await (await fetchWorker(`/arena/run/${ids.trap}`)).text();
     expect(without).toContain('<section class="share"');
-    expect(without).not.toMatch(/Download the clip|\.mp4/);
+    expect(without).not.toMatch(/Download clip|\.mp4/);
     // A takedown hides the link even though the bout once had a clip.
-    expect(await (await fetchWorker(`/arena/run/${ids.removed}`)).text()).not.toContain("Download the clip");
+    expect(await (await fetchWorker(`/arena/run/${ids.removed}`)).text()).not.toContain("Download clip");
   });
 });
 

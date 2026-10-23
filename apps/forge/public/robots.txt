@@ -3,6 +3,7 @@ User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=no
 Allow: /
 Disallow: /dashboard
+Disallow: /admin
 Disallow: /auth/
 Disallow: /callback
 Disallow: /authorize

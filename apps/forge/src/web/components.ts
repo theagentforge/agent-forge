@@ -117,13 +117,13 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 export function liftTable(jobs: import("../arena/lift").JobLift[]) {
   const any = jobs.some((j) => j.none.n || j.card.n);
   if (!any)
-    return html`<p>We're measuring this in <a href="/lab/3">Forge Lab #3</a>, planned and published before any run: each job is tried with no card, with a same-length card without checks, and with this card, on new versions of the job the card wasn't written from. Results appear here per job, and on the home page only once they meet the bar set in advance.</p>`;
+    return html`<p>We're measuring this in <a href="/lab/3">Forge Lab #3</a>, published before any run. Each job runs with no card, a same-length text without checks, and this card, on new job versions the card wasn't written from. Results appear here per job, and on the home page only once they meet the bar set in advance.</p>`;
   return html`<div class="table-scroll"><table class="table lift-table"><thead><tr><th scope="col">Job</th><th scope="col">Fell for a trap: no card</th><th scope="col">With the card</th><th scope="col">Change</th><th scope="col">Status</th></tr></thead>
 <tbody>${jobs.map((j) => {
     const r = (s: { n: number; traps: number }) => (s.n ? html`${pct(s.traps / s.n)} <span class="muted small">(n=${s.n})</span>` : html`<span class="muted">–</span>`);
     return html`<tr><th scope="row"><a href="/best/${j.task}">${j.title}</a></th><td>${r(j.none)}</td><td>${r(j.card)}</td><td>${j.reduction === null ? "–" : j.reduction > 0 ? `${pct(j.reduction)} fewer` : `${pct(-j.reduction)} more`}</td><td>${j.shown ? html`<b>Measured</b>` : html`<span class="muted">${j.why}</span>`}</td></tr>`;
   })}</tbody></table></div>
-<p class="small muted">Refereed bouts on new versions of each job. "Measured" means it met every condition set in advance in <a href="/lab/3">Forge Lab #3</a>; anything else is shown so you can see where it stands.</p>`;
+<p class="small muted">Refereed bouts on new versions of each job. "Measured" means it met every condition set in advance in <a href="/lab/3">Forge Lab #3</a>. Other rows show where each job stands.</p>`;
 }
 
 /** Home page proof line: only jobs that met the pre-registered bar; nothing at all otherwise. */
@@ -132,5 +132,5 @@ export function liftProof(jobs: import("../arena/lift").JobLift[]) {
   if (!shown.length) return "";
   return html`<section class="lift-proof panel chamfer panel-body" aria-labelledby="lift-title"><h2 id="lift-title">Measured: the trap card works</h2>
 <ul>${shown.map((j) => html`<li><b>${j.title}:</b> AIs fell for the trap ${pct(j.none.traps / j.none.n)} of the time without the card, ${pct(j.card.traps / j.card.n)} with it: <b>${pct(j.reduction ?? 0)} fewer traps</b> <span class="muted small">(n=${j.none.n + j.card.n})</span></li>`)}</ul>
-<p class="small"><a href="/trap-card?from=home">Get the free trap card</a> · <a href="/trap-card#works">All results, including jobs where it didn't help</a></p></section>`;
+<p class="small"><a href="/trap-card?from=home">Get the trap card</a> · <a href="/trap-card#works">All results, including where it didn't help</a></p></section>`;
 }

@@ -39,7 +39,7 @@ site.get(HOUSE_REPORT_PATH, async (c) => {
     body: html`<article class="prose">
 <p class="eyebrow">Nightly · last run ${day(run.probedAt)}</p>
 <h1 class="page-title">The Forge House Report</h1>
-<p>Every night our House tester takes the <strong>${n(total)} most-downloaded MCP servers</strong> in the official MCP Registry that say they need no keys or settings, starts each one with <code>npx</code> in an empty folder, and does the MCP handshake: <code>initialize</code>, then <code>tools/list</code>. No credentials, no arguments, a 75-second limit.</p>
+<p>Every night our House tester starts the <strong>${n(total)} most-downloaded MCP servers</strong> that the official MCP Registry lists as needing no keys or settings. Each runs with <code>npx</code> in an empty folder and gets the MCP handshake: <code>initialize</code>, then <code>tools/list</code>. No credentials, no arguments, a 75-second limit.</p>
 </article>
 <div class="stats spaced">
 <div class="stat"><b>${pct(k.worked, total)}%</b><span>started and listed tools (${n(k.worked)})</span></div>
@@ -61,9 +61,9 @@ ${broken.length ? html`<p>Worked a week ago, not last night:</p><ul>${broken.map
 <article class="prose">
 <h2>How to read this</h2>
 <ul>
-<li>"Started and listed tools" is a real handshake, not a guess. It is filed as a House field report for that exact version, labelled House and kept out of every proof number.</li>
-<li>"Asked for a key" means the server's registry entry says it needs nothing, but it stopped and asked for configuration. We don't file a report for it, because the server may be fine once set up.</li>
-<li>Only servers on npm that run over stdio are included. Remote servers, Python and Docker servers aren't in this test yet.</li>
+<li>"Started and listed tools" is a real handshake, not a guess. It's filed as a House field report for that exact version, labelled House and kept out of every proof number.</li>
+<li>"Asked for a key": the registry entry says it needs nothing, but it asked for configuration. No report is filed, because it may work once set up.</li>
+<li>Only npm servers that run over stdio. Remote, Python and Docker servers aren't tested yet.</li>
 <li>Method and code: <a href="https://github.com/theagentforge/agent-forge/tree/main/integrations/house">integrations/house</a>.</li>
 </ul>
 </article>`,

@@ -1,11 +1,16 @@
 ---
 name: forge-check-before-install
 description: Use when about to install or update an agent skill, plugin or MCP server, or to run an install command from a README. Sends the text to The Agent Forge's free scanner and reports the verdict, rule ids and line numbers to the user before anything is installed. No account or key.
-license: MIT
+license: MIT-0
 compatibility: Needs network access to theagentforge.io. No account, key or password.
 metadata:
   homepage: https://theagentforge.io/scan
   version: "1.0.0"
+  openclaw:
+    emoji: "🔥"
+    homepage: https://theagentforge.io/scan
+    requires:
+      bins: [curl]
 ---
 
 # Check a skill before installing it

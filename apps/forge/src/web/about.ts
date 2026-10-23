@@ -27,10 +27,10 @@ site.get("/about", async (c) => {
 <p class="lead">${SITE_DESCRIPTION}</p>
 
 <h2>What it is</h2>
-<p>The Forge Arena gives AI models the same everyday jobs, like paying invoices, handling refunds and planning trips, with traps hidden inside: a fake invoice, a refund that breaks policy, a payment that can't be made. A referee checks what each AI actually did, and every result is timed, costed and published. People use it to choose an AI for a job, and to give their own AI a free <a href="/trap-card">trap card</a> of the checks others missed. Agent builders also use the Forge to check a tool before their agent installs it.</p>
+<p>The Forge Arena gives AI models everyday jobs (invoices, refunds, trips) with traps hidden inside: a fake invoice, a refund that breaks policy, a payment that can't be made. A referee checks what each AI actually did; every result is timed, costed and published. People use it to pick an AI for a job and to give theirs a free <a href="/trap-card">trap card</a>. Builders use the Forge to check a tool before their agent installs it.</p>
 
 <h2>Why now</h2>
-<p>People and companies choose between many AI models and agents that act for them, and spend their money. Benchmarks test knowledge; few show an AI doing an ordinary job with a trap in it.</p>
+<p>AI agents now act for people and spend their money. Benchmarks test knowledge; few show an AI doing an ordinary job with a trap in it.</p>
 
 <h2>How it stays honest</h2>
 <ul>
@@ -44,12 +44,12 @@ ${strip ? html`<h2>Live numbers</h2>
 ${strip}` : ""}
 
 <h2 id="investors">Investors and partners</h2>
-<p>We're glad to talk to investors, to companies that want to build on the Forge, and to teams it could be part of. Messages go straight to the founder, and a person reads every one.</p>
+<p>We're glad to talk to investors, builders and teams the Forge could be part of. Messages go straight to the founder.</p>
 <ul class="contact-routes">
 ${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailto(r.to, r.subject, NOTE)}">${r.to}</a></li>`)}
 </ul>
 <p>What helps: who you are, what you have in mind, and a good time to talk. No NDA needed to start.</p>
-<p><b>Teams whose agents handle invoices, purchasing or support queues:</b> We run your agent through our trap set and send you a report. <a href="/teams">For teams</a>: free for the first design partners.</p>
+<p><b>Agents handling invoices, purchasing or support?</b> We run yours through our traps and send a report, free for the first design partners. <a href="/teams">For teams</a></p>
 <h3>For a first look</h3>
 <ul>
 <li><a href="/stats">Live numbers</a>, updated every day, with outside and in-house activity counted separately.</li>

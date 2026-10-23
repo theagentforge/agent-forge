@@ -113,7 +113,7 @@ describe("/arena/failures", () => {
     expect(body).toMatch(/<b>75%<\/b> <span class="muted">3 of 4<\/span><br><span class="small muted">n=4 · 95% 30%–95%<\/span> <span class="label"[^>]*>Early read<\/span>/);
     expect(body).toContain('<td class="muted" title="No ranked attempt with this trap yet">–</td>');
     expect(body).toContain("Running out of time or moves is not a fall.");
-    expect(body).toContain("Practice runs and Lab #3 prompt experiments are left out.");
+    expect(body).toContain("without practice runs or Lab #3 prompt experiments");
     expect(body).toContain("Permission overreach");
     expect(body).toContain('aria-current="page">All tiers</a>');
     expect(body).toContain('rel="alternate" type="application/json" href="/arena/failures?format=json"');

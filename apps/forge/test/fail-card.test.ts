@@ -144,7 +144,7 @@ describe("fail card image and Share block", () => {
     expect(body).toContain('<section class="share" aria-labelledby="h-share"><h2 id="h-share">Share</h2>');
     const short = liarId.slice(0, 8);
     const link = `${env.PUBLIC_ORIGIN}/arena/run/${short}`;
-    expect(body).toContain(`href="/og/arena/run/${liarId}/card.png" download="forge-bout-${short}.png">Download the card (PNG)</a>`);
+    expect(body).toContain(`href="/og/arena/run/${liarId}/card.png" download="forge-bout-${short}.png">Download card (PNG)</a>`);
     expect(body).toContain(`<code id="share-link">${link}</code>`);
     const x = /href="(https:\/\/x\.com\/intent\/post\?[^"]+)"/.exec(body)![1]!.replace(/&amp;/g, "&");
     const u = new URL(x);

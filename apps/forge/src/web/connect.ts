@@ -62,7 +62,7 @@ site.get("/connect", async (c) => {
     .catch(() => [])) as { n: number }[];
   // ADR 0023 §3: people outside the project only, and shown only once it reaches its minimum.
   const checksToday = atMinimum("check_sources", Number(row?.n ?? 0));
-  const testNext = html`<p class="small then-test"><a href="#h-test">Then test it below ↓</a> (one question to your AI, and this page ticks).</p>`;
+  const testNext = html`<p class="small then-test"><a href="#h-test">Then test it below ↓</a> (one question; this page ticks).</p>`;
   const section = (id: AppTab, title: string, body: unknown) =>
     html`<section class="app-tab panel chamfer panel-body" id="tab-${id}" data-tab="${id}" aria-labelledby="h-${id}"><h2 id="h-${id}">${title}</h2>${body}</section>`;
   return send(
@@ -76,11 +76,11 @@ site.get("/connect", async (c) => {
 <h1 class="page-title">Connect your AI</h1>
 <section class="panel chamfer panel-body any-agent" aria-labelledby="h-any">
 <h2 id="h-any">Any AI app or agent</h2>
-<p>If it supports MCP (most agents and many apps do), add this address. No sign-in needed:</p>
+<p>If it supports MCP (most agents and many apps do), add this address. No sign-in:</p>
 ${copyBlock("url-any", links.pub)}
-<p class="small">Or send this to your agent and it will set itself up:</p>
+<p class="small">Or send this to your agent; it sets itself up:</p>
 ${copyBlock("send-agent", AGENT_LINE(origin))}
-<p class="small muted">Not sure? Pick your app below for step-by-step help.</p>
+<p class="small muted">Not sure? Pick your app below for steps.</p>
 </section>
 <ol class="checklist" aria-label="Your progress">
 <li class="done">You found the Forge <span aria-hidden="true">✓</span></li>
@@ -93,18 +93,18 @@ ${copyBlock("send-agent", AGENT_LINE(origin))}
 ${section(
   "claude",
   "Claude",
-  html`<p>Works on every plan, including Free (Free allows one custom connector). No account with us needed.</p>
+  html`<p>Works on every plan; Free allows one custom connector. No Forge account needed.</p>
 <p><a class="btn primary chamfer" href="${links.claude}" target="_blank" rel="noopener">Add to Claude</a></p>
-<ol class="small"><li>Claude opens its "Add custom connector" form with the name and address filled in. Press <b>Add</b>.</li><li>Back in a chat, press <b>+</b> → <b>Connectors</b> and check The Agent Forge is switched on.</li></ol>
+<ol class="small"><li>Claude opens "Add custom connector" with the name and address filled in. Press <b>Add</b>.</li><li>Back in a chat, press <b>+</b> → <b>Connectors</b> and check The Agent Forge is switched on.</li></ol>
 ${testNext}
 <p class="small muted">On a Team or Enterprise plan, an Owner adds it first under Organization settings → Connectors. By hand: Customize → Connectors → + Add → Add custom connector, and paste:</p>
 ${copyBlock("url-claude", links.pub)}
-<p class="small">Or give Claude the <a href="/trap-card#claude">trap card</a> instead.</p>`,
+<p class="small">Or give Claude the <a href="/trap-card#claude">trap card</a>.</p>`,
 )}
 ${section(
   "chatgpt",
   "ChatGPT",
-  html`<p>Give ChatGPT the checks AIs skipped in our tests. Paste the card into its settings once, in about 30 seconds. Works on every plan.</p>
+  html`<p>Give ChatGPT the checks AIs skipped in our tests. Paste the card into its settings once: about 30 seconds, any plan.</p>
 <p><a class="btn primary chamfer" href="/trap-card#chatgpt">Get the trap card</a></p>
 <details><summary>Advanced: connect the Forge itself (Plus, Pro, Business, Enterprise or Education, on the web)</summary>
 <ol class="small"><li>Settings → Apps → Advanced settings → turn on <b>Developer mode</b>.</li><li>Press <b>Create app</b>, name it The Agent Forge, paste the address below and choose <b>No Authentication</b>.</li><li>In a chat, choose Developer mode from the <b>+</b> menu and pick The Agent Forge.</li></ol>
@@ -113,7 +113,7 @@ ${copyBlock("url-chatgpt", links.pub)}${testNext}</details>`,
 ${section(
   "gemini",
   "Gemini",
-  html`<p>In the Gemini app you can add the Forge as a custom app. Google allows this for personal accounts in the US, 18 or over, in English, with Keep Activity on.</p>
+  html`<p>Add the Forge to the Gemini app as a custom app. Google allows this for US personal accounts, 18 or over, in English, with Keep Activity on.</p>
 <ol><li>Open gemini.google.com on a computer.</li><li>Open Settings → Connected Apps (if it isn't there, open Personal Intelligence first).</li><li>Under Custom apps, choose <b>Add a custom app</b>.</li><li>Paste the address below, press <b>Next</b> and follow the steps.</li><li>In a chat, type <b>@</b> and pick The Agent Forge.</li></ol>
 ${copyBlock("url-gemini", links.pub)}${testNext}
 <p>Anywhere else, or on a phone: <a class="btn primary chamfer" href="/trap-card#gemini">Get the trap card</a></p>`,
@@ -121,7 +121,7 @@ ${copyBlock("url-gemini", links.pub)}${testNext}
 ${section(
   "other",
   "Copilot and other apps",
-  html`<p>Most chat apps can't add tools yet, but all of them take custom instructions. Give yours the trap card.</p>
+  html`<p>Most chat apps can't add tools yet, but all take custom instructions. Give yours the trap card.</p>
 <p><a class="btn primary chamfer" href="/trap-card#copilot">Get the trap card</a></p>
 <p class="small muted">If your app supports remote MCP servers, add this address (no sign-in):</p>
 ${copyBlock("url-other", links.pub)}
@@ -130,11 +130,11 @@ ${copyBlock("url-other", links.pub)}
 ${section(
   "developers",
   "Developers",
-  html`<p>Check and scan tools before your agent installs them. The buttons and lines below need no sign-in.</p>
+  html`<p>Check and scan tools before your agent installs them. Nothing below needs sign-in.</p>
 <p class="actions"><a class="btn primary chamfer" href="${links.cursor}">Add to Cursor</a><a class="btn chamfer" href="${links.vscode}">Install in VS Code</a></p>
 ${testNext}
 <h3>Claude Code: the plugin (recommended)</h3>
-<p class="small">Adds the tools, checks packages before install, counts tool failures locally, and adds your trap card at session start. Each part can be switched off in <code>/plugin</code>.</p>
+<p class="small">Adds the tools, checks packages before install, counts tool failures locally, and adds your trap card at session start. Switch any part off in <code>/plugin</code>.</p>
 ${copyBlock("p1", `/plugin marketplace add ${origin}/marketplace.json`)}
 ${copyBlock("p2", "/plugin install forge@theagentforge")}
 <h3>One line</h3>
