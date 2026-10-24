@@ -130,7 +130,8 @@ describe("Lab #3 results are published (18 Oct 2026)", () => {
 
 describe("the main lineup", () => {
   it("is each lab's workhorse, pinned to one no-data-collection provider, with unique ids", () => {
-    expect(HEADLINE.map((m) => m.lab)).toEqual(["Anthropic", "OpenAI", "Google", "Mistral AI", "DeepSeek (open weights)", "Alibaba"]);
+    // Embargoed entries (K2) are checked in their own private test.
+    expect(HEADLINE.filter((m) => !m.embargoed).map((m) => m.lab)).toEqual(["Anthropic", "OpenAI", "Google", "Mistral AI", "DeepSeek (open weights)", "Alibaba"]);
     for (const m of HEADLINE) {
       expect(m.division).toBe("heavyweight");
       if (m.route.kind === "openrouter") expect(m.route.provider).toMatch(/^[a-z-]+$/);

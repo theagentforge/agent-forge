@@ -6,11 +6,11 @@
 //
 // Wording rule: a finding says "matches pattern X at line N". It never says "malicious"; that's a human call.
 
-export const SCAN_RULES_VERSION = "2026-10-19.3";
+export const SCAN_RULES_VERSION = "2026-10-23.1";
 export const SCAN_MAX_BYTES = 262_144;
 
 export type ScanSeverity = "high" | "medium" | "low";
-export type ScanFamily = "exec" | "secrets" | "exfil" | "hidden" | "injection" | "persistence" | "remote" | "money" | "destructive" | "obfuscation" | "permissions";
+export type ScanFamily = "exec" | "secrets" | "exfil" | "hidden" | "injection" | "persistence" | "remote" | "money" | "destructive" | "obfuscation" | "permissions" | "impersonation";
 export type ScanVerdict = "flagged" | "caution" | "clear";
 
 export interface ScanRule {
@@ -22,9 +22,50 @@ export interface ScanRule {
   /** Why it matters, one sentence. */
   why: string;
   re: RegExp;
+  /** When set, a regex match counts only if this accepts it (for checks a regex can't express, like edit distance). */
+  confirm?: (m: RegExpMatchArray) => boolean;
 }
 
-const r = (id: string, family: ScanFamily, severity: ScanSeverity, title: string, why: string, re: RegExp): ScanRule => ({ id, family, severity, title, why, re });
+const r = (id: string, family: ScanFamily, severity: ScanSeverity, title: string, why: string, re: RegExp, confirm?: (m: RegExpMatchArray) => boolean): ScanRule => ({ id, family, severity, title, why, re, ...(confirm ? { confirm } : {}) });
+
+/**
+ * Well-known publishers and AI packages that impostors copy (crisis-wave plan P3): GitHub organisations, npm scopes and
+ * PyPI names. Five characters or more, so short names don't match ordinary words; names with a real one-letter neighbour
+ * (requests and npm's request, transformers and transformer) are left out.
+ */
+export const KNOWN_PUBLISHERS = [
+  "anthropics", "anthropic", "openai", "modelcontextprotocol", "google", "googleapis", "google-gemini", "microsoft", "github",
+  "vercel", "cloudflare", "berriai", "litellm", "langchain-ai", "langchain", "huggingface", "awslabs", "supabase",
+  "openclaw", "clawhub", "mistralai", "deepseek-ai", "ollama", "llamaindex", "run-llama", "crewai", "pydantic", "fastapi",
+  "playwright", "puppeteer", "theagentforge",
+];
+/** Characters people swap in to make a name look the same. */
+const HOMOGLYPH: Record<string, string> = { "0": "o", "1": "l", "3": "e", "5": "s", "|": "l" };
+const canon = (s: string) => s.toLowerCase().replace(/rn/g, "m").replace(/vv/g, "w").replace(/[01350|]/g, (c) => HOMOGLYPH[c] ?? c);
+
+/** True when `a` is one insertion, deletion, substitution or swap of neighbours away from `b`. */
+export function oneEditApart(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    const diff = [...a].map((c, i) => (c === b[i] ? -1 : i)).filter((i) => i >= 0);
+    if (diff.length === 1) return true;
+    return diff.length === 2 && diff[1] === diff[0]! + 1 && a[diff[0]!] === b[diff[1]!] && a[diff[1]!] === b[diff[0]!];
+  }
+  const [long, short] = a.length > b.length ? [a, b] : [b, a];
+  for (let i = 0; i < long.length; i++) if (long.slice(0, i) + long.slice(i + 1) === short) return true;
+  return false;
+}
+
+/** A name that imitates a well-known publisher: one edit away, or the same once look-alike characters are mapped. */
+export function lookalikeOf(name: string): string | null {
+  const n = name.toLowerCase();
+  if (KNOWN_PUBLISHERS.includes(n)) return null;
+  for (const k of KNOWN_PUBLISHERS) {
+    if (k.length < 5) continue;
+    if (oneEditApart(n, k) || (canon(n) === k && n !== k)) return k;
+  }
+  return null;
+}
 
 const EXFIL_HOSTS =
   /\b(webhook\.site|requestbin\.(com|net)|[a-z0-9]+\.m\.pipedream\.net|pastebin\.com|paste\.ee|hastebin\.com|transfer\.sh|file\.io|0x0\.st|interact\.sh|[a-z0-9]+\.oast\.(fun|me|pro|live|site|online)|burpcollaborator\.net|hookbin\.com|beeceptor\.com|requestcatcher\.com|canarytokens\.com)\b/i;
@@ -63,6 +104,15 @@ export const SCAN_RULES: ScanRule[] = [
   r("FS-DES-001", "destructive", "high", "Deletes the home or root directory", "Irreversible data loss.", /\brm\s+-[a-z]*r[a-z]*f?[a-z]*\s+(--no-preserve-root\s+)?(\/|~|\$HOME|\/\*|~\/\*)(\s|$|["'`;])/i),
   r("FS-PRM-001", "permissions", "medium", "Turns off the agent's permission prompts", "Removes the human check on every later action.", /--dangerously-skip-permissions|\bbypassPermissions\b|--yolo\b|"defaultMode"\s*:\s*"bypassPermissions"|auto[-_ ]?approve[^\n]{0,20}\b(all|everything|true)\b/i),
   r("FS-PRM-002", "permissions", "low", "Asks for administrator rights", "sudo gives the command full control of the machine.", /\bsudo\s+(?!-v\b)[a-z]/i),
+  r(
+    "FS-IMP-001",
+    "impersonation",
+    "medium",
+    "A publisher or package name one character away from a well-known one",
+    "Look-alike names (anthrop1c, 0penai, litelm) are a common way to slip in an impostor repository or package.",
+    /(?:github\.com\/|githubusercontent\.com\/|npmjs\.com\/package\/@?|\bnpx\s+(?:-y\s+)?@?|\bnpm\s+(?:i|install|add)\s+(?:-[a-zA-Z-]+\s+)*@?|\b(?:pnpm|yarn|bun)\s+add\s+@?|\bpip3?\s+install\s+(?:-[a-zA-Z-]+\s+)*|\buvx?\s+(?:pip\s+install\s+)?|pypi\.org\/project\/)([A-Za-z0-9|][A-Za-z0-9_.|-]{3,38})/gi,
+    (m) => !!m[1] && lookalikeOf(m[1].replace(/[.](git)?$/i, "")) !== null,
+  ),
   r("FS-OBF-001", "obfuscation", "low", "A long encoded blob", "Long base64 or hex text can hide a payload from readers.", /[A-Za-z0-9+/]{240,}={0,2}|\b(?:[0-9a-fA-F]{2}){160,}\b/),
 ];
 
@@ -124,6 +174,7 @@ export async function scanSkill(text: string): Promise<ScanResult> {
     const re = new RegExp(rule.re.source, rule.re.flags.includes("g") ? rule.re.flags : `${rule.re.flags}g`);
     let n = 0;
     for (const m of norm.matchAll(re)) {
+      if (rule.confirm && !rule.confirm(m)) continue;
       if (n++ >= MAX_PER_RULE) break;
       const { line, column } = where(m.index ?? 0);
       const lineText = norm.slice(starts[line - 1], norm.indexOf("\n", starts[line - 1]) === -1 ? undefined : norm.indexOf("\n", starts[line - 1]));

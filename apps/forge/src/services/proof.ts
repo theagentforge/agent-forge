@@ -1,6 +1,7 @@
 import { and, count, countDistinct, eq, gte, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { dataInventory, dataSnapshotValues, growthKpis, kpiSnapshotValues } from "./kpis";
 import { isLean } from "./ops-mode";
 
 // The proof scoreboard (MASTER_PLAN §7.5, ADR 0006). Every number is split into external and House, so proof of
@@ -116,6 +117,14 @@ export async function writeSnapshot(env: Env, now = Date.now(), fetcher: typeof 
   const metrics: Record<string, Metric> = await proofNow(env, now, yesterday);
   const npm = await npmDownloads(fetcher);
   if (npm !== null) metrics.cli_npm_downloads = { external: npm, house: 0 };
+  // The growth KPIs (ADR 0039), kept daily so their trend survives: metric "kpi_<id>", external value only.
+  try {
+    const { kpis } = await growthKpis(env, now);
+    for (const [k, v] of Object.entries(kpiSnapshotValues(kpis))) metrics[k] = { external: v, house: 0 };
+    for (const [k, v] of Object.entries(dataSnapshotValues(await dataInventory(env, now)))) metrics[k] = { external: v, house: 0 };
+  } catch (e) {
+    console.error("kpi_snapshot_failed", String(e));
+  }
   const db = getDb(env);
   for (const [metric, v] of Object.entries(metrics)) {
     await db

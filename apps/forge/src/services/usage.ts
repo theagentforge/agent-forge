@@ -257,6 +257,7 @@ export function discoveryCounters(req: { method: string; url: string; headers: H
   if (path === "/.well-known/api-catalog") return ["disc:api-catalog"];
   if (path === "/mcp/public/server-card") return ["disc:server-card-public"];
   if (path === "/mcp/gauntlet/server-card") return ["disc:server-card-gauntlet"];
+  if (path === "/.well-known/mcp.json" || path === "/.well-known/mcp/server-card.json" || path === "/.well-known/mcp") return ["disc:server-card-well-known"];
   if (path === "/.well-known/agent-skills/index.json" || path === "/.well-known/skills/index.json") return ["skills:index"];
   const file = /^\/\.well-known\/(agent-skills|skills)\/([a-z0-9-]+)\/SKILL\.md$/.exec(path);
   if (file) return [`skills:file:${file[2]}`];

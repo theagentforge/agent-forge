@@ -75,15 +75,17 @@ describe("MCP client identity (ADR 0032 item 2)", () => {
 
 describe("scout signals", () => {
   it("lists yesterday's misses, MCP clients with their first day, and flags names first seen yesterday", async () => {
-    const now = Date.UTC(2026, 9, 25, 3);
+    // A fixed day far from the real calendar: other tests in this file record real misses "today", which would land
+    // in this test's "yesterday" if it fell on the day the suite runs (it did on 24 Oct 2026).
+    const now = Date.UTC(2026, 0, 25, 3);
     const yesterday = now - 86_400_000;
     await bump(env, ["mcp:client:old-faithful"], now - 10 * 86_400_000);
     await bump(env, ["mcp:client:old-faithful", "mcp:client:brand-new", "mcp:clientcall:stateless-one", "disc:ai-catalog"], yesterday);
     await recordMiss(env, "check", "npm:wanted-tool", { now: yesterday });
     const s = await scoutSignals(env, now);
-    expect(s.day).toBe("2026-10-24");
+    expect(s.day).toBe("2026-01-24");
     expect(s.new_clients).toEqual(["brand-new", "stateless-one"]);
-    expect(s.mcp_clients.find((c) => c.name === "old-faithful")).toMatchObject({ first_seen: "2026-10-15", sessions_7d: 1, yesterday: 1, directory: false });
+    expect(s.mcp_clients.find((c) => c.name === "old-faithful")).toMatchObject({ first_seen: "2026-01-15", sessions_7d: 1, yesterday: 1, directory: false });
     expect(s.mcp_clients.find((c) => c.name === "stateless-one")).toMatchObject({ calls_7d: 1 });
     expect(s.misses.yesterday).toEqual([{ kind: "check", id: "npm:wanted-tool", n: 1 }]);
     expect(s.discovery_fetches["ai-catalog"]).toBe(1);

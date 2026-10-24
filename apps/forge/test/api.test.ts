@@ -200,7 +200,7 @@ describe("public check", () => {
     const res = await fetchWorker("/api/v1/check?url=https://github.com/nobody/nothing");
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toContain("max-age=60");
-    expect(await res.json()).toMatchObject({ known: false, security_status: "clear", forge_score: null });
+    expect(await res.json()).toMatchObject({ known: false, security_status: "unknown", forge_score: null, verdict: "insufficient" });
   });
 
   it("rejects ambiguous queries", async () => {

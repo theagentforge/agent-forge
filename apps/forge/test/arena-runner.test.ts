@@ -164,6 +164,18 @@ describe("model adapters", () => {
     expect(r.toolCalls[0]!.function).toEqual({ name: "get_accounts", arguments: "{}" });
   });
 
+  it("caps practice replies at 2048 tokens, and lets headline Workers AI models write longer ones (Crucible 2 fix)", async () => {
+    const { modelById } = await import("../src/arena/lineup");
+    const seen: number[] = [];
+    vi.spyOn(env.AI, "run").mockImplementation((async (_m: string, input: { max_tokens: number }) => {
+      seen.push(input.max_tokens);
+      return { response: "ok", tool_calls: [], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    }) as never);
+    await callModel(env, model.route, [{ role: "user", content: "x" }], []);
+    await callModel(env, modelById("deepseek-v4-pro")!.route, [{ role: "user", content: "x" }], []);
+    expect(seen).toEqual([2048, 8192]);
+  });
+
   it("reads Llama's text tool calls (pythonic format) only on routes that say so", async () => {
     const { parsePythonicCalls } = await import("../src/arena/pythonic");
     const tools = [
@@ -219,10 +231,10 @@ describe("arena status", () => {
 });
 
 describe("the cost guard caps (ADR 0027, Dinike 19 Oct 2026: no unexpected charges)", () => {
-  it("OpenRouter: $61.40 in October (raised 20 Oct for Lab #4), $45 in November (Lab #5), then $16 a month", async () => {
+  it("OpenRouter: $118 in October (raised 23 Oct for Crucible 2), $45 in November (Lab #5), then $16 a month", async () => {
     const { monthlyCap } = await import("../src/arena/runner");
-    expect(monthlyCap(Date.UTC(2026, 9, 19))).toBe(61.4);
-    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(61.4);
+    expect(monthlyCap(Date.UTC(2026, 9, 19))).toBe(118);
+    expect(monthlyCap(Date.UTC(2026, 9, 31, 23, 59))).toBe(118);
     expect(monthlyCap(Date.UTC(2026, 10, 1))).toBe(45);
     expect(monthlyCap(Date.UTC(2026, 10, 30, 23, 59))).toBe(45);
     expect(monthlyCap(Date.UTC(2026, 11, 1))).toBe(16);
@@ -256,6 +268,32 @@ describe("queue order and budgets", () => {
     expect(p).toBeDefined();
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, practice));
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, guest));
+  });
+});
+
+describe("headline events on Workers AI (H1: DeepSeek V4 Pro in Crucible 2)", () => {
+  it("play when practice's allowance is used, up to their own daily allowance", async () => {
+    scripted(honest);
+    const db = getDb(env);
+    const practice = await planEvent(env, { slug: "w-practice", name: "Practice", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [21], attempts: 1 });
+    await db.insert(t.arenaRuns).values({ id: "w-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 10, costEstimated: true, finishedAt: Date.now() });
+    const card = await planEvent(env, { slug: "w-card", name: "Crucible", season: "s0", kind: "card", models: ["deepseek-v4-pro"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 21], attempts: 1 });
+    const first = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+    expect(first.skipped).toContain("practice allowance for today used");
+    const [played] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, card));
+    expect(played!.status).toBe("done");
+    const [waiting] = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, practice), eq(t.arenaRuns.status, "queued")));
+    expect(waiting).toBeDefined();
+    // Over the headline allowance: the next headline run on Workers AI waits for tomorrow too.
+    await db.insert(t.arenaRuns).values({ id: "w-spent-headline", eventId: card, modelId: "deepseek-v4-pro", task: "refund", seed: 1, attemptNo: 2, status: "done", cost: 10, costEstimated: true, finishedAt: Date.now() });
+    const s = await spend(env);
+    expect(s.headlineWorkersAiToday).toBeGreaterThanOrEqual(10);
+    const card2 = await planEvent(env, { slug: "w-card-2", name: "Crucible", season: "s0", kind: "card", models: ["deepseek-v4-pro"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 22], attempts: 1 });
+    const second = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+    expect(second.skipped).toContain("headline Workers AI allowance for today used");
+    const [held] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, card2));
+    expect(held!.status).toBe("queued");
+    for (const e of [practice, card, card2]) await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, e));
   });
 });
 

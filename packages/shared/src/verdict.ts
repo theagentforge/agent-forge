@@ -1,4 +1,4 @@
-import { MIN_OWNERS_FOR_SCORE, type CheckVerdict } from "./scoring";
+import { MIN_OWNERS_FOR_SCORE, type CheckSecurity, type CheckVerdict } from "./scoring";
 
 // The verdict strings shared by the website, the CLI and the plugin hook (docs/BRAND.md §5.5, §10).
 
@@ -11,9 +11,15 @@ export interface VerdictInput {
   forge_score: number | null;
   distinct_owners: number;
   verified_owners: number;
-  security_status: CheckVerdict;
+  security_status: CheckSecurity;
   page_url: string | null;
+  /** Published advisories (crisis-wave plan C2): the line names the one behind an advisory-based verdict. */
+  public_signals_summary?: { advisories: { id: string; kind: string }[] } | null;
 }
+
+/** The advisory id behind an advisory-based verdict: a malicious-package record first. */
+export const advisoryIdOf = (c: Pick<VerdictInput, "public_signals_summary">) =>
+  c.public_signals_summary?.advisories.find((a) => a.kind === "malicious")?.id ?? c.public_signals_summary?.advisories[0]?.id ?? null;
 
 export const PUNCH: Record<DisplayVerdict, string> = {
   clear: "[F✓]",
@@ -33,6 +39,7 @@ export const VERDICT_WORD: Record<DisplayVerdict, string> = {
 
 /** "Clear" is only shown once there is a score; before that the honest answer is "not enough reports". */
 export function displayVerdict(c: Pick<VerdictInput, "security_status" | "forge_score">): DisplayVerdict {
+  if (c.security_status === "unknown") return "insufficient";
   if (c.security_status !== "clear") return c.security_status;
   return c.forge_score === null ? "insufficient" : "clear";
 }
@@ -42,6 +49,10 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function verdictLine(c: VerdictInput): string {
   const v = displayVerdict(c);
   const subject = c.tool ? `${c.tool.id}${c.version ? `@${c.version}` : ""}` : "unknown tool";
+  // A published advisory speaks for itself, known tool or not: name it.
+  const advisory = advisoryIdOf(c);
+  if (advisory && (v === "flagged" || v === "caution") && (!c.known || c.verified_owners === 0))
+    return [PUNCH[v], v, `published advisory ${advisory}`, subject, ...(c.page_url ? [c.page_url.replace(/^https?:\/\//, "")] : [])].join(" · ");
   if (!c.known) return [PUNCH.insufficient, "not enough reports yet (0 of 5)", subject, "no field reports yet"].join(" · ");
   const parts: string[] = [PUNCH[v]];
   switch (v) {

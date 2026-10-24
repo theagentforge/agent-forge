@@ -28,7 +28,8 @@ describe("agent funnel (found us → connected → used a tool → came back →
   it("adds up each stage, leaving out directory health checks", async () => {
     const now = Date.UTC(2027, 0, 10, 12);
     await bump(env, ["ai:indexer", "ai:live", "ai:coding", "disc:agent-card", "disc:ai-catalog", "skills:index", "skills:file:forge-check", "skillmd:agent"], now);
-    await bump(env, ["mcp:public:sessions", "mcp:public:sessions", "mcp:public:sessions", "mcp:gauntlet:sessions", "mcp:client:glama", "mcp:client:glama"], now);
+    // Two Glama health checks and a catalogue probe that names itself: none are agents.
+    await bump(env, ["mcp:public:sessions", "mcp:public:sessions", "mcp:public:sessions", "mcp:public:sessions", "mcp:gauntlet:sessions", "mcp:client:glama", "mcp:client:glama", "mcp:client:agentrank-probe"], now);
     await bump(env, ["a2a:requests", "mcp:public:calls", "mcp:public:calls", "mcp:signed_in:calls", "scan:api", "watch:calls", "mcp:house:sessions"], now);
     // A day outside the 7-day window is never counted.
     await bump(env, ["ai:indexer", "mcp:public:sessions", "mcp:public:calls"], now - 8 * 86_400_000);
@@ -38,7 +39,7 @@ describe("agent funnel (found us → connected → used a tool → came back →
     const f = await agentFunnel(env, now);
     expect(f.stages).toMatchObject({ found: 8, connected: 3, used: 5, returned: 1 });
     expect(f.detail).toMatchObject({ found_with_intent: 5, mcp_client_apps_on_2plus_days: 1 });
-    expect(f.detail).toMatchObject({ mcp_sessions: 2, directory_health_checks: 2, a2a_requests: 1, tool_calls: 3, api_scans: 1, house_mcp_sessions: 1 });
+    expect(f.detail).toMatchObject({ mcp_sessions: 2, directory_health_checks: 3, a2a_requests: 1, tool_calls: 3, api_scans: 1, house_mcp_sessions: 1 });
     expect(f.rates).toMatchObject({ connected: 37.5, used: 166.7, returned: 20 });
     const daily = await agentFunnelDaily(env, now);
     expect(daily).toHaveLength(14);

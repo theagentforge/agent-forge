@@ -308,8 +308,9 @@
     tabs.forEach(function (t) { t.hidden = t.getAttribute("data-tab") !== id; });
     tiles.forEach(function (t) { var on = t.getAttribute("data-tile") === id; t.classList.toggle("active", on); if (on) t.setAttribute("aria-current", "true"); else t.removeAttribute("aria-current"); });
   }
-  var start = (location.hash || "").replace("#tab-", "");
-  show(tiles.some(function (t) { return t.getAttribute("data-tile") === start; }) ? start : box.getAttribute("data-default-tab"));
+  // Not called "start": that name is the test poller's function below, and a var of the same name would replace it.
+  var fromHash = (location.hash || "").replace("#tab-", "");
+  show(tiles.some(function (t) { return t.getAttribute("data-tile") === fromHash; }) ? fromHash : box.getAttribute("data-default-tab"));
   tiles.forEach(function (t) {
     t.addEventListener("click", function (e) {
       e.preventDefault();

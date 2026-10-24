@@ -43,6 +43,8 @@ export function aiCatalog(origin: string) {
   };
 }
 
+export const WELL_KNOWN_MCP = ["/.well-known/mcp.json", "/.well-known/mcp/server-card.json", "/.well-known/mcp"];
+
 const open = { "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" };
 const json = (c: Context<{ Bindings: Env }>, body: unknown, type: string) => c.body(JSON.stringify(body), 200, { ...open, "Content-Type": `${type}; charset=utf-8` });
 
@@ -50,6 +52,9 @@ const json = (c: Context<{ Bindings: Env }>, body: unknown, type: string) => c.b
 site.get("/.well-known/ai-catalog.json", (c) => json(c, aiCatalog(c.env.PUBLIC_ORIGIN), "application/ai-catalog+json"));
 for (const s of SERVERS.filter((x) => x.key !== "signed-in"))
   site.get(`${s.path}/server-card`, (c) => json(c, serverCard(c.env.PUBLIC_ORIGIN, s), "application/mcp-server-card+json"));
+// Older well-known spellings some clients and directories try first (Worker logs, 23 Oct). The no-sign-in card.
+for (const path of WELL_KNOWN_MCP)
+  site.get(path, (c) => json(c, serverCard(c.env.PUBLIC_ORIGIN, SERVERS[0]), "application/mcp-server-card+json"));
 
 /**
  * The API catalog (RFC 9727): one linkset entry per API we offer, each pointing at what describes it. Served at

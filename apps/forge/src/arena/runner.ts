@@ -25,11 +25,13 @@ export const NUDGE = "Please continue: use the tools, and call finish when you'r
  */
 export const MONTHLY_CAP_USD = 16;
 /**
- * October 2026: $61.40, a $65 key limit less the 5.5% fee. It was $28.40 ($30); raised on 20 Oct (Dinike: "raise the budget and do
+ * October 2026: $118, a $125 key limit less the 5.5% fee (Dinike, 23 Oct: K2 and H1 approved, "raise the October or
+ * November cap as needed"): Crucible 2 (Hard v3, the headline lineup, 3 attempts per job) is about $45-57 on
+ * top of $52.54 spent. Before that: $61.40, a $65 key limit less the 5.5% fee. It was $28.40 ($30); raised on 20 Oct (Dinike: "raise the budget and do
  * the tests and add frontier models") for Lab #4 (the trap card on frontier models, about $28) and the widely used
  * practice models. From November $16 a month: the weekly headline bout plus those practice models (about $3-6).
  */
-export const OCT_2026_CAP_USD = 61.4;
+export const OCT_2026_CAP_USD = 118;
 /** November 2026: $45 (Dinike, 21 Oct: "raise November to $45"), for Forge Lab #5 (about $24) on top of the usual bouts. */
 export const NOV_2026_CAP_USD = 45;
 export const monthlyCap = (now: number) =>
@@ -44,6 +46,12 @@ export const monthlyCap = (now: number) =>
  * ladder allowances before that (Dinike, 15–16 Oct: $1.50 and $8 a day) ended when Lab #3 finished.
  */
 export const PRACTICE_DAILY_CAP_USD = 0.1;
+/**
+ * Headline (card and guest) events on Workers AI (DeepSeek V4 Pro) get their own daily allowance, so a ranked event
+ * isn't held to practice's $0.10 (H1, Crucible 2: DeepSeek's 18 Hard v3 attempts are about $16 at list price, over
+ * about 3 days). Practice running out never stops them, and this running out never stops OpenRouter.
+ */
+export const HEADLINE_WORKERS_AI_DAILY_USD = 6;
 export const LADDER_CAP_USD = 1.5;
 export const LAB3_CAP_USD = 8;
 /** When the cost guard took over (ADR 0027). */
@@ -143,6 +151,9 @@ export async function playBout(
     } catch (e) {
       // Rate limited (429): nothing happened in the world, so pause here and carry on later, as at a deadline.
       if (e instanceof ProviderError && e.rateLimited) {
+        // The provider's reason (429 rate limit, 402 out of credit, 403 key limit) goes to the Worker log, so a long
+        // pause can be told apart from a slow provider without guessing.
+        console.warn("arena_paused", model.id, e.message.slice(0, 200));
         return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, ticks: (cp?.ticks ?? 0) + 1 }, rateLimited: true };
       }
       throw e;
@@ -196,7 +207,20 @@ export async function spend(env: Env, now = Date.now()) {
     )[0]?.c ?? 0;
   const month = await sum(false, monthStart(now));
   const practiceToday = await sum(true, dayStart(now));
-  return { month, monthCap: monthlyCap(now), alert: month >= 0.8 * monthlyCap(now), practiceToday, practiceCap: practiceCap(now) };
+  const [h] = await db
+    .select({ c: sql<number>`coalesce(sum(${t.arenaRuns.cost}), 0)` })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(and(eq(t.arenaRuns.costEstimated, true), gte(t.arenaRuns.finishedAt, dayStart(now)), sql`${t.arenaEvents.kind} != 'practice'`));
+  return {
+    month,
+    monthCap: monthlyCap(now),
+    alert: month >= 0.8 * monthlyCap(now),
+    practiceToday,
+    practiceCap: practiceCap(now),
+    headlineWorkersAiToday: h?.c ?? 0,
+    headlineWorkersAiCap: HEADLINE_WORKERS_AI_DAILY_USD,
+  };
 }
 
 /** Runs queued attempts until the deadline or a budget stops it. Returns a short log for the cron output. */
@@ -214,7 +238,10 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   // Each budget only stops its own route: practice running out never holds up a headline bout, and the reverse.
   const routeIds = (kind: "openrouter" | "workers-ai") => ALL_MODELS.filter((m) => m.route.kind === kind).map((m) => m.id);
   const blocked = new Set<"openrouter" | "workers-ai">();
+  /** Practice's allowance is used up: Workers AI still plays headline events, up to their own allowance. */
+  let practiceBlocked = false;
   const openrouterIds = routeIds("openrouter");
+  const workersAiIds = routeIds("workers-ai");
   let stop = false;
   const lane = async () => {
     while (!stop && now() < deadline) {
@@ -223,11 +250,16 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         blocked.add("openrouter");
         out.skipped.push("monthly budget reached");
       }
-      if (s.practiceToday >= practiceCap(now()) && !blocked.has("workers-ai")) {
-        blocked.add("workers-ai");
+      if (s.practiceToday >= practiceCap(now()) && !practiceBlocked) {
+        practiceBlocked = true;
         out.skipped.push("practice allowance for today used");
       }
+      if (s.headlineWorkersAiToday >= s.headlineWorkersAiCap && !blocked.has("workers-ai")) {
+        blocked.add("workers-ai");
+        out.skipped.push("headline Workers AI allowance for today used");
+      }
       const excluded = [...[...blocked].flatMap(routeIds), ...cooling];
+      const practiceOff = practiceBlocked && workersAiIds.length ? [sql`not (${inArray(t.arenaRuns.modelId, workersAiIds)} and ${t.arenaEvents.kind} = 'practice')`] : [];
       // OpenRouter runs first (the headline lineup, bounded by the monthly budget), then headline events before
       // practice, then suspended bouts before new ones, then oldest first: a long practice ladder never delays a
       // headline bout or a lineup check, and a bout that was started finishes before more are started.
@@ -235,7 +267,7 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         .select({ run: t.arenaRuns })
         .from(t.arenaRuns)
         .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
-        .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : [])))
+        .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : []), ...practiceOff))
         .orderBy(
           openrouterIds.length ? sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end` : sql`0`,
           sql`case when ${t.arenaEvents.kind} = 'practice' then 1 else 0 end`,

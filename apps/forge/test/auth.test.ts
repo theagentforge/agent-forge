@@ -229,6 +229,6 @@ describe("MCP server", () => {
     const res = await rpc(token, "tools/call", { name: "forge_check", arguments: { id: "npm:unknown-thing" } });
     const out = (await result(res)).result;
     expect(out.isError).toBeFalsy();
-    expect(out.structuredContent).toMatchObject({ known: false, security_status: "clear" });
+    expect(out.structuredContent).toMatchObject({ known: false, security_status: "unknown" });
   });
 });

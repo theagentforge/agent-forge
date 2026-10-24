@@ -75,6 +75,7 @@ site.get("/connect", async (c) => {
       nav: "connect",
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}">
 <h1 class="page-title">Connect your AI</h1>
+<p class="small muted">Your agent can check its own stack against <a href="/advisories/2026-10?from=connect">this month's advisories</a> once connected.</p>
 <section class="panel chamfer panel-body any-agent" aria-labelledby="h-any">
 <h2 id="h-any">Any AI app or agent</h2>
 <p>If it supports MCP (most agents and many apps do), add this address. No sign-in:</p>

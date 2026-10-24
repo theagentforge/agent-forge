@@ -81,7 +81,7 @@ export function weeklyModels() {
   const seen = new Set<string>();
   return HEADLINE.filter((m) => {
     const lab = m.lab.replace(/ \(open weights\)$/, "");
-    if (m.division !== "heavyweight" || m.retired || /xai|grok/i.test(`${m.lab} ${m.id}`) || seen.has(lab)) return false;
+    if (m.division !== "heavyweight" || m.retired || m.embargoed || /xai|grok/i.test(`${m.lab} ${m.id}`) || seen.has(lab)) return false;
     seen.add(lab);
     return true;
   }).map((m) => m.id);

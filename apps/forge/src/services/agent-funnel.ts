@@ -11,6 +11,17 @@ import { getDb } from "./db";
 
 /** MCP clients that are directory health checks, not agents doing work. */
 export const DIRECTORY_CLIENTS = ["glama", "smithery", "pulsemcp", "mcp-registry", "mcp-inspector"];
+// After the MCP Registry update on 23 Oct about 58 new client names arrived, nearly all catalogues and checkers that
+// open a session and leave (agentrank-probe, talaria-catalog, mcpscore, verifymcp-probe...). They name themselves,
+// so a name pattern catches them (forge-scout, our own collector, too).
+const CHECKER_NAME = /probe|prober|catalog|index|crawl|scan|scrape|check|health|registry|inventory|score|rank|monitor|watch|triage|snapshot|research|collector|bench|tlog|spike|scout|(^|-)ping|(^|-)ci$/i;
+
+/** True when an MCP client name is a directory, catalogue or checker rather than an agent doing work. */
+export const isDirectoryClient = (name: string) => DIRECTORY_CLIENTS.includes(name) || CHECKER_NAME.test(name);
+
+/** Sessions from directory and checker clients among `mcp:client:<name>` counter rows. */
+export const directorySessions = (rows: { key: string; n: number | string }[]) =>
+  rows.filter((r) => r.key.startsWith("mcp:client:") && isDirectoryClient(r.key.slice("mcp:client:".length))).reduce((a, r) => a + Number(r.n), 0);
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
@@ -43,7 +54,7 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   const found = aiFetches + discovery + skillFiles;
 
   // Connected: MCP sessions on our three endpoints, less directory health checks, plus A2A requests.
-  const directoryChecks = DIRECTORY_CLIENTS.reduce((a, c) => a + get(`mcp:client:${c}`), 0);
+  const directoryChecks = directorySessions(rows);
   const mcpSessions = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directoryChecks);
   const a2a = get("a2a:requests");
   const connected = mcpSessions + a2a;
@@ -75,7 +86,7 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
     .from(t.usageDaily)
     .where(and(gte(t.usageDaily.day, since), sql`${t.usageDaily.key} like 'mcp:client:%'`))
     .groupBy(t.usageDaily.key);
-  const repeatClients = clientDays.filter((c) => Number(c.days) >= 2 && !DIRECTORY_CLIENTS.includes(c.key.slice("mcp:client:".length))).length;
+  const repeatClients = clientDays.filter((c) => Number(c.days) >= 2 && !isDirectoryClient(c.key.slice("mcp:client:".length))).length;
 
   const rate = (x: number, of: number) => (of > 0 ? Math.round((x / of) * 1000) / 10 : null);
   return {
@@ -115,7 +126,7 @@ export async function agentFunnelDaily(env: Env, now = Date.now(), days = 14) {
     const r = rows.filter((x) => x.day === d);
     const get = (k: string) => r.filter((x) => x.key === k).reduce((a, x) => a + x.n, 0);
     const pre = (p: string) => r.filter((x) => x.key.startsWith(p)).reduce((a, x) => a + x.n, 0);
-    const dir = DIRECTORY_CLIENTS.reduce((a, c) => a + get(`mcp:client:${c}`), 0);
+    const dir = directorySessions(r);
     const found = get("ai:indexer") + get("ai:live") + get("ai:coding") + pre("disc:") + get("skillmd:agent") + get("skills:index") + pre("skills:file:");
     const connected = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - dir) + get("a2a:requests");
     const used = get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls") + get("a2a:requests") + get("scan:api");

@@ -5,7 +5,7 @@ including `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, Cursor rules and Copilot instruc
 scanners miss: downloads piped into a shell, reads of key files, data sent to throwaway servers, hidden
 instructions and invisible characters.
 
-- **Nothing leaves GitHub.** The scan runs on the runner, using the same 34 rules as
+- **Nothing leaves GitHub.** The scan runs on the runner, using the same rules as
   [theagentforge.io/scan](https://theagentforge.io/scan?from=skill-scan-readme). It needs no account and no key.
 - **One calm comment per pull request,** edited in place, plus notes on the flagged lines. It never calls anything
   "malicious": a match is a reason to read the line.

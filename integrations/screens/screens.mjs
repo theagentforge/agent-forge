@@ -1,6 +1,6 @@
 // Screenshots of the live site, desktop and iPhone, for visual checks from places that can't reach it (cloud agent
 // sessions). Run by .github/workflows/screens.yml; it writes PNGs and a summary (HTTP status, sideways scroll,
-// browser errors) into <out dir>. Public pages only, no secrets.
+// browser errors) into <out dir>, plus the body of any JSON answer (an API check). Public pages only, no secrets.
 //
 //   PLAYWRIGHT_DIR=<dir with playwright installed> node screens.mjs <site> <out dir> [path ...]
 
@@ -10,10 +10,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const DEFAULT_PATHS = ["/", "/arena", "/wire", "/skill-watch", "/scan", "/trap-card", "/lab/3/results", "/check", "/stats"];
-const PATH_RE = /^\/[A-Za-z0-9/_.%:@-]*$/;
+// A query string is allowed (for /api/v1/check?id=…&version=…), with the same plain characters.
+const PATH_RE = /^\/[A-Za-z0-9/_.%:@-]*(\?[A-Za-z0-9_.%:@=&-]*)?$/;
 
 /** A safe file name for a page: "/" is "home", "/lab/3/results" is "lab-3-results". */
 export const shotName = (path) => (path === "/" ? "home" : path.replace(/^\//, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/-+$/, "")) || "home";
+
+/** The page's address, tagged from=screens so our visit counts apart; API endpoints reject unknown keys, so not those. */
+export const screenUrl = (site, path) => (path.startsWith("/api/") ? `${site}${path}` : `${site}${path}${path.includes("?") ? "&" : "?"}from=screens`);
 
 export function validPaths(list) {
   return list.filter((p) => PATH_RE.test(p) && !p.includes("..")).slice(0, 20);
@@ -43,12 +47,15 @@ async function main() {
         const errors = [];
         page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
         page.on("console", (m) => m.type() === "error" && errors.push(m.text().slice(0, 200)));
-        const url = `${site}${path}${path.includes("?") ? "&" : "?"}from=screens`;
+        const url = screenUrl(site, path);
         let status = 0;
         try {
           const res = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
           status = res?.status() ?? 0;
           await page.waitForTimeout(2500);
+          if (view === "desktop" && (res?.headers()["content-type"] ?? "").includes("json")) {
+            writeFileSync(join(out, `${shotName(path)}.json`), (await res.text()).slice(0, 200_000));
+          }
           const [sw, iw] = await page.evaluate(() => [document.documentElement.scrollWidth, innerWidth]);
           const file = `${view}-${shotName(path)}.png`;
           await page.screenshot({ path: join(out, file), fullPage: true });

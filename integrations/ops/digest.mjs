@@ -95,7 +95,26 @@ export function releaseIssue(a, date) {
 }
 
 /** The issue body. `history` is /stats' daily snapshots; yesterday's external value gives the change. */
-export function render(stats, date, arena = null, growth = null, learningText = null, citations = null, scoutText = null) {
+/**
+ * The growth KPIs (ADR 0039) from the latest Forge Scout snapshot: the north star first, then each KPI with its
+ * status against the first and second targets. Internal (the digest is a private issue).
+ */
+export function kpiLine(k) {
+  if (!k?.kpis?.length) return null;
+  const n = (x) => (x === null || x === undefined ? "–" : Number(x).toLocaleString("en-US"));
+  const label = { below: "below", first: "first target met", second: "second target met", untracked: "parked" };
+  const north = k.kpis.find((x) => x.id === "north_star");
+  const change = north?.detail?.change_pct;
+  const head = north
+    ? `**North star: ${n(north.value)} agent-days** in the 7 days to ${k.as_of}${typeof change === "number" ? ` (${change >= 0 ? "+" : ""}${change}% on the week before)` : ""}; targets ${n(north.first)} / ${n(north.second)}.`
+    : "**Growth KPIs:**";
+  const rows = k.kpis
+    .filter((x) => x.id !== "north_star")
+    .map((x) => `| ${x.name} | ${n(x.value)} ${x.unit} | ${n(x.first)} | ${n(x.second)} | ${label[x.status] ?? x.status} |`);
+  return [head, "", "| KPI | Now | First target | Second target | Status |", "|---|---|---|---|---|", ...rows].join("\n");
+}
+
+export function render(stats, date, arena = null, growth = null, learningText = null, citations = null, scoutText = null, kpis = null) {
   const prev = new Map();
   const days = [...new Set((stats.history ?? []).map((h) => h.date))].sort();
   const before = days.at(-2);
@@ -112,6 +131,7 @@ export function render(stats, date, arena = null, growth = null, learningText = 
   return [
     `Numbers for ${date}. **External** is people outside the project, the only numbers that count as proof. **House** is our own test agents.`,
     "",
+    ...(kpiLine(kpis) ? [kpiLine(kpis), ""] : []),
     "| | External | House |",
     "|---|---|---|",
     ...rows,
@@ -139,6 +159,20 @@ async function gh(method, path, body) {
   });
   if (!res.ok) throw new Error(`GitHub ${method} ${path}: ${res.status}`);
   return res.json();
+}
+
+async function latestKpis(now) {
+  for (const back of [0, 1, 2]) {
+    const d = new Date(now - back * 86_400_000).toISOString().slice(0, 10);
+    // Raw media type: snapshots can pass the contents API's 1 MB inline limit.
+    const res = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/contents/scout/${d}.json?ref=scout-data`, {
+      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github.raw+json" },
+    });
+    if (!res.ok) continue;
+    const k = (await res.json())?.sources?.ours?.scout_signals?.kpis;
+    if (k?.kpis?.length) return k;
+  }
+  return null;
 }
 
 async function main() {
@@ -176,8 +210,10 @@ async function main() {
   ])
     .then(([briefs, a, b]) => scoutSection({ briefs, proposals: [...a, ...b.filter((x) => !a.some((y) => y.number === x.number))], now }))
     .catch((e) => `Forge Scout checks: not available today (${e.message}).`);
+  // The growth KPIs from the newest Forge Scout snapshot (scout-data branch); yesterday's if today's isn't in yet.
+  const kpis = await latestKpis(now).catch(() => null);
   const old = await gh("GET", "/issues?state=open&labels=ops-digest&per_page=10");
-  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations, scoutText), labels: ["ops-digest"] });
+  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations, scoutText, kpis), labels: ["ops-digest"] });
   const rel = releaseIssue(arena, date);
   if (rel) await gh("POST", "/issues", rel);
   // Money rule: at 80% of the Arena budget, ask Dinike once a month (ADR 0012 §2).

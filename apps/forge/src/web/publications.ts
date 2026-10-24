@@ -3,6 +3,7 @@ import { marked } from "marked";
 import census from "../../../../docs/reports/2026-10-mcp-registry-census.md";
 import skillScanReport from "../../../../docs/reports/2026-10-skill-scan.md";
 import checkGuide from "../../../../docs/guides/check-before-install.md";
+import advisories202610 from "../../../../docs/reports/advisories-2026-10.md";
 import labNotes from "../../../../lab/001-calm-vs-cheating/results/NOTES.md";
 import labRuns from "../../../../lab/001-calm-vs-cheating/results/runs.csv";
 import labPrereg from "../../../../lab/001-calm-vs-cheating/PREREGISTRATION.md";
@@ -47,12 +48,20 @@ interface Publication {
  */
 export function reportScanBox(from: string) {
   return html`<aside class="panel chamfer report-scan" aria-label="Scan a skill">
-<p><b>Check a skill before your agent installs it.</b> Paste a GitHub or ClawHub link. Free, no account, same 34 rules as this report.</p>
+<p><b>Check a skill before your agent installs it.</b> Paste a GitHub or ClawHub link. Free, no account, the same rules as this report and newer ones.</p>
 <form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="${from}"><label class="sr-only" for="scan-${from}">Link to a skill file</label><input id="scan-${from}" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo/…/SKILL.md" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
 </aside>`;
 }
 
 export const PUBLICATIONS: Publication[] = [
+  {
+    // The October 2026 advisory wave (crisis-wave plan §6, crisis-messaging §4): official facts first, then what our own
+    // check said before and after. Kept as an archive once the home line retires.
+    path: "/advisories/2026-10",
+    markdown: advisories202610,
+    description: "October 2026 advisories: what an agent can check this week. LiteLLM 1.107.0 and PHP2Shell facts with official links, and what our check returned before and after it read OSV and CISA data.",
+    live: true,
+  },
   {
     // The question people search for (23 Oct: the search results for it are Snyk, SkillScan, Backslash), answered
     // first, with our own data. Published by Claude for Dinike's "go ahead with all" (23 Oct).
@@ -142,7 +151,9 @@ export const PUBLICATIONS: Publication[] = [
     path: "/lab/1",
     markdown: labWriteup,
     description: "Forge Lab #1: 150 pre-registered runs on impossible coding tasks, testing whether calming an agent changes how often it cheats.",
-    live: false,
+    // Approved with the X thread (#35: "approving here also means OK to publish the write-up page"), which went out on
+    // 23 Oct linking here; switched on 24 Oct.
+    live: true,
     files: [
       { name: "preregistration.md", label: "Pre-registration", text: labPrereg, type: "text/markdown" },
       { name: "runs.csv", label: "All 150 runs (CSV)", text: labRuns, type: "text/csv" },

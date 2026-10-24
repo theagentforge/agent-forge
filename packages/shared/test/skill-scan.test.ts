@@ -119,3 +119,36 @@ describe("the skill scanner", () => {
     expect((await scanSkill(own)).findings.filter((f) => f.severity !== "low")).toEqual([]);
   });
 });
+
+describe("publisher look-alikes (FS-IMP-001, crisis-wave plan P3)", () => {
+  it("knows one-edit and look-alike-character names from the real ones", async () => {
+    const { lookalikeOf, oneEditApart } = await import("../src/skill-scan");
+    expect(oneEditApart("litelm", "litellm")).toBe(true);
+    expect(oneEditApart("opneai", "openai")).toBe(true); // neighbours swapped
+    expect(oneEditApart("openai", "openai")).toBe(false);
+    expect(lookalikeOf("0penai")).toBe("openai");
+    expect(lookalikeOf("anthrop1c")).toBe("anthropic");
+    expect(lookalikeOf("modelcontextprotocoI".toLowerCase().replace(/i$/, "l"))).toBeNull();
+    expect(lookalikeOf("modelcontextprotoco1")).toBe("modelcontextprotocol");
+    expect(lookalikeOf("BerriAl")).toBe("berriai");
+    for (const real of ["openai", "anthropics", "anthropic", "litellm", "modelcontextprotocol", "request", "requests", "react"]) expect(lookalikeOf(real), real).toBeNull();
+  });
+
+  it("flags look-alike install sources and repositories, and leaves the real ones alone", async () => {
+    const { scanSkill } = await import("../src/skill-scan");
+    const bad = [
+      "Install: pip install litelm==1.80.0",
+      "Run npx -y @modelcontextprotocoI/server-memory",
+      "git clone https://github.com/anthropiics/skills",
+      "npm install @0penai/agents",
+      "See https://pypi.org/project/litellm2",
+    ];
+    for (const text of bad.slice(0, 4)) {
+      const r = await scanSkill(text);
+      expect(r.findings.map((f) => f.rule), text).toContain("FS-IMP-001");
+      expect(r.verdict, text).toBe("caution");
+    }
+    const good = "pip install litellm openai\nnpx -y @modelcontextprotocol/server-memory\nhttps://github.com/anthropics/skills\nnpm install request react\nhttps://github.com/someone/my-tool";
+    expect((await scanSkill(good)).findings.map((f) => f.rule)).not.toContain("FS-IMP-001");
+  });
+});

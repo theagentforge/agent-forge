@@ -582,6 +582,7 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .hero2{display:grid;gap:var(--s6);grid-template-columns:minmax(0,1fr);padding:var(--s5) 0 var(--s5)}
 @media (min-width:960px){.hero2{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:var(--s7);align-items:start}}
 .live-pill{display:inline-flex;align-items:center;gap:8px;margin:0;font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--flagged);border:1px solid var(--seam);padding:6px 10px;background:var(--surface)}
+.advisory-line{margin:var(--s3) 0;max-width:60ch;border-left:2px solid var(--seam);padding-left:var(--s3)}
 .live-pill i{width:8px;height:8px;border-radius:50%;background:var(--flagged);animation:pulse 1.8s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,82,.6)}70%{box-shadow:0 0 0 10px rgba(255,93,82,0)}100%{box-shadow:0 0 0 0 rgba(255,93,82,0)}}
 .hero2 h1{font-size:clamp(2.3rem,1.5rem + 3.4vw,4.2rem);line-height:.98;margin:var(--s4) 0;font-stretch:112%;font-weight:800;letter-spacing:-.02em}

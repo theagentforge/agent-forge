@@ -1,4 +1,5 @@
 import type { Division } from "@forge/arena";
+import { EMBARGOED_LINEUP } from "./lineup-embargoed";
 
 // Who fights. Every headline model runs through the OpenRouter key with a pinned provider (ADR 0014 §8–9).
 // Workers AI models are for the practice dry run only: they measure real token use per bout on our own harness at
@@ -13,6 +14,12 @@ export type Route =
       priceOut: number;
       /** The model writes tool calls as text in this format, which Workers AI doesn't parse (see arena/pythonic.ts). */
       textToolCalls?: "pythonic";
+      /**
+       * Largest reply per turn. Default 2048 (practice). Headline models get more: at 2048, DeepSeek V4 Pro's replies
+       * were cut off mid-reasoning 13-20 times a Hard bout in Crucible 2, costing turns that OpenRouter models (no
+       * per-reply cap) don't spend, so its results weren't comparable (23 Oct).
+       */
+      maxTokens?: number;
     };
 
 export interface ArenaModel {
@@ -24,6 +31,11 @@ export interface ArenaModel {
   route: Route;
   /** Kept so old runs still resolve, but no longer entered in new events or listed as tested. */
   retired?: true;
+  /**
+   * Run, stored and refereed, but never shown: no public page, API, feed, share card, clip or social draft reads its
+   * runs or lists the model (K2). Lifted only on Dinike's word, by deleting this flag.
+   */
+  embargoed?: true;
 }
 
 /** Practice lineup: Cloudflare Workers AI list prices in $ per million tokens (checked 15 Oct 2026). */
@@ -74,11 +86,16 @@ export const HEADLINE: ArenaModel[] = [
   // DeepSeek's own API is filtered out by our no-data-collection rule (OpenRouter 404, 15 Oct), so DeepSeek's workhorse
   // runs on Cloudflare Workers AI: the same model (V4 Pro 0813), no training on prompts. Its cost is estimated at list
   // price, so it counts toward the practice allowance; its runs in headline events are still headline results.
-  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", lab: "DeepSeek (open weights)", division: "heavyweight", route: { kind: "workers-ai", model: "@cf/deepseek-ai/deepseek-v4-pro-0813", priceIn: 1.32, priceOut: 3.96 } },
+  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", lab: "DeepSeek (open weights)", division: "heavyweight", route: { kind: "workers-ai", model: "@cf/deepseek-ai/deepseek-v4-pro-0813", priceIn: 1.32, priceOut: 3.96, maxTokens: 8192 } },
   { id: "qwen3.8-max", name: "Qwen3.8 Max", lab: "Alibaba", division: "heavyweight", route: { kind: "openrouter", model: "qwen/qwen3.8-max-0902", provider: "alibaba" } },
+  // Embargoed entries (K2) live in their own file, which the public mirror replaces with an empty list.
+  ...EMBARGOED_LINEUP,
 ];
 
 export const ALL_MODELS = [...PRACTICE, ...HEADLINE];
-/** Every model currently entered, for the "Which models we test" list. */
-export const testedModels = () => ALL_MODELS.filter((m) => !m.retired);
+/** Models whose runs no public surface may read (K2). */
+export const EMBARGOED_MODEL_IDS = ALL_MODELS.filter((m) => m.embargoed).map((m) => m.id);
+export const isEmbargoed = (id: string) => EMBARGOED_MODEL_IDS.includes(id);
+/** Every model currently entered and public, for the "Which models we test" list. */
+export const testedModels = () => ALL_MODELS.filter((m) => !m.retired && !m.embargoed);
 export const modelById = (id: string) => ALL_MODELS.find((m) => m.id === id) ?? null;

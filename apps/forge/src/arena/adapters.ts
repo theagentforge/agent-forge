@@ -28,6 +28,9 @@ export interface ModelReply {
   provider: string | null;
 }
 
+/** Default largest reply per turn on Workers AI (practice models); a route can set its own (`maxTokens`). */
+export const WORKERS_AI_MAX_TOKENS = 2048;
+
 export class ProviderError extends Error {
   constructor(
     message: string,
@@ -67,14 +70,18 @@ export async function callModel(
     });
     const body = (await res.json().catch(() => null)) as OpenAiShape | null;
     if (!res.ok || !body?.choices?.[0]) {
-      throw new ProviderError(`OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300), res.status === 429 || res.status >= 500 || res.status === 408, res.status === 429);
+      const msg = `OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300);
+      // Out of prepaid credit or over the key's limit (402, or 403 "key limit"): the bout pauses until the limit is
+      // raised, like a rate limit, rather than being voided.
+      const outOfCredit = res.status === 402 || (res.status === 403 && /limit|credit/i.test(msg));
+      throw new ProviderError(msg, res.status === 429 || res.status >= 500 || res.status === 408 || outOfCredit, res.status === 429 || outOfCredit);
     }
     return fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0);
   }
 
   let out: unknown;
   try {
-    out = await env.AI.run(route.model as keyof AiModels, { messages, tools: toolsParam(tools), temperature: 0, max_tokens: 2048 } as never);
+    out = await env.AI.run(route.model as keyof AiModels, { messages, tools: toolsParam(tools), temperature: 0, max_tokens: route.maxTokens ?? WORKERS_AI_MAX_TOKENS } as never);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // "Capacity temporarily exceeded" and 429s mean "slow down", not a failed bout.

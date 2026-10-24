@@ -2,12 +2,12 @@
   "version": "0.3.0",
   "files": {
     "staging": {
-      "file": "forge-staging-0.3.0-8df39c77a9ce.zip",
-      "sha256": "8df39c77a9cec75084d54d0455aafaae50faceee94219a2fc2043c36174990cf"
+      "file": "forge-staging-0.3.0-e9a0679d67e4.zip",
+      "sha256": "e9a0679d67e486fa8b5032de40249919a2b74538cb066b1d5139fb160919c3c8"
     },
     "production": {
-      "file": "forge-production-0.3.0-cda3a3136eac.zip",
-      "sha256": "cda3a3136eac8878dfb54b239d2484152eeeecfe3228c219b202a5431c0981bc"
+      "file": "forge-production-0.3.0-274a4593ec49.zip",
+      "sha256": "274a4593ec499a94d2c8c70eb864a7e7c6a576fa5de3c34e320abd4a68e0746a"
     }
   }
 }

@@ -25,6 +25,7 @@ import { getDb } from "./services/db";
 import { countsAsHouse } from "./services/identity";
 import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
+import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -228,6 +229,19 @@ publicApi.post("/api/v1/watch", async (c) => {
   return c.json(await watchStatus(getDb(c.env), fps), 200, { "Cache-Control": "no-store" });
 });
 
+/** "Was my agent stack hit?" (crisis-wave plan C4): names and versions in, advisory matches out. Counts only. */
+publicApi.post("/api/v1/exposure", async (c) => {
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
+  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
+  if (Number(c.req.header("content-length") ?? 0) > EXPOSURE_MAX_TEXT * 2) return c.json({ error: "too_large", max_bytes: EXPOSURE_MAX_TEXT * 2 }, 413);
+  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip));
+  const r = await exposureRequest(c.env, await bodyOf(c));
+  if ("error" in r) return c.json(r, 400);
+  c.executionCtx.waitUntil(bump(c.env, exposureCounters(r)).catch(() => {}));
+  return c.json(r, 200, { "Cache-Control": "no-store" });
+});
+
 // The Gauntlet over plain HTTP (ADR 0024), for agents that can fetch but don't speak MCP. Same calls as /mcp/public.
 const GAUNTLET_ID = /^g[0-9a-f]{32}$/;
 
@@ -235,7 +249,9 @@ publicApi.post("/api/v1/gauntlet", async (c) => {
   const body = await bodyOf(c);
   const cardFrom = typeof body.card_from === "string" && GAUNTLET_ID.test(body.card_from) ? body.card_from : undefined;
   if (body.card_from !== undefined && !cardFrom) return c.json({ error: "invalid_card_from" }, 400);
-  const r = await startGauntlet(c.env, c.req.header("CF-Connecting-IP") ?? "unknown", { cardFrom });
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const r = await startGauntlet(c.env, ip, { cardFrom });
+  if (!("error" in r)) c.executionCtx.waitUntil(recordCheck(c.env, "api", ip));
   return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
 });
 

@@ -6,6 +6,7 @@ import {
   TOOL_KINDS,
   verdictFor,
   type CheckQuery,
+  type CheckSecurity,
   type CheckVerdict,
   type DisplayVerdict,
   type HumanTier,
@@ -15,6 +16,8 @@ import {
 } from "@forge/shared";
 import { and, count, countDistinct, desc, eq, gte, like, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
+import { osvPackageFor, queryAdvisories, recordAdvisories, type AdvisoryResult } from "./advisories";
+import { kevState, markExploited } from "./kev";
 import { forgetContributor, isContributor, reportAlerts, reportsNeeded, reportUrl, type ReportDraft } from "./contribute";
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
@@ -45,13 +48,18 @@ export interface CheckResult {
   strain_reports: number;
   strain_hook_reports: number;
   outcome_breakdown: { worked: number; partial: number; failed: number };
-  security_status: CheckVerdict;
+  /** A verdict, or "unknown": a tool we don't know with no published advisory (crisis-wave plan C2). */
+  security_status: CheckSecurity;
   /**
    * Other versions of this tool that are under review, flagged or confirmed malicious. When the newest version has no
    * score of its own, the worst of these sets security_status, so a fresh unscored version can't hide a flagged one.
    */
   other_versions_flagged: { version: string; security_status: CheckVerdict }[];
-  public_signals_summary: null;
+  /**
+   * Published advisories from OSV for npm and PyPI packages, or null when there's no package to look up or OSV
+   * couldn't be reached. Identifiers only: ids, aliases, fixed versions, dates and links (never advisory text).
+   */
+  public_signals_summary: AdvisoryResult | null;
   page_url: string | null;
   /** Field reports on this exact version (any tier). */
   reports_for_this_version: number;
@@ -127,6 +135,32 @@ export async function findTool(db: Db, canonicalId: string) {
   return alias ? db.query.tools.findFirst({ where: eq(t.tools.id, alias.toolId) }) : undefined;
 }
 
+/**
+ * Published advisories for a check (crisis-wave plan P1):
+ * - with a version: a malicious-package (MAL-) record for it is "flagged"; any other advisory for it is "under review"
+ *   (shown as caution);
+ * - without one: a malicious record for any version is "under review", since the version in use may be the bad one;
+ * - never "confirmed_malicious", which stays a human decision.
+ */
+export function advisoryStatus(r: AdvisoryResult | null): SecurityStatus | null {
+  if (!r || !r.advisories.length) return null;
+  const malicious = r.advisories.some((a) => a.kind === "malicious");
+  if (r.version) return malicious ? "flagged" : "under_review";
+  return malicious ? "under_review" : null;
+}
+
+/** The most serious of two statuses. */
+const worse = (a: SecurityStatus, b: SecurityStatus | null) => (b && STATUS_RANK[b] > STATUS_RANK[a] ? b : a);
+
+async function advisoriesFor(env: Env, ids: string[], version: string | null) {
+  const pkg = ids.map(osvPackageFor).find((p) => p);
+  const r = pkg ? await queryAdvisories(env, pkg, version) : null;
+  if (!r) return null;
+  // Marked on every check, not cached with the OSV answer, so a new KEV entry shows the day it's listed (C3).
+  const kev = await kevState(env);
+  return markExploited(r, kev.ids, kev.updated);
+}
+
 export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   const db = getDb(env);
   let version: typeof t.toolVersions.$inferSelect | undefined;
@@ -150,10 +184,12 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   }
 
   if (!tool) {
+    const advisories = canonical ? await advisoriesFor(env, [canonical], q.version ?? null) : null;
+    const status = advisoryStatus(advisories);
     return {
       known: false,
       tool: null,
-      version: null,
+      version: q.version ?? null,
       fingerprint: q.fingerprint ?? null,
       forge_score: null,
       distinct_owners: 0,
@@ -163,13 +199,14 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
       strain_reports: 0,
       strain_hook_reports: 0,
       outcome_breakdown: EMPTY_BREAKDOWN,
-      security_status: "clear",
+      // Nothing known about it: "unknown", never "clear" (crisis-wave plan, 23 Oct), unless an advisory says more.
+      security_status: status ? verdictFor(status) : "unknown",
       other_versions_flagged: [],
-      public_signals_summary: null,
+      public_signals_summary: advisories,
       page_url: null,
       reports_for_this_version: 0,
       be_first: true,
-      verdict: "insufficient",
+      verdict: status ? verdictFor(status) : "insufficient",
       contribute: contributeFor(env.PUBLIC_ORIGIN),
       candidates: await toolCandidates(db, env.PUBLIC_ORIGIN, canonical ? nameTerm(canonical) : null),
     };
@@ -193,6 +230,10 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   const reportCount = breakdown.worked + breakdown.partial + breakdown.failed;
   const ownStatus = score?.securityStatus ?? "clear";
   const inherited = ownStatus === "clear" && score?.successScore == null ? otherFlagged[0]?.status : undefined;
+  const aliases = (await db.select({ alias: t.toolAliases.alias }).from(t.toolAliases).where(eq(t.toolAliases.toolId, tool.id)).limit(20)).map((a) => a.alias);
+  const advisories = await advisoriesFor(env, [tool.canonicalId, ...aliases], q.version ?? version?.version ?? null);
+  if (advisories) await recordAdvisories(db, tool.id, advisories).catch(() => {});
+  const status = worse(inherited ?? ownStatus, advisoryStatus(advisories));
   return {
     known: true,
     tool: { kind: tool.kind, id: tool.canonicalId },
@@ -206,9 +247,9 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     strain_reports: score?.strainReports ?? 0,
     strain_hook_reports: score?.strainHookReports ?? 0,
     outcome_breakdown: score?.outcomeBreakdown ?? EMPTY_BREAKDOWN,
-    security_status: verdictFor(inherited ?? ownStatus),
+    security_status: verdictFor(status),
     other_versions_flagged: otherFlagged.map((o) => ({ version: o.version, security_status: verdictFor(o.status) })),
-    public_signals_summary: null,
+    public_signals_summary: advisories,
     page_url: toolPageUrl(env.PUBLIC_ORIGIN, tool.canonicalId),
     reports_for_this_version: reportCount,
     be_first: reportCount === 0,
@@ -217,7 +258,7 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
       report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", version: version?.version ?? "", fp: version?.fingerprint ?? "" }),
       reports_needed: reportsNeeded(score?.distinctOwners ?? 0, score?.verifiedOwners ?? 0, score?.successScore != null),
     },
-    verdict: displayVerdict({ security_status: verdictFor(inherited ?? ownStatus), forge_score: score?.successScore ?? null }),
+    verdict: displayVerdict({ security_status: verdictFor(status), forge_score: score?.successScore ?? null }),
   };
 }
 

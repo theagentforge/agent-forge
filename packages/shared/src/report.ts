@@ -77,6 +77,8 @@ export const checkQuerySchema = z
     id: z.string().trim().min(1).max(512).optional(),
     url: z.url({ protocol: /^https?$/ }).max(512).optional(),
     fingerprint: toolRefSchema.shape.fingerprint.optional(),
+    /** The exact version to check advisories for (crisis-wave plan C2); field reports stay pinned to what's on file. */
+    version: z.string().trim().min(1).max(128).regex(VERSION_PATTERN, "version must be a version string such as 1.4.2").optional(),
   })
   .refine((q) => [q.id, q.url, q.fingerprint].filter((v) => v !== undefined).length === 1, {
     message: "give exactly one of id, url or fingerprint",

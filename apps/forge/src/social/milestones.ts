@@ -1,6 +1,6 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import * as t from "../db/schema";
-import { DIRECTORY_CLIENTS, outsidePeople } from "../services/agent-funnel";
+import { directorySessions, outsidePeople } from "../services/agent-funnel";
 import type { Db } from "../services/db";
 
 // Milestone posts (Dinike, 22 Oct 2026: "100, 1000, and then another suitable milestone going forward to show
@@ -54,7 +54,7 @@ export async function metricValues(env: Env, db: Db, now: number, before: number
       .groupBy(t.usageDaily.key);
     const get = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
     const sessions = get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions");
-    const directory = DIRECTORY_CLIENTS.reduce((a, c) => a + get(`mcp:client:${c}`), 0);
+    const directory = directorySessions(rows);
     return Math.max(0, sessions - directory) + get("a2a:requests");
   };
   return {

@@ -1,7 +1,8 @@
 import { and, eq, gte, like, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
-import { agentFunnel, DIRECTORY_CLIENTS } from "./agent-funnel";
+import { agentFunnel, directorySessions, isDirectoryClient } from "./agent-funnel";
 import { getDb } from "./db";
+import { dataInventory, growthKpis } from "./kpis";
 import { topMisses } from "./misses";
 
 // Our own signals for Forge Scout (ADR 0031 step 1, ADR 0032 item 2), read once a day by scout-collect.yml in the
@@ -43,6 +44,9 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     agentFunnel(env, now - 86_400_000, 7),
   ]);
   const conversion = await conversionDaily(env, now);
+  // The growth KPIs (ADR 0039): Scout reports the north star and flags any KPI that fell for 2 weeks running.
+  const kpis = await growthKpis(env, now).catch((e) => ({ as_of: yesterday, kpis: [], error: String(e) }));
+  const data_inventory = await dataInventory(env, now).catch((e) => ({ error: String(e) }));
 
   // One entry per client name, whether it said hello with `initialize` or named itself in a call's `_meta`.
   const name = (key: string) => key.replace(/^mcp:client(call)?:/, "");
@@ -62,13 +66,15 @@ export async function scoutSignals(env: Env, now = Date.now()) {
   }
   const list = [...clients.values()]
     .filter((c) => c.sessions_7d + c.calls_7d > 0 || c.first_seen === yesterday)
-    .map((c) => ({ ...c, directory: DIRECTORY_CLIENTS.includes(c.name) }))
+    .map((c) => ({ ...c, directory: isDirectoryClient(c.name) }))
     .sort((a, b) => b.sessions_7d + b.calls_7d - (a.sessions_7d + a.calls_7d) || a.name.localeCompare(b.name))
     .slice(0, 50);
 
   return {
     data_kind: "scout_signals",
     day: yesterday,
+    kpis,
+    data_inventory,
     misses: { yesterday: missesDay, last_7_days: missesWeek },
     mcp_clients: list,
     new_clients: [...clients.values()].filter((c) => c.first_seen === yesterday).map((c) => c.name).sort(),
@@ -107,7 +113,7 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
     const d = day(now - (days - i) * 86_400_000);
     const r = rows.filter((x) => x.day === d);
     const get = (k: string) => r.filter((x) => x.key === k).reduce((a, x) => a + x.n, 0);
-    const directory = DIRECTORY_CLIENTS.reduce((a, c) => a + get(`mcp:client:${c}`), 0);
+    const directory = directorySessions(r);
     const connections = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directory) + get("a2a:requests");
     const pageViews = get("visit:all"), people = get("visit:arrivals");
     return {

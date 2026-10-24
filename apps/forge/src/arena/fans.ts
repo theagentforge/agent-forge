@@ -2,7 +2,7 @@ import { boutOutcome, TASKS, TWISTS, type AttemptResult } from "@forge/arena";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, newId, type Db } from "../services/db";
-import { modelName } from "./views";
+import { modelName, notEmbargoedModel } from "./views";
 
 // Fans choose what is tested, never how it's scored (ADR 0014 §5), and call results before they air (§7).
 
@@ -75,7 +75,7 @@ async function fixtureResult(db: Db, f: typeof t.arenaFixtures.$inferSelect): Pr
   const rows = await db
     .select({ model: t.arenaRuns.modelId, result: t.arenaRuns.result })
     .from(t.arenaRuns)
-    .where(and(eq(t.arenaRuns.eventId, f.eventId), eq(t.arenaRuns.task, f.task), eq(t.arenaRuns.status, "done")));
+    .where(and(eq(t.arenaRuns.eventId, f.eventId), eq(t.arenaRuns.task, f.task), eq(t.arenaRuns.status, "done"), notEmbargoedModel()));
   const a = rows.filter((r) => r.model === f.modelA).map((r) => r.result as AttemptResult);
   const b = rows.filter((r) => r.model === f.modelB).map((r) => r.result as AttemptResult);
   if (!a.length || !b.length) return null;

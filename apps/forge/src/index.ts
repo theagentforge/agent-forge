@@ -1,4 +1,5 @@
 import { pingIndexNow } from "./services/indexnow";
+import { refreshKev } from "./services/kev";
 import { OAuthProvider, type OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
 import { API_VERSION } from "@forge/shared";
 import { Hono } from "hono";
@@ -22,6 +23,7 @@ import "./web/teams";
 import "./web/legal";
 import "./web/publications";
 import "./web/admin-moltbook";
+import "./web/admin-kpis";
 import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
@@ -125,6 +127,12 @@ export default {
       );
     }
     ctx.waitUntil(
+      refreshKev(env, controller.scheduledTime).then(
+        (r) => console.log("kev", JSON.stringify(r)),
+        (e) => console.error("kev_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
       pingIndexNow(env, controller.scheduledTime).then(
         (r) => console.log("indexnow", JSON.stringify(r)),
         (e) => console.error("indexnow_failed", String(e)),
@@ -170,7 +178,13 @@ export default {
   fetch(request, env, ctx) {
     // The anonymous, read-only MCP endpoint (ADR 0017 §3) is answered before the OAuth provider, which would
     // otherwise treat it as part of the protected /mcp route.
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    // Clients that append /mcp to every MCP address: /mcp/public/mcp is the same endpoint.
+    if (url.pathname === `${PUBLIC_MCP_ROUTE}/mcp`) {
+      url.pathname = PUBLIC_MCP_ROUTE;
+      request = new Request(url, request);
+    }
+    const path = url.pathname;
     // Usage counts (services/usage.ts): read from a copy of the body, counted only when the endpoint accepted it.
     const counted = (endpoint: McpEndpoint, res: Response | Promise<Response>, copy: Request | null) =>
       Promise.resolve(res).then((r) => {
@@ -180,6 +194,16 @@ export default {
     const copyIfPost = () => (request.method === "POST" ? request.clone() : null);
     // MCP Server Cards (SEP-2127) live under each endpoint's path but are static pages, answered by the site.
     if (request.method === "GET" && CARD_PATHS.includes(path)) return app.fetch(request, env, ctx);
+    // Wrong doors (Worker logs, 23 Oct: 117 GETs refused with 405 in a day). A plain GET of an MCP endpoint from a
+    // browser goes to /connect, and from anything else gets the endpoint's server card; a GET asking for an event
+    // stream is still the MCP handler's to answer.
+    for (const route of [PUBLIC_MCP_ROUTE, GAUNTLET_MCP_ROUTE]) {
+      if (path !== route || request.method !== "GET") continue;
+      const accept = request.headers.get("accept") ?? "";
+      if (accept.includes("text/event-stream")) break;
+      if (accept.includes("text/html")) return Response.redirect(`${env.PUBLIC_ORIGIN}${route === PUBLIC_MCP_ROUTE ? "/connect" : "/gauntlet"}`, 302);
+      return app.fetch(new Request(new URL(`${route}/server-card`, request.url), request), env, ctx);
+    }
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       return counted("public", publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
@@ -194,6 +218,24 @@ export default {
       providers.set(env.PUBLIC_ORIGIN, provider);
     }
     // Signed-in /mcp is counted in api.ts, where the agent is known, so House sessions are kept apart (ADR 0023 §3).
-    return provider.fetch(request, env, ctx);
+    if (path !== "/mcp") return provider.fetch(request, env, ctx);
+    // 433 refusals in a day from clients without a sign-in: the 401 also names the endpoint that needs none.
+    return provider.fetch(request, env, ctx).then((res) => {
+      if (res.status !== 401) return res;
+      const headers = new Headers(res.headers);
+      headers.append("Link", `<${env.PUBLIC_ORIGIN}${PUBLIC_MCP_ROUTE}>; rel="alternate"; title="no sign-in, read only"`);
+      return res.text().then((text) => {
+        let body: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(text);
+          body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : { error: "unauthorized" };
+        } catch {
+          body = { error: "unauthorized" };
+        }
+        headers.set("Content-Type", "application/json");
+        headers.delete("Content-Length");
+        return new Response(JSON.stringify({ ...body, public_endpoint: `${env.PUBLIC_ORIGIN}${PUBLIC_MCP_ROUTE}` }), { status: 401, headers });
+      });
+    });
   },
 } satisfies ExportedHandler<Env>;

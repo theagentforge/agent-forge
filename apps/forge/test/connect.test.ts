@@ -1,11 +1,22 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { defaultTab, installLinks } from "../src/web/connect";
-import { HOME_SUBHEAD, VALUE_CARDS } from "../src/web/pages";
+import { ADVISORY_LINE_UNTIL, HOME_SUBHEAD, VALUE_CARDS, advisoryLine } from "../src/web/pages";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
 const page = async (path: string, headers: Record<string, string> = {}) => (await fetchWorker(path, { headers: { Accept: "text/html", ...headers } })).text();
+
+describe("October 2026 advisory lines (crisis-messaging §4)", () => {
+  it("home carries the dated line until it retires; /connect carries its sub-line", async () => {
+    const home = await page("/");
+    expect(home).toContain("<b>October 2026 advisories:</b> checks now include OSV malicious-package and CISA exploited-vulnerability data.");
+    expect(home).toContain('href="/advisories/2026-10?from=home"');
+    expect(String(advisoryLine(ADVISORY_LINE_UNTIL))).toBe("");
+    expect(String(advisoryLine(ADVISORY_LINE_UNTIL - 1))).toContain("See what changed");
+    expect(await page("/connect")).toContain("Your agent can check its own stack against <a href=\"/advisories/2026-10?from=connect\">this month's advisories</a> once connected.");
+  });
+});
 
 describe("/connect, pick your app (ADR 0017 §4)", () => {
   it("leads with one address for any AI app or agent, then the app tiles", async () => {

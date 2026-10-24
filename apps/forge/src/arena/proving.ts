@@ -5,6 +5,7 @@ import { canParticipate } from "../services/access";
 import { getDb, newId, type Db } from "../services/db";
 import { activeAgent } from "../services/forge";
 import type { AgentProps } from "../services/props";
+import { notEmbargoedModel } from "./views";
 
 // Proving Ground (ADR 0012 §3, ADR 0013 §4): any connected, human-verified agent takes the same bouts through the
 // Forge MCP. The server only referees. Like the headline models (and the Gauntlet, ADR 0024 §6), the agent is never
@@ -30,7 +31,7 @@ function replay(row: Pick<PgRow, "task" | "seed" | "calls">) {
 }
 
 export async function houseBar(db: Db, task: string) {
-  const [r] = await db.select({ v: avg(t.arenaRuns.score) }).from(t.arenaRuns).where(and(eq(t.arenaRuns.task, task), eq(t.arenaRuns.status, "done")));
+  const [r] = await db.select({ v: avg(t.arenaRuns.score) }).from(t.arenaRuns).where(and(eq(t.arenaRuns.task, task), eq(t.arenaRuns.status, "done"), notEmbargoedModel()));
   return r?.v != null ? Number(r.v) : DEFAULT_BAR;
 }
 

@@ -2,7 +2,7 @@ import { boutOutcome, conservative, glicko2, HARD3_TASKS, HARD_TASKS, NEW_RATING
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
-import { modelById, type ArenaModel } from "./lineup";
+import { EMBARGOED_MODEL_IDS, modelById, type ArenaModel } from "./lineup";
 
 // Read side of the Arena: what the pages, the Task Guide and the dataset show. Only finished, refereed runs.
 
@@ -120,7 +120,21 @@ export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; e
  * schedule, never withheld: every run is public once its premiere has passed.
  */
 export const notEmbargoed = (now: number) =>
-  sql`not exists (select 1 from arena_fixtures f where f.event_id = ${t.arenaRuns.eventId} and f.task = ${t.arenaRuns.task} and f.premiere_at > ${now} and (f.model_a = ${t.arenaRuns.modelId} or f.model_b = ${t.arenaRuns.modelId}))`;
+  and(
+    sql`not exists (select 1 from arena_fixtures f where f.event_id = ${t.arenaRuns.eventId} and f.task = ${t.arenaRuns.task} and f.premiere_at > ${now} and (f.model_a = ${t.arenaRuns.modelId} or f.model_b = ${t.arenaRuns.modelId}))`,
+    notEmbargoedModel(),
+  )!;
+
+/**
+ * Runs no public surface may read: an embargoed model's (K2, `embargoed` in the lineup), and any run of an event held
+ * for review (status "planned": ADR 0021 amendment 2, every fail is checked in the log before it's published). A held
+ * event is published by setting its status to "running" once the review is done; no release needed.
+ */
+export const notEmbargoedModel = () =>
+  and(
+    EMBARGOED_MODEL_IDS.length ? notInArray(t.arenaRuns.modelId, EMBARGOED_MODEL_IDS) : sql`1 = 1`,
+    sql`${t.arenaRuns.eventId} not in (select id from arena_events where status = 'planned')`,
+  )!;
 
 export async function runWithLog(db: Db, id: string, now = Date.now()) {
   const [row] = await db
@@ -189,7 +203,8 @@ export async function consistencyBoard(db: Db, tier: Tier = "normal") {
 /** One event's card: for each task, every model's stats and the head-to-head winner against the runner-up. */
 export async function eventCard(db: Db, slug: string) {
   const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
-  if (!event) return null;
+  // An event held for review isn't public yet.
+  if (!event || event.status === "planned") return null;
   const runs = await finishedRuns(db, { eventId: event.id });
   const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();

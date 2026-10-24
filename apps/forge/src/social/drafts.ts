@@ -7,7 +7,7 @@ import { channelDuels, gauntletClipId } from "../arena/featured";
 import { failCard } from "../arena/fail-card";
 import { easternDaylight, nextHeadlineSlot, slotDate, weeklyModels, weeklySlug, weeklyTask } from "../arena/headline-slot";
 import { modelById } from "../arena/lineup";
-import { finishedRuns, modelName, runWithLog } from "../arena/views";
+import { finishedRuns, modelName, notEmbargoedModel, runWithLog } from "../arena/views";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { labTotals } from "../web/home-wire";
@@ -271,7 +271,8 @@ async function weeklyResults(db: Db, now: number) {
   if (slot > now) return null;
   const [ev] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, weeklySlug(slot)));
   if (!ev) return null;
-  const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, ev.id));
+  // Embargoed models (K2) never reach a social draft.
+  const runs = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, ev.id), notEmbargoedModel()));
   if (!runs.length || runs.some((r) => r.status === "queued" || r.status === "running")) return null;
   const done = runs.filter((r) => r.status === "done");
   const by = new Map<string, { n: number; fell: number; passed: number }>();

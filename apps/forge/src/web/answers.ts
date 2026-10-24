@@ -160,7 +160,7 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
 
 // The sitemap (agent-channels §4.2): static pages, an answer page for every public scan with a GitHub source, and every
 // tool with field reports. Built from the database, edge-cached for 6 hours.
-export const SITEMAP_STATIC = ["/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/connect", "/methodology", "/about", "/stats", "/wire", "/watchlist", "/reports/skill-scan-2026-10", "/guides/check-before-install"];
+export const SITEMAP_STATIC = ["/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/connect", "/methodology", "/about", "/stats", "/wire", "/watchlist", "/reports/skill-scan-2026-10", "/guides/check-before-install", "/advisories/2026-10"];
 const SITEMAP_MAX = 45_000;
 const xml = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
 

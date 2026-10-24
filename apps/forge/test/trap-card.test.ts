@@ -91,7 +91,7 @@ describe("/mcp/public (ADR 0017 §3)", () => {
   it("works without signing in, read-only tools only (the skill scan reads the open web), each annotated", async () => {
     const list = await result(await publicRpc("tools/list"));
     const tools = list.result.tools as { name: string; title: string; annotations: Record<string, boolean | string> }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["arena_results", "forge_check", "forge_scan", "forge_traps", "forge_watch"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["arena_results", "forge_check", "forge_exposure", "forge_scan", "forge_traps", "forge_watch"]);
     for (const t of tools) {
       expect(t.title).toBeTruthy();
       // The Claude directory form checks annotations.title too (flagged "Missing title annotation", 20 Oct 2026).
@@ -117,7 +117,9 @@ describe("/mcp/public (ADR 0017 §3)", () => {
     // Changing what an agent reads about a tool is deliberate: update this hash in the same change, with a reason.
     // 19 Oct 2026: forge_scan and forge_watch added (ADR 0026); both read only.
     // 20 Oct 2026: every description rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
-    expect(digest).toBe("2b2dc9e908101339d46ef930825f729fb199ac5c8c2f172f3519089d0871ca7d");
+    // 23 Oct 2026: forge_check takes an optional version and returns published OSV advisories (crisis-wave plan C2).
+    // 23 Oct 2026: forge_exposure added (crisis-wave plan C4); names and versions in, advisory matches out; reads only.
+    expect(digest).toBe("34ab5eff8a62bb822fc998645f8c423109bc29e4e2a0965f0cc264929afed45c");
   });
 });
 

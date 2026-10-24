@@ -74,3 +74,23 @@ describe("ops digest", () => {
     expect(funnelLine({})).toBeNull();
   });
 });
+
+describe("the growth KPIs in the digest (ADR 0039)", () => {
+  it("leads with the north star and lists the rest against their targets", async () => {
+    const { kpiLine, render } = await import("../digest.mjs");
+    const k = {
+      as_of: "2026-10-23",
+      kpis: [
+        { id: "north_star", name: "Weekly active agent-days (north star)", value: 120, unit: "agent-days in 7 days", first: 500, second: 5000, status: "below", detail: { change_pct: 25 } },
+        { id: "retention", name: "4-week retention (signed-in agents)", value: null, unit: "%", first: 15, second: 25, status: "untracked" },
+        { id: "distribution", name: "Live listings", value: 12, unit: "live", first: 12, second: 20, status: "first" },
+      ],
+    };
+    const line = kpiLine(k);
+    expect(line).toContain("**North star: 120 agent-days** in the 7 days to 2026-10-23 (+25% on the week before); targets 500 / 5,000.");
+    expect(line).toContain("| Live listings | 12 live | 12 | 20 | first target met |");
+    expect(line).toContain("| 4-week retention (signed-in agents) | – % | 15 | 25 | parked |");
+    expect(kpiLine(null)).toBeNull();
+    expect(render({ now: {}, history: [] }, "2026-10-24", null, null, null, null, null, k)).toContain("North star");
+  });
+});

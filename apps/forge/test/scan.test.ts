@@ -125,7 +125,10 @@ describe("the launch scan dataset (ADR 0026)", () => {
     const { importSkillSeed, SEED_PATH } = await import("../src/services/skill-seed");
     const { SCAN_RULES_VERSION } = await import("@forge/shared");
     const file = (await (await env.ASSETS.fetch(new Request(`https://assets.local${SEED_PATH}`))).json()) as any;
-    expect(file.meta.rules_version).toBe(SCAN_RULES_VERSION);
+    // The launch dataset keeps the rules it was scanned with (2026-10-19.3, as the report says). Later rule versions
+    // (2026-10-23.1 adds FS-IMP-001, publisher look-alikes) apply to new scans, and forge_watch marks older ones for a rescan.
+    expect(file.meta.rules_version).toBe("2026-10-19.3");
+    expect(SCAN_RULES_VERSION).not.toBe("");
     const held = (await import("../src/seed/skill-scan-held.json")).default as any;
     // The public mirror ships an empty held file until 2 Nov.
     expect(file.rows.length + (held.rows.length || file.meta.held)).toBe(file.meta.files);
@@ -273,5 +276,25 @@ describe("skill-check tracking (ADR 0026 launch metrics)", () => {
     expect(stats.skill_checks.watch_checkins_7d).toBeNull();
     const growth = (await (await fetchWorker("/api/v1/growth")).json()) as any;
     expect(growth.watch_checkins_7d).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("Terms 1.1 and Privacy 1.2 (Dinike approved 23 Oct): announced 14 days ahead", () => {
+  it("shows the coming changes now, and they switch on by themselves on 7 November", async () => {
+    const { legalNextInForce, NEXT_LEGAL } = await import("../src/web/legal");
+    expect(NEXT_LEGAL).toMatchObject({ terms: "1.1", privacy: "1.2", date: "7 November 2026" });
+    expect(legalNextInForce(Date.UTC(2026, 10, 6, 23, 59))).toBe(false);
+    expect(legalNextInForce(Date.UTC(2026, 10, 7))).toBe(true);
+    // 14 days' notice (Terms §14): the switch is at least 14 days after this change was published.
+    expect(NEXT_LEGAL.from - Date.UTC(2026, 9, 23)).toBeGreaterThanOrEqual(14 * 86_400_000);
+    const terms = await (await fetchWorker("/terms", { headers: { Accept: "text/html" } })).text();
+    const privacy = await (await fetchWorker("/privacy", { headers: { Accept: "text/html" } })).text();
+    if (!legalNextInForce()) {
+      expect(terms).toContain("Version 1.1 takes effect on 7 November 2026");
+      expect(terms).toContain("15. If The Forge changes hands (from 7 November 2026)");
+      expect(privacy).toContain("Version 1.2 takes effect on 7 November 2026");
+    }
+    expect(terms).toContain("The same licence covers everything else you or your agents submit");
+    expect(privacy).toContain("A new operator:");
   });
 });
