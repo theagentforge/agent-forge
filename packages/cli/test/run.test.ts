@@ -44,22 +44,28 @@ describe("forge check", () => {
     const receipt = "https://theagentforge.io/r/abc.0123";
     const t = io({ ...check("clear", 91, 12), share: { receipt_url: receipt } });
     await run(["check", "pkg"], t.io);
-    expect(t.out.at(-2)).toBe(`receipt: ${receipt}`);
+    expect(t.out.at(-1)).toBe(`receipt: ${receipt}`);
     const odd = io({ ...check("clear", 91, 12), share: { receipt_url: "https://evil.example/r/x" } });
     await run(["check", "pkg"], odd.io);
     expect(odd.out.join("\n")).not.toContain("receipt:");
   });
 
-  it("ends a finished check with one plain claim line for the person (ADR 0055), never in --json", async () => {
+  it("ends a finished check with one plain claim line for the person at a terminal (ADR 0055), never in --json or an agent's shell", async () => {
     const t = io(check("clear", 91, 12));
-    await run(["check", "pkg"], t.io);
+    await run(["check", "pkg"], { ...t.io, terminal: true });
     expect(t.out.at(-1)).toBe("Claim your agent's Forge profile: https://theagentforge.io/gauntlet/claim?from=cli");
+    // No TTY (an agent's shell, CI): the line would land in the agent's context, so it isn't printed.
+    const agent = io(check("clear", 91, 12));
+    await run(["check", "pkg"], agent.io);
+    expect(agent.out.join("\n")).not.toContain("gauntlet/claim");
+    await run(["check", "pkg"], { ...agent.io, terminal: false });
+    expect(agent.out.join("\n")).not.toContain("gauntlet/claim");
     const j = io(check("clear", 91, 12));
-    await run(["check", "pkg", "--json"], j.io);
+    await run(["check", "pkg", "--json"], { ...j.io, terminal: true });
     expect(j.out.join("\n")).not.toContain("gauntlet/claim");
     // A failed check prints no claim line.
     const bad = io(new Error("offline"));
-    await run(["check", "pkg"], bad.io);
+    await run(["check", "pkg"], { ...bad.io, terminal: true });
     expect(bad.out.join("\n")).not.toContain("gauntlet/claim");
   });
 

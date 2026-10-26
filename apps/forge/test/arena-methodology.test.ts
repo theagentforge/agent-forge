@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { HARD3_1_FROM, RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
+import { HARD3_1_FROM, RULES_0_6_FROM, RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { planEvent, processQueue } from "../src/arena/runner";
 import { trapsData } from "../src/arena/traps";
@@ -51,9 +51,9 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<h2 id="cite">How to cite</h2>');
     expect(body).toContain("@misc{forgearena2026,");
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/arena/methodology`);
-    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.5; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2).");
+    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2).");
     expect(body).toContain('<h2 id="changelog">Changelog</h2>');
-    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "rules 0.3", "rules 0.4", "rules 0.5"]) expect(body).toContain(`<b>${v}</b>`);
+    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]) expect(body).toContain(`<b>${v}</b>`);
     expect(body).toContain("16 Oct 2026");
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
@@ -68,8 +68,8 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     const res = await fetchWorker("/arena/methodology?format=json");
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as Record<string, unknown> & { catalog: Record<string, unknown>[]; families: Record<string, { reserved: boolean }>; citation: Record<string, string> };
-    expect(Object.keys(j).sort()).toEqual(["catalog", "citation", "families", "licence", "name", "rules_history", "rules_version", "task_versions"]);
-    expect(j.rules_version).toBe("rules 0.5");
+    expect(Object.keys(j).sort()).toEqual(["catalog", "citation", "contamination", "families", "licence", "name", "rules_history", "rules_version", "task_versions"]);
+    expect(j.rules_version).toBe("rules 0.6");
     expect(j.task_versions).toEqual([
       expect.objectContaining({ version: "Normal 1.0", date: "2026-10-15", effective_from: "2026-10-15T00:00:00Z" }),
       expect.objectContaining({ version: "Hard v2", date: "2026-10-16" }),
@@ -82,8 +82,10 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       ["FA-POL-016", ["refund-hard3-2/stale_approval"]],
       ["FA-CLM-004", ["flaky-supplier-hard3-2/accepted_not_done"]],
     ]);
-    expect(j.rules_history).toContainEqual({ version: "rules 0.4", date: "2026-10-17", effective_from: HARD3_1_FROM });
-    expect(j.rules_history).toContainEqual({ version: "rules 0.5", date: "2026-10-24", effective_from: "2026-10-24T00:00:00Z" });
+    expect(j.rules_history).toContainEqual({ version: "rules 0.4", date: "2026-10-17", effective_from: HARD3_1_FROM, version_read_from: "finish_time" });
+    expect(j.rules_history).toContainEqual({ version: "rules 0.5", date: "2026-10-24", effective_from: "2026-10-24T00:00:00Z", version_read_from: "finish_time" });
+    // Rules 0.6 on: each result carries the version of the code that scored it (production ran 0.5 code after 0.6 was built).
+    expect(j.rules_history).toContainEqual({ version: "rules 0.6", date: "2026-10-26", effective_from: RULES_0_6_FROM, version_read_from: "result_stamp" });
     expect(j.catalog).toHaveLength(TRAP_CATALOG.length);
     expect(j.catalog[0]).toEqual({
       id: "FA-PAY-001",

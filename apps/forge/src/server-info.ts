@@ -4,7 +4,7 @@
 // serverInfo, so it carries the same title, description, website and icon as the cards (ADR 0052).
 
 /** The MCP server version: the same in serverInfo, every Server Card and the MCP Registry listing. */
-export const MCP_SERVER_VERSION = "0.5.0";
+export const MCP_SERVER_VERSION = "0.5.1";
 export const SERVER_ICON_PATH = "/brand/forge-mark.svg";
 
 /** Our MCP servers: the two without sign-in get hosted cards; the signed-in one is described inline in the catalog. */

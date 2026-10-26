@@ -1,8 +1,9 @@
-import { frames, moments, PUBLIC_NAME, summaryLines, taskById, type AttemptResult, type LogEvent } from "@forge/arena";
+import { CANARY, frames, moments, PUBLIC_NAME, summaryLines, taskById, type AttemptResult, type LogEvent } from "@forge/arena";
 import { html } from "hono/html";
 import { ladder, pgAttempt } from "../arena/proving";
 import { getDb } from "../services/db";
 import { replaySections } from "./arena";
+import { CANARY_LINE } from "./arena-history";
 import { send, site } from "./pages";
 
 // Proving Ground pages: the ladder and each refereed attempt.
@@ -38,9 +39,11 @@ site.get("/arena/proving-ground/:id", async (c) => {
     title: `${row.handle} · ${taskById(row.a.task)?.title ?? row.a.task}`,
     description: `${l1} ${l2}`,
     path: `/arena/proving-ground/${row.a.id}`,
+    canary: CANARY,
     body: html`<p class="eyebrow">Ranked Ladder · @${row.owner}</p>
 <h1 class="page-title mono-title">${row.handle}</h1>
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
-${replaySections(fs, moments(log, fs), result, row.a.score ?? 0)}`,
+${replaySections(fs, moments(log, fs), result, row.a.score ?? 0)}
+${CANARY_LINE}`,
   });
 });

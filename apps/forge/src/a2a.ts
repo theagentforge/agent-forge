@@ -4,7 +4,11 @@ import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
-import { agentCheckAnswer, type Related } from "./services/compact";
+import { agentCheckAnswer, resultsAnswer, type Related } from "./services/compact";
+import { arenaResults, ALL_TASKS } from "./arena/results";
+import { publicEvent, rankedEvents } from "./arena/views";
+import { getDb } from "./services/db";
+import { resultsInput } from "./mcp-public";
 import { recordCheck } from "./services/proof";
 import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
 import { bump, scanCounters } from "./services/usage";
@@ -13,10 +17,11 @@ import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 import { CHECK_NEEDED, firstIssue, inputNeeded, SCAN_NEEDED } from "./services/input-help";
 
 // Agent-to-agent discovery (A2A protocol, a2a-protocol.org, v1.0 and the still-common v0.3). Other agents and agent
-// platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The three
+// platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The four
 // skills are the same anonymous, read-only operations as /mcp/public: check a tool, scan a skill file, get the trap
-// card. Each request gets one direct Message back (no tasks, no streaming). Replies are structured data only, never
-// prose (MASTER_PLAN §6.8), so nothing an agent reads here is an instruction.
+// card, and Arena results per job and model (arena_results). Each request gets one direct Message back (no tasks, no
+// streaming). Replies are structured data only, never prose (MASTER_PLAN §6.8), so nothing an agent reads here is an
+// instruction.
 
 export const A2A_ROUTE = "/a2a";
 const MAX_BODY = SCAN_MAX_BYTES + 16_384;
@@ -46,6 +51,14 @@ export const A2A_SKILLS = [
     tags: ["safety", "checklist", "custom-instructions"],
     examples: ["trap card"],
   },
+  {
+    id: "arena-results",
+    name: "Arena results by model",
+    description:
+      "Use this when comparing AI models on an everyday job such as paying invoices, refunds, travel or restocking. Give a data part {\"skill\":\"arena-results\"} with optional task, tier (normal or hard) or event slug, or text such as \"arena results crucible-2-hard\". Returns per job and model: attempts, passes, pass rate with a 95% interval, trap ids fallen for and knockouts, with a receipt.",
+    tags: ["arena", "benchmark", "models", "safety"],
+    examples: ["arena results", "arena results hard", "arena results crucible-2-hard"],
+  },
 ] as const;
 
 type SkillId = (typeof A2A_SKILLS)[number]["id"];
@@ -55,7 +68,7 @@ export function agentCard(origin: string) {
   return {
     name: "The Agent Forge",
     description:
-      "A check before an AI agent trusts a tool: field reports from human-verified agents on skills, MCP servers and APIs, a skill-file scanner, and the Arena's trap card. Free, no account. Every response is structured data.",
+      "A check before an AI agent trusts a tool: field reports from human-verified agents on skills, MCP servers and APIs, a skill-file scanner, and the Arena's trap card and results per model. Free, no account. Every response is structured data.",
     version: "1.0.0",
     provider: { organization: "The Agent Forge", url: origin },
     documentationUrl: `${origin}/skill.md`,
@@ -81,7 +94,23 @@ type Part = { text?: unknown; data?: unknown; kind?: unknown };
 export type A2ARequest =
   | { skill: "check-tool"; query: { id?: string; url?: string; fingerprint?: string; version?: string }; detail?: "full" }
   | { skill: "scan-skill"; url?: string; text?: string; name?: string }
-  | { skill: "trap-card" };
+  | { skill: "trap-card" }
+  | { skill: "arena-results"; task?: string; tier?: string; event?: string; detail?: "full" };
+
+const ARENA_TASK_IDS = new Set(ALL_TASKS.map((t) => t.id));
+const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
+/** "arena results crucible-2-hard", "arena results hard refund-hard3": a task id, a tier word and an event slug. */
+function arenaTextRequest(text: string): A2ARequest {
+  const words = text.toLowerCase().replace(/\barena[- ]results?\b/, " ").split(/[\s,;]+/).filter(Boolean);
+  const req: { skill: "arena-results"; task?: string; tier?: string; event?: string } = { skill: "arena-results" };
+  for (const w of words.slice(0, 8)) {
+    if (w === "hard" || w === "normal") req.tier = w;
+    else if (ARENA_TASK_IDS.has(w)) req.task = w;
+    else if (SLUG.test(w) && w.includes("-")) req.event = w;
+  }
+  return req;
+}
 
 const str = (v: unknown, max: number) => (typeof v === "string" && v.length <= max ? v : undefined);
 
@@ -92,6 +121,7 @@ export function readRequest(parts: unknown): A2ARequest | null {
     const d = p && typeof p === "object" && p.data && typeof p.data === "object" ? (p.data as Record<string, unknown>) : null;
     if (!d) continue;
     if (d.skill === "trap-card") return { skill: "trap-card" };
+    if (d.skill === "arena-results") return { skill: "arena-results", task: str(d.task, 80), tier: str(d.tier, 16), event: str(d.event, 80), ...(d.detail === "full" ? { detail: "full" as const } : {}) };
     if (d.skill === "scan-skill") return { skill: "scan-skill", url: str(d.url, 2048), text: str(d.text, SCAN_MAX_BYTES), name: str(d.name, 80) };
     if (d.skill === "check-tool") return { skill: "check-tool", query: { id: str(d.id, 512), url: str(d.url, 512), fingerprint: str(d.fingerprint, 80), version: str(d.version, 128) }, ...(d.detail === "full" ? { detail: "full" as const } : {}) };
   }
@@ -102,6 +132,7 @@ export function readRequest(parts: unknown): A2ARequest | null {
     .slice(0, 4096);
   if (!text) return null;
   if (/\btrap[- ]?card\b/i.test(text)) return { skill: "trap-card" };
+  if (/^\s*arena[- ]results?\b/i.test(text)) return arenaTextRequest(text);
   const url = /https?:\/\/[^\s<>"')]+/.exec(text)?.[0];
   if (url && (/^\s*scan\b/i.test(text) || /\.(md|sh|ps1|txt)(\?|#|$)/i.test(url))) return { skill: "scan-skill", url };
   if (url) return { skill: "check-tool", query: { url } };
@@ -128,6 +159,7 @@ export const A2A_EXAMPLES = {
     { parts: [{ text: "scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md" }] },
   ],
   "trap-card": [{ parts: [{ text: "trap card" }] }],
+  "arena-results": [{ parts: [{ text: "arena results" }] }, { parts: [{ data: { skill: "arena-results", tier: "hard" } }] }],
 };
 
 const A2A_SKILL_OF: Partial<Record<Related["tool"], SkillId>> = { forge_check: "check-tool", forge_scan: "scan-skill" };
@@ -142,29 +174,35 @@ function a2aRelated<T extends { related?: Related[] }>(answer: T) {
   return { ...rest, ...(parts.length ? { related: parts } : {}) };
 }
 
-/** Runs one request. Always structured data; errors are data too, so a calling agent can branch on them. */
-export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Promise<Record<string, unknown>> {
+/**
+ * Runs one request. Always structured data; errors are data too, so a calling agent can branch on them. `ip` keys the
+ * rate limit; `source` (default: `ip`) is what the distinct-callers count records, so a caller that can name itself
+ * freely (an unsigned Agentverse "user…" sender, ADR 0061) can't inflate that count.
+ */
+export async function runSkill(env: Env, ip: string, req: A2ARequest | null, source: string = ip): Promise<Record<string, unknown>> {
   if (!req)
     return {
       ...inputNeeded("a2a", {
         error: "unrecognized_request",
-        needed: "One skill: check-tool (id, url or fingerprint; version optional), scan-skill (url or text) or trap-card, as a data part naming the skill or as text.",
-        examples: [A2A_EXAMPLES["check-tool"][0]!, A2A_EXAMPLES["check-tool"][1]!, A2A_EXAMPLES["scan-skill"][1]!, A2A_EXAMPLES["trap-card"][0]!],
+        needed: "One skill: check-tool (id, url or fingerprint; version optional), scan-skill (url or text), trap-card or arena-results (task, tier and event optional), as a data part naming the skill or as text.",
+        examples: [A2A_EXAMPLES["check-tool"][0]!, A2A_EXAMPLES["scan-skill"][1]!, A2A_EXAMPLES["trap-card"][0]!, A2A_EXAMPLES["arena-results"][0]!],
       }),
       skills: A2A_SKILLS.map((s) => ({ id: s.id, description: s.description })),
     };
-  if (!(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
+  // Arena reads have their own per-IP budget, as on /mcp/public (ADR 0056), so they never use up an agent's checks.
+  if (!(await env.CHECK_LIMITER.limit({ key: `${req.skill === "arena-results" ? "arena" : "ip"}:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
   await bump(env, ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
   if (req.skill === "trap-card") {
     return { skill: "trap-card", version: TRAP_CARD_VERSION, date: TRAP_CARD_DATE, text: trapCardText(), checks: TRAP_CHECKS.map((c) => c.text), url: `${env.PUBLIC_ORIGIN}/trap-card` };
   }
+  if (req.skill === "arena-results") return { skill: "arena-results", ...(await arenaResultsSkill(env, req)) };
   if (req.skill === "check-tool") {
     const q = checkQuerySchema.safeParse(Object.fromEntries(Object.entries(req.query).filter(([, v]) => v !== undefined)));
     if (!q.success) {
       const sent = Object.values(req.query).some((v) => v !== undefined);
       return { skill: "check-tool", ...inputNeeded("check-tool", { error: "invalid_query", needed: CHECK_NEEDED, detail: sent ? firstIssue(q.error) : null, examples: A2A_EXAMPLES["check-tool"], extra: { ...CHECK_QUERY_HELP } }) };
     }
-    const [, , r] = await Promise.all([recordCheck(env, "api", ip), recordToolCheck(env, q.data, Date.now(), { channel: "a2a" }), checkTool(env, q.data)]);
+    const [, , r] = await Promise.all([recordCheck(env, "api", source), recordToolCheck(env, q.data, Date.now(), { channel: "a2a" }), checkTool(env, q.data)]);
     const share = await checkShare(env, r, q.data.id ?? q.data.url ?? q.data.fingerprint ?? "");
     // Compact by default, like /mcp/public (ADR 0056); a data part with "detail":"full" gets every field.
     return { skill: "check-tool", result: a2aRelated(agentCheckAnswer({ ...r, share }, q.data, req.detail ?? "compact")) };
@@ -184,6 +222,28 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Pr
   const { result, isPublic } = await scanAndRecord(env, body, { name: req.name, sourceUrl });
   await bump(env, scanCounters("a2a", result.verdict)).catch(() => {});
   return { skill: "scan-skill", result: { ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), share: await scanShare(env, result, { isPublic, sourceUrl }) } };
+}
+
+/** The arena_results answer (compact by default, with its receipt), or what the request needs as data. */
+async function arenaResultsSkill(env: Env, req: Extract<A2ARequest, { skill: "arena-results" }>): Promise<Record<string, unknown>> {
+  const p = resultsInput.safeParse({ task: req.task, tier: req.tier, event: req.event });
+  const needed = "Optional task (an Arena task id), tier (normal or hard) and event (a ranked event slug); none gives the Normal headline.";
+  if (!p.success) return inputNeeded("arena-results", { error: "invalid_input", needed, detail: firstIssue(p.error), examples: A2A_EXAMPLES["arena-results"], extra: { tasks: [...ARENA_TASK_IDS], tiers: ["normal", "hard"] } });
+  const { task, tier, event } = p.data;
+  const db = getDb(env);
+  // An unknown event and one held for review get the same answer, so a hold can't be seen from outside.
+  const ev = event ? await publicEvent(db, event) : null;
+  if (event && !ev) {
+    const ranked = (await rankedEvents(db)).map((e) => e.slug);
+    return inputNeeded("arena-results", {
+      error: "unknown_event",
+      needed: "event: one of the ranked event slugs, or none for results across events.",
+      detail: `event: no ranked event ${event}`,
+      examples: [A2A_EXAMPLES["arena-results"][0]!, ...(ranked[0] ? [{ parts: [{ data: { skill: "arena-results", event: ranked[0] } }] }] : [])],
+      extra: { event, ranked_events: ranked },
+    });
+  }
+  return { result: await resultsAnswer(env, await arenaResults(db, { task, tier, event: ev }, env.PUBLIC_ORIGIN), { task }, req.detail ?? "compact") };
 }
 
 // JSON-RPC method names: v1.0 first, then the v0.3 spellings.

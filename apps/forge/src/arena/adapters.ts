@@ -26,6 +26,11 @@ export interface ModelReply {
   costEstimated: boolean;
   latencyMs: number;
   provider: string | null;
+  /**
+   * The model string the provider reported serving (OpenRouter's response `model`), or the Workers AI model id. Stored
+   * per run as `arena_runs.model_version` (ADR 0058), so a version change under the same lineup id shows in the data.
+   */
+  servedModel?: string;
   /** Input tokens read from the provider's prompt cache, when it reports them (part of `tokensIn`, not extra). */
   cachedTokens?: number;
   /** Input tokens written to the prompt cache by this call, when the provider reports them. */
@@ -141,7 +146,7 @@ export async function callModel(
       const outOfCredit = res.status === 402 || (res.status === 403 && /limit|credit/i.test(msg));
       throw new ProviderError(msg, res.status === 429 || res.status >= 500 || res.status === 408 || outOfCredit, res.status === 429 || outOfCredit);
     }
-    return fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0);
+    return { ...fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0), servedModel: typeof body.model === "string" && body.model ? body.model.slice(0, 120) : route.model };
   }
 
   let out: unknown;
@@ -160,7 +165,7 @@ export async function callModel(
   const reply = o?.choices?.[0] ? fromOpenAi(o, ms, "cloudflare-workers-ai", true, route.priceIn, route.priceOut) : fromLegacy(o, ms, route);
   // Some models write their tool calls as text (Llama's pythonic format); read them for routes that say so.
   if (route.textToolCalls === "pythonic" && !reply.toolCalls.length) reply.toolCalls = parsePythonicCalls(reply.text, tools);
-  return reply;
+  return { ...reply, servedModel: route.model };
 }
 
 function fromLegacy(o: (OpenAiShape & LegacyShape) | null, ms: number, route: Extract<Route, { kind: "workers-ai" }>): ModelReply {
@@ -189,6 +194,7 @@ interface OpenAiShape {
   choices?: { message?: { content?: string | null; reasoning?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null };
   provider?: string;
+  model?: string;
   error?: { message?: string };
 }
 

@@ -1,4 +1,4 @@
-import { JOB_LINE, reach, taskById, type Duel } from "@forge/arena";
+import { familyOf, JOB_LINE, reach, taskById, type Duel } from "@forge/arena";
 import { TRAP_CHECKS, type ScanFinding } from "@forge/shared";
 import { and, eq, gte } from "drizzle-orm";
 import { gullibilityBoard } from "../arena/board";
@@ -99,7 +99,7 @@ const bare = (title: string) => title.replace(/^The /, "");
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const dropDot = (s: string) => s.replace(/\.$/, "");
 /** The trap card check that answers a task's trap, if any. */
-const checkFor = (task: string, trap: string | null) => TRAP_CHECKS.find((c) => trap && c.traps.includes(`${task.replace(/-hard\d*$/, "")}/${trap}`));
+const checkFor = (task: string, trap: string | null) => TRAP_CHECKS.find((c) => trap && c.traps.includes(`${familyOf(task)}/${trap}`));
 /** Today's duels where one side fell for the trap and the other didn't, best-known models first. */
 async function contrastDuels(env: Env, db: Db, now: number) {
   const duels = (await channelDuels(env, db, now).catch(() => [])).filter((d) => d.gauntlet && d.a.fell !== d.b.fell);

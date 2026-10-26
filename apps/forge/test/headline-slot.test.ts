@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { TASKS } from "@forge/arena";
+import { heldOutSeeds, TASKS } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
@@ -99,6 +99,7 @@ describe("calendar file and /arena", () => {
     const rules = await (await fetchWorker("/arena/rules")).text();
     expect(rules).toContain('<h2 id="weekly">The weekly headline bout</h2>');
     expect(rules).toContain("ISO week number");
+    expect(rules).toContain("one private held-out version of the same job, which is never published");
   });
 });
 
@@ -116,9 +117,16 @@ describe("queueing the weekly bout", () => {
     expect((await weekly("weekly-2026-10-22")).ev).toBeUndefined();
 
     expect(await queueWeeklyHeadline(prod, FIRST_SLOT + 2 * 60_000)).toBe("weekly-2026-10-22");
-    const first = await weekly("weekly-2026-10-22");
-    expect(first.ev).toMatchObject({ kind: "card", season: "s0" });
+    const all = await weekly("weekly-2026-10-22");
+    expect(all.ev).toMatchObject({ kind: "card", season: "s0" });
     const models = weeklyModels();
+    // ADR 0058: the same models and attempts on the job's first private held-out seed (none in the public mirror).
+    const firstHeld = heldOutSeeds(weeklyTask(FIRST_SLOT).id).slice(0, 1);
+    const held = all.runs.filter((r) => r.heldOut);
+    expect(held).toHaveLength(models.length * 3 * firstHeld.length);
+    expect(held.every((r) => firstHeld.includes(r.seed) && r.task === weeklyTask(FIRST_SLOT).id)).toBe(true);
+    expect(held.map((r) => `${r.modelId}:${r.attemptNo}`).sort()).toEqual(firstHeld.length ? models.flatMap((m) => [1, 2, 3].map((a) => `${m}:${a}`)).sort() : []);
+    const first = { ev: all.ev, runs: all.runs.filter((r) => !r.heldOut) };
     expect(first.runs).toHaveLength(models.length * 3);
     expect(new Set(first.runs.map((r) => r.task))).toEqual(new Set([weeklyTask(FIRST_SLOT).id]));
     expect(new Set(first.runs.map((r) => r.modelId))).toEqual(new Set(models));
@@ -128,7 +136,7 @@ describe("queueing the weekly bout", () => {
     expect(first.runs.map((r) => r.attemptNo).sort()).toEqual(models.flatMap(() => [1, 2, 3]).sort());
 
     expect(await queueWeeklyHeadline(prod, FIRST_SLOT + 7 * 60_000)).toBeNull();
-    expect((await weekly("weekly-2026-10-22")).runs).toHaveLength(models.length * 3);
+    expect((await weekly("weekly-2026-10-22")).runs).toHaveLength(models.length * 3 * (1 + firstHeld.length));
     const events = await getDb(env).select().from(t.arenaEvents);
     expect(events.filter((e) => e.slug.startsWith("weekly-"))).toHaveLength(1);
     await getDb(env).delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, first.ev!.id));

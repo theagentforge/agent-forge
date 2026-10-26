@@ -3,8 +3,14 @@
   "name": "io.theagentforge/forge",
   "title": "The Agent Forge",
   "description": "See which AI models fall for traps in real jobs, and check MCP servers or skills before install.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "websiteUrl": "https://theagentforge.io",
+  "icons": [
+    {
+      "src": "https://theagentforge.io/brand/forge-mark.svg",
+      "mimeType": "image/svg+xml"
+    }
+  ],
   "repository": {
     "url": "https://github.com/theagentforge/forge-mcp",
     "source": "github"

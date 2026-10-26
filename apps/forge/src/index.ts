@@ -1,5 +1,6 @@
 import { pingIndexNow } from "./services/indexnow";
 import { refreshKev } from "./services/kev";
+import { registerAgentverse } from "./agentverse";
 import { OAuthProvider, type OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
 import { API_VERSION } from "@forge/shared";
 import { Hono } from "hono";
@@ -17,7 +18,7 @@ import { rescoreTick } from "./arena/rescore-job";
 import { refreshClipIndex } from "./arena/clips";
 import { sweepGauntletLogs } from "./arena/gauntlet";
 import { writeSeasonSnapshot } from "./arena/season";
-import { importSkillSeed } from "./services/skill-seed";
+import { importSkillSeed, releaseHeldScans } from "./services/skill-seed";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
 import { getDb } from "./services/db";
@@ -31,6 +32,9 @@ import "./web/legal";
 import "./web/publications";
 import "./web/admin-moltbook";
 import "./web/admin-kpis";
+import "./web/admin-review";
+import "./web/admin-arena-panel";
+import "./web/admin-arena-rescore";
 import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
@@ -41,6 +45,7 @@ import "./web/arena-agent";
 import "./web/arena-methodology";
 import "./web/croissant";
 import "./web/results-policy";
+import "./web/arena-history";
 import "./web/arena-clip";
 import "./web/arena-failures";
 import "./web/arena-fotw";
@@ -57,6 +62,7 @@ import "./web/digest-feed";
 import "./web/publishers";
 import "./web/og";
 import "./a2a";
+import "./agentverse";
 import "./web/answers";
 import "./web/skills-index";
 import "./web/receipt";
@@ -155,6 +161,14 @@ export default {
         (e) => console.error("kev_failed", String(e)),
       ),
     );
+    // ADR 0061: refresh the Agentverse listing (production, and only once the AGENTVERSE_CONNECTION secret is set).
+    if (env.ENVIRONMENT === "production" && env.AGENTVERSE_CONNECTION)
+      ctx.waitUntil(
+        registerAgentverse(env, controller.scheduledTime).then(
+          (r) => console.log("agentverse", JSON.stringify(r)),
+          (e) => console.error("agentverse_failed", String(e).slice(0, 120)),
+        ),
+      );
     ctx.waitUntil(
       pingIndexNow(env, controller.scheduledTime).then(
         (r) => console.log("indexnow", JSON.stringify(r)),
@@ -189,6 +203,12 @@ export default {
       importSkillSeed(env).then(
         (r) => console.log("skill_seed", JSON.stringify(r)),
         (e) => console.error("skill_seed_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
+      releaseHeldScans(env, controller.scheduledTime).then(
+        (r) => console.log("skill_seed_release", JSON.stringify(r)),
+        (e) => console.error("skill_seed_release_failed", String(e)),
       ),
     );
     ctx.waitUntil(

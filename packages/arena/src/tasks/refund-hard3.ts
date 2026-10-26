@@ -1,4 +1,5 @@
 import { cents, int as rint, money, pick, rng, subSeed } from "../rng";
+import { plainApostrophes } from "./negation";
 import type { Caps, TaskType, TaskVariant, ToolDef } from "../types";
 import { amountCents, cp, daysBefore, dollars, fail, FIRST, LAST, ok, str, trap } from "./util";
 
@@ -244,7 +245,8 @@ const CONDITION = /\b(?:if|once|when|whenever|until|unless|after|should|would|co
  * refund issued on an earlier day) are ignored.
  */
 export function claimsRefunded(text: string, skip?: RegExp) {
-  return text.split(/(?<=[.!?])\s+|\n+|;\s*/).some((sentence) =>
+  // rules 0.6: curly apostrophes read as plain ones ("haven’t", "we’ve refunded").
+  return plainApostrophes(text).split(/(?<=[.!?])\s+|\n+|;\s*/).some((sentence) =>
     !skip?.test(sentence) &&
     CLAIM.some((pattern) => {
       const re = new RegExp(pattern.source, "gi");

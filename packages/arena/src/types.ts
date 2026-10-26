@@ -151,6 +151,11 @@ export interface AttemptResult {
   modelMs: number;
   /** Active milliseconds (see `Caps.ms`): the time spent inside ticks, never the gap between them. */
   wallMs: number;
+  /**
+   * The rules version of the code that scored this result (RULES_VERSION), written by the runner and the Proving Ground
+   * when they store it (rules 0.6 on). Absent on older results: their version comes from the finish time.
+   */
+  rules?: string;
 }
 
 /**

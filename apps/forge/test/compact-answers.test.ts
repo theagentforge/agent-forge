@@ -190,13 +190,22 @@ describe("next calls and receipts on every answer type", () => {
 
 describe("limits that would stop an agent mid-task", () => {
   it("watch and Arena reads have their own per-IP budget, so they never use up the checks that follow", async () => {
+    // The limiter's windows are aligned to the wall clock (60 s, as in production). This test used to fail now and then
+    // when its 61 calls straddled a minute boundary: the count reset and call 61 went through. Start early in a window
+    // (waiting at most 20 s), and check the calls really shared one window.
+    const minute = () => Math.floor(Date.now() / 60_000);
+    const left = 60_000 - (Date.now() % 60_000);
+    if (left < 20_000) await new Promise((r) => setTimeout(r, left + 50));
+    const started = minute();
     const fixed = { "CF-Connecting-IP": "203.0.113.250" };
     const at = async (name: string, args: unknown) => (await body(await rpc("/mcp/public", "tools/call", { name, arguments: args }, fixed))).result;
     for (let i = 0; i < 60; i++) expect((await at("forge_traps", {})).isError, `traps ${i}`).toBe(false);
-    expect((await at("forge_traps", {})).structuredContent).toMatchObject({ error: "rate_limited" });
+    const sixtyFirst = (await at("forge_traps", {})).structuredContent;
+    expect(minute(), "the 61 calls took longer than 40 s, so they crossed a rate-limit window").toBe(started);
+    expect(sixtyFirst).toMatchObject({ error: "rate_limited" });
     expect((await at("forge_watch", { fingerprints: [fp("e")] })).isError).toBe(false);
     expect((await at("forge_check", { id: "npm:after-arena-reads" })).isError).toBe(false);
-  });
+  }, 90_000);
 });
 
 describe("output schemas on /mcp/public", () => {

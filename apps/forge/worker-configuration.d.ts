@@ -8,6 +8,7 @@ interface __BaseEnv_Env {
 	CHECK_LIMITER: RateLimit;
 	REPORT_LIMITER: RateLimit;
 	CONTRIBUTOR_LIMITER: RateLimit;
+	AGENTVERSE_LIMITER: RateLimit;
 	AI: Ai;
 	ASSETS: Fetcher;
 	ENVIRONMENT: "staging" | "production";
@@ -26,6 +27,7 @@ declare namespace Cloudflare {
 		CHECK_LIMITER: RateLimit;
 		REPORT_LIMITER: RateLimit;
 		CONTRIBUTOR_LIMITER: RateLimit;
+		AGENTVERSE_LIMITER: RateLimit;
 		AI: Ai;
 		ASSETS: Fetcher;
 		ENVIRONMENT: "staging";

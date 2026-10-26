@@ -1,7 +1,7 @@
 import { TASKS } from "@forge/arena";
 import { env } from "cloudflare:workers";
-import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
+import { describe, expect, it, vi } from "vitest";
 import { CLAIM_NOTICE } from "../src/arena/gauntlet-claims";
 import { ensureSeason, latestSnapshot, SEASON_1, SEASON_NOTICE, seasonBoard, WEEK, writeSeasonSnapshot } from "../src/arena/season";
 import * as t from "../src/db/schema";
@@ -87,7 +87,7 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
     expect(html).toContain("/gauntlet-claim.js");
     expect(html).toContain(CLAIM_NOTICE.replace(/'/g, "&#39;"));
     expect(html).toContain(SEASON_NOTICE.replace(/'/g, "&#39;"));
-    expect(html).toContain(`/auth/login?next=${encodeURIComponent(`/gauntlet/claim?run=${id}&season=1`)}`);
+    expect(html).toContain(`/auth/login?next=${encodeURIComponent(`/gauntlet/claim?run=${id}&season=1&back=1`)}`);
     expect(html).not.toContain(key);
     // The sign-in returns to the claim page (the existing safe `next`).
     const login = await fetchWorker(`/auth/login?next=${encodeURIComponent(`/gauntlet/claim?run=${id}&season=1`)}`, { redirect: "manual" });
@@ -158,7 +158,7 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
   it("from a check (CLI, plugin, Action): a profile page with one sign-in link and the two ways to fill it", async () => {
     const html = await (await fetchWorker("/gauntlet/claim?from=cli", { headers: { Accept: "text/html" } })).text();
     expect(html).toContain("Claim your agent&#39;s profile");
-    expect(html).toContain(`/auth/login?next=${encodeURIComponent("/gauntlet/claim?from=cli")}`);
+    expect(html).toContain(`/auth/login?next=${encodeURIComponent("/gauntlet/claim?from=cli&back=1")}`);
     expect(html).toContain("/connect");
   });
 });
@@ -254,5 +254,67 @@ describe("owner funnel KPIs (ADR 0055)", () => {
     expect(k.kpis.find((x) => x.id === "verified_agents")!.detail).toHaveProperty("agents_per_human");
     // Not on a public page.
     expect((await (await fetchWorker("/admin/kpis", { redirect: "manual" })).status)).toBe(302);
+  });
+});
+
+describe("review fixes (ADR 0055)", () => {
+  it("blanks a claim key the agent echoed into a tool call out of the stored calls and public replay", async () => {
+    const ip = nextIp();
+    const start = await gauntlet("gauntlet_start", {}, ip);
+    const key = start.claim_key as string;
+    await gauntlet("gauntlet_act", { gauntlet_id: start.gauntlet_id, tool: "finish", args: { status: "cannot_complete", summary: `My claim link is ${start.claim.url}` } }, ip);
+    const [b] = await getDb(env).select().from(t.arenaGauntletBouts).where(and(eq(t.arenaGauntletBouts.gauntletId, start.gauntlet_id), eq(t.arenaGauntletBouts.idx, 0)));
+    const stored = JSON.stringify([b!.calls, b!.log, b!.result]);
+    expect(stored).not.toContain(key);
+    expect(stored).toContain("gck_[redacted]");
+    const replay = await (await fetchWorker(`/gauntlet/r/${start.gauntlet_id}/1`, { headers: { Accept: "text/html" } })).text();
+    expect(replay).not.toContain(key);
+    // The key still claims the run (only the copies in the log are blanked).
+    await finish(start.gauntlet_id, ip);
+    const o = await webOwner();
+    const res = await o.post("/gauntlet/claim", { run: start.gauntlet_id, agent: "new", claim_key: key, season: "0" }, `/gauntlet/claim?run=${start.gauntlet_id}`);
+    expect(res.headers.get("Location")).toMatch(/m=claimed_new$/);
+  });
+
+  it("counts a claim-page visit once: not again on the return from GitHub sign-in", async () => {
+    const db = getDb(env);
+    const read = async () => {
+      const rows = await db.select().from(t.usageDaily).where(eq(t.usageDaily.key, "owner:claim_page:action"));
+      return rows.reduce((n, r) => n + r.n, 0);
+    };
+    const before = await read();
+    const page = await (await fetchWorker("/gauntlet/claim?from=action", { headers: { Accept: "text/html" } })).text();
+    await vi.waitFor(async () => expect(await read()).toBe(before + 1));
+    const next = decodeURIComponent(/\/auth\/login\?next=([^"]+)"/.exec(page)![1]!.replace(/&amp;/g, "&"));
+    expect(next).toBe("/gauntlet/claim?from=action&back=1");
+    await fetchWorker(next, { headers: { Accept: "text/html" } });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await read()).toBe(before + 1);
+  });
+
+  it("gives every agent with a run on the board the entrant badge, drops owners no longer verified from the snapshot, and freezes the final week at the season's end", async () => {
+    const db = getDb(env);
+    const s = await ensureSeason(db);
+    const o = await webOwner();
+    const r1 = await finishedRun();
+    await o.post("/gauntlet/claim", { run: r1.id, agent: "new", claim_key: r1.key, season: "1" }, `/gauntlet/claim?run=${r1.id}`);
+    const r2 = await finishedRun();
+    await o.post("/gauntlet/claim", { run: r2.id, agent: "new", claim_key: r2.key, season: "1" }, `/gauntlet/claim?run=${r2.id}`);
+    const agents = await db.select().from(t.agents).where(eq(t.agents.humanId, o.human.id));
+    expect(agents).toHaveLength(2);
+    // r1 (earlier, equal result) is the owner's one entry; r2's agent still shows as an entrant, without a rank.
+    const badges = await Promise.all(agents.map(async (a) => (await json(`/a/${a.handle}`)).season));
+    expect(badges.every((b) => b && b.badges.some((x: any) => x.id === "season-1-entrant"))).toBe(true);
+    expect(badges.filter((b) => b.rank !== null)).toHaveLength(1);
+
+    // A snapshot taken while verified; the owner later loses verification: off the shown snapshot too.
+    const end = await writeSeasonSnapshot(env, s.endsAt + 3_600_000);
+    expect(end).toMatchObject({ written: true, week: Math.ceil((s.endsAt - s.startsAt) / WEEK) });
+    let snap = await latestSnapshot(env, s);
+    expect(snap!.as_of).toBe(new Date(s.endsAt).toISOString());
+    expect(snap!.entries.some((e) => e.gauntlet_id === r1.id)).toBe(true);
+    await db.update(t.humans).set({ tier: "sandbox" }).where(eq(t.humans.id, o.human.id));
+    snap = await latestSnapshot(env, s);
+    expect(snap!.entries.some((e) => e.gauntlet_id === r1.id)).toBe(false);
   });
 });

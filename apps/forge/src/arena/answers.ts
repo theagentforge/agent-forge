@@ -1,4 +1,4 @@
-import { HARD3_TASKS, HARD_TASKS, taskById, TASKS, wilsonInterval } from "@forge/arena";
+import { familyOf, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, taskById, TASKS, wilsonInterval } from "@forge/arena";
 import type { Db } from "../services/db";
 import { modelRow, RESULTS_METHOD, trapsFell, versionsAndDates, type Run } from "./results";
 import { finishedRuns, isKnockout, RANKED_KINDS, tierOf, type Tier } from "./views";
@@ -11,7 +11,7 @@ import { finishedRuns, isKnockout, RANKED_KINDS, tierOf, type Tier } from "./vie
 export interface ArenaQuestion {
   slug: string;
   question: string;
-  /** The Normal task id; its Hard v2 and Hard v3 versions are `<job>-hard` and `<job>-hard3`. */
+  /** The Normal task id; its Hard v2, Hard v3 and Hard v3.2 versions are `<job>-hard`, `<job>-hard3` and `<job>-hard3-2`. */
   job: string;
   /**
    * Public trap ids (FA-*) that count as "did it" on this page, or null for any planted trap on the job. The table
@@ -41,15 +41,21 @@ export const ARENA_QUESTIONS: ArenaQuestion[] = [
 export const answerPagePath = (q: ArenaQuestion) => `${ANSWERS_PATH}/${q.slug}`;
 export const arenaQuestion = (slug: string) => ARENA_QUESTIONS.find((q) => q.slug === slug) ?? null;
 /** The answer page for a task id (any tier), for links from the task guides. */
-export const questionForTask = (task: string) => ARENA_QUESTIONS.find((q) => q.job === task.replace(/-hard3?$/, "")) ?? null;
+export const questionForTask = (task: string) => ARENA_QUESTIONS.find((q) => q.job === familyOf(task)) ?? null;
 
-/** A job's versions, newest and hardest first: the answer leads with the first one that has ranked results. */
-const versionsOf = (job: string) =>
+export type AnswerVersion = "Hard v3.2" | "Hard v3" | "Hard v2" | "Normal";
+
+/**
+ * A job's versions, newest and hardest first: the answer leads with the first one that has ranked results. Hard v3.2
+ * (ADR 0054) is listed for the two jobs that have it; like every version, it shows only once it has ranked runs.
+ */
+export const versionsOf = (job: string) =>
   [
+    { task: HARD3_2_TASKS.find((x) => x.id === `${job}-hard3-2`), version: "Hard v3.2" as const },
     { task: HARD3_TASKS.find((x) => x.id === `${job}-hard3`), version: "Hard v3" as const },
     { task: HARD_TASKS.find((x) => x.id === `${job}-hard`), version: "Hard v2" as const },
     { task: TASKS.find((x) => x.id === job), version: "Normal" as const },
-  ].filter((v): v is { task: NonNullable<typeof v.task>; version: "Hard v3" | "Hard v2" | "Normal" } => !!v.task);
+  ].filter((v): v is { task: NonNullable<typeof v.task>; version: AnswerVersion } => !!v.task);
 
 const pctOf = (k: number, n: number) => (n ? Math.round((k / n) * 1000) / 1000 : 0);
 

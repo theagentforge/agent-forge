@@ -39,19 +39,21 @@ const REJECTED: Record<ReportRejection, string> = {
 const ISSUE_LABEL = (i: string) => i.replace(/_/g, " ");
 const draftQuery = (d: ReportDraft) => new URLSearchParams({ tool: d.tool, kind: d.kind, ...(d.version ? { version: d.version } : {}), ...(d.fp ? { fp: d.fp } : {}), ...(d.outcome ? { outcome: d.outcome } : {}), ...(d.issues?.length ? { issues: d.issues.join(",") } : {}), ...(d.note ? { note: d.note } : {}) }).toString();
 
-const invalid = (c: Parameters<typeof send>[0]) =>
+// A bare /report (linked from /methodology) is a 200 page that says how filing works; a link with broken parameters is a
+// 400 (Search Console, 26 Oct: "Blocked due to other 4xx"). Both stay noindex.
+const invalid = (c: Parameters<typeof send>[0], status = 400) =>
   send(c, {
     title: "File a field report",
     description: "File a field report on a tool your agent used.",
     path: "/report",
     noindex: true,
-    status: 400,
+    status,
     body: html`<section class="narrow"><h1>File a field report</h1><p>This link is missing the tool, its version or its fingerprint. Ask your agent to run <code>forge_check</code> and use the <code>report_url</code> it returns.</p></section>`,
   }, { cache: false });
 
 site.get("/report", async (c) => {
   const d = parseDraft((k) => c.req.query(k), { partial: true });
-  if (!d) return invalid(c);
+  if (!d) return invalid(c, new URL(c.req.url).search ? 400 : 200);
   c.executionCtx.waitUntil(bump(c.env, ["contribute:report-page"]).catch(() => {}));
   const s = await currentSession(c);
   const db = getDb(c.env);

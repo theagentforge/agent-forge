@@ -1,4 +1,4 @@
-import { boutOutcome, conservative, glicko2, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { boutOutcome, conservative, glicko2, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
@@ -119,20 +119,34 @@ export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; e
  * Runs in a "Call it" fixture stay hidden until the fixture premieres (ADR 0014 §7). Publication is delayed by the
  * schedule, never withheld: every run is public once its premiere has passed.
  */
-export const notEmbargoed = (now: number) =>
-  and(
-    sql`not exists (select 1 from arena_fixtures f where f.event_id = ${t.arenaRuns.eventId} and f.task = ${t.arenaRuns.task} and f.premiere_at > ${now} and (f.model_a = ${t.arenaRuns.modelId} or f.model_b = ${t.arenaRuns.modelId}))`,
-    notEmbargoedModel(),
-  )!;
+export const notEmbargoed = (now: number) => and(notEmbargoedKeepHeldOut(now), notHeldOut())!;
 
 /**
- * Runs no public surface may read: an embargoed model's (K2, `embargoed` in the lineup), and any run of an event held
- * for review (status "planned": ADR 0021 amendment 2, every fail is checked in the log before it's published). A held
- * event is published by setting its status to "running" once the review is done; no release needed.
+ * As `notEmbargoed`, but held-out runs (ADR 0058) stay in. Only aggregate readers use it (arena/holdout.ts: the
+ * public-vs-held-out gap and the longitudinal panel), and they publish counts and rates, never a run.
  */
-export const notEmbargoedModel = () =>
+export const notEmbargoedKeepHeldOut = (now: number) =>
+  and(
+    sql`not exists (select 1 from arena_fixtures f where f.event_id = ${t.arenaRuns.eventId} and f.task = ${t.arenaRuns.task} and f.premiere_at > ${now} and (f.model_a = ${t.arenaRuns.modelId} or f.model_b = ${t.arenaRuns.modelId}))`,
+    publishableModelAndEvent(),
+  )!;
+
+/** Runs on a private held-out seed (ADR 0058) are never published one by one: no row, brief, log, replay or card. */
+export const notHeldOut = () => eq(t.arenaRuns.heldOut, false);
+
+/**
+ * Runs no public surface may read: an embargoed model's (K2, `embargoed` in the lineup), a private family's (ADR 0057), and any run of an event held
+ * for review (status "planned": ADR 0021 amendment 2, every fail is checked in the log before it's published). A held
+ * event is published by setting its status to "running" once the review is done; no release needed. Runs on held-out
+ * seeds (ADR 0058) are never readable here either.
+ */
+export const notEmbargoedModel = () => and(publishableModelAndEvent(), notHeldOut())!;
+
+const publishableModelAndEvent = () =>
   and(
     EMBARGOED_MODEL_IDS.length ? notInArray(t.arenaRuns.modelId, EMBARGOED_MODEL_IDS) : sql`1 = 1`,
+    // ADR 0057: runs of the private job families are private held-out material, shown on no public surface.
+    PRACTICE_ONLY_TASK_IDS.length ? notInArray(t.arenaRuns.task, [...PRACTICE_ONLY_TASK_IDS]) : sql`1 = 1`,
     sql`${t.arenaRuns.eventId} not in (select id from arena_events where status = 'planned')`,
   )!;
 
@@ -236,7 +250,7 @@ export async function eventCard(db: Db, slug: string) {
   const event = await publicEvent(db, slug);
   if (!event) return null;
   const runs = await finishedRuns(db, { eventId: event.id });
-  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS].map((task) => {
+  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();
     for (const r of runs.filter((x) => x.summary.task === task.id)) by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.result]);
     const rows = [...by.entries()].map(([model, results]) => ({ model, results, stats: summarize(results) })).sort((a, b) => b.stats.score - a.stats.score);

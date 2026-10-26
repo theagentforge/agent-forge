@@ -1,4 +1,4 @@
-import { TASKS } from "@forge/arena";
+import { CANARY, TASKS } from "@forge/arena";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { GAUNTLET_DAILY_PER_SOURCE, GAUNTLET_KEEP_LOGS_MS, GAUNTLET_TIME_LIMIT_MS, gauntletAct, startGauntlet, sweepGauntletLogs, tailoredCard } from "../src/arena/gauntlet";
@@ -77,7 +77,12 @@ describe("the Gauntlet over its own anonymous MCP endpoint (no account)", () => 
     expect(body).toContain("Your agent's trap card");
     expect(body).toContain(`card_from &quot;${start.gauntlet_id}&quot;`);
     expect(body).toContain('<meta name="robots" content="noindex">');
-    expect((await page(`/gauntlet/r/${start.gauntlet_id}/6`)).status).toBe(200);
+    const replay = await page(`/gauntlet/r/${start.gauntlet_id}/6`);
+    expect(replay.status).toBe(200);
+    // Replays carry the canary (ADR 0058): comment, meta tag and visible line.
+    const replayHtml = await replay.text();
+    expect(replayHtml).toContain(`<!-- ${CANARY} -->`);
+    expect(replayHtml.split(CANARY).length - 1).toBeGreaterThanOrEqual(3);
     expect((await page(`/gauntlet/r/${start.gauntlet_id}/7`)).status).toBe(404);
     expect((await page(`/gauntlet/r/g${"0".repeat(32)}`)).status).toBe(404);
   });

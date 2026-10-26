@@ -15,6 +15,7 @@ import { getDb } from "../services/db";
 import { checkTool, findTool, publicStats } from "../services/forge";
 import { proofNow, recordCheck, snapshotHistory } from "../services/proof";
 import { markConnectTest } from "../services/connect-test";
+import { nofollowActionLinks } from "./seo";
 import {
   agentHref,
   ago,
@@ -98,7 +99,7 @@ export const DISCOVERY_LINKS = [
 
 /** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
 export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean } = {}) {
-  const body = await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN });
+  const body = nofollowActionLinks((await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN })).toString(), c.env.PUBLIC_ORIGIN);
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", ...securityHeaders(o) });
   headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${PAGE_CACHE_SECONDS}`);
   headers.set("Vary", "Accept");

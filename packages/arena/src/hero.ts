@@ -218,8 +218,8 @@ export function contrastTrap(task: string, a: AttemptResult, b: AttemptResult): 
   return a.traps.find((t) => tb.has(t.id) && tb.get(t.id) !== t.triggered)?.id ?? taskById(task)?.traps[0]?.id ?? null;
 }
 
-/** "refund-hard3" → "refund": Hard jobs share their everyday job's one-line description. */
-export const baseTask = (task: string) => task.replace(/-hard\d*$/, "");
+/** "refund-hard3" (or "refund-hard3-2") → "refund": Hard jobs share their everyday job's one-line description. */
+export const baseTask = (task: string) => task.replace(/-hard[0-9-]*$/, "");
 
 /**
  * The "Hidden trap" line: the hand-written one for everyday jobs, else (Hard jobs) built from the task's own trap

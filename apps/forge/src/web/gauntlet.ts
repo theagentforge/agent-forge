@@ -1,4 +1,4 @@
-import { attemptScore, frames, moments, type AttemptResult, type LogEvent } from "@forge/arena";
+import { attemptScore, CANARY, frames, moments, type AttemptResult, type LogEvent } from "@forge/arena";
 import { html } from "hono/html";
 import { CHALLENGE_PATTERN, challengePath, GAUNTLET_TIME_LIMIT_MS, gauntletRun, JOBS, reportPath, standingOpponents, vsPath, type GauntletSummary } from "../arena/gauntlet";
 import { headToHead, headToHeadJson, shownClaims, type HeadToHead, type Side } from "../arena/head-to-head";
@@ -9,6 +9,7 @@ import * as t from "../db/schema";
 import { getDb } from "../services/db";
 import { eq } from "drizzle-orm";
 import { replaySections } from "./arena";
+import { CANARY_LINE } from "./arena-history";
 import { agentHref, copyBlock } from "./components";
 import { send, site } from "./pages";
 
@@ -277,8 +278,10 @@ site.get("/gauntlet/r/:id/:job", async (c) => {
     description: `${result.passed ? "Right" : "Not right"}; fell for ${result.traps.filter((x) => x.triggered).length} of ${result.traps.length} traps.`,
     path: `${reportPath(id)}/${n}`,
     noindex: true,
+    canary: CANARY,
     body: html`<p class="eyebrow"><a href="${reportPath(id)}">Gauntlet report</a> · job ${n} of ${JOBS.length}</p>
 <h1 class="page-title">${JOBS[n - 1]!.title}</h1>
-${replaySections(fs, moments(log, fs), result, attemptScore(result))}`,
+${replaySections(fs, moments(log, fs), result, attemptScore(result))}
+${CANARY_LINE}`,
   }, { cache: false });
 });

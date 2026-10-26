@@ -29,3 +29,5 @@ jobs:
       - run: pnpm test
       - name: Plugin and CLI bundles are up to date
         run: pnpm -r --if-present check-build
+      - name: Verifiers dev split referee matches the TypeScript one (D9)
+        run: python3 -m unittest discover -s integrations/verifiers-env/tests -t integrations/verifiers-env

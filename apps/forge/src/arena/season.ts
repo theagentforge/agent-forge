@@ -153,7 +153,8 @@ export async function agentSeasonBadges(env: Env, agentId: string, now = Date.no
   const board = await seasonBoard(env, s, now);
   const entry = board.entries.find((e) => e.agent_id === agentId);
   const sweep = board.runs.some((r) => r.agent_id === agentId && r.clean_sweep);
-  if (!entry && !sweep) return null;
+  // Entrant: any of its runs is on the board, even when the owner's best (the board entry) is another agent's run.
+  if (!entry && !board.runs.some((r) => r.agent_id === agentId)) return null;
   return badgesFor(s, board.entries.length, entry ?? null, sweep, now);
 }
 
@@ -258,7 +259,8 @@ export async function writeSeasonSnapshot(env: Env, now = Date.now()) {
   const db = getDb(env);
   const s = await ensureSeason(db, now);
   const totalWeeks = Math.ceil((s.endsAt - s.startsAt) / WEEK);
-  const week = Math.min(totalWeeks, Math.floor((now - s.startsAt) / WEEK));
+  // Once the season is over the final (last) week is frozen at once, not when its full seven days would have passed.
+  const week = now >= s.endsAt ? totalWeeks : Math.min(totalWeeks, Math.floor((now - s.startsAt) / WEEK));
   if (week < 1) return { written: false as const };
   const [have] = await db.select({ week: t.gauntletSeasonSnapshots.week }).from(t.gauntletSeasonSnapshots).where(and(eq(t.gauntletSeasonSnapshots.seasonId, s.id), eq(t.gauntletSeasonSnapshots.week, week)));
   if (have) return { written: false as const };
@@ -285,7 +287,9 @@ export async function latestSnapshot(env: Env, s: Season) {
         .from(t.gauntletClaims)
         .innerJoin(t.gauntletSeasonEntries, and(eq(t.gauntletSeasonEntries.gauntletId, t.gauntletClaims.gauntletId), eq(t.gauntletSeasonEntries.seasonId, s.id)))
         .innerJoin(t.agents, eq(t.agents.id, t.gauntletClaims.agentId))
-        .where(and(inArray(t.gauntletClaims.gauntletId, ids), eq(t.gauntletClaims.hidden, false), eq(t.agents.status, "active")))
+        .innerJoin(t.humans, eq(t.humans.id, t.gauntletClaims.humanId))
+        // The same people rules as the live board: an owner no longer verified, or now House or a founder, drops out.
+        .where(and(inArray(t.gauntletClaims.gauntletId, ids), eq(t.gauntletClaims.hidden, false), eq(t.agents.status, "active"), eq(t.humans.tier, "verified"), outsidePeople(env)))
     : [];
   const name = new Map(shown.map((r) => [r.id, r.handle]));
   return {

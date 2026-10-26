@@ -218,7 +218,7 @@ describe("empty and wrong first calls over A2A", () => {
     for (const parts of [[], [{ text: "" }], [{ data: {} }], [{ data: { skill: "nope" } }], [{ text: "litellm" }]]) {
       const d = expectA2A(await send(parts), "a2a");
       expect(d.error).toBe("unrecognized_request");
-      expect((d.skills as { id: string }[]).map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card"]);
+      expect((d.skills as { id: string }[]).map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
     }
     stubSkillFetch();
     await works(expectA2A(await send([]), "a2a").examples);

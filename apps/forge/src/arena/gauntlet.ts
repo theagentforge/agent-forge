@@ -1,4 +1,4 @@
-import { Attempt, DEFAULT_CAPS, publicTrapId, TASKS, type AttemptResult, type CallRecord } from "@forge/arena";
+import { Attempt, DEFAULT_CAPS, freshBoutSeed, publicTrapId, TASKS, type AttemptResult, type CallRecord } from "@forge/arena";
 import { provenance } from "../services/provenance";
 import { TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
@@ -49,7 +49,7 @@ export interface GauntletSummary {
 }
 
 const newGauntletId = () => `g${crypto.randomUUID().replace(/-/g, "")}`;
-const newSeed = () => 1000 + Math.floor(Math.random() * 1_000_000);
+const newSeed = () => freshBoutSeed();
 export const reportPath = (id: string) => `/gauntlet/r/${id}`;
 /** V2 (ADR 0047): the head-to-head page of a challenge: the run it challenged, then the challenger. */
 export const vsPath = (original: string, challenger: string) => `/gauntlet/vs/${original}/${challenger}`;
@@ -287,8 +287,19 @@ export async function gauntletStatus(env: Env, id: string, now = Date.now()) {
 
 const verdictOf = (r: AttemptResult) => ({ passed: r.passed, reason: r.reason, traps_fell: r.traps.filter((x) => x.triggered).length, traps_total: r.traps.length });
 
+/**
+ * ADR 0048/0055: a claim key an agent echoed into a tool call (it has the key, and claim.url carries it) would otherwise
+ * sit in the public replay of that job, and anyone reading it could claim the run first. Stored calls and logs of a
+ * finished job have any claim key blanked out.
+ */
+const CLAIM_KEY_ANYWHERE = /gck_[A-Za-z0-9_-]{43}/g;
+export const redactClaimKeys = <T>(v: T): T => (v == null ? v : (JSON.parse(JSON.stringify(v).replace(CLAIM_KEY_ANYWHERE, "gck_[redacted]")) as T));
+
 async function closeBout(db: Db, b: B, result: AttemptResult, a: Attempt, now: number) {
-  await db.update(t.arenaGauntletBouts).set({ status: "done", calls: b.calls, passed: result.passed, result, log: a.log, finishedAt: now }).where(eq(t.arenaGauntletBouts.id, b.id));
+  await db
+    .update(t.arenaGauntletBouts)
+    .set({ status: "done", calls: redactClaimKeys(b.calls), passed: result.passed, result: redactClaimKeys(result), log: redactClaimKeys(a.log), finishedAt: now })
+    .where(eq(t.arenaGauntletBouts.id, b.id));
   return verdictOf(result);
 }
 

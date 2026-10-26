@@ -1,4 +1,5 @@
 import { SCAN_RULES, type ScanFinding, type ScanSeverity } from "@forge/shared";
+import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { isLean } from "./ops-mode";
@@ -11,7 +12,7 @@ import heldFile from "../seed/skill-scan-held.json";
 export const SEED_PATH = "/data/skill-scan-2026-10-19.json";
 // v2: the held rows moved out of the public file on 19 Oct, so the order changed; reloading what's there is a no-op.
 const CURSOR_KEY = "seed:skill-scan-2026-10-19:v2";
-const SEEDED_AT = Date.UTC(2026, 9, 19, 12);
+export const SEEDED_AT = Date.UTC(2026, 9, 19, 12);
 /**
  * Disclosure (report v1.1, 19 Oct): flagged and caution results stay unlisted until maintainers have heard from us,
  * except the four vendors' official installers, which the report names. They go public on NOTICE_ENDS. Until then
@@ -72,4 +73,91 @@ export async function importSkillSeed(env: Env, limit = 1500) {
   const next = at + slice.length;
   await env.KV.put(CURSOR_KEY, String(next));
   return { loaded: slice.length, next, total: all.length };
+}
+
+// --- The hold on scans of held files (26 Oct) ------------------------------------------------------------------------
+// Anyone can scan a held file themselves, by link or by pasting it. They get the verdict (they have the file anyway),
+// but until NOTICE_ENDS the stored result stays unlisted: no page, sitemap entry, receipt link, "Same repository" line,
+// dataset row or MCP output beyond that answer. A scan matches a held entry by fingerprint, or by its GitHub source
+// (same repository and path at any single-segment ref, or refs/heads|tags/<name>), so an edited copy stays held too.
+// After NOTICE_ENDS the hold ends by itself: new scans are public as usual, and releaseHeldScans (hourly cron) lists the
+// rows scans created during the hold. Seed rows (first_seen = SEEDED_AT) are left to the 2 Nov publication task, which
+// checks for maintainer requests first. That task removes this block with the held file and the held import.
+
+type HeldIndex = { fps: Set<string>; paths: Map<string, Set<string>> };
+let heldIndex: HeldIndex | null = null;
+let heldSource: SeedFile = heldFile as unknown as SeedFile;
+
+function buildHeldIndex(file: SeedFile): HeldIndex {
+  const fps = new Set<string>();
+  const paths = new Map<string, Set<string>>();
+  for (const [repoIdx, path, hex] of file.rows) {
+    fps.add(`sha256:${hex}`);
+    const repo = file.repos[repoIdx]?.[0]?.toLowerCase();
+    if (!repo) continue;
+    if (!paths.has(repo)) paths.set(repo, new Set());
+    paths.get(repo)!.add(path);
+  }
+  return { fps, paths };
+}
+
+/** Tests only: swap the held list (null restores the bundled file). */
+export function useHeldFile(file: SeedFile | null) {
+  heldSource = file ?? (heldFile as unknown as SeedFile);
+  heldIndex = null;
+}
+
+/** Whether a scan's fingerprint or source URL matches a held entry (regardless of date). */
+export function matchesHeld(fingerprint: string, sourceUrl: string | null | undefined) {
+  heldIndex ??= buildHeldIndex(heldSource);
+  if (heldIndex.fps.has(fingerprint)) return true;
+  if (!sourceUrl) return false;
+  let u: URL;
+  try {
+    u = new URL(sourceUrl);
+  } catch {
+    return false;
+  }
+  if (u.hostname !== "raw.githubusercontent.com") return false;
+  let parts: string[];
+  try {
+    parts = u.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return false;
+  }
+  const held = heldIndex.paths.get(`${parts[0] ?? ""}/${parts[1] ?? ""}`.toLowerCase());
+  if (!held) return false;
+  // owner/repo/<ref>/path, or owner/repo/refs/(heads|tags)/<name>/path.
+  const starts = parts[2] === "refs" && (parts[3] === "heads" || parts[3] === "tags") ? [3, 5] : [3];
+  return starts.some((i) => parts.length > i && held.has(parts.slice(i).join("/")));
+}
+
+/** True while the hold is on and the scan matches a held entry: its stored result must stay unlisted. */
+export const heldScan = (fingerprint: string, sourceUrl: string | null | undefined, now = Date.now()) => now < NOTICE_ENDS && matchesHeld(fingerprint, sourceUrl);
+
+const RELEASED_KEY = "seed:skill-scan-held:released";
+
+/**
+ * After NOTICE_ENDS (hourly cron, once): lists the rows that scans created while the hold was on. They are the rows
+ * that match a held entry, aren't seed rows, and are unlisted; URL scans and held files are public after the hold.
+ */
+export async function releaseHeldScans(env: Env, now = Date.now()) {
+  if (now < NOTICE_ENDS) return { skipped: "held" };
+  if (await env.KV.get(RELEASED_KEY)) return { done: true };
+  heldIndex ??= buildHeldIndex(heldSource);
+  const db = getDb(env);
+  const fps = new Set<string>();
+  const notSeed = and(eq(t.skillScans.public, false), ne(t.skillScans.firstSeen, SEEDED_AT));
+  const held = [...heldIndex.fps];
+  for (let i = 0; i < held.length; i += 90) {
+    const rows = await db.select({ fp: t.skillScans.fingerprint }).from(t.skillScans).where(and(notSeed, inArray(t.skillScans.fingerprint, held.slice(i, i + 90))));
+    for (const r of rows) fps.add(r.fp);
+  }
+  // Only held scans leave a URL-sourced row unlisted, so this set is small.
+  const linked = await db.select({ fp: t.skillScans.fingerprint, src: t.skillScans.sourceUrl }).from(t.skillScans).where(and(notSeed, isNotNull(t.skillScans.sourceUrl)));
+  for (const r of linked) if (matchesHeld(r.fp, r.src)) fps.add(r.fp);
+  const list = [...fps];
+  for (let i = 0; i < list.length; i += 90) await db.update(t.skillScans).set({ public: true }).where(inArray(t.skillScans.fingerprint, list.slice(i, i + 90)));
+  await env.KV.put(RELEASED_KEY, String(now));
+  return { released: list.length };
 }

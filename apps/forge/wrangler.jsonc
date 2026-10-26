@@ -44,7 +44,9 @@
     { "name": "CHECK_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
     { "name": "REPORT_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
     // ADR 0038: checks by agents of recent contributors (5x CHECK_LIMITER).
-    { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "2003", "simple": { "limit": 300, "period": 60 } }
+    { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "2003", "simple": { "limit": 300, "period": 60 } },
+    // ADR 0061: /av/chat (Agentverse), per IP before any signature check. The proxy is shared, so the cap is generous.
+    { "name": "AGENTVERSE_LIMITER", "namespace_id": "2004", "simple": { "limit": 120, "period": 60 } }
   ],
   "env": {
     // Staging: deployed from `main` to staging.theagentforge.io, with its own database.
@@ -69,7 +71,8 @@
       "ratelimits": [
         { "name": "CHECK_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
         { "name": "REPORT_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
-        { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "1003", "simple": { "limit": 300, "period": 60 } }
+        { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "1003", "simple": { "limit": 300, "period": 60 } },
+        { "name": "AGENTVERSE_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } }
       ]
     }
   }

@@ -1,4 +1,4 @@
-import { Attempt, attemptScore, conservative, DEFAULT_CAPS, glicko2, NEW_RATING, taskById, TASKS, type CallRecord } from "@forge/arena";
+import { Attempt, attemptScore, conservative, DEFAULT_CAPS, freshBoutSeed, glicko2, NEW_RATING, RULES_VERSION, taskById, TASKS, type CallRecord } from "@forge/arena";
 import { and, avg, desc, eq, gte, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { canParticipate } from "../services/access";
@@ -47,7 +47,7 @@ export async function startChallenge(env: Env, props: AgentProps, taskId: string
   if ((today[0]?.n ?? 0) >= PG_DAILY_LIMIT) return { error: "daily_limit" as const, limit: PG_DAILY_LIMIT };
   const task = taskId ? taskById(taskId) : TASKS[Math.floor(Math.random() * TASKS.length)]!;
   if (!task) return { error: "unknown_task" as const, tasks: TASKS.map((x) => x.id) };
-  const seed = 1000 + Math.floor(Math.random() * 1_000_000);
+  const seed = freshBoutSeed();
   const id = newId();
   await db.insert(t.arenaPgAttempts).values({ id, agentId: who.agent.id, humanId: who.human.id, task: task.id, seed, calls: [], status: "open", startedAt: now });
   const a = replay({ task: task.id, seed, calls: [] });
@@ -98,7 +98,8 @@ function verdictOf(row: PgRow) {
 async function finish(env: Env, row: PgRow, reason: Parameters<Attempt["end"]>[0], now: number): Promise<PgRow> {
   const db = getDb(env);
   const a = replay(row);
-  const result = a.done ? a.result! : a.end(reason);
+  // Stamped with the rules that scored it (rules 0.6 on), as the runner does.
+  const result = { ...(a.done ? a.result! : a.end(reason)), rules: RULES_VERSION };
   const score = attemptScore(result);
   const done = { ...row, status: "done" as const, score, passed: result.passed, result, log: a.log, finishedAt: now };
   await db.update(t.arenaPgAttempts).set({ status: "done", score, passed: result.passed, result, log: a.log, finishedAt: now, calls: row.calls }).where(eq(t.arenaPgAttempts.id, row.id));

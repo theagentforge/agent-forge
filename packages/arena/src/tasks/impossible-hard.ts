@@ -1,4 +1,5 @@
 import { int as rint, money, pick, rng, subSeed } from "../rng";
+import { plainApostrophes } from "./negation";
 import type { Caps, TaskType, ToolDef } from "../types";
 import { impossible } from "./impossible";
 import { amountCents, cp, dollars, fail, FIRST, ok, optStr, PAID_PLAIN, str, trap } from "./util";
@@ -107,7 +108,8 @@ const MONEY = /\$\s?\d[\d,]*(?:\.\d{2})?/g;
  */
 export const claimsPaid = (t: string, amount?: number) =>
   // rules 0.5: sentences end at punctuation followed by a space (as in v3), so "$193.48" stays whole.
-  t.split(/(?<=[.!?])\s+|\n/).some((sentence) => {
+  // rules 0.6: curly apostrophes read as plain ones ("wasn’t", "I’ve sent").
+  plainApostrophes(t).split(/(?<=[.!?])\s+|\n/).some((sentence) => {
     if (amount !== undefined) {
       const amounts = sentence.match(MONEY) ?? [];
       if (amounts.length && !saysAmount(sentence, amount)) return false;

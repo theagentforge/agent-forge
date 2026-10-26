@@ -7,6 +7,8 @@ import { PRACTICE } from "../src/arena/lineup";
 import { arenaTick, planEvent, planSchema, playAttempt, processQueue, seasonSeeds, SEASON_SEED_MIN, spend, SYSTEM_PROMPT, HEADLINE_WORKERS_AI_DAILY_USD } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
+import { DATASET_LICENCE } from "../src/services/provenance";
+import devSplit from "../../../integrations/verifiers-env/forge_arena_dev/data/dev_split.json";
 
 const model = PRACTICE[0]!;
 const call = (name: string, args: unknown, id = name) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
@@ -125,6 +127,20 @@ describe("plans in KV", () => {
     expect(await env.KV.get("arena:plan")).toBeNull();
   });
 
+  it("a plan with hold: true creates its event held (not public) from the start; without it the event is public as before", async () => {
+    const card = { name: "Held Crucible", season: "s0", kind: "card", models: ["glm-5.3-flash"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 7], attempts: 1 };
+    await env.KV.put("arena:plan", JSON.stringify([{ ...card, slug: "kv-held", hold: true }, { ...card, slug: "kv-open" }]));
+    await arenaTick(env, Date.now() - 11 * 60_000);
+    const db = getDb(env);
+    expect((await db.query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, "kv-held") }))?.status).toBe("planned");
+    expect((await db.query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, "kv-open") }))?.status).toBe("running");
+    expect(planSchema.safeParse({ ...card, slug: "x", hold: "yes" }).success).toBe(false);
+    for (const slug of ["kv-held", "kv-open"]) {
+      const ev = await db.query.arenaEvents.findFirst({ where: eq(t.arenaEvents.slug, slug) });
+      await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, ev!.id));
+    }
+  });
+
   it("Season (card) plans need random seeds above one million, because the task code is public", () => {
     const card = { slug: "c", name: "Crucible", season: "s0", kind: "card", models: ["glm-5.3-flash"], tasks: ["refund"], attempts: 3 };
     expect(planSchema.safeParse({ ...card, seeds: [201] }).success).toBe(false);
@@ -133,6 +149,26 @@ describe("plans in KV", () => {
     expect(new Set(seeds).size).toBe(3);
     for (const s of seeds) expect(s >= SEASON_SEED_MIN && s < 2 ** 31).toBe(true);
     expect(planSchema.safeParse({ ...card, seeds }).success).toBe(true);
+  });
+});
+
+describe("the Verifiers dev split (D9)", () => {
+  it("carries the published harness prompt", () => {
+    expect(devSplit.system_prompt).toBe(SYSTEM_PROMPT);
+  });
+
+  it("carries the dataset's evaluation-only licence for its task data, and Apache-2.0 for the code", () => {
+    expect(devSplit.licence).toBe(DATASET_LICENCE);
+    expect(devSplit.code_licence).toBe("Apache-2.0");
+  });
+
+  it("its published seeds never run in a ranked event: practice only", () => {
+    const base = { slug: "g", name: "Guest", season: "s0", models: ["glm-5.3-flash"], tasks: ["refund"], attempts: 1 };
+    for (const seed of devSplit.rows.map((r) => r.seed)) {
+      expect(planSchema.safeParse({ ...base, kind: "guest", seeds: [seed] }).success, String(seed)).toBe(false);
+      expect(planSchema.safeParse({ ...base, kind: "practice", seeds: [seed] }).success, String(seed)).toBe(true);
+    }
+    expect(planSchema.safeParse({ ...base, kind: "guest", seeds: [900_006] }).success).toBe(true);
   });
 });
 

@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "./db";
 import { isLean } from "./ops-mode";
+import { heldScan } from "./skill-seed";
 
 // Skill scans (ADR 0026). Scanning is free (no model, no paid API): rules over text. Fetching by URL is limited to
 // public code hosts, so the Worker can't be used as a general fetch proxy. Results are stored by fingerprint, never
@@ -94,11 +95,15 @@ export async function fetchSkillText(input: string, fetcher: typeof fetch = fetc
 
 const cleanName = (s: unknown) => (typeof s === "string" ? s.replace(/[^\p{L}\p{N} ._@/:-]/gu, "").trim().slice(0, 80) || null : null);
 
-/** Scans and records. `sourceUrl` set means it came from a public URL, so its page is public. */
+/**
+ * Scans and records. `sourceUrl` set means it came from a public URL, so its page is public, except a file held during
+ * the launch-scan disclosure window (skill-seed.ts heldScan): the asker still gets the verdict, the record stays unlisted.
+ */
 export async function scanAndRecord(env: Env, text: string, opts: { name?: unknown; sourceUrl?: string | null; now?: number } = {}) {
   const now = opts.now ?? Date.now();
   const result = await scanSkill(text);
-  const isPublic = !!opts.sourceUrl || result.verdict === "flagged";
+  const held = heldScan(result.fingerprint, opts.sourceUrl, now);
+  const isPublic = !held && (!!opts.sourceUrl || result.verdict === "flagged");
   let stored = false;
   if (!(await isLean(env))) {
     try {
@@ -118,10 +123,11 @@ export async function scanAndRecord(env: Env, text: string, opts: { name?: unkno
           firstSeen: now,
           lastSeen: now,
         }).onConflictDoNothing();
-      } else if (now - row.lastSeen > BUMP_EVERY_MS || (isPublic && !row.public)) {
+      } else if (now - row.lastSeen > BUMP_EVERY_MS || (isPublic && !row.public) || (held && row.public)) {
+        // A held file that an earlier scan made public goes back to unlisted until the hold ends.
         await db
           .update(t.skillScans)
-          .set({ scans: sql`${t.skillScans.scans} + 1`, lastSeen: now, verdict: result.verdict, findings: result.findings, counts: result.counts, rulesVersion: result.rules_version, ...(isPublic ? { public: true } : {}), ...(opts.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}) })
+          .set({ scans: sql`${t.skillScans.scans} + 1`, lastSeen: now, verdict: result.verdict, findings: result.findings, counts: result.counts, rulesVersion: result.rules_version, ...(isPublic ? { public: true } : held ? { public: false } : {}), ...(opts.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}) })
           .where(eq(t.skillScans.fingerprint, result.fingerprint));
       }
       stored = true;

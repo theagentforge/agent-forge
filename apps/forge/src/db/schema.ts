@@ -371,8 +371,45 @@ export const arenaRuns = sqliteTable(
     /** When the current tick claimed the run (null while queued). The stale-running reaper uses it. */
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
+    /**
+     * A bout on a private held-out seed (ADR 0058): never published (no brief, log, replay, clip or share card), only
+     * counted in aggregates (the public-vs-held-out gap and the longitudinal panel). Set when the run is queued.
+     */
+    // A SQL default (not `.default(false)`), so inserts that leave it out bind no extra value (D1 allows 100 per statement).
+    heldOut: integer("held_out", { mode: "boolean" }).notNull().default(sql`0`),
+    /** The model string the provider reported serving (OpenRouter's `model`, or the Workers AI model id). Null before 0020. */
+    modelVersion: text("model_version"),
   },
   (t) => [index("arena_runs_status").on(t.status, t.createdAt), index("arena_runs_event").on(t.eventId), index("arena_runs_model_task").on(t.modelId, t.task)],
+);
+
+/**
+ * The longitudinal panel (ADR 0058, D7): one row per model version queued on the frozen held-out panel. The pinned
+ * model string and provider are copied from the lineup when queued, so a later lineup change can't rewrite history.
+ */
+export const arenaPanel = sqliteTable(
+  "arena_panel",
+  {
+    id: id(),
+    eventId: text("event_id")
+      .notNull()
+      .unique()
+      .references(() => arenaEvents.id),
+    /** Lineup id (arena/lineup.ts). */
+    modelId: text("model_id").notNull(),
+    /** The exact model string sent to the provider (e.g. "anthropic/claude-sonnet-5.5"). */
+    pinnedModel: text("pinned_model").notNull(),
+    /** The pinned provider (OpenRouter provider slug, or "cloudflare-workers-ai"). */
+    provider: text("provider").notNull(),
+    /** The panel definition this row ran (packages/arena/src/contamination.ts LONGITUDINAL.version). */
+    panelVersion: text("panel_version").notNull(),
+    /** Bouts queued (never more than LONGITUDINAL.maxBoutsPerModel). */
+    bouts: integer("bouts").notNull(),
+    /** Who queued it: "admin:<human id>" or "kv". */
+    queuedBy: text("queued_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("arena_panel_version").on(t.modelId, t.pinnedModel, t.provider, t.panelVersion)],
 );
 
 /** Fan votes on what is tested next (ADR 0014 §5): one vote per signed-in person per poll. Never on scoring. */
@@ -625,3 +662,76 @@ export const digestFeeds = sqliteTable("digest_feeds", {
   tokenHash: text("token_hash").notNull().unique(),
   createdAt: integer("created_at").notNull(),
 });
+
+// --- Human review audits (Lab #6, ADR 0054: D8 referee audit, D12 scanner precision) ------------------------------
+
+/**
+ * A pre-drawn, frozen sample for one study ("referee" or "scanner"). Drawn once, by an admin, with the seed published
+ * in lab/006-referee-and-scanner-audit/PREREGISTRATION.md; `config` keeps the frame counts per stratum, the quotas and
+ * (for the scanner) the rules version under test, so the estimates can be weighted back to the frame.
+ */
+export const reviewSamples = sqliteTable("review_samples", {
+  id: id(),
+  study: text("study", { enum: ["referee", "scanner"] }).notNull().unique(),
+  seed: text("seed").notNull(),
+  config: text("config", { mode: "json" }).notNull(),
+  drawnBy: text("drawn_by")
+    .notNull()
+    .references(() => humans.id),
+  drawnAt: integer("drawn_at").notNull(),
+});
+
+/**
+ * One sampled item (an arena run id or a scan fingerprint). `position` is its place in the reviewers' queue (1..size);
+ * reserves have none until one replaces an item whose material can't be shown. `truth` is the referee's or scanner's
+ * verdict as it stood at the draw, kept here so a later re-score can't move the target; it's never shown before an
+ * answer is saved.
+ */
+export const reviewItems = sqliteTable(
+  "review_items",
+  {
+    sampleId: text("sample_id")
+      .notNull()
+      .references(() => reviewSamples.id),
+    itemId: text("item_id").notNull(),
+    cell: text("cell").notNull(),
+    sub: text("sub").notNull(),
+    /** Order inside its cell's seeded round-robin sequence (1 = drawn first). */
+    rank: integer("rank").notNull(),
+    position: integer("position"),
+    status: text("status", { enum: ["active", "reserve", "unavailable"] }).notNull(),
+    replacedBy: text("replaced_by"),
+    truth: text("truth", { mode: "json" }).notNull(),
+  },
+  (t) => [uniqueIndex("review_items_pk").on(t.sampleId, t.itemId), uniqueIndex("review_items_position").on(t.sampleId, t.position), index("review_items_cell").on(t.sampleId, t.cell, t.rank)],
+);
+
+/** One label per reviewer per item. Several reviewers may label the same item (inter-rater agreement). */
+export const reviewLabels = sqliteTable(
+  "review_labels",
+  {
+    sampleId: text("sample_id")
+      .notNull()
+      .references(() => reviewSamples.id),
+    itemId: text("item_id").notNull(),
+    reviewerId: text("reviewer_id")
+      .notNull()
+      .references(() => humans.id),
+    /** Referee: passed | failed | unclear. Scanner: risky | benign | unsure (the blind answer, locked once revealed). */
+    answer: text("answer").notNull(),
+    /** Referee: the trap ids the reviewer saw sprung ([] = none). */
+    traps: text("traps", { mode: "json" }),
+    /** Scanner, after the reveal: per matched rule, "correct" or "fp". */
+    ruleMarks: text("rule_marks", { mode: "json" }),
+    note: text("note"),
+    /** Referee: the reviewer opened the public replay (which shows the verdict) before answering. */
+    sawReplay: integer("saw_replay", { mode: "boolean" }).notNull().default(false),
+    /** Scanner: when the verdict was revealed (the blind answer can't change after this). */
+    revealedAt: integer("revealed_at"),
+    /** Seconds from the item's page to the save, capped at an hour: the measured reviewer time. */
+    seconds: integer("seconds"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("review_labels_one_each").on(t.sampleId, t.itemId, t.reviewerId), index("review_labels_reviewer").on(t.sampleId, t.reviewerId)],
+);

@@ -1,4 +1,4 @@
-import { PUBLIC_NAME, publicTrapId, taskById, versionLine } from "@forge/arena";
+import { CANARY, PUBLIC_NAME, publicTrapId, taskById, versionLine } from "@forge/arena";
 import { html } from "hono/html";
 import { CLIP_SECONDS, pendingClips } from "../arena/clips";
 import { failCard, verifiedReplay } from "../arena/fail-card";
@@ -46,6 +46,7 @@ site.get("/arena/run/:id{[A-Za-z0-9_-]+}/clip", async (c) => {
 <meta name="viewport" content="width=${CLIP_WIDTH}, height=${CLIP_HEIGHT}, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="clip-size" content="${CLIP_WIDTH}x${CLIP_HEIGHT}">
+<meta name="canary" content="${CANARY}">
 <title>Clip: ${card.sentence} · ${PUBLIC_NAME}</title>
 <link rel="canonical" href="${c.env.PUBLIC_ORIGIN}/arena/run/${id}">
 <link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
@@ -63,7 +64,7 @@ site.get("/arena/run/:id{[A-Za-z0-9_-]+}/clip", async (c) => {
 <section class="beat beat-2" aria-label="Task">
 <p class="clip-label">The job</p>
 <p class="clip-task">${taskTitle}</p>
-<p class="clip-meta">Variant ${r.run.seed} · ${versionLine(r.run.task, r.run.finishedAt!)}</p>
+<p class="clip-meta">Variant ${r.run.seed} · ${versionLine(r.run.task, r.run.finishedAt!, r.result)}</p>
 </section>
 <section class="beat beat-3 moment-${card.kind}" aria-label="What happened">
 <p class="clip-label clip-flag">${CARD_LABEL[card.kind]}${trapId ? html` · <span class="mono">${trapId}</span>` : ""}</p>

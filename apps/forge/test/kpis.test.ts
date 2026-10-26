@@ -7,6 +7,7 @@ import { growthKpis, agentDaysSeries, PARTNERS_KV, CITATIONS_KV, DISTRIBUTION, k
 import { recordCheck } from "../src/services/proof";
 import { connectAgent, connectApprovedAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
 import "../src/index";
+import { PRIVATE_FAMILIES, PRIVATE_TASK_IDS } from "@forge/arena";
 
 // The growth KPIs (ADR 0039): exact, crawler-free, House-free.
 
@@ -166,7 +167,8 @@ describe("the dataset inventory (ADR 0040)", () => {
     expect(after.refereed_runs.ranked - before.refereed_runs.ranked).toBe(6);
     expect(after.refereed_runs.with_trap_fall - before.refereed_runs.with_trap_fall).toBe(2);
     expect(after.calibration.per_task.find((x) => x.task === "inv-task")).toEqual({ task: "inv-task", n: 6, pass_rate: 50 });
-    expect(after.environments).toMatchObject({ task_families: 6, job_versions: 18 });
+    // The four private families (ADR 0057) count here, admin only; the public mirror has none.
+    expect(after.environments).toMatchObject({ task_families: 6 + Object.keys(PRIVATE_FAMILIES).length, job_versions: 20 + PRIVATE_TASK_IDS.length });
     expect(after.controls).toEqual(DATA_CONTROLS);
     expect(Object.keys(dataSnapshotValues(after))).toContain("data_trap_falls");
   });

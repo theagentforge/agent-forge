@@ -1,7 +1,7 @@
 import { Attempt, stable } from "./engine";
 import { twistById } from "./config";
 import { attemptScore } from "./scorecard";
-import { taskById } from "./tasks/index";
+import { anyTaskById } from "./tasks/index";
 import { RULES_VERSION } from "./versions";
 import type { AttemptResult, EndReason, LogEvent, TaskType } from "./types";
 
@@ -82,7 +82,7 @@ export function rescore(run: StoredRun, opts: { task?: TaskType } = {}): Rescore
   if (start.type !== "start") throw new Error("The log doesn't begin with a start event.");
   if (start.task !== run.task || start.seed !== run.seed) throw new Error(`The log is for ${start.task}/${start.seed}, not ${run.task}/${run.seed}.`);
   if (run.twist !== undefined && (run.twist ?? null) !== start.twist) throw new Error(`The log's twist (${start.twist}) isn't the run's (${run.twist}).`);
-  const task = opts.task ?? taskById(run.task);
+  const task = opts.task ?? anyTaskById(run.task);
   if (!task || task.id !== run.task) throw new Error(`Unknown task ${run.task}.`);
 
   // The bout's own caps, already multiplied by its twist: the twist is passed by id only, so it isn't applied twice.

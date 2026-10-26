@@ -175,9 +175,16 @@ export const exposureAnswerOutput = z.looseObject({
       advisories: z.array(z.looseObject({ id: str, kind: advisoryKind, aliases: z.array(str), fixed: z.array(str), url: str, exploited_in_wild: z.boolean().optional() })),
     }),
   ),
+  // Compact answers (ADR 0056): when matches were cut, how many are shown (`matched` is the total) and the argument for all.
+  shown: num.optional(),
+  truncated: z.literal(true).optional(),
+  full_answer_arguments: z.looseObject({ detail: z.literal("full") }).optional(),
   related: z.array(relatedOutput).optional(),
   share: shareOutput.omit({ page_url: true, badge_markdown: true }),
 });
+
+/** forge_traps and arena_results: a receipt of the query and data date, and the live page (services/receipts.ts arenaShare). */
+const arenaShareOutput = z.looseObject({ receipt_url: str, page_url: opt(str), receipt_badge_url: str.optional(), receipt_markdown: str.optional() });
 
 export const trapsAnswerOutput = z.looseObject({
   card_version: str,
@@ -192,6 +199,8 @@ export const trapsAnswerOutput = z.looseObject({
       traps: z.array(z.looseObject({ trap: str, public_id: str.nullable(), name: str, attempts: num, fell: num, fall_rate: num.nullable(), card_checks: z.array(str) })),
     }),
   ),
+  // Left out only for a model with no data (no model id that isn't in the data goes into a receipt).
+  share: arenaShareOutput.optional(),
 });
 
 export const resultsAnswerOutput = z.looseObject({
@@ -199,6 +208,7 @@ export const resultsAnswerOutput = z.looseObject({
   tier: z.enum(["normal", "hard", "all"]),
   event: z.looseObject({ slug: str, name: str, kind: str, url: str }).nullable(),
   tasks: z.array(z.looseObject({ task: str, title: str, tier: str, guide_url: str, models: z.array(z.looseObject({ model: str, name: str, pass_rate: num })) })),
+  share: arenaShareOutput,
 });
 
 /** Each public tool's declared output: its answer, or one of the two structured errors. */

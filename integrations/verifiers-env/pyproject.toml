@@ -1,0 +1,18 @@
+[project]
+name = "forge-arena-dev"
+version = "0.1.0"
+description = "The Forge Arena dev split: six refereed business jobs for AI agents (refunds, invoices, travel, records, ordering, payments), each with planted traps. Practice seeds only."
+readme = "README.md"
+# The code is Apache-2.0; the task data (seeds and briefs) is under the Forge evaluation-only licence (LICENSE-DATA).
+license = "Apache-2.0 AND LicenseRef-Forge-Evaluation-Only"
+license-files = ["LICENSE", "LICENSE-DATA"]
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0,<0.5"]
+keywords = ["verifiers", "agents", "tool-use", "evaluation", "safety"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["forge_arena_dev"]

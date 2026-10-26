@@ -23,7 +23,10 @@ if (root) {
   const input = document.getElementById("claim-key");
   let saved = read();
   if (saved && saved.run !== run) saved = null;
-  const hash = decodeURIComponent(location.hash.slice(1));
+  let hash = "";
+  try {
+    hash = decodeURIComponent(location.hash.slice(1));
+  } catch {} // a mangled fragment (a stray "%") isn't a key; the page still works with a pasted one
   if (KEY.test(hash)) {
     saved = { ...(saved || {}), run, key: hash };
     write(saved);

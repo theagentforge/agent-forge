@@ -1,4 +1,4 @@
-import { HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, trapEntry, type AttemptResult } from "@forge/arena";
+import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, trapEntry, type AttemptResult } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import type { Db } from "../services/db";
 import { finishedRuns, modelName, tierOf, type Tier } from "./views";
@@ -40,7 +40,7 @@ export interface TrapsData {
 /**
  * Trap fall rates per task, from headline runs if any exist, else practice runs (and says which). Normal unless `tier`
  * is "hard" or the task is a Hard one. The Normal card lists its six jobs even with no runs; Hard lists jobs with runs
- * (v2 and v3 are separate jobs with their own traps).
+ * (v2, v3 and v3.2 are separate jobs with their own traps).
  */
 export async function trapsData(db: Db, f: { task?: string; model?: string; tier?: Tier } = {}): Promise<TrapsData> {
   const tier: Tier = f.task ? tierOf(f.task) : (f.tier ?? "normal");
@@ -48,7 +48,7 @@ export async function trapsData(db: Db, f: { task?: string; model?: string; tier
   const headline = (await finishedRuns(db, { kinds: ["card", "guest"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
   const runs = headline.length ? headline : (await finishedRuns(db, { kinds: ["practice"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
   const mine = f.model ? runs.filter((r) => r.summary.model === f.model) : runs;
-  const pool = tier === "hard" ? [...HARD_TASKS, ...HARD3_TASKS].filter((t) => mine.some((r) => r.summary.task === t.id)) : TASKS;
+  const pool = tier === "hard" ? [...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].filter((t) => mine.some((r) => r.summary.task === t.id)) : TASKS;
   const tasks = pool.filter((t) => !f.task || t.id === f.task).map((task) => {
     const results: AttemptResult[] = mine.filter((r) => r.summary.task === task.id).map((r) => r.result);
     return {

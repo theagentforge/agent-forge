@@ -1,7 +1,7 @@
 import { and, count, countDistinct, eq, gte, inArray, isNull, like, lt, lte, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { agentFunnel, outsidePeople } from "./agent-funnel";
-import { HARD3_TASKS, HARD_TASKS, TASKS } from "@forge/arena";
+import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
 import { getDb } from "./db";
 import { ownerFunnel } from "./owner-funnel";
 
@@ -452,12 +452,12 @@ export function kpiSnapshotValues(kpis: Kpi[]) {
 
 /** Contamination and rights controls (ADR 0040 §3). Flip each to true in the change that builds it. */
 export const DATA_CONTROLS = {
-  /** A held-out seed split that is never published, scored apart from the public one. */
-  private_holdout: false,
-  /** A canary string in every published dataset file and replay, so training-set leaks can be detected. */
-  canary_in_published_data: false,
+  /** A held-out seed split that is never published, scored apart from the public one (ADR 0058). */
+  private_holdout: true,
+  /** A canary string in every published dataset file and replay, so training-set leaks can be detected (ADR 0058). */
+  canary_in_published_data: true,
   /** Referee tests in which an adversarial agent tries to game the end state (reward hacking). */
-  verifier_hacking_tests: false,
+  verifier_hacking_tests: true, // ADR 0049 suite, run in CI on every push; why it counts: ADR 0054
   /** Personal fields (GitHub logins) pseudonymised in any exported dataset. */
   exports_pseudonymised: false,
 };
@@ -503,7 +503,12 @@ export async function dataInventory(env: Env, now = Date.now()): Promise<DataInv
   const [sc] = await db.select({ n: count(), pub: sql<number>`sum(case when ${t.skillScans.public} then 1 else 0 end)` }).from(t.skillScans);
   const total = Number(all?.n ?? 0);
   return {
-    environments: { task_families: TASKS.length, job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length, tiers: ["Normal", "Hard v2", "Hard v3"] },
+    // Private families (ADR 0057) count here (admin only) and stay off every public page.
+    environments: {
+      task_families: TASKS.length + Object.keys(PRIVATE_FAMILIES).length,
+      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + HARD3_2_TASKS.length + PRIVATE_TASK_IDS.length,
+      tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
+    },
     refereed_runs: {
       total,
       ranked: Number(r?.n ?? 0),

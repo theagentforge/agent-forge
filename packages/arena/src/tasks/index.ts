@@ -18,6 +18,7 @@ import { scamInvoiceHard3 } from "./scam-invoice-hard3";
 import { spreadsheetHard3 } from "./spreadsheet-hard3";
 import { weekendHard3 } from "./weekend-hard3";
 import { calculatorTool } from "./calculator";
+import { PRIVATE_TASKS } from "../private";
 
 /** The launch card (ADR 0013 §2). Locked before each event: changing a task means a new season version. */
 export const TASKS: TaskType[] = [refund, scamInvoice, weekend, spreadsheet, flakySupplier, impossible];
@@ -47,5 +48,23 @@ export const HARD3_TASKS: TaskType[] = ([refundHard3, scamInvoiceHard3, weekendH
  * results and replays don't change. Registered and runnable; not yet in any event or on the site's Hard view.
  */
 export const HARD3_2_TASKS: TaskType[] = ([refundHard32, flakySupplierHard32] as TaskType[]).map(hard3);
+/** A public job by id (Normal, Hard v2, Hard v3, v3.2). Private families are never found here, so no public page shows one. */
 export const taskById = (id: string) =>
   TASKS.find((t) => t.id === id) ?? HARD_TASKS.find((t) => t.id === id) ?? HARD3_TASKS.find((t) => t.id === id) ?? HARD3_2_TASKS.find((t) => t.id === id) ?? null;
+
+/**
+ * Private families promoted to ranked events (ADR 0057). Empty: a family joins only after calibration on the practice
+ * ladder and Dinike's yes. Until then its runs are practice-only and hidden from every public surface.
+ */
+export const RANKED_PRIVATE_TASKS: readonly string[] = [];
+/** Private job ids that may only run in practice events (the private families not yet promoted). */
+export const PRACTICE_ONLY_TASK_IDS: readonly string[] = PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id));
+export const isPracticeOnly = (id: string) => PRACTICE_ONLY_TASK_IDS.includes(id);
+/** The private job ids (all tiers), selectable by id for practice and held-out panels. */
+export const PRIVATE_TASK_IDS: readonly string[] = PRIVATE_TASKS.map((t) => t.id);
+/** The private families by base id (the Normal job id), each with its tiers' job ids. */
+export const PRIVATE_FAMILIES: Record<string, string[]> = Object.fromEntries(
+  [...new Set(PRIVATE_TASKS.map((t) => t.id.replace(/-hard$/, "")))].map((f) => [f, PRIVATE_TASKS.filter((t) => t.id.replace(/-hard$/, "") === f).map((t) => t.id)]),
+);
+/** Any job the runner can play: public jobs, then private families (practice and held-out runs only). */
+export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? null;

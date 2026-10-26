@@ -171,29 +171,38 @@ describe("versions (ADR 0023 §5)", () => {
     expect(taskVersion("refund-hard3-2")).toBe("Hard v3.2");
     expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 27))).toBe("Hard v3.1");
     expect(taskVersion("flaky-supplier-hard3")).toBe("Hard v3.1");
-    expect(RULES_VERSION).toBe("rules 0.5");
-    expect(RULES_HISTORY.at(-1)).toMatchObject({ version: "rules 0.5", date: "2026-10-24" });
-    expect(rulesVersionAt(Date.parse("2026-10-18T00:00:00Z"))).toBe("rules 0.4");
-    expect(rulesVersionAt(Date.parse("2026-10-24T00:00:00Z"))).toBe(RULES_VERSION);
-    expect(rulesVersionAt(Date.UTC(2026, 9, 15, 12))).toBe("rules 0.1");
-    expect(rulesVersionAt(Date.UTC(2026, 9, 16, 23))).toBe("rules 0.2");
+    expect(RULES_VERSION).toBe("rules 0.6");
+    expect(RULES_HISTORY.at(-1)).toMatchObject({ version: "rules 0.6", date: "2026-10-26", from: "2026-10-26T15:02:35Z" });
+    // Rules 0.6 on is read from the stamp the code that scored a result wrote, never the clock: production ran rules 0.5
+    // code after 0.6 was built, so an unstamped result is 0.5 or older whenever it finished.
+    expect(rulesVersionAt(Date.parse("2026-10-26T10:59:59Z"), null)).toBe("rules 0.5");
+    expect(rulesVersionAt(Date.parse("2026-10-26T11:00:00Z"), null)).toBe("rules 0.5");
+    expect(rulesVersionAt(Date.parse("2026-11-30T00:00:00Z"), {})).toBe("rules 0.5");
+    expect(rulesVersionAt(Date.parse("2026-10-26T12:00:00Z"), { rules: "rules 0.6" })).toBe("rules 0.6");
+    // A stamp that isn't a known version is ignored.
+    expect(rulesVersionAt(Date.parse("2026-10-26T12:00:00Z"), { rules: "rules 9" })).toBe("rules 0.5");
+    expect(rulesVersionAt(Date.parse("2026-10-18T00:00:00Z"), null)).toBe("rules 0.4");
+    expect(rulesVersionAt(Date.parse("2026-10-24T00:00:00Z"), undefined)).toBe("rules 0.5");
+    expect(rulesVersionAt(Date.UTC(2026, 9, 15, 12), null)).toBe("rules 0.1");
+    expect(rulesVersionAt(Date.UTC(2026, 9, 16, 23), null)).toBe("rules 0.2");
     // Rules 0.3 and 0.4 (and Hard v3 and v3.1) share a day: the exact instant decides, so earlier runs keep their versions.
-    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 6))).toBe("Rules 0.3 · Hard v3");
-    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 7))).toBe("Rules 0.4 · Hard v3.1");
-    expect(versionLine("refund-hard", Date.UTC(2026, 9, 18))).toBe("Rules 0.4 · Hard v2");
+    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 6), null)).toBe("Rules 0.3 · Hard v3");
+    expect(versionLine("weekend-hard3", Date.UTC(2026, 9, 17, 7), null)).toBe("Rules 0.4 · Hard v3.1");
+    expect(versionLine("refund-hard", Date.UTC(2026, 9, 18), null)).toBe("Rules 0.4 · Hard v2");
+    expect(versionLine("impossible", Date.UTC(2026, 9, 27), { rules: "rules 0.6" })).toBe("Rules 0.6 · Normal 1.0");
     expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 17, 6, 59))).toBe("Hard v3");
     expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 16))).toBe("Hard v3"); // never earlier than its first version
   });
 
   it("the citation has title, version, date and URL, as a plain line and BibTeX", () => {
     const c = citation("https://theagentforge.io/");
-    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-10-26", url: "https://theagentforge.io/arena/methodology", version: "rules 0.5; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2" });
-    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.5; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2). 26 Oct 2026. https://theagentforge.io/arena/methodology");
+    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-10-26", url: "https://theagentforge.io/arena/methodology", version: "rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2" });
+    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2). 26 Oct 2026. https://theagentforge.io/arena/methodology");
     expect(c.bibtex).toMatch(/^@misc\{forgearena2026,/);
     expect(c.bibtex).toContain("url          = {https://theagentforge.io/arena/methodology}");
     expect(CHANGELOG.map((x) => x.date)).toEqual([...CHANGELOG.map((x) => x.date)].sort());
-    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4", "rules 0.5"]));
-    expect(CHANGELOG.filter((x) => x.version.startsWith("rules ")).at(-1)).toMatchObject({ version: "rules 0.5", date: "2026-10-24" });
+    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]));
+    expect(CHANGELOG.filter((x) => x.version.startsWith("rules ")).at(-1)).toMatchObject({ version: "rules 0.6", date: "2026-10-26" });
     expect(CHANGELOG.find((x) => x.version === "Hard v3.1")!.change).toMatch(/^Permission-overreach traps\./);
     // Same-day entries are in the order they took effect.
     const order = CHANGELOG.map((x) => x.version);

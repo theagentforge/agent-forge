@@ -1,4 +1,5 @@
 import type { ScanResult } from "@forge/shared";
+import { answerPagePath, questionForTask } from "../arena/answers";
 import type { CheckResult } from "./forge";
 import { scanPath } from "./scans";
 import { signReport } from "./signing";
@@ -11,7 +12,7 @@ import { splitInlineVersion } from "./tools";
 // Data only (AGENTS.md rule 7): the share fields are URLs and Markdown, never instructions.
 
 export const RECEIPT_SCHEMA = 1;
-export const RECEIPT_KINDS = ["check", "scan", "exposure", "watch"] as const;
+export const RECEIPT_KINDS = ["check", "scan", "exposure", "watch", "traps", "results"] as const;
 export type ReceiptKind = (typeof RECEIPT_KINDS)[number];
 const MAX_TOKEN = 2400;
 
@@ -20,11 +21,16 @@ export interface ReceiptPayload {
   kind: ReceiptKind;
   /**
    * check: the tool id asked about; scan: the file's sha256 fingerprint; exposure and watch: a sha256 of the sorted
-   * list asked about (ADR 0056), so the same list gives the same subject and the list itself is never in the link.
+   * list asked about (ADR 0056), so the same list gives the same subject and the list itself is never in the link;
+   * traps and results: the Arena query as `tier=hard&task=refund-hard3` (enum values, an event slug that exists and a
+   * model id with data only: never free text).
    */
   subject: string;
   version: string | null;
-  /** check: the display verdict; scan: flagged, caution or clear; exposure: flagged, caution or no_match; watch: flagged, caution or no_flags. */
+  /**
+   * check: the display verdict; scan: flagged, caution or clear; exposure: flagged, caution or no_match; watch: flagged,
+   * caution or no_flags; traps and results: the answer's data_kind (headline, practice or none).
+   */
   verdict: string;
   /** check only: security_status and how many published advisories matched. */
   security?: string;
@@ -37,6 +43,9 @@ export interface ReceiptPayload {
   /** exposure and watch: how many items were asked about, and how many matched an advisory or were flagged. */
   items?: number;
   matched?: number;
+  /** traps and results: refereed attempts counted, and the day of the newest one (the data date), if any. */
+  attempts?: number;
+  as_of?: string | null;
   /** ISO time to the minute. */
   at: string;
 }
@@ -151,4 +160,62 @@ export async function listShare(
   const token = await receiptToken(env.REPORT_SIGNING_KEY, { v: RECEIPT_SCHEMA, kind, subject: await listSubject(r.items), version: null, verdict, items: new Set(r.items).size, matched: r.matched, at: minute(now) });
   const { receipt_url, receipt_badge_url, receipt_markdown } = share(env.PUBLIC_ORIGIN, token, kind === "exposure" ? "Forge exposure check" : "Forge watch", null, null);
   return { receipt_url, receipt_badge_url, receipt_markdown };
+}
+
+/** An Arena query (forge_traps, arena_results, the A2A arena-results skill): enum values, a slug and a model id only. */
+export interface ArenaQuery {
+  tier?: string;
+  task?: string;
+  event?: string;
+  model?: string;
+}
+
+const ARENA_KEYS = ["tier", "task", "event", "model"] as const;
+const ARENA_VALUE = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+
+/** "tier=hard&task=refund-hard3": the query in a fixed key order, so the same question gives the same subject. */
+export function arenaSubject(q: ArenaQuery) {
+  return ARENA_KEYS.filter((k) => q[k] !== undefined && ARENA_VALUE.test(q[k]!)).map((k) => `${k}=${q[k]}`).join("&");
+}
+
+/** The subject read back into its query (unknown keys and odd values are dropped). */
+export function arenaQueryOf(subject: string): ArenaQuery {
+  const q: ArenaQuery = {};
+  for (const part of subject.split("&")) {
+    const [k, v] = part.split("=");
+    if (v && (ARENA_KEYS as readonly string[]).includes(k!) && ARENA_VALUE.test(v)) q[k as (typeof ARENA_KEYS)[number]] = v;
+  }
+  return q;
+}
+
+/**
+ * The live page for an Arena answer: the event's page, the job's answer page (else its task guide), the failure board
+ * for trap data, else the Arena itself. A receipt links here, so a reader can compare the figures then with today's.
+ */
+export function arenaLivePath(kind: "traps" | "results", q: ArenaQuery): string {
+  if (q.event) return `/arena/event/${q.event}`;
+  if (q.task) {
+    const question = questionForTask(q.task);
+    return question ? answerPagePath(question) : `/best/${q.task}`;
+  }
+  const tier = q.tier === "hard" || q.tier === "normal" ? q.tier : null;
+  if (kind === "traps") return tier ? `/arena/failures?tier=${tier}` : "/arena/failures";
+  return tier === "hard" ? "/arena?tier=hard" : "/arena";
+}
+
+/**
+ * Share fields for a forge_traps or arena_results answer: a receipt of the query, its data_kind, the data date and how
+ * many refereed attempts it counted, plus the live page. The per-model figures aren't in the link; the page has today's.
+ */
+export async function arenaShare(
+  env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">,
+  kind: "traps" | "results",
+  q: ArenaQuery,
+  r: { data_kind: string; as_of: string | null; attempts: number },
+  now = Date.now(),
+): Promise<Pick<Share, "receipt_url" | "receipt_badge_url" | "receipt_markdown" | "page_url">> {
+  const token = await receiptToken(env.REPORT_SIGNING_KEY, { v: RECEIPT_SCHEMA, kind, subject: arenaSubject(q), version: null, verdict: r.data_kind, attempts: r.attempts, as_of: r.as_of, at: minute(now) });
+  const origin = env.PUBLIC_ORIGIN;
+  const s = share(origin, token, kind === "traps" ? "Forge Arena trap data" : "Forge Arena results", `${origin}${arenaLivePath(kind, q)}`, null);
+  return { receipt_url: s.receipt_url, receipt_badge_url: s.receipt_badge_url, receipt_markdown: s.receipt_markdown, page_url: s.page_url };
 }

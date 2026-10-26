@@ -69,6 +69,7 @@ run(process.argv.slice(2), {
     await writeFile(join(dir, name), text);
   },
   confirm,
+  terminal: process.stdout.isTTY === true,
   env: process.env,
   sha256Hex: (s) => createHash("sha256").update(s).digest("hex"),
   skillFiles,

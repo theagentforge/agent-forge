@@ -21,6 +21,12 @@ export interface PageOptions {
   /** JSON-LD object for search engines. */
   jsonLd?: Record<string, unknown>;
   noindex?: boolean;
+  /** "noindex, follow" for thin pages kept for people and agents but out of search until they have data (ADR 0060). */
+  noindexFollow?: boolean;
+  /** Canonical path when it differs from `path` (a near-duplicate consolidated to its main page, ADR 0060). */
+  canonicalPath?: string;
+  /** A benchmark canary line (ADR 0058) for pages that show Arena data: an HTML comment and a meta tag in the head. */
+  canary?: string;
   nav?: "home" | "scan" | "skillwatch" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
   /** Extra same-origin module scripts for this page only (e.g. /webmcp.js on /scan and /check). */
   modules?: string[];
@@ -81,8 +87,10 @@ export function renderPage(o: PageOptions): Html {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${fullTitle}</title>
 <meta name="description" content="${o.description}">
-<link rel="canonical" href="${url}">
-${o.noindex ? html`<meta name="robots" content="noindex">` : ""}
+<link rel="canonical" href="${o.canonicalPath ? `${o.origin}${o.canonicalPath}` : url}">
+${o.noindex ? html`<meta name="robots" content="noindex">` : o.noindexFollow ? html`<meta name="robots" content="noindex, follow">` : ""}
+${o.canary ? html`${raw(`<!-- ${o.canary.replace(/-->|--/g, "")} -->`)}
+<meta name="canary" content="${o.canary}">` : ""}
 <meta name="theme-color" content="#0B0E12">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>

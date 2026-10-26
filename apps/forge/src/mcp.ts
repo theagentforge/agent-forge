@@ -8,7 +8,7 @@ import { act, startChallenge } from "./arena/proving";
 import { trapsData } from "./arena/traps";
 import { serverInfo } from "./server-info";
 import { checkInput, checkInputNeeded, parseCheck, PUBLIC_MCP_ROUTE, PUBLIC_TOOLS, REPORT_PROMPT, reportPromptText, trapsInput } from "./mcp-public";
-import { agentCheckAnswer } from "./services/compact";
+import { agentCheckAnswer, trapsAnswer } from "./services/compact";
 import { lenient } from "./services/input-help";
 import { isContributor } from "./services/contribute";
 import { getDb } from "./services/db";
@@ -181,7 +181,7 @@ export function createForgeServer(env: Env, props: AgentProps, internal: Interna
       inputSchema: trapsInput,
       annotations: { title: PUBLIC_TOOLS.forge_traps.title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ task, model, tier }) => json(await trapsData(getDb(env), { task, model, tier })),
+    async ({ task, model, tier }) => json(await trapsAnswer(env, await trapsData(getDb(env), { task, model, tier }), { task })),
   );
 
   server.registerTool(

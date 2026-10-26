@@ -5,10 +5,11 @@ import { summarise } from "../src/arena/gauntlet";
 import { EVENT_CSV_HEADER } from "../src/arena/results";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
-import { DATASET_LICENCE, LICENCE_ID, PRIVACY_HISTORY, provenance, runProvenance, TERMS_HISTORY, versionAt } from "../src/services/provenance";
+import { DATASET_LICENCE, LICENCE_ID, PRIVACY_HISTORY, provenance, runProvenance, TERMS_HISTORY, versionAt, WORKERS_AI_PROVIDER } from "../src/services/provenance";
 import { signReport } from "../src/services/signing";
+import { SHOWS_EMBARGOED } from "./fixtures/embargoed";
 import { LEGAL_DATE, LEGAL_VERSION, NEXT_LEGAL, PRIVACY_DATE, PRIVACY_VERSION } from "../src/web/legal";
-import { NOTICE_DAYS } from "../src/web/results-policy";
+import { NOTICE_DAYS, RESULTS_POLICY_CHANGES, RESULTS_POLICY_VERSION } from "../src/web/results-policy";
 import { fetchWorker } from "./helpers";
 import { AGENT_DIRECTED } from "./wording";
 import "../src/index";
@@ -63,7 +64,8 @@ describe("provenance helper", () => {
       run_date: "2026-10-20", terms_version: "1.0", privacy_version: "1.1", licence: LICENCE_ID,
     });
     // No provider recorded: the lineup's pinned one (Workers AI for practice models).
-    expect(runProvenance({ model: QWEN, provider: null, finishedAt: FINISHED }).model).toEqual({ id: QWEN, exact: "@cf/qwen/qwen3-30b-a3b-fp8", maker: "Alibaba (open weights)", gateway: "workers-ai", served_by: "workers-ai" });
+    expect(runProvenance({ model: QWEN, provider: null, finishedAt: FINISHED }).model).toEqual({ id: QWEN, exact: "@cf/qwen/qwen3-30b-a3b-fp8", maker: "Alibaba (open weights)", gateway: "workers-ai", served_by: WORKERS_AI_PROVIDER });
+    expect(WORKERS_AI_PROVIDER).toBe("cloudflare-workers-ai"); // what arena/adapters.ts records on a Workers AI run
     expect(runProvenance({ model: "not-a-model", provider: null, finishedAt: FINISHED }).model).toEqual({ id: "not-a-model", exact: null, maker: null, gateway: null, served_by: null });
     for (const s of ["gauntlet", "field_report", "scan"] as const) expect(provenance(s, FINISHED)).toMatchObject({ source: s, model: null, licence: LICENCE_ID, terms_version: "1.0" });
   });
@@ -130,11 +132,20 @@ describe("/arena/croissant.json (Croissant 1.0 + RAI)", () => {
     expect(c.isLiveDataset).toBe(true);
     for (const k of ["rai:dataCollection", "rai:dataUseCases", "rai:dataLimitations", "rai:dataBiases", "rai:personalSensitiveInformation", "rai:dataReleaseMaintenancePlan"]) expect(String(c[k]).length, k).toBeGreaterThan(20);
     expect(c.distribution[0]!.contentUrl).toBe(`${ORIGIN}/arena/dataset.json`);
+    // The standard Croissant 1.0 @context (mlcroissant 1.1.1, rdf.make_context for a 1.0 file): the validator warns if
+    // any key is missing, and recommends datePublished.
+    const STANDARD = ["@language", "@vocab", "citeAs", "column", "conformsTo", "cr", "rai", "data", "dataType", "dct", "equivalentProperty", "examples", "extract", "field", "fileProperty", "fileObject", "fileSet", "format", "includes", "isLiveDataset", "jsonPath", "key", "md5", "parentField", "path", "recordSet", "references", "regex", "repeated", "replace", "samplingRate", "sc", "separator", "source", "subField", "transform"];
+    expect(Object.keys(c["@context"] as object).sort()).toEqual([...STANDARD].sort());
+    expect(c.datePublished).toBe("2026-10-15");
+    expect(c.distribution[0]).not.toHaveProperty("sha256");
+    expect(c.distribution[0]).not.toHaveProperty("md5");
     // Every field points at a key that exists on a dataset row.
     const row = ((await (await fetchWorker("/arena/dataset.json")).json()) as { runs: Record<string, unknown>[] }).runs.find((r) => r.id === ids.sonnet)!;
     for (const f of c.recordSet[0]!.field) {
       expect(f.source.fileObject["@id"]).toBe("dataset-json");
-      const path = f.source.extract.jsonPath.replace(/^\$\.runs\[\*\]\./, "").replace(/\[\*\]$/, "").split(".");
+      // One value per run: no path may fan out inside a row (mlcroissant needs every column the same length).
+      expect(f.source.extract.jsonPath, f.name).toMatch(/^\$\.runs\[\*\]\.[A-Za-z_.]+$/);
+      const path = f.source.extract.jsonPath.replace(/^\$\.runs\[\*\]\./, "").split(".");
       let v: unknown = row;
       for (const p of path) v = (v as Record<string, unknown>)?.[p];
       expect(v, f.name).not.toBeUndefined();
@@ -152,13 +163,23 @@ describe("/results-policy (D14)", () => {
     expect(body).toContain("No lab gets it earlier than the others");
     expect(body).toContain("No lab pays for placement");
     expect(body).toContain('href="mailto:hello@theagentforge.io"');
-    expect(body).not.toMatch(/Muse|meta\/muse/i);
+    expect(body).not.toMatch(SHOWS_EMBARGOED);
+    // Scope matches what the site does: practice runs publish as they finish, so "first results" means first ranked
+    // results; repeats of published numbers aren't new headline results; the pack can't link to replays still hidden.
+    expect(body).toContain("the first ranked results for any model");
+    expect(body).not.toContain("the first published results for any model");
+    expect(body).not.toContain("links to the replays");
+    expect(body).toContain(`Version ${RESULTS_POLICY_VERSION}`);
+    expect(body).toContain('<h2 id="changes">');
+    expect(RESULTS_POLICY_CHANGES.at(-1)!.version).toBe(RESULTS_POLICY_VERSION);
   });
 
   it("has a structured JSON twin", async () => {
     const d = (await (await fetchWorker("/results-policy?format=json")).json()) as { pre_release_notice: { days: number; same_content: boolean; early_access_for_any_lab: boolean }; independence: { paid_placement: boolean } };
     expect(d.pre_release_notice).toMatchObject({ days: 7, same_content: true, early_access_for_any_lab: false });
     expect(d.independence.paid_placement).toBe(false);
+    expect((d as unknown as { applies_to: string[] }).applies_to).toContain("first_ranked_results_for_a_model");
+    expect((d as unknown as { corrections: Record<string, unknown> }).corrections).toMatchObject({ aim_to_reply_within_days: 7 });
     expect(JSON.stringify(d)).not.toMatch(AGENT_DIRECTED);
   });
 

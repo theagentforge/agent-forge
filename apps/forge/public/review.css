@@ -1,0 +1,33 @@
+/* Lab #6 review console (admin only). Uses the site's tokens from site.css. */
+.rv-top{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;padding:var(--s2) 0;background:var(--bg);border-bottom:1px solid var(--seam);font-size:var(--fs-sm)}
+.rv-top progress{flex:1 1 120px;min-width:120px;height:8px}
+.rv-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s5);margin-top:var(--s4)}
+@media (min-width:960px){.rv-grid{grid-template-columns:minmax(0,1fr) 340px}.rv-form{position:sticky;top:56px;align-self:start;max-height:calc(100vh - 72px);overflow:auto}}
+.rv-material section{margin-bottom:var(--s5)}
+.rv-material h2,.rv-steps summary h2,.rv-material details summary h2{font-size:var(--fs-lg);display:inline;margin:0}
+.rv-pre,.rv-text{white-space:pre-wrap;overflow-wrap:anywhere;font:400 var(--fs-sm)/1.5 var(--font-mono);background:var(--surface);border:1px solid var(--seam);padding:var(--s3);max-height:60vh;overflow:auto;margin:var(--s2) 0}
+.rv-text{max-height:none}
+.rv-line{display:block}
+.rv-line i{display:inline-block;min-width:3.5em;color:var(--text-muted);font-style:normal;user-select:none}
+.rv-hl{background:color-mix(in srgb,var(--caution) 22%,transparent)}
+.rv-at{outline:2px solid var(--brand)}
+.rv-cols{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s3)}
+@media (min-width:720px){.rv-cols{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.rv-steps ol{padding-left:var(--s5);font-size:var(--fs-sm)}
+.rv-step{margin:var(--s1) 0;overflow-wrap:anywhere}
+.rv-step code{white-space:pre-wrap}
+.rv-error .label,.rv-repeat .label{color:var(--caution)}
+.rv-form fieldset{border:1px solid var(--seam);margin:0 0 var(--s3);padding:var(--s2) var(--s3)}
+.rv-form legend{font-weight:600}
+.rv-choice{display:flex;gap:var(--s2);align-items:center;min-height:44px;cursor:pointer}
+.rv-choice input{width:22px;height:22px;flex:none}
+.rv-note{display:block;margin:var(--s3) 0}
+.rv-note input{display:block;width:100%;box-sizing:border-box;min-height:44px;margin-top:var(--s1);background:var(--bg);color:var(--text);border:1px solid var(--seam);padding:0 var(--s2);font:inherit}
+.rv-form button{width:100%;min-height:48px;margin-top:var(--s2)}
+.rv-form kbd,.rv-top kbd{font:400 var(--fs-xs) var(--font-mono);border:1px solid var(--seam);padding:0 4px}
+.rv-study{margin:var(--s5) 0;padding:var(--s4)}
+.rv-results h3{font-size:var(--fs-lg)}
+.rv-results h4{font-size:var(--fs-md);margin-bottom:var(--s1)}
+.rv-matrix th,.rv-matrix td{padding:var(--s1) var(--s3)}
+.rv-unblind summary{color:var(--caution)}
+.rv-missing{padding:var(--s4);margin:var(--s4) 0}

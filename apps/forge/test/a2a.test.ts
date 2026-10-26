@@ -33,7 +33,7 @@ describe("the Agent Card", () => {
     for (const i of card.supportedInterfaces) expect(i.url.endsWith("/a2a")).toBe(true);
     expect(card.url.endsWith("/a2a")).toBe(true);
     expect(card.capabilities.streaming).toBe(false);
-    expect(card.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card"]);
+    expect(card.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
     for (const s of card.skills) expect(s.tags.length).toBeGreaterThan(0);
     expect(await (await fetchWorker("/.well-known/agent.json")).json()).toEqual(card);
   });
@@ -87,7 +87,7 @@ describe("POST /a2a", () => {
     expect(["flagged", "caution", "clear"]).toContain(scan.result.message.parts[0]!.data.result.verdict);
     const help = (await (await send([{ text: "hello" }])).json()) as { result: { message: { parts: { data: { error: string; skills: { id: string }[] } }[] } } };
     expect(help.result.message.parts[0]!.data.error).toBe("unrecognized_request");
-    expect(help.result.message.parts[0]!.data.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card"]);
+    expect(help.result.message.parts[0]!.data.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
   });
 
   it("answers the rest with the A2A error codes", async () => {

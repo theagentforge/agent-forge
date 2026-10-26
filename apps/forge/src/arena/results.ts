@@ -1,8 +1,9 @@
-import { HARD3_TASKS, HARD_TASKS, publicTrapId, rulesVersionAt, summarize, taskVersion, TASKS, wilsonInterval, type AttemptResult } from "@forge/arena";
+import { CANARY, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, rulesVersionAt, summarize, taskVersion, TASKS, wilsonInterval, type AttemptResult } from "@forge/arena";
 import type * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { csvCell } from "./business";
 import { LICENCE_ID, LICENCE_PATH, runProvenance, type Provenance } from "../services/provenance";
+import { GAP_METHOD, heldOutGap, weeklyPooledGap } from "./holdout";
 import { consistency, DATASET_LICENCE, finishedRuns, isKnockout, isRankedEvent, modelName, publicEvent, tierOf, type Tier } from "./views";
 
 // Arena results for agents and crawlers (AGENTS.md rule 7: numbers, enums, ids and links only):
@@ -11,8 +12,8 @@ import { consistency, DATASET_LICENCE, finishedRuns, isKnockout, isRankedEvent, 
 // Every run comes through `finishedRuns`, so embargoed models (ADR 0041), events held for review, fixtures before their
 // premiere and Lab #3 arms never appear.
 
-/** Every task in catalog order: Normal, Hard v2, Hard v3. */
-export const ALL_TASKS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS];
+/** Every task in catalog order: Normal, Hard v2, Hard v3, Hard v3.2. A tier or event lists only jobs with runs. */
+export const ALL_TASKS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS];
 const ORDER = new Map(ALL_TASKS.map((x, i) => [x.id, i]));
 
 export type Run = Awaited<ReturnType<typeof finishedRuns>>[number];
@@ -38,7 +39,7 @@ export const RESULTS_METHOD = {
 export function versionsAndDates(runs: Run[]) {
   const times = runs.map((r) => r.summary.finishedAt);
   return {
-    rules_versions: uniq(runs.map((r) => rulesVersionAt(r.summary.finishedAt))).sort(),
+    rules_versions: uniq(runs.map((r) => rulesVersionAt(r.summary.finishedAt, r.result))).sort(),
     task_versions: uniq(runs.map((r) => taskVersion(r.summary.task, r.summary.finishedAt))).sort(),
     since: times.length ? day(Math.min(...times)) : null,
     as_of: times.length ? day(Math.max(...times)) : null,
@@ -99,6 +100,8 @@ export async function arenaResults(db: Db, f: ResultsFilter = {}, origin = "") {
   // The Normal card lists its six jobs even before they have runs (as it always has); a tier or event lists jobs with runs.
   const listAll = tier === "normal" && !f.event;
   const tasks = (listAll ? TASKS : ALL_TASKS).filter((x) => (!f.task || x.id === f.task) && (listAll || runs.some((r) => r.summary.task === x.id)));
+  // ADR 0058: public-vs-held-out pass rates per model, for this event or every ranked event that ran held-out seeds.
+  const [gap, pooled] = await Promise.all([heldOutGap(db, { eventId: f.event?.id }), weeklyPooledGap(db)]);
   return {
     data_kind: !runs.length ? "none" : kind,
     tier: tier ?? "all",
@@ -116,6 +119,14 @@ export async function arenaResults(db: Db, f: ResultsFilter = {}, origin = "") {
         models: [...by.entries()].map(([model, rs]) => modelRow(model, rs, origin)).sort((a, b) => b.pass_rate - a.pass_rate || a.name.localeCompare(b.name)),
       };
     }),
+    held_out_gap: {
+      status: [...gap, ...pooled].some((g) => g.status === "measured") ? "measured" : gap.length || pooled.length ? "not_enough_bouts" : "not_yet_measured",
+      method: GAP_METHOD,
+      rows: gap,
+      // Every weekly headline bout pooled per model (3 attempts a side each, too few alone), whatever the filter.
+      weekly_pooled: { label: "weekly bouts pooled", rows: pooled },
+      url: `${origin}/arena/history#gap`,
+    },
   };
 }
 
@@ -145,7 +156,7 @@ export async function eventData(db: Db, slug: string, origin = "") {
         traps_fell: trapsFell(s.task, r.result),
         knockout: isKnockout(r.result),
         replay_url: `${origin}/arena/run/${s.id}`,
-        rules_version: rulesVersionAt(s.finishedAt),
+        rules_version: rulesVersionAt(s.finishedAt, r.result),
         task_version: taskVersion(s.task, s.finishedAt),
         finished_at: new Date(s.finishedAt).toISOString(),
         provenance: runProvenance(s),
@@ -153,6 +164,7 @@ export async function eventData(db: Db, slug: string, origin = "") {
     })
     .sort((a, b) => (ORDER.get(a.task) ?? 99) - (ORDER.get(b.task) ?? 99) || a.model.localeCompare(b.model) || a.seed - b.seed || a.attempt - b.attempt);
   return {
+    canary: CANARY,
     event: { slug: event.slug, name: event.name, kind: event.kind, season: event.season, page: `${origin}/arena/event/${event.slug}`, csv: `${origin}/arena/events/${event.slug}.csv` },
     licence: DATASET_LICENCE,
     licence_id: LICENCE_ID,
@@ -167,12 +179,12 @@ export async function eventData(db: Db, slug: string, origin = "") {
 
 export type EventData = NonNullable<Awaited<ReturnType<typeof eventData>>>;
 
-export const EVENT_CSV_HEADER = "event,run,model,model_name,task,tier,seed,attempt,passed,reason,traps_fell,knockout,replay_url,rules_version,task_version,finished_at,source,model_exact,model_maker,served_by,terms_version,privacy_version,licence";
+export const EVENT_CSV_HEADER = "event,run,model,model_name,task,tier,seed,attempt,passed,reason,traps_fell,knockout,replay_url,rules_version,task_version,finished_at,source,model_exact,model_maker,served_by,terms_version,privacy_version,licence,canary";
 
-/** One row per attempt; trap ids are joined with ";". */
+/** One row per attempt; trap ids are joined with ";". The last column is the canary line (ADR 0058) on every row. */
 export function eventCsv(d: EventData) {
   const lines = d.runs.map((r) =>
-    [d.event.slug, r.run, r.model, r.model_name, r.task, r.tier, r.seed, r.attempt, r.passed, r.reason, r.traps_fell.join(";"), r.knockout, r.replay_url, r.rules_version, r.task_version, r.finished_at, ...provenanceCells(r.provenance)].map(csvCell).join(","),
+    [d.event.slug, r.run, r.model, r.model_name, r.task, r.tier, r.seed, r.attempt, r.passed, r.reason, r.traps_fell.join(";"), r.knockout, r.replay_url, r.rules_version, r.task_version, r.finished_at, ...provenanceCells(r.provenance), CANARY].map(csvCell).join(","),
   );
   return `${[EVENT_CSV_HEADER, ...lines].join("\n")}\n`;
 }

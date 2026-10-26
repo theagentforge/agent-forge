@@ -1,11 +1,12 @@
-import { SCAN_RULES, type ScanFinding } from "@forge/shared";
-import { and, eq, gte, lt } from "drizzle-orm";
+import { SCAN_RULES, SCAN_RULES_VERSION, type ScanFinding } from "@forge/shared";
+import { and, count, desc, eq, gte, lt, max } from "drizzle-orm";
+import type { Context } from "hono";
 import { html } from "hono/html";
 import * as t from "../db/schema";
 import { answerPagePath, ANSWERS_PATH, ARENA_QUESTIONS } from "../arena/answers";
 import { getDb, type Db } from "../services/db";
 import { scanPath, skillLabel } from "../services/scans";
-import { breakableId } from "./components";
+import { breakableId, toolHref } from "./components";
 import { notFound, send, sendJson, site, wantsJson } from "./pages";
 import { toolDetail } from "./queries";
 import { PUBLICATIONS } from "./publications";
@@ -21,11 +22,21 @@ const forgeOrg = (origin: string) => ({ "@type": "Organization", name: "The Agen
 export const ANSWER_PREFIX = "/tools/";
 const GH_RAW = /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/;
 
+/** Path segments decoded, or null for a malformed escape (one bad stored URL must not break the sitemap or a page). */
+function decodePath(p: string): string[] | null {
+  try {
+    return p.split("/").map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+}
+
 /** A scanned GitHub file's answer-page id: github.com/<owner>/<repo>[/<folder>] (the folder holding SKILL.md). */
 export function answerId(sourceUrl: string | null): string | null {
   const m = GH_RAW.exec(sourceUrl ?? "");
   if (!m) return null;
-  const parts = m[4]!.split("/").map(decodeURIComponent);
+  const parts = decodePath(m[4]!);
+  if (!parts) return null;
   const dir = /^skill\.md$/i.test(parts.at(-1) ?? "") ? parts.slice(0, -1) : parts;
   return ["github.com", m[1], m[2], ...dir].join("/");
 }
@@ -38,20 +49,77 @@ export function sourceLine(sourceUrl: string, line: number): string | null {
   return m ? `https://github.com/${m[1]}/${m[2]}/blob/${m[3]}/${m[4]}#L${line}` : null;
 }
 
-/** Public scans whose file sits at this answer id, newest first. */
-async function scansFor(db: Db, id: string) {
+const REPO_ROWS_MAX = 5_000;
+
+/**
+ * Every public scan in the answer id's repository (a prefix range on the source_url index), newest first and capped, so
+ * if the cap is ever hit it drops the oldest rows: whenever a skill has any row here, its newest one is here too.
+ */
+async function repoScans(db: Db, id: string) {
   const m = /^github\.com\/([^/]+)\/([^/]+)/.exec(id);
   if (!m) return [];
-  const rows = await db
+  return db
     .select()
     .from(t.skillScans)
     // A prefix range, not LIKE: D1 caps LIKE patterns at 50 bytes, and the range can use the source_url index.
     .where(and(eq(t.skillScans.public, true), gte(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}/`), lt(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}0`)))
-    .limit(2000);
-  return rows.filter((r) => answerId(r.sourceUrl) === id).sort((a, b) => b.lastSeen - a.lastSeen);
+    .orderBy(desc(t.skillScans.lastSeen))
+    .limit(REPO_ROWS_MAX);
+}
+
+/** Public scans whose file sits at this answer id, newest first. */
+async function scansFor(db: Db, id: string) {
+  return (await repoScans(db, id)).filter((r) => answerId(r.sourceUrl) === id).sort((a, b) => b.lastSeen - a.lastSeen);
+}
+
+/**
+ * Field reports on a tool across all its versions, counted in the database (toolDetail reads at most 50 reports on 20
+ * versions, so its list can't be counted for "The facts"). Held reports are left out, as everywhere public.
+ */
+async function reportTotals(db: Db, toolId: string) {
+  const rows = await db
+    .select({ version: t.toolVersions.version, n: count(), latest: max(t.reports.createdAt) })
+    .from(t.reports)
+    .innerJoin(t.toolVersions, eq(t.reports.toolVersionId, t.toolVersions.id))
+    .where(and(eq(t.toolVersions.toolId, toolId), eq(t.reports.held, false)))
+    .groupBy(t.toolVersions.version)
+    .orderBy(desc(max(t.reports.createdAt)));
+  return { total: rows.reduce((a, r) => a + Number(r.n), 0), versions: rows.map((r) => r.version), latest: Math.max(0, ...rows.map((r) => Number(r.latest ?? 0))) };
+}
+
+/** The newest public scan's fingerprint at this answer id, or null (web/scan.ts: which scan page is the current one). */
+export async function latestFingerprintFor(db: Db, id: string): Promise<string | null> {
+  return (await scansFor(db, id))[0]?.fingerprint ?? null;
+}
+
+type RepoRow = Awaited<ReturnType<typeof repoScans>>[number];
+
+/**
+ * The other skills scanned in the same repository (ADR 0060): how many, how many matched a pattern, and up to six
+ * neighbours in folder order, so each answer page carries facts of its own and links to its siblings. Counts are of
+ * the newest public scan per skill; `capped` says the repository had more rows than we read.
+ */
+export function repoSiblings(rows: RepoRow[], id: string, show = 6) {
+  const latest = new Map<string, RepoRow>();
+  for (const r of rows) {
+    const sid = answerId(r.sourceUrl);
+    if (!sid || sid === id) continue;
+    const have = latest.get(sid);
+    if (!have || have.lastSeen < r.lastSeen) latest.set(sid, r);
+  }
+  const ids = [...latest.keys()].sort();
+  const counts = { total: ids.length, flagged: 0, caution: 0, clear: 0 };
+  for (const r of latest.values()) counts[r.verdict]++;
+  // Neighbours in folder order around this skill (wrapping), so every sibling is linked from somewhere.
+  const at = ids.findIndex((x) => x > id);
+  const start = at < 0 ? ids.length : at;
+  const half = Math.floor(show / 2);
+  const picked = ids.length <= show ? ids : Array.from({ length: show }, (_, i) => ids[(start - half + i + ids.length) % ids.length]!);
+  return { ...counts, capped: rows.length >= REPO_ROWS_MAX, neighbours: picked.map((sid) => ({ id: sid, verdict: latest.get(sid)!.verdict })) };
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const size = (b: number) => (b < 1024 ? `${b.toLocaleString("en-US")} bytes` : `${(b / 1024).toFixed(1)} KB`);
 const plural = (n: number, w: string) => `${n.toLocaleString("en-US")} ${w}${n === 1 ? "" : "s"}`;
 const commit = (sourceUrl: string | null) => GH_RAW.exec(sourceUrl ?? "")?.[3]?.slice(0, 7) ?? null;
 
@@ -59,7 +127,7 @@ type Scan = Awaited<ReturnType<typeof scansFor>>[number];
 type Detail = NonNullable<Awaited<ReturnType<typeof toolDetail>>>;
 
 /** The one-paragraph answer, from the scan and the field reports. Never a safety promise. */
-export function answerText(name: string, scan: Scan | null, detail: Detail | null): string {
+export function answerText(name: string, scan: Scan | null, detail: Detail | null, reportTotal = detail?.reports.length ?? 0): string {
   const out: string[] = [];
   if (scan) {
     const f = scan.findings as ScanFinding[];
@@ -78,7 +146,7 @@ export function answerText(name: string, scan: Scan | null, detail: Detail | nul
     const house = detail.reports.every((r) => r.ownerHouse);
     const people = latest?.distinctOwners ?? 0;
     const who = house ? "from the Forge's own test agents (House)" : `from ${people.toLocaleString("en-US")} ${people === 1 ? "person's agent" : "people's agents"}`;
-    out.push(`${plural(detail.reports.length, "field report")} ${who}: ${b.worked ?? 0} worked, ${b.partial ?? 0} partly, ${b.failed ?? 0} failed.`);
+    out.push(`${plural(reportTotal, "field report")} ${who}: ${b.worked ?? 0} worked, ${b.partial ?? 0} partly, ${b.failed ?? 0} failed.`);
   }
   return out.join(" ");
 }
@@ -91,13 +159,16 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
     return notFound(c, "Not a valid tool link", "That link isn't a valid tool address.");
   }
   const db = getDb(c.env);
-  const [scans, detail] = await Promise.all([scansFor(db, id), toolDetail(db, id)]);
+  const [repoRows, detail] = await Promise.all([repoScans(db, id), toolDetail(db, id)]);
+  const scans = repoRows.filter((r) => answerId(r.sourceUrl) === id).sort((a, b) => b.lastSeen - a.lastSeen);
   const hasReports = !!detail?.reports.length;
   if (!scans.length && !hasReports) return notFound(c, "No Forge data on this tool yet", `Nothing has been scanned or reported for ${id} yet.`);
   const scan = scans[0] ?? null;
   const label = scan ? skillLabel(scan.sourceUrl, scan.name) : { title: id.split("/").at(-1) ?? id, where: null };
   const name = label.where ? `${label.title} (${label.where})` : label.title;
-  const answer = answerText(name, scan, hasReports ? detail : null);
+  const totals = hasReports ? await reportTotals(db, detail!.tool.id) : null;
+  const reportCount = Math.max(totals?.total ?? 0, detail?.reports.length ?? 0);
+  const answer = answerText(name, scan, hasReports ? detail : null, reportCount);
   const findings = (scan?.findings ?? []) as ScanFinding[];
   const path = answerPath(id);
   const updated = Math.max(scan?.lastSeen ?? 0, detail?.reports[0]?.createdAt ?? 0);
@@ -113,16 +184,26 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
       scan: scan
         ? { verdict: scan.verdict, fingerprint: scan.fingerprint, rules_version: scan.rulesVersion, scanned: new Date(scan.lastSeen).toISOString(), source_url: scan.sourceUrl, findings: findings.map((f) => ({ rule: f.rule, severity: f.severity, line: f.line })), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(scan.fingerprint)}` }
         : null,
-      field_reports: hasReports ? { count: detail!.reports.length, house_only: detail!.reports.every((r) => r.ownerHouse), outcomes: detail!.versions[0]?.outcomeBreakdown ?? null, page_url: `${c.env.PUBLIC_ORIGIN}/t/${encodeURIComponent(detail!.tool.canonicalId)}` } : null,
+      field_reports: hasReports ? { count: reportCount, house_only: detail!.reports.every((r) => r.ownerHouse), outcomes: detail!.versions[0]?.outcomeBreakdown ?? null, page_url: `${c.env.PUBLIC_ORIGIN}/t/${encodeURIComponent(detail!.tool.canonicalId)}` } : null,
       earlier_scans: scans.slice(1, 10).map((s) => ({ fingerprint: s.fingerprint, verdict: s.verdict, scanned: new Date(s.lastSeen).toISOString() })),
     });
 
   const question = `Is ${label.title} safe to install?`;
+  const siblings = scan ? repoSiblings(repoRows, id) : null;
+  const gh = GH_RAW.exec(scan?.sourceUrl ?? "");
+  const repo = gh ? `${gh[1]}/${gh[2]}` : null;
+  const filePath = gh ? (decodePath(gh[4]!)?.join("/") ?? gh[4]!) : null;
+  const low = findings.filter((f) => f.severity === "low").length;
+  const reportedVersions = totals?.versions ?? [];
   return send(c, {
-    title: `${question} Scan and field reports`,
+    // The repository in the title too: many skills share a folder name ("pdf", "docs"), and their pages must not share a title.
+    title: `Is ${label.title}${label.where ? ` (${label.where})` : ""} safe to install? Scan and field reports`,
     description: answer.slice(0, 300),
     path,
     nav: "scan",
+    // Field reports without a scan: the tool's own page (/t/<id>) carries the same reports with more, so this one stays
+    // reachable but out of search and out of the sitemap (ADR 0060). Links on it are still followed.
+    noindexFollow: !scan,
     jsonAlternate: `${path}?format=json`,
     jsonLd: {
       "@context": "https://schema.org",
@@ -154,6 +235,28 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
 <h1 class="page-title">${question}</h1>
 <p class="lead" id="answer">${answer}</p>
 <p class="small mono muted">${breakableId(id)}</p>
+${!scan && hasReports ? html`<p>The full record for this tool, with every report, version and status change: <a href="${toolHref(detail!.tool.canonicalId)}">${detail!.tool.canonicalId}</a>.</p>` : ""}
+${scan
+      ? html`<section aria-labelledby="facts"><h2 id="facts">The facts</h2>
+<dl class="small facts">
+${repo ? html`<dt>Repository</dt><dd><a class="mono" href="https://github.com/${repo}" rel="nofollow ugc">${repo}</a></dd>` : ""}
+${filePath ? html`<dt>File</dt><dd class="mono">${filePath}</dd>` : ""}
+<dt>Size</dt><dd>${size(scan.bytes)}</dd>
+<dt>Versions scanned</dt><dd>${scans.length.toLocaleString("en-US")} (newest ${commit(scan.sourceUrl) ?? scan.fingerprint.slice(7, 14)})</dd>
+<dt>First scanned</dt><dd>${day(Math.min(...scans.map((x) => x.firstSeen ?? x.lastSeen)))}</dd>
+<dt>Last checked</dt><dd>${day(scan.lastSeen)}, ${plural(scan.scans, "scan")} of this exact file</dd>
+<dt>Rules</dt><dd>${scan.rulesVersion}${scan.rulesVersion === SCAN_RULES_VERSION ? " (current)" : html` (current rules: ${SCAN_RULES_VERSION}; a fresh scan may differ)`}</dd>
+${low ? html`<dt>Low-severity notes</dt><dd>${low.toLocaleString("en-US")}</dd>` : ""}
+<dt>Field reports</dt><dd>${hasReports ? html`${plural(reportCount, "report")} on ${reportedVersions.length === 1 ? "version" : "versions"} ${reportedVersions.slice(0, 5).join(", ")}${reportedVersions.length > 5 ? "…" : ""}, the latest on ${day(detail!.reports[0]!.createdAt)}` : "none yet"}</dd>
+</dl>
+</section>`
+      : ""}
+${siblings && siblings.total
+      ? html`<section aria-labelledby="repo"><h2 id="repo">Same repository</h2>
+<p class="small">${siblings.capped ? "At least " : ""}${plural(siblings.total, "other skill")} from ${repo ?? "this repository"} ${siblings.total === 1 ? "has" : "have"} a public scan here: ${siblings.flagged.toLocaleString("en-US")} with a high-risk pattern, ${siblings.caution.toLocaleString("en-US")} with a medium-risk pattern, ${siblings.clear.toLocaleString("en-US")} with no matches.</p>
+<ul class="small">${siblings.neighbours.map((n) => html`<li><a href="${answerPath(n.id)}">${n.id.split("/").slice(3).join("/") || n.id}</a> <span class="muted">${n.verdict === "clear" ? "no matches" : n.verdict === "flagged" ? "high-risk pattern" : "medium-risk pattern"}</span></li>`)}</ul>
+</section>`
+      : ""}
 ${scan
       ? html`<section aria-labelledby="scan"><h2 id="scan">Skill scan</h2>
 <div class="stats spaced">
@@ -174,7 +277,7 @@ ${scans.length > 1 ? html`<p class="small muted">Earlier versions: ${scans.slice
       : ""}
 ${hasReports
       ? html`<section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
-<p>${plural(detail!.reports.length, "report")}, the latest on ${day(detail!.reports[0]!.createdAt)}. <a href="/t/${encodeURIComponent(detail!.tool.canonicalId)}">All reports, versions and status history</a>.</p>
+<p>${plural(reportCount, "report")}, the latest on ${day(detail!.reports[0]!.createdAt)}. <a href="/t/${encodeURIComponent(detail!.tool.canonicalId)}">All reports, versions and status history</a>.</p>
 ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class="small muted">${r.agentHandle}${r.ownerHouse ? " (House: the Forge's own test agent)" : ""}, v${r.version}, ${day(r.createdAt)}</footer></blockquote>`)}
 </section>`
       : ""}
@@ -184,8 +287,11 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
   });
 });
 
-// The sitemap (agent-channels §4.2): static pages (with the Arena's answer pages, /answers/<question>), an answer page for every public scan with a GitHub source, and every
-// tool with field reports. Built from the database, edge-cached for 6 hours.
+// The sitemap (agent-channels §4.2; ADR 0060): static pages (with the Arena's answer pages, /answers/<question>), an
+// answer page for every public scan with a GitHub source, and the tool page (/t/<id>) of every tool with field reports
+// but no scan. Only pages with data of their own are listed: a tool with nothing has no page, and an answer page with
+// reports but no scan is noindex (its /t/ page is the one listed). Each dated entry's lastmod is its newest scan or
+// report; static pages carry none rather than a made-up date. Built from the database, edge-cached for 6 hours.
 // Every live publication (reports, Lab write-ups, guides) is listed from PUBLICATIONS, so a new one can't be missed
 // (26 Oct check: the Lab results and the Registry census were in no sitemap).
 export const SITEMAP_STATIC = [
@@ -198,10 +304,20 @@ export const SITEMAP_STATIC = [
     ...ARENA_QUESTIONS.map(answerPagePath),
   ]),
 ];
-const SITEMAP_MAX = 45_000;
+/**
+ * Google's limits per sitemap file are 50,000 URLs and 50 MB uncompressed; above that, a sitemap index lists the files
+ * (developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps). We split well below: 40,000 URLs of
+ * about 150 bytes is about 6 MB.
+ */
+export const SITEMAP_CHUNK = 40_000;
 const xml = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
 
-export async function sitemapPaths(db: Db): Promise<{ path: string; lastmod?: number }[]> {
+export interface SitemapRow {
+  path: string;
+  lastmod?: number;
+}
+
+export async function sitemapPaths(db: Db): Promise<SitemapRow[]> {
   const scans = await db.select({ sourceUrl: t.skillScans.sourceUrl, lastSeen: t.skillScans.lastSeen }).from(t.skillScans).where(eq(t.skillScans.public, true));
   const byId = new Map<string, number>();
   for (const s of scans) {
@@ -209,13 +325,37 @@ export async function sitemapPaths(db: Db): Promise<{ path: string; lastmod?: nu
     if (id && (byId.get(id) ?? 0) < s.lastSeen) byId.set(id, s.lastSeen);
   }
   const reported = await db
-    .selectDistinct({ id: t.tools.canonicalId })
+    .select({ id: t.tools.canonicalId, latest: max(t.reports.createdAt) })
     .from(t.reports)
     .innerJoin(t.toolVersions, eq(t.reports.toolVersionId, t.toolVersions.id))
     .innerJoin(t.tools, eq(t.toolVersions.toolId, t.tools.id))
-    .where(eq(t.reports.held, false));
-  for (const r of reported) if (!byId.has(r.id)) byId.set(r.id, 0);
-  return [...SITEMAP_STATIC.map((path) => ({ path })), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined }))].slice(0, SITEMAP_MAX);
+    .where(eq(t.reports.held, false))
+    .groupBy(t.tools.canonicalId);
+  const toolPages: SitemapRow[] = [];
+  for (const r of reported) {
+    const latest = Number(r.latest ?? 0);
+    if (byId.has(r.id)) byId.set(r.id, Math.max(byId.get(r.id)!, latest));
+    else toolPages.push({ path: toolHref(r.id), lastmod: latest || undefined });
+  }
+  return [...SITEMAP_STATIC.map((path) => ({ path })), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined })), ...toolPages];
+}
+
+const urlset = (origin: string, rows: SitemapRow[]) =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.map((r) => `<url><loc>${xml(origin + r.path)}</loc>${r.lastmod ? `<lastmod>${day(r.lastmod)}</lastmod>` : ""}</url>`).join("\n")}\n</urlset>\n`;
+
+/**
+ * The sitemap documents for these rows: one <urlset> at /sitemap.xml while it fits in one file, else /sitemap.xml is a
+ * <sitemapindex> of /sitemap-1.xml, /sitemap-2.xml and so on, each dated by its newest entry.
+ */
+export function sitemapDocs(origin: string, rows: SitemapRow[], chunk = SITEMAP_CHUNK): { main: string; parts: string[] } {
+  if (rows.length <= chunk) return { main: urlset(origin, rows), parts: [] };
+  const groups: SitemapRow[][] = [];
+  for (let i = 0; i < rows.length; i += chunk) groups.push(rows.slice(i, i + chunk));
+  const entries = groups.map((g, i) => {
+    const newest = Math.max(0, ...g.map((r) => r.lastmod ?? 0));
+    return `<sitemap><loc>${xml(`${origin}/sitemap-${i + 1}.xml`)}</loc>${newest ? `<lastmod>${day(newest)}</lastmod>` : ""}</sitemap>`;
+  });
+  return { main: `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join("\n")}\n</sitemapindex>\n`, parts: groups.map((g) => urlset(origin, g)) };
 }
 
 // The IndexNow key file (services/indexnow.ts): search engines fetch it to confirm our pings are ours.
@@ -225,15 +365,20 @@ site.get("/:file{[a-f0-9]{32}\\.txt}", async (c) => {
   return c.text(key, 200, { "Cache-Control": "public, max-age=86400" });
 });
 
-site.get("/sitemap.xml", async (c) => {
+const sitemapResponse = (body: string) => new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=21600" } });
+
+async function serveSitemap(c: Context<{ Bindings: Env }>, part: number) {
   const cache = caches.default;
-  const key = new Request(new URL("/sitemap.xml", c.req.url).toString());
+  const key = new Request(new URL(part ? `/sitemap-${part}.xml` : "/sitemap.xml", c.req.url).toString());
   const hit = await cache.match(key);
   if (hit) return hit;
-  const origin = c.env.PUBLIC_ORIGIN;
-  const rows = await sitemapPaths(getDb(c.env));
-  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.map((r) => `<url><loc>${xml(origin + r.path)}</loc>${r.lastmod ? `<lastmod>${day(r.lastmod)}</lastmod>` : ""}</url>`).join("\n")}\n</urlset>\n`;
-  const res = new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=21600" } });
+  const docs = sitemapDocs(c.env.PUBLIC_ORIGIN, await sitemapPaths(getDb(c.env)));
+  const body = part ? docs.parts[part - 1] : docs.main;
+  if (body === undefined) return c.notFound();
+  const res = sitemapResponse(body);
   c.executionCtx.waitUntil(cache.put(key, res.clone()));
   return res;
-});
+}
+
+site.get("/sitemap.xml", (c) => serveSitemap(c, 0));
+site.get("/:file{sitemap-[1-9][0-9]{0,3}\\.xml}", (c) => serveSitemap(c, Number(/\d+/.exec(c.req.param("file"))![0])));

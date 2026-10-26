@@ -1,11 +1,11 @@
 import { env } from "cloudflare:workers";
-import { HARD3_TASKS, TASKS, type LogEvent, type ToolSpec } from "@forge/arena";
+import { HARD3_TASKS, RULES_VERSION, TASKS, type LogEvent, type ToolSpec } from "@forge/arena";
 import { eq, inArray } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cacheHint, callModel, openRouterBody, type ChatMessage } from "../src/arena/adapters";
 import { lastHeadlineSlot, weeklyTask } from "../src/arena/headline-slot";
 import { ALL_MODELS, modelById, PRACTICE } from "../src/arena/lineup";
-import { arenaTick, planEvent, playAttempt, processQueue, PROMPT_CACHE_FROM, promptCacheOn, rulesInForceSince, solvedPairs, SYSTEM_PROMPT } from "../src/arena/runner";
+import { arenaTick, planEvent, playAttempt, processQueue, PROMPT_CACHE_FROM, promptCacheOn, solvedPairs, SYSTEM_PROMPT } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 
@@ -185,9 +185,10 @@ describe("prompt caching (S1)", () => {
 describe("no more plain practice on a job a model has already got right 3 of 3 (S1)", () => {
   const m = PRACTICE[0]!.id;
   /** Finished runs of `m` at one task and seed, in a new event. */
-  async function history(id: string, task: string, seed: number, passed: boolean[], ev: Partial<typeof t.arenaEvents.$inferInsert> = {}, finishedAt = Date.now()) {
+  /** Finished runs; `rules` is the stamp the scoring code wrote (null: an older, unstamped result). */
+  async function history(id: string, task: string, seed: number, passed: boolean[], ev: Partial<typeof t.arenaEvents.$inferInsert> = {}, rules: string | null = RULES_VERSION) {
     await db.insert(t.arenaEvents).values({ id, slug: id, name: id, season: "s0", kind: "practice", status: "running", ...ev });
-    await db.insert(t.arenaRuns).values(passed.map((p, i) => ({ id: `${id}-${i}`, eventId: id, modelId: m, task, seed, attemptNo: i + 1, status: "done" as const, passed: p, finishedAt })));
+    await db.insert(t.arenaRuns).values(passed.map((p, i) => ({ id: `${id}-${i}`, eventId: id, modelId: m, task, seed, attemptNo: i + 1, status: "done" as const, passed: p, finishedAt: Date.now(), result: rules ? { rules } : {} })));
   }
   const runsOf = async (eventId: string) => db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
 
@@ -196,12 +197,14 @@ describe("no more plain practice on a job a model has already got right 3 of 3 (
     await history("h-two", "weekend", 5, [true, true]);
     await history("h-miss", "spreadsheet", 5, [true, false, true]);
     await history("h-spread", "flaky-supplier", 1, [true, true]);
-    await db.insert(t.arenaRuns).values({ id: "h-spread-x", eventId: "h-spread", modelId: m, task: "flaky-supplier", seed: 2, attemptNo: 1, status: "done", passed: true, finishedAt: Date.now() });
-    await history("h-old", "scam-invoice", 5, [true, true, true], {}, rulesInForceSince() - 1);
+    await db.insert(t.arenaRuns).values({ id: "h-spread-x", eventId: "h-spread", modelId: m, task: "flaky-supplier", seed: 2, attemptNo: 1, status: "done", passed: true, finishedAt: Date.now(), result: { rules: RULES_VERSION } });
+    // Scored by older rules: unstamped (rules 0.5 code or older), or stamped with an older version. Neither counts.
+    await history("h-old", "scam-invoice", 5, [true, true, true], {}, null);
+    await history("h-older", "weekend-hard", 5, [true, true, true], {}, "rules 0.5");
     await history("h-lab", "impossible", 5, [true, true, true], { arm: "card" });
     await history("h-twist", "refund-hard", 5, [true, true, true], { twist: "some-twist" });
     await history("h-ranked", "refund-hard3", 1_000_003, [true, true, true], { kind: "card" });
-    const solved = await solvedPairs(env, [m], ["refund", "weekend", "spreadsheet", "flaky-supplier", "scam-invoice", "impossible", "refund-hard", "refund-hard3"]);
+    const solved = await solvedPairs(env, [m], ["refund", "weekend", "spreadsheet", "flaky-supplier", "scam-invoice", "impossible", "refund-hard", "refund-hard3", "weekend-hard"]);
     // Ranked bouts are plain conditions too, so they count as evidence; the tier is part of the job (task id).
     expect([...solved].sort()).toEqual([`${m}:refund`, `${m}:refund-hard3`]);
   });
@@ -224,6 +227,8 @@ describe("no more plain practice on a job a model has already got right 3 of 3 (
       { id: "q-plain", slug: "q-plain", name: "q", season: "s0", kind: "practice", status: "running" },
       { id: "q-lab", slug: "q-lab", name: "q", season: "s0", kind: "practice", status: "running", arm: "none" },
       { id: "q-card", slug: "q-card", name: "q", season: "s0", kind: "card", status: "running", createdAt: PROMPT_CACHE_FROM - 1 },
+      // A practice study created on hold (contamination test 1): keeps every attempt.
+      { id: "q-held", slug: "q-held", name: "q", season: "s0", kind: "practice", status: "planned" },
     ]);
     const queued = (id: string, eventId: string, extra: Partial<typeof t.arenaRuns.$inferInsert> = {}) => ({ id, eventId, modelId: m, task: "impossible", seed: 11, attemptNo: 1, status: "queued" as const, ...extra });
     await db.insert(t.arenaRuns).values([
@@ -232,16 +237,18 @@ describe("no more plain practice on a job a model has already got right 3 of 3 (
       queued("q-p3", "q-plain", { attemptNo: 3, task: "weekend" }),
       queued("q-l1", "q-lab"),
       queued("q-c1", "q-card", { seed: 1_000_011 }),
+      queued("q-h1", "q-held"),
     ]);
     const out = await processQueue(env, Date.now() + 60_000);
     expect(out.solved).toBe(2);
-    const left = await db.select().from(t.arenaRuns).where(inArray(t.arenaRuns.eventId, ["q-plain", "q-lab", "q-card"]));
+    const left = await db.select().from(t.arenaRuns).where(inArray(t.arenaRuns.eventId, ["q-plain", "q-lab", "q-card", "q-held"]));
     expect(left.map((r) => [r.id, r.status]).sort()).toEqual([
       ["q-c1", "done"],
+      ["q-h1", "done"],
       ["q-l1", "done"],
       ["q-p3", "done"],
     ]);
-    await db.delete(t.arenaRuns).where(inArray(t.arenaRuns.eventId, ["q-plain", "q-lab", "q-card", "q-solved"]));
+    await db.delete(t.arenaRuns).where(inArray(t.arenaRuns.eventId, ["q-plain", "q-lab", "q-card", "q-held", "q-solved"]));
   });
 });
 

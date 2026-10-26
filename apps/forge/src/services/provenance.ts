@@ -65,10 +65,15 @@ export interface Provenance {
   licence: typeof LICENCE_ID;
 }
 
+/** The provider name the Workers AI adapter records on every run it serves. */
+export const WORKERS_AI_PROVIDER = "cloudflare-workers-ai";
+
 export function modelProvenance(id: string, servedBy: string | null): ModelProvenance {
   const m = modelById(id);
   const route = m?.route;
-  const pinned = route?.kind === "openrouter" ? route.provider : route?.kind === "workers-ai" ? "workers-ai" : null;
+  // Workers AI replies are recorded as "cloudflare-workers-ai" (arena/adapters.ts); the fallback uses the same name so a
+  // row with no recorded provider can't read differently from one that has it.
+  const pinned = route?.kind === "openrouter" ? route.provider : route?.kind === "workers-ai" ? WORKERS_AI_PROVIDER : null;
   return { id, exact: route?.model ?? null, maker: m?.lab ?? null, gateway: route?.kind ?? null, served_by: servedBy ?? pinned };
 }
 

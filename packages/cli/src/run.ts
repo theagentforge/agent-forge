@@ -38,7 +38,7 @@ import { DRAFTS_FILE, MEMORY_FILE, noteTools, parseNoted, type NotedTool } from 
 
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
 export const EXIT = { ok: 0, error: 1, usage: 2, blocked: 3 } as const;
-export const VERSION = "0.4.1";
+export const VERSION = "0.4.2";
 
 const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--origin <url>]
        forge report [<tool>] [--version <v>] [--outcome worked|partial|failed] [--issues <a,b>] [--note <text>]
@@ -81,6 +81,11 @@ export interface Io {
   writeCache?: (name: string, text: string) => Promise<void>;
   /** Asks the person at the terminal; null when there is no terminal (an agent's shell, CI). */
   confirm?: (question: string) => Promise<boolean | null>;
+  /**
+   * True when a person is reading the output at a terminal (stdout is a TTY). An agent's shell or CI isn't one, so the
+   * claim line (ADR 0055), which is meant for the person, never lands in an agent's context.
+   */
+  terminal?: boolean;
   env?: Record<string, string | undefined>;
   sha256Hex?: (s: string) => string;
   /** SKILL.md files in the usual places (for `watch` without paths). */
@@ -283,8 +288,9 @@ async function check(tool: string, o: { json: boolean; strict: boolean; origin: 
     if (since !== undefined) io.out(sinceLine(since));
     if (c.known && c.tool) io.out(`report draft after use: forge report ${c.tool.id}${c.asked_version ? ` --version ${c.asked_version}` : ""} (nothing is filed without the owner's confirmation)`);
     if (receipt) io.out(`receipt: ${receipt}`);
-    // ADR 0055: one plain line for the person, after a finished check (not with --json).
-    io.out(claimLine(o.origin, "cli"));
+    // ADR 0055: one plain line for the person, after a finished check (not with --json, and only at a terminal: never
+    // in an agent's shell, where it would read as an instruction in the agent's context).
+    if (io.terminal === true) io.out(claimLine(o.origin, "cli"));
   }
   const v = displayVerdict(c);
   if (v === "flagged" || v === "confirmed_malicious") return EXIT.blocked;

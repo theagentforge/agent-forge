@@ -1,8 +1,8 @@
 import type { CheckQuery } from "@forge/shared";
 import type { Advisory, AdvisoryResult } from "./advisories";
 import type { CheckResult } from "./forge";
-import { listShare, type Share } from "./receipts";
-import type { ExposureResult } from "./exposure";
+import { arenaShare, listShare, type Share } from "./receipts";
+import type { ExposureMatch, ExposureResult } from "./exposure";
 
 // Compact answers (ADR 0056). On 26 Oct a live `forge_check pypi:litellm` came back as ~15 KB of JSON: 25 full advisory
 // objects and every field, most of them null or 0, with the verdict somewhere in the middle. An agent pays for every
@@ -223,11 +223,72 @@ export const scanRelated = (fingerprint: string): Related[] => [{ relation: "wat
 export const exposureRelated = (matches: { ecosystem: "npm" | "pypi"; package: string; version: string }[]): Related[] =>
   matches.slice(0, COMPACT_LIST).map((m) => ({ relation: "check_match", tool: "forge_check", arguments: { id: `${m.ecosystem}:${m.package}`, version: m.version } }));
 
-/** An exposure answer with its receipt and next calls (ADR 0056). The list asked about is hashed, never kept. */
-export async function exposureAnswer(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">, r: ExposureResult, asked: string[]) {
-  const related = exposureRelated(r.matches);
+/** Matches kept in a compact exposure answer; the rest are counted (`matched` is the total). */
+export const COMPACT_MATCHES = 20;
+
+/** Matches with an advisory exploited in the wild first, then malicious-package (flagged) ones, then the rest, in order. */
+export function rankMatches<M extends { status: ExposureMatch["status"]; advisories: { exploited_in_wild?: boolean }[] }>(matches: M[]): M[] {
+  const exploited = (m: M) => m.advisories.some((a) => a.exploited_in_wild);
+  return [...matches].sort((a, b) => Number(exploited(b)) - Number(exploited(a)) || Number(b.status === "flagged") - Number(a.status === "flagged"));
+}
+
+/**
+ * An exposure answer with its receipt and next calls (ADR 0056). The list asked about is hashed, never kept.
+ * `compact` (agent channels' default) keeps COMPACT_MATCHES matches, ranked as `rankMatches`, and when it cuts says
+ * `truncated: true` and `shown`, with `matched` the total and `full_answer_arguments` the argument for every match.
+ * `full` (REST, and `detail: "full"` on MCP) keeps every match in the order found.
+ */
+export async function exposureAnswer(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">, r: ExposureResult, asked: string[], detail: Detail = "full") {
   const flagged = r.matches.filter((m) => m.status === "flagged").length;
-  return { ...r, ...(related.length ? { related } : {}), share: await listShare(env, "exposure", { items: asked, matched: r.matched, flagged }) };
+  const share = await listShare(env, "exposure", { items: asked, matched: r.matched, flagged });
+  if (detail === "full") {
+    const related = exposureRelated(r.matches);
+    return { ...r, ...(related.length ? { related } : {}), share };
+  }
+  const ranked = rankMatches(r.matches);
+  const cut = ranked.length > COMPACT_MATCHES;
+  const matches = ranked.slice(0, COMPACT_MATCHES);
+  const related = exposureRelated(matches);
+  return {
+    ...r,
+    matches,
+    ...(cut ? { shown: matches.length, truncated: true as const, full_answer_arguments: { detail: "full" as const } } : {}),
+    ...(related.length ? { related } : {}),
+    share,
+  };
+}
+
+/** The Arena answers' shapes, as far as a receipt needs them (arena/traps.ts trapsData, arena/results.ts arenaResults). */
+type TrapsLike = { tier: string; data_kind: string; as_of: string | null; model: { id: string } | null; tasks: { traps: { attempts: number }[] }[] };
+type ResultsLike = { tier: string; data_kind: string; as_of: string | null; event: { slug: string } | null; tasks: { models: { runs: number }[] }[] };
+
+/**
+ * A forge_traps answer with its receipt. The subject is the answered query (the resolved tier, task and model), so a
+ * receipt never holds free text: a model id is only there when the answer has data for it, and an answer for a model
+ * with no data (possible only when no model has any) gets no receipt.
+ */
+export async function trapsAnswer<T extends TrapsLike>(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">, d: T, q: { task?: string }) {
+  if (d.model && d.data_kind === "none") return d;
+  // Attempts on each job: its most-listed trap's count (every trap of a job is listed in every attempt of it).
+  const attempts = d.tasks.reduce((n, x) => n + Math.max(0, ...x.traps.map((tr) => tr.attempts)), 0);
+  return { ...d, share: await arenaShare(env, "traps", { tier: d.tier, task: q.task, model: d.model?.id }, { data_kind: d.data_kind, as_of: d.as_of, attempts }) };
+}
+
+/**
+ * An arena_results answer with its receipt. `compact` (the A2A default, ADR 0056) leaves out null fields and empty
+ * lists at the top and in each model row (a null cost per pass, no trap ids fallen for), and keeps the receipt link and
+ * live page in `share`; every figure is kept, and `tasks` always stays. `full` is the answer as /mcp/public gives it.
+ */
+export async function resultsAnswer<T extends ResultsLike>(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">, r: T, q: { task?: string }, detail: Detail = "full") {
+  const attempts = r.tasks.reduce((n, x) => n + x.models.reduce((m, row) => m + row.runs, 0), 0);
+  const share = await arenaShare(env, "results", { tier: r.tier, task: q.task, event: r.event?.slug }, { data_kind: r.data_kind, as_of: r.as_of, attempts });
+  if (detail === "full") return { ...r, share };
+  const { tasks, ...rest } = r;
+  return {
+    ...dropEmpty(rest),
+    tasks: tasks.map((x) => ({ ...x, models: x.models.map((m) => dropEmpty(m as Record<string, unknown>)) })),
+    share: { receipt_url: share.receipt_url, ...(share.page_url ? { page_url: share.page_url } : {}) },
+  };
 }
 
 /** A watch answer with its receipt (ADR 0056). */

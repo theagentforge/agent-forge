@@ -1,3 +1,4 @@
+import { CANARY } from "@forge/arena";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -97,6 +98,10 @@ describe("verified score pages", () => {
     expect(html).toContain("@sc-owner");
     expect(html).toContain("verified");
     for (const id of ids) expect(html).toContain(`/arena/proving-ground/${id}`);
+    // Proving-ground replays carry the canary (ADR 0058).
+    const replay = await (await fetchWorker(`/arena/proving-ground/${ids[0]}`, { headers: { Accept: "text/html" } })).text();
+    expect(replay).toContain(`<meta name="canary" content="${CANARY}">`);
+    expect(replay.split(CANARY).length - 1).toBeGreaterThanOrEqual(3);
     expect(html).toContain("By failure mode");
     expect(html).toContain("How to verify");
     expect(html).toContain(`/arena/agent/${o.agent.handle}/badge.svg`);

@@ -11,7 +11,8 @@ import { AGENT_LINE } from "./agent-line";
 import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
 import { copyBlock } from "./components";
-import { send, site, WEBMCP_SCRIPT } from "./pages";
+import { answerId, answerPath, latestFingerprintFor } from "./answers";
+import { notFound, send, site, WEBMCP_SCRIPT } from "./pages";
 
 // Skill scan pages (ADR 0026): paste or link a skill and see what it asks an agent to do; a shareable page per
 // public result; the rules; and Skill Watch, the public feed of flagged skills. Wording: "matches pattern X at line
@@ -126,7 +127,12 @@ site.post("/scan", async (c) => {
       body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Share this result</a></p>` : "");
     }
   } else body = html`<p class="notice warn">Give a link or paste the text.</p>`;
-  return send(
+  return scanResultPage(c, body, url);
+});
+
+/** The result page for a scan that has no public page to send people to (POST /scan, and /go for a held file). */
+const scanResultPage = (c: Parameters<typeof send>[0], body: unknown, url: string) =>
+  send(
     c,
     {
       title: "Skill scan result",
@@ -139,7 +145,6 @@ site.post("/scan", async (c) => {
     },
     { cache: false },
   );
-});
 
 /** The agent skill file, served from static assets; the Worker sees it first only to count fetches (pages.ts). */
 // CORS-open like the other discovery files, so a browser-based agent on another site can read them too.
@@ -170,8 +175,21 @@ site.get("/scan/rules", (c) =>
 
 site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
   const origin = c.env.PUBLIC_ORIGIN;
-  const row = await scanByFingerprint(getDb(c.env), `sha256:${c.req.param("hex")}`);
-  if (!row || !row.public) return c.notFound();
+  const db = getDb(c.env);
+  const row = await scanByFingerprint(db, `sha256:${c.req.param("hex")}`);
+  // One answer for unknown and private fingerprints alike, so the page never reveals that a private scan exists. Not
+  // 410: nothing public was deleted. Pasted-text results never get a page, and results held during a disclosure window
+  // (services/skill-seed.ts) are not public yet (ADR 0060).
+  if (!row || !row.public)
+    return notFound(c, "No public scan at this address", "There is no public scan page for this fingerprint. Most scans of pasted text stay private, and some results are held back for a while as their maintainers hear from us. Scan the file yourself to see today's result.");
+  // A clear result for a GitHub skill says the same as the skill's answer page (ADR 0060): the newest one points search
+  // engines there (canonical), and an older clear version stays reachable but out of search. Pages with a matched
+  // pattern quote the lines and stay their own.
+  const id = row.verdict === "clear" ? answerId(row.sourceUrl) : null;
+  const latest = id ? await latestFingerprintFor(db, id) : null;
+  // No newest found (the answer page couldn't read this skill's rows): leave the page as its own canonical rather than
+  // take the only indexable copy out of search.
+  const consolidate = id && latest ? (latest === row.fingerprint ? { canonicalPath: answerPath(id) } : { noindexFollow: true }) : {};
   const findings = row.findings as ScanFinding[];
   const page = `${origin}${scanPath(row.fingerprint)}`;
   const label = skillLabel(row.sourceUrl, row.name);
@@ -183,6 +201,7 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
     path: scanPath(row.fingerprint),
     image: `/og/scan/${row.fingerprint.replace("sha256:", "")}.png`,
     nav: "scan",
+    ...consolidate,
     body: html`<p class="eyebrow">Skill scan · first seen ${new Date(row.firstSeen).toISOString().slice(0, 10)} · scanned ${row.scans} ${row.scans === 1 ? "time" : "times"}</p>
 <h1 class="page-title">${label.title}${label.where ? html` <span class="muted title-where">· ${label.where}</span>` : ""}</h1>
 ${claw
@@ -196,6 +215,7 @@ ${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page
 ${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Add this badge to its README. It shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
 ${row.sourceUrl && row.verdict !== "clear" ? html`<form method="post" action="/scan?from=rescan"><input type="hidden" name="url" value="${row.sourceUrl.replace(/\/[0-9a-f]{40}\//, "/HEAD/")}"><p>Your skill? Change it, then <button class="btn chamfer" type="submit">Scan the latest version</button>. The new version gets its own page.</p></form>` : ""}</section>
 <p class="small muted">This page shows text patterns in one exact version of the file (fingerprint above), not a judgement of its author. Publisher? <a href="mailto:disputes@theagentforge.io?subject=Scan%20${row.fingerprint.slice(7, 19)}">Reply or dispute</a>, and we add your reply here.</p>
+${id ? html`<p class="small">Every scanned version of this skill, with field reports: <a href="${answerPath(id)}">Is ${label.title} safe to install?</a></p>` : ""}
 ${checkYours(origin, "result")}`,
   });
 });
@@ -302,6 +322,8 @@ site.post("/go", async (c) => {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
       c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), `scan:from:${from}`]).catch(() => {}));
       if (isPublic) return c.redirect(`${scanPath(result.fingerprint)}?from=${from}`, 303);
+      // A file held during a disclosure window has no page yet: show the asker the result here.
+      return scanResultPage(c, resultBlock(result, ""), q);
     }
   }
   return c.redirect(`/check?q=${encodeURIComponent(q.slice(0, 512))}&from=${from}`, 303);

@@ -1,5 +1,5 @@
-import { Attempt, attemptScore, RULES_HISTORY, RULES_VERSION, SEASON, taskById, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
-import { and, asc, eq, gte, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { anyTaskById, Attempt, attemptScore, heldOutSeeds, isAnyHeldOutSeed, isDevSplitSeed, isPracticeOnly, RULES_VERSION, SEASON, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
+import { and, asc, eq, gte, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as t from "../db/schema";
 import { getDb, newId } from "../services/db";
@@ -7,6 +7,7 @@ import { signReport } from "../services/signing";
 import { callModel, ProviderError, type CacheOptions, type ChatMessage } from "./adapters";
 import { armText, ARMS, type Arm } from "./arms";
 import { ALL_MODELS, modelById, type ArenaModel } from "./lineup";
+import { PANEL_KV, queuePanelsFromKv } from "./panel";
 import { lastHeadlineSlot, slotDate, WEEKLY_ATTEMPTS, WEEKLY_QUEUE_WINDOW_MS, weeklyModels, weeklySlug, weeklyTask } from "./headline-slot";
 
 // The bout runner. It runs inside the Worker's 5-minute cron: picks queued attempts, plays each one through the
@@ -80,11 +81,13 @@ export interface BoutCheckpoint {
   messages: ChatMessage[];
   costEstimated: boolean;
   provider: string | null;
+  /** The model string the provider reported serving (ADR 0058); absent in checkpoints written before it. */
+  modelVersion?: string | null;
   /** Ticks the bout has been played in so far. */
   ticks: number;
 }
 
-type Finished = { result: AttemptResult; log: LogEvent[]; costEstimated: boolean; provider: string | null };
+type Finished = { result: AttemptResult; log: LogEvent[]; costEstimated: boolean; provider: string | null; modelVersion: string | null };
 
 /** Plays one attempt to the end. Throws ProviderError if the provider fails (the run is then void and re-queued). */
 export async function playAttempt(
@@ -111,7 +114,8 @@ export async function playBout(
   twistId: string | null,
   opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number; cache?: CacheOptions | null } = {},
 ): Promise<Finished | { suspended: BoutCheckpoint; rateLimited?: boolean }> {
-  const task = taskById(run.task);
+  // Private families (ADR 0057) play here too; they can only be queued in practice events (planSchema).
+  const task = anyTaskById(run.task);
   if (!task) throw new Error(`Unknown task ${run.task}`);
   const attemptOpts = { twist: twistById(twistId), now: opts.now };
   const now = opts.now ?? Date.now;
@@ -135,6 +139,7 @@ export async function playBout(
       ];
   let estimated = cp?.costEstimated ?? false;
   let provider: string | null = cp?.provider ?? null;
+  let modelVersion: string | null = cp?.modelVersion ?? null;
   let turnsThisTick = 0;
   while (!a.done) {
     if (a.outOfTurns()) {
@@ -143,7 +148,7 @@ export async function playBout(
     }
     // Only here, between a finished turn and the next model call, is a bout ever suspended.
     if (opts.suspendAt !== undefined && turnsThisTick > 0 && now() >= opts.suspendAt) {
-      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, ticks: (cp?.ticks ?? 0) + 1 } };
+      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1 } };
     }
     turnsThisTick++;
     let reply: Awaited<ReturnType<typeof callModel>>;
@@ -155,12 +160,13 @@ export async function playBout(
         // The provider's reason (429 rate limit, 402 out of credit, 403 key limit) goes to the Worker log, so a long
         // pause can be told apart from a slow provider without guessing.
         console.warn("arena_paused", model.id, e.message.slice(0, 200));
-        return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, ticks: (cp?.ticks ?? 0) + 1 }, rateLimited: true };
+        return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1 }, rateLimited: true };
       }
       throw e;
     }
     estimated ||= reply.costEstimated;
     provider = reply.provider;
+    modelVersion = reply.servedModel ?? modelVersion;
     const ko = a.recordTurn({
       tokensIn: reply.tokensIn,
       tokensOut: reply.tokensOut,
@@ -186,7 +192,7 @@ export async function playBout(
       if (a.done) break;
     }
   }
-  return { result: a.result!, log: a.log, costEstimated: estimated, provider };
+  return { result: a.result!, log: a.log, costEstimated: estimated, provider, modelVersion };
 }
 
 const asCheckpoint = (v: unknown) => (v && typeof v === "object" && (v as BoutCheckpoint).v === 1 ? (v as BoutCheckpoint) : null);
@@ -210,21 +216,18 @@ function parseArgs(s: string): unknown {
 export const PROMPT_CACHE_FROM = Date.UTC(2026, 9, 26);
 export const promptCacheOn = (event: { kind: string; createdAt: number }) => event.kind === "practice" || event.createdAt >= PROMPT_CACHE_FROM;
 
-/** When the rules in force now took effect. */
-export function rulesInForceSince() {
-  const r = RULES_HISTORY.find((v) => v.version === RULES_VERSION) ?? RULES_HISTORY.at(-1)!;
-  return Date.parse(r.from ?? `${r.date}T00:00:00Z`);
-}
-
 /**
  * Plain practice: no Lab arm and no twist. Only these skip solved jobs (S1). Ranked events keep their plans for
- * fairness, and Lab events are pre-registered, so neither ever loses an attempt.
+ * fairness, and Lab events are pre-registered, so neither ever loses an attempt. A practice event created on hold
+ * (status "planned", e.g. the contamination test, docs/data/contamination-test-1.md) is a pre-registered study too:
+ * it keeps every attempt while held.
  */
-export const isPlainPractice = (e: { kind: string; arm?: string | null; twist?: string | null }) => e.kind === "practice" && !e.arm && !e.twist;
+export const isPlainPractice = (e: { kind: string; arm?: string | null; twist?: string | null; status?: string; hold?: boolean }) =>
+  e.kind === "practice" && !e.arm && !e.twist && !e.hold && e.status !== "planned";
 
 /**
  * "Solved" (S1): the model got one version of the job (task and seed; the task id carries the tier) right on 3 or more
- * attempts out of 3 or more, all under the rules in force now, in plain conditions (no arm, no twist: the published
+ * attempts out of 3 or more, all scored by the rules in force now (the `rules` stamp on the stored result), in plain conditions (no arm, no twist: the published
  * harness, as in a ranked bout). It's the published "right 3 times out of 3" (views.ts `consistency`). Returns
  * `model:task` keys.
  */
@@ -237,7 +240,8 @@ export async function solvedPairs(env: Env, models: string[], tasks: string[]) {
     .where(
       and(
         eq(t.arenaRuns.status, "done"),
-        gte(t.arenaRuns.finishedAt, rulesInForceSince()),
+        // Scored by the rules in force now: the stamp the runner writes (rules 0.6 on), never the clock.
+        sql`json_extract(${t.arenaRuns.result}, '$.rules') = ${RULES_VERSION}`,
         inArray(t.arenaRuns.modelId, models),
         inArray(t.arenaRuns.task, tasks),
         isNull(t.arenaEvents.arm),
@@ -255,7 +259,7 @@ async function dropSolved(env: Env, modelId: string, task: string, alsoId: strin
   const plain = db
     .select({ id: t.arenaEvents.id })
     .from(t.arenaEvents)
-    .where(and(eq(t.arenaEvents.kind, "practice"), isNull(t.arenaEvents.arm), isNull(t.arenaEvents.twist)));
+    .where(and(eq(t.arenaEvents.kind, "practice"), isNull(t.arenaEvents.arm), isNull(t.arenaEvents.twist), ne(t.arenaEvents.status, "planned")));
   const gone = await db
     .delete(t.arenaRuns)
     .where(
@@ -413,7 +417,9 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
             costEstimated: r.costEstimated,
             tokens: r.result.tokensIn + r.result.tokensOut,
             provider: r.provider,
-            result: r.result,
+            modelVersion: r.modelVersion,
+            // The rules that scored it (rules 0.6 on): its version comes from this stamp, not the clock.
+            result: { ...r.result, rules: RULES_VERSION },
             log: r.log,
             signature,
             checkpoint: null,
@@ -439,10 +445,14 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   return out;
 }
 
-/** Queues an event: every model × task × seed × attempt. Returns the event id. */
+/**
+ * Queues an event: every model × task × seed × attempt. With `heldOut` (ADR 0058), each task also gets its first
+ * `heldOut` private held-out seeds, same models and attempts, marked `held_out`: scored apart and never published.
+ * Returns the event id.
+ */
 export async function planEvent(
   env: Env,
-  p: { slug: string; name: string; season: string; kind: "card" | "guest" | "practice"; twist?: string | null; arm?: Arm | null; models: string[]; tasks: string[]; seeds: number[]; attempts: number },
+  p: { slug: string; name: string; season: string; kind: "card" | "guest" | "practice"; twist?: string | null; arm?: Arm | null; hold?: boolean; models: string[]; tasks: string[]; seeds: number[]; attempts: number; heldOut?: number },
 ) {
   const db = getDb(env);
   const [existing] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, p.slug));
@@ -452,7 +462,10 @@ export async function planEvent(
     const [has] = await db.select({ id: t.arenaRuns.id }).from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId)).limit(1);
     if (has) return eventId;
   } else {
-    await db.insert(t.arenaEvents).values({ id: eventId, slug: p.slug, name: p.name, season: p.season, kind: p.kind, status: "running", twist: p.twist ?? null, arm: p.arm ?? null });
+    // `hold`: created held (status "planned"), so its runs are played and stored but no public surface reads them until
+    // the status is set to "running": the results policy's notice period (/results-policy) and review holds (ADR 0041).
+    // Holding from the start leaves no window in which the first finished runs are public.
+    await db.insert(t.arenaEvents).values({ id: eventId, slug: p.slug, name: p.name, season: p.season, kind: p.kind, status: p.hold ? "planned" : "running", twist: p.twist ?? null, arm: p.arm ?? null });
   }
   // S1: plain practice leaves out the jobs a model has already got right 3 times out of 3 under the rules in force.
   // Ranked and Lab plans are queued exactly as written.
@@ -460,11 +473,25 @@ export async function planEvent(
   const rows = p.tasks
     .flatMap((task) => p.seeds.flatMap((seed) => Array.from({ length: p.attempts }, (_, i) => p.models.map((modelId) => ({ id: newId(), eventId, modelId, task, seed, attemptNo: i + 1, status: "queued" as const })))).flat())
     .filter((r) => !solved.has(`${r.modelId}:${r.task}`));
+  // A seed passed in by hand that happens to be held out is still marked held out: it is never published.
+  const marked = rows.map((r) => (heldOutSeeds(r.task).includes(r.seed) ? { ...r, heldOut: true } : r));
+  const heldRows = (p.heldOut ?? 0) > 0
+    ? p.tasks.flatMap((task) =>
+        heldOutSeeds(task)
+          .slice(0, p.heldOut)
+          .filter((seed) => !p.seeds.includes(seed))
+          .flatMap((seed) => Array.from({ length: p.attempts }, (_, i) => p.models.map((modelId) => ({ id: newId(), eventId, modelId, task, seed, attemptNo: i + 1, status: "queued" as const, heldOut: true })))).flat(),
+      )
+    : [];
   if (solved.size) console.log("arena: plan skips solved practice", p.slug, [...solved].join(", "));
   // Models are interleaved, so a partial run still compares like with like. D1 allows 100 bound values per
   // statement and each row binds 9, so insert in batches of 10, all in one atomic batch (so a failure leaves no partial plan).
+  // Held-out rows bind one value more (held_out), so they go 9 to a statement, apart from the public rows.
+  const pub = marked.filter((r) => !("heldOut" in r));
+  const held = [...marked.filter((r) => "heldOut" in r), ...heldRows];
   const statements = [];
-  for (let i = 0; i < rows.length; i += 10) statements.push(db.insert(t.arenaRuns).values(rows.slice(i, i + 10)));
+  for (let i = 0; i < pub.length; i += 10) statements.push(db.insert(t.arenaRuns).values(pub.slice(i, i + 10)));
+  for (let i = 0; i < held.length; i += 9) statements.push(db.insert(t.arenaRuns).values(held.slice(i, i + 9)));
   const [first, ...rest] = statements;
   if (first) await db.batch([first, ...rest]);
   return eventId;
@@ -475,7 +502,11 @@ export const SEASON_SEED_MIN = 1_000_000;
 const MAX_SEED = 2 ** 31 - 1;
 export function seasonSeeds(n: number) {
   const out = new Set<number>();
-  while (out.size < n) out.add(SEASON_SEED_MIN + (crypto.getRandomValues(new Uint32Array(1))[0]! % (MAX_SEED - SEASON_SEED_MIN)));
+  while (out.size < n) {
+    const s = SEASON_SEED_MIN + (crypto.getRandomValues(new Uint32Array(1))[0]! % (MAX_SEED - SEASON_SEED_MIN));
+    // A public draw never lands on a private held-out seed (ADR 0058).
+    if (!isAnyHeldOutSeed(s)) out.add(s);
+  }
   return [...out];
 }
 
@@ -487,13 +518,27 @@ export const planSchema = z.strictObject({
   kind: z.enum(["card", "guest", "practice"]),
   twist: z.string().max(64).nullable().optional(),
   arm: z.enum(ARMS as [Arm, ...Arm[]]).nullable().optional(),
+  /** Create the event held (not public) until its status is set to "running" (results policy notice, ADR 0053). */
+  hold: z.boolean().optional(),
   models: z.array(z.string().max(64)).min(1).max(20),
   tasks: z.array(z.string().max(64)).min(1).max(20),
   seeds: z.array(z.number().int().min(1).max(MAX_SEED)).min(1).max(100),
   attempts: z.number().int().min(1).max(30),
-}).refine((p) => p.kind !== "card" || p.seeds.every((s) => s >= SEASON_SEED_MIN), {
-  message: "Season (card) events need random seeds of at least 1,000,000 (RULES-season-0: Seeds)",
-});
+  /** ADR 0058: add each task's first N private held-out seeds (scored apart, never published). */
+  heldOut: z.number().int().min(0).max(4).optional(),
+})
+  .refine((p) => p.kind !== "card" || p.seeds.every((s) => s >= SEASON_SEED_MIN), {
+    message: "Season (card) events need random seeds of at least 1,000,000 (RULES-season-0: Seeds)",
+  })
+  // ADR 0057: the private families start on the practice ladder; a ranked event can't include one until it's promoted.
+  // D9: the dev-split seeds are published with their worlds and reference plays, so no ranked event (card or guest) may
+  // use one.
+  .refine((p) => p.kind === "practice" || !p.seeds.some(isDevSplitSeed), {
+    message: "The published dev-split seeds (900001 to 900005) run in practice events only (ADR 0057)",
+  })
+  .refine((p) => p.kind === "practice" || !p.tasks.some(isPracticeOnly), {
+    message: "Private job families run in practice events only until promoted (ADR 0057)",
+  });
 
 /**
  * The weekly frontier headline bout (ADR 0023 §2): at the first tick at or after each Thursday 8 pm US Eastern slot
@@ -517,6 +562,9 @@ export async function queueWeeklyHeadline(env: Env & { OPENROUTER_API_KEY?: stri
     tasks: [task.id],
     seeds: seasonSeeds(1),
     attempts: WEEKLY_ATTEMPTS,
+    // ADR 0058 (approved spend, about $1.50 a week): the same models and attempts on the job's first private held-out
+    // seed, never published; counted only in the public-vs-held-out gap (pooled across weekly bouts).
+    heldOut: 1,
   });
   const db = getDb(env);
   const [existing] = await db.select({ id: t.arenaEvents.id }).from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
@@ -542,6 +590,12 @@ export async function arenaTick(env: Env & { OPENROUTER_API_KEY?: string }, star
       }
       await env.KV.delete("arena:plan");
     }
+    // The longitudinal panel (ADR 0058, D7): model ids left in KV `arena:panel` by an admin session.
+    // A failure here is logged and never stops the tick (the weekly bout and the queue still run).
+    if (await env.KV.get(PANEL_KV).catch(() => null))
+      await queuePanelsFromKv(env, startedAt)
+        .then((out) => console.log("arena: panel", JSON.stringify(out)))
+        .catch((e) => console.error("arena: panel not queued", String(e)));
     const weekly = await queueWeeklyHeadline(env, startedAt).catch((e) => {
       console.error("arena: weekly headline bout not queued", String(e));
       return null;

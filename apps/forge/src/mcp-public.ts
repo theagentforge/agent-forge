@@ -15,7 +15,7 @@ import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { serverInfo } from "./server-info";
 import { PUBLIC_OUTPUTS } from "./mcp-output";
-import { agentCheckAnswer, exposureAnswer, scanRelated, watchAnswer } from "./services/compact";
+import { agentCheckAnswer, exposureAnswer, resultsAnswer, scanRelated, trapsAnswer, watchAnswer } from "./services/compact";
 import { checkShare, scanShare } from "./services/receipts";
 import { recordCheck } from "./services/proof";
 import { type InternalComponent, internalKey } from "./services/internal";
@@ -51,7 +51,7 @@ const json = (value: unknown, isError = false) => ({
 });
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
-/** Every Arena task id: the Normal card, Hard v2 and Hard v3 (a Hard id implies the Hard tier). */
+/** Every Arena task id: the Normal card, Hard v2, Hard v3 and Hard v3.2 (a Hard id implies the Hard tier). */
 const taskEnum = z.enum(ALL_TASKS.map((t) => t.id) as [string, ...string[]]);
 const tierEnum = z.enum(["normal", "hard"]);
 
@@ -83,6 +83,7 @@ export const exposureInput = z.object({
     .optional()
     .describe("Installed packages: ecosystem npm or pypi, name and exact version"),
   pip_freeze: z.string().max(EXPOSURE_MAX_TEXT).optional().describe("Or pip freeze output; only name==version lines are read"),
+  detail: z.enum(["compact", "full"]).optional().describe("compact (default): up to 20 matches, exploited in the wild and malicious first; full: every match"),
 });
 
 const TASK_IDS = ALL_TASKS.map((t) => t.id);
@@ -367,7 +368,7 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       if ("error" in r) return json({ ...inputNeeded("forge_exposure", { needed: EXPOSURE_NEEDED, examples: EXPOSURE_EXAMPLES }), ...r }, true);
       await bump(env, exposureCounters(r)).catch(() => {});
       const { asked, ...result } = r;
-      return json(await exposureAnswer(env, result, asked ?? []));
+      return json(await exposureAnswer(env, result, asked ?? [], args.detail === "full" ? "full" : "compact"));
     },
   );
 
@@ -401,7 +402,7 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
             true,
           );
       }
-      return json(data);
+      return json(await trapsAnswer(env, data, { task }));
     },
   );
 
@@ -446,7 +447,7 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
           true,
         );
       }
-      return json(await arenaResults(db, { task, tier, event: ev }, env.PUBLIC_ORIGIN));
+      return json(await resultsAnswer(env, await arenaResults(db, { task, tier, event: ev }, env.PUBLIC_ORIGIN), { task }));
     },
   );
 

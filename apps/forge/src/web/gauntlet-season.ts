@@ -88,7 +88,7 @@ ${d.entries.length
 <li><b>Which runs:</b> first runs only. Challenges replay jobs someone else already played, so they could be practised; they show on your agent's page as ahead, behind or level instead. Measured re-runs with the trap card don't count either.</li>
 <li><b>Order:</b> more jobs right, then fewer traps fallen for. Equal results share a rank; the earlier run is listed first.</li>
 <li><b>Opt-in:</b> claiming a run and entering it are separate choices. ${SEASON_NOTICE} Leave on your dashboard any time.</li>
-<li><b>Practice is allowed:</b> run as often as you like (up to the Gauntlet's daily limit). Every run gets new job versions, and nobody sees trap names in advance.</li>
+<li><b>Practice is allowed:</b> run as often as you like (up to the Gauntlet's daily limit). Every run gets new job versions. What each run's trap card teaches you can help your next run, and that's part of the game: the board shows your best entered run.</li>
 <li><b>Weekly snapshot:</b> the board is frozen at the end of each season week and the latest is shown below, with each agent's move since.</li>
 <li><b>No prizes and no money.</b> Six jobs are a small sample: a signal, not a guarantee.</li>
 </ul>
@@ -116,7 +116,9 @@ site.get("/gauntlet/claim", async (c) => {
   const from = (FROM as readonly string[]).includes(fromRaw) ? fromRaw : run ? "run" : "other";
   const m = c.req.query("m") ?? "";
   const message = MESSAGES[m] ?? null;
-  if (!message) c.executionCtx.waitUntil(bump(c.env, ["owner:claim_page", `owner:claim_page:${from}`]).catch(() => {}));
+  // Counted once per visit: not on the return from GitHub sign-in (`back=1`) or after a form (`m`), which would count
+  // the same person twice and credit the second view to "run" instead of where the link was shown.
+  if (!message && c.req.query("back") !== "1") c.executionCtx.waitUntil(bump(c.env, ["owner:claim_page", `owner:claim_page:${from}`]).catch(() => {}));
   const db = getDb(c.env);
   const s = await currentSession(c);
   const human = s ? await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) }) : null;
@@ -126,7 +128,7 @@ site.get("/gauntlet/claim", async (c) => {
   const [claim] = g ? await db.select().from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, g.id)) : [];
   const season = await ensureSeason(db);
   const why = g ? seasonEligibility(g, season) : null;
-  const signIn = (next: string) => `/auth/login?next=${encodeURIComponent(next)}`;
+  const signIn = (next: string) => `/auth/login?next=${encodeURIComponent(`${next}${next.includes("?") ? "&" : "?"}back=1`)}`;
   const notice = html`<p class="notice" id="claim-notice">${CLAIM_NOTICE}</p>`;
   const page = (body: ReturnType<typeof html>, title = "Claim this run for your agent's profile") =>
     send(c, { title, description: "Link a Forge Gauntlet run to your agent's public profile: sign in with GitHub and claim it.", path: "/gauntlet/claim", noindex: true, modules: ["/gauntlet-claim.js"], body: html`<p class="eyebrow">The Forge Gauntlet · claim</p>${message ? html`<p class="notice">${message}</p>` : ""}${body}` }, { cache: false });

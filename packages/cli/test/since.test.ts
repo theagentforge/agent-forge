@@ -47,6 +47,7 @@ function machine(reply: (url: string, init?: RequestInit) => Response, opts: { c
     readCache: async (name) => cache.get(name) ?? null,
     writeCache: async (name, text) => void cache.set(name, text),
     confirm: async () => opts.confirm ?? null,
+    terminal: true,
     env: opts.token ? { FORGE_TOKEN: opts.token } : {},
     sha256Hex,
     skillFiles: async () => [],

@@ -7,8 +7,13 @@ import { site } from "./pages";
 // that could go stale. The human datasheet (docs/data/datasheet.md) has the same headings.
 
 export const CROISSANT_PATH = "/arena/croissant.json";
+/** The day /arena/dataset.json first went public (the Arena pages and dataset shipped on 15 Oct 2026). */
+export const DATASET_FIRST_PUBLISHED = "2026-10-15";
 
-/** The Croissant 1.0 JSON-LD context, as given in the specification (mlcommons.org/croissant/1.0), plus `rai`. */
+/**
+ * The Croissant 1.0 JSON-LD context, as given in the specification (mlcommons.org/croissant/1.0), `rai` included.
+ * Every key of the standard context must be here: the reference validator (mlcroissant) warns on any missing one.
+ */
 const CONTEXT = {
   "@language": "en",
   "@vocab": "https://schema.org/",
@@ -20,6 +25,7 @@ const CONTEXT = {
   data: { "@id": "cr:data", "@type": "@json" },
   dataType: { "@id": "cr:dataType", "@type": "@vocab" },
   dct: "http://purl.org/dc/terms/",
+  equivalentProperty: "cr:equivalentProperty",
   examples: { "@id": "cr:examples", "@type": "@json" },
   extract: "cr:extract",
   field: "cr:field",
@@ -39,6 +45,7 @@ const CONTEXT = {
   regex: "cr:regex",
   repeated: "cr:repeated",
   replace: "cr:replace",
+  samplingRate: "cr:samplingRate",
   sc: "https://schema.org/",
   separator: "cr:separator",
   source: "cr:source",
@@ -74,6 +81,8 @@ export function croissant(origin: string) {
     publisher: { "@type": "sc:Organization", name: "The Agent Forge", url: origin },
     isAccessibleForFree: true,
     isLiveDataset: true,
+    // The first public Arena bouts and /arena/dataset.json went live on 15 Oct 2026 (recommended by Croissant 1.0).
+    datePublished: DATASET_FIRST_PUBLISHED,
     version: RULES_VERSION.replace(/^rules /, ""),
     citeAs: cite.bibtex,
     keywords: ["AI agents", "evaluation", "benchmark", "tool use", "prompt injection", "agent safety", "business tasks"],
@@ -112,8 +121,9 @@ export function croissant(origin: string) {
         description: "Every published refereed run, regenerated on request (cached 5 minutes). It changes as bouts finish, so it has no fixed checksum.",
         contentUrl: `${origin}/arena/dataset.json`,
         encodingFormat: "application/json",
-        // A live file has no stable hash; this is the convention the Croissant project documents for that case.
-        sha256: "https://github.com/mlcommons/croissant/issues/80",
+        // No checksum: the file is live (isLiveDataset), and Croissant 1.0 needs md5 or sha256 only for files that
+        // aren't. The reference loader (mlcroissant) skips the hash check for a live file without one, but treats any
+        // value given (even the "issues/80" placeholder) as a real hash and fails to load the records.
       },
     ],
     recordSet: [
@@ -128,7 +138,7 @@ export function croissant(origin: string) {
           field("event", "sc:Text", "Event slug."),
           field("kind", "sc:Text", "Event kind: card or guest (ranked) or practice (never ranked)."),
           field("model", "sc:Text", "The Forge's lineup id of the model."),
-          field("task", "sc:Text", "Job id; Hard-tier jobs end in -hard or -hard3."),
+          field("task", "sc:Text", "Job id; Hard-tier job ids contain -hard (for example refund-hard, refund-hard3, refund-hard3-2)."),
           field("tier", "sc:Text", "normal or hard."),
           field("seed", "sc:Integer", "Seed that built the job's sandbox; the same seed gives the same world."),
           field("attempt", "sc:Integer", "Attempt number on that seed (1 to 3)."),
@@ -139,13 +149,16 @@ export function croissant(origin: string) {
           field("tokens", "sc:Integer", "Tokens used."),
           field("provider", "sc:Text", "Serving provider recorded for the run."),
           field("finishedAt", "sc:Integer", "Finish time in milliseconds since 1970 (UTC)."),
-          field("rules_version", "sc:Text", "Referee and scoring rules version in force at the finish time."),
+          field("rules_version", "sc:Text", "Referee and scoring rules version that scored the run (stamped on the result from rules 0.6; older runs by finish time)."),
           field("task_version", "sc:Text", "Task version of the job at the finish time."),
-          field("traps_triggered", "sc:Text", "Public trap ids (FA-...) the attempt fell for.", "traps_triggered[*]", true),
+          // Repeated field: the JSONPath selects the list itself (one value per run). "traps_triggered[*]" would select
+          // one value per trap, so the column lengths differ and mlcroissant can't build the records.
+          field("traps_triggered", "sc:Text", "Public trap ids (FA-...) the attempt fell for.", "traps_triggered", true),
           field("log", "sc:URL", "Path of the run's signed full log."),
           field("provenance_source", "sc:Text", "Where the record came from (house_bout for every row of this file).", "provenance.source"),
           field("provenance_model_exact", "sc:Text", "Exact model id sent to the gateway.", "provenance.model.exact"),
           field("provenance_model_maker", "sc:Text", "Lab that makes the model, as named in the lineup.", "provenance.model.maker"),
+          field("provenance_served_by", "sc:Text", "Serving provider recorded for the run, or the provider the model is pinned to when none was recorded.", "provenance.model.served_by"),
           field("provenance_run_date", "sc:Date", "UTC date the run finished.", "provenance.run_date"),
           field("provenance_terms_version", "sc:Text", "Terms of Service version in force on the run date.", "provenance.terms_version"),
           field("provenance_privacy_version", "sc:Text", "Privacy Policy version in force on the run date.", "provenance.privacy_version"),

@@ -1,4 +1,6 @@
 import { env } from "cloudflare:workers";
+import { RULES_VERSION } from "@forge/arena";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { act, DEFAULT_BAR, ladder, PG_DAILY_LIMIT, startChallenge } from "../src/arena/proving";
 import * as t from "../src/db/schema";
@@ -37,6 +39,9 @@ describe("Proving Ground", () => {
     const end = (await result(await rpc(token, "tools/call", { name: "arena_act", arguments: { attempt_id: start.attempt_id, tool: "finish", args: { status: "cannot_complete", summary: "Checking is short and savings is locked." } } }))).result.structuredContent;
     expect(end.verdict).toMatchObject({ passed: true });
     expect(end.verdict.score).toBeGreaterThan(DEFAULT_BAR);
+    // The stored result carries the rules that scored it (rules 0.6 on), so its label never depends on the clock.
+    const [stored] = await getDb(env).select().from(t.arenaPgAttempts).where(eq(t.arenaPgAttempts.id, start.attempt_id));
+    expect((stored!.result as { rules?: string }).rules).toBe(RULES_VERSION);
 
     const board = await ladder(getDb(env));
     expect(board.find((r) => r.owner === "pg-player")).toMatchObject({ games: 1, wins: 1 });

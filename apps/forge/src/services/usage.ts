@@ -343,6 +343,6 @@ export async function skillStats(env: Env, now = Date.now(), days = 7) {
     skill_file_browser_views: get("skillmd:browser"),
     /** Requests from other agents over A2A (/a2a), and how many asked for each skill. */
     a2a_requests: get("a2a:requests"),
-    a2a_by_skill: { check_tool: get("a2a:skill:check-tool"), scan_skill: get("a2a:skill:scan-skill"), trap_card: get("a2a:skill:trap-card") },
+    a2a_by_skill: { check_tool: get("a2a:skill:check-tool"), scan_skill: get("a2a:skill:scan-skill"), trap_card: get("a2a:skill:trap-card"), arena_results: get("a2a:skill:arena-results") },
   };
 }
