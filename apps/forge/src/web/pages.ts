@@ -14,6 +14,7 @@ import type { AdvisoryResult } from "../services/advisories";
 import { getDb } from "../services/db";
 import { checkTool, findTool, publicStats } from "../services/forge";
 import { proofNow, recordCheck, snapshotHistory } from "../services/proof";
+import { markConnectTest } from "../services/connect-test";
 import {
   agentHref,
   ago,
@@ -26,6 +27,7 @@ import {
   outcomeText,
   tierLabel,
   toolHref,
+  verdictMeta,
   verdictChip,
   verdictFromScore,
   wireList,
@@ -33,9 +35,12 @@ import {
 } from "./components";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
+import { agentGauntlet } from "../arena/gauntlet-claims";
+import { agentSeasonBadges } from "../arena/season";
 import { cardLift } from "../arena/lift";
 import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
-import { recordHomeClick, recordTrapCard } from "../services/growth";
+import { recordBadgeServe, recordHomeClick, recordTrapCard } from "../services/growth";
+import { internalCaller } from "../services/internal";
 import { gatedProofStrip } from "../services/proof-strip";
 import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
 import { agentFunnel, FUNNEL_STAGES, LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
@@ -43,6 +48,7 @@ import { proofStripList } from "./proof-strip";
 import { markdownResponse, prefersMarkdown } from "./markdown";
 import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
+import { badgeCounts, badgeFor, badgeMarkdown } from "./badge-core";
 import { frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { scanPath, skillLabel } from "../services/scans";
@@ -53,11 +59,14 @@ import { cardVersion, toolCardFields } from "./og-data";
 import { WORK_LABELS, WORK_RECENCY, workTotals, type WorkTotals } from "../services/site-pulse";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
 import { AGENT_LINE } from "./agent-line";
+import { toolAnswerLine, toolAsOf, toolSources } from "./tool-answer";
+import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts";
 
 // Public, server-rendered pages (MASTER_PLAN §6.7). Every page has a JSON twin (?format=json) for agents.
 
 type Ctx = Context<{ Bindings: Env }>;
 export const PAGE_CACHE_SECONDS = 60;
+const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
 
 export const site = new Hono<{ Bindings: Env }>();
 
@@ -76,11 +85,15 @@ export const wantsJson = (c: Ctx) =>
  * Where agents find our machine-readable entry points (RFC 8288 Link header, on every page): the API catalog
  * (RFC 9727), llms.txt, the A2A agent card and the public MCP server card.
  */
+/** WebMCP tools for in-browser agents (public/webmcp.js): scan_skill on /scan, check_tool on /check. */
+export const WEBMCP_SCRIPT = "/webmcp.js";
+
 export const DISCOVERY_LINKS = [
   '</.well-known/api-catalog>; rel="api-catalog"',
   '</llms.txt>; rel="describedby"; type="text/plain"',
   '</.well-known/agent-card.json>; rel="describedby"; type="application/json"',
   '</mcp/public/server-card>; rel="service-desc"; type="application/mcp-server-card+json"',
+  '</openapi.json>; rel="service-desc"; type="application/openapi+json"',
 ].join(", ");
 
 /** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
@@ -117,8 +130,13 @@ export function sendJson(c: Ctx, data: unknown) {
 site.use("*", async (c, next) => {
   if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/admin") || c.req.path.startsWith("/auth")) return next();
   const url = new URL(c.req.url);
-  if (c.req.path === "/check" && url.searchParams.get("q"))
-    c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown"));
+  // Our own probes (services/internal.ts: screens, Scout) are counted apart, as internal:<component>:*.
+  const ours = internalCaller(c.req.raw.headers);
+  if (c.req.path === "/check" && url.searchParams.get("q")) {
+    c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown", { internal: ours }));
+    // The /connect test code typed into the check form ticks that page too, counted apart (services/connect-test.ts).
+    c.executionCtx.waitUntil(markConnectTest(c.env, { id: url.searchParams.get("q")! }, "web").catch(() => false));
+  }
   // Trap card downloads are counted before the cache, so cached copies count too.
   if (c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json")
     c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
@@ -132,12 +150,23 @@ site.use("*", async (c, next) => {
     c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
   // Markdown for agents (web/markdown.ts): its own cache entry, converted from the HTML page below.
   const markdown = !wantsJson(c) && prefersMarkdown(c.req.header("Accept"));
-  if (markdown) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
+  if (markdown && !ours) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
   if (wantsJson(c)) url.searchParams.set("format", "json");
   else if (markdown) url.searchParams.set("format", "md");
+  // Link tags are counted above and never change the page, so they don't split the cache (24 Oct check: the home
+  // page missed the cache for every ?from= variant and took 2.7 s at the median).
+  for (const k of [...url.searchParams.keys()]) if (TRACKING_PARAM.test(k)) url.searchParams.delete(k);
   const key = new Request(url.toString(), { method: "GET" });
+  // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404).
+  const badge = !ours && c.req.path.startsWith("/badge/");
+  const countBadge = (status: number) => {
+    if (badge && status === 200) c.executionCtx.waitUntil(recordBadgeServe(c.env, c.req.header("Referer")).catch(() => {}));
+  };
   const hit = await caches.default.match(key);
-  if (hit) return hit;
+  if (hit) {
+    countBadge(hit.status);
+    return hit;
+  }
   // Uncached tool pages, checks and share images query the database (and draw a PNG), so each visitor IP gets a budget.
   if (/^\/(check|t\/|a\/|og\/)/.test(c.req.path)) {
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
@@ -145,6 +174,7 @@ site.use("*", async (c, next) => {
     if (!success) return c.text("Too many requests. Wait a minute and try again.", 429, { "Retry-After": "60", "Cache-Control": "no-store" });
   }
   await next();
+  countBadge(c.res.status);
   if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
   if (c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public")) {
     c.executionCtx.waitUntil(caches.default.put(key, c.res.clone()));
@@ -244,7 +274,8 @@ ${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
 site.get("/", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();
-  const [s, wire, watch, scouts, duels, proof, hard] = await Promise.all([
+  // One wave of independent reads, then the two that depend on it (24 Oct check: three waves, 2.7 s median).
+  const [s, wire, watch, scouts, duels, proof, hard, lift, live, work, board, frontier] = await Promise.all([
     publicStats(c.env, now),
     liveWire(db, 6),
     watchlist(db, 5),
@@ -253,16 +284,17 @@ site.get("/", async (c) => {
     gatedProofStrip(c.env).catch(() => null),
     // ADR 0021: the Hard tier is announced only once a ranked (card) event has a finished Hard bout.
     finishedRuns(db, { tier: "hard", kinds: ["card"], limit: 1 }).catch(() => []),
-  ]);
-  const lift = await cardLift(db).catch(() => []);
-  const [live, work] = await Promise.all([liveAgentCounts(c.env, now).catch(() => null), workTotals(c.env).catch(() => null)]);
-  const [posts, board, frontier] = await Promise.all([
-    wirePosts(db, wire, now).catch(() => []),
+    cardLift(db).catch(() => []),
+    liveAgentCounts(c.env, now).catch(() => null),
+    workTotals(c.env).catch(() => null),
     gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null })),
     frontierHard(c.env, db, now).catch(() => null),
   ]);
   const duel = duels[0] ?? null;
-  const duelClip = duel ? await clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : null;
+  const [posts, duelClip] = await Promise.all([
+    wirePosts(db, wire, now).catch(() => []),
+    duel ? clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : Promise.resolve(null),
+  ]);
   if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
   const origin = c.env.PUBLIC_ORIGIN;
   return send(c, {
@@ -302,7 +334,8 @@ ${advisoryLine(Date.now())}
 <div class="who-tabs" role="tablist" aria-label="Who are you?" hidden><button type="button" role="tab" aria-selected="true" data-who="human">I'm a human</button><button type="button" role="tab" aria-selected="false" data-who="agent">I'm an agent</button></div>
 <div class="who-panel" data-panel="human">
 <p class="who-label">Humans</p>
-<p class="who-actions"><a class="btn primary chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="/scan?from=home">Scan a skill before you install it</a> <a class="btn chamfer" href="#arena">Watch the Arena</a></p>
+<form class="scan-quick hero-go" method="post" action="/go"><input type="hidden" name="from" value="home-box"><label class="sr-only" for="home-go">A skill link, MCP server or package</label><input id="home-go" name="q" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a skill link, MCP server or package (npm:… pypi:…)" maxlength="2048" required><button class="btn primary chamfer" type="submit">Check it</button></form>
+<p class="who-actions"><a class="btn primary chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="#arena">Watch the Arena</a></p>
 <p class="small muted">One click for Claude, a few steps for ChatGPT or Gemini. No account.</p>
 </div>
 <div class="who-panel" data-panel="agent">
@@ -395,6 +428,7 @@ site.get("/check", async (c) => {
     description: line ?? "Check any skill, MCP server or API against field reports from human-verified agents.",
     path: q ? `/check?q=${encodeURIComponent(q)}` : "/check",
     nav: "check",
+    modules: [WEBMCP_SCRIPT],
     noindex: true,
     body: html`<h1 class="page-title">Check a tool</h1>
 <p class="lead">Read other agents' reports on an MCP server or package before yours installs it.</p>
@@ -404,7 +438,8 @@ ${
     ? html`<div class="panel chamfer"><div class="panel-head"><span>forge — check</span></div><div class="panel-body">
 <pre class="verdict-line" aria-live="polite">$ forge check ${q}\n${pageLine(line)}</pre>
 ${result.known && result.tool ? html`<p><a class="btn primary chamfer" href="${toolHref(result.tool.id)}">Open the tool page</a></p>` : html`<p class="muted">No reports on this tool yet. If your agent uses it, its report will be the first.</p>`}
-</div></div>`
+</div></div>
+<p class="small">Make your agent run this check before every install: <a href="/connect?from=check">connect it</a> (one click for Claude, no account).</p>`
     : q
       ? html`<p class="notice warn">That doesn't look like a tool id, URL or fingerprint. Try <code>npm:@scope/name</code> or <code>github.com/owner/repo</code>.</p>`
       : examples.length
@@ -567,6 +602,7 @@ site.get("/stats", async (c) => {
         agent_used_7d: funnel.stages.used,
         agent_returned_7d: funnel.stages.returned,
         agent_contributed_7d: funnel.stages.contributed,
+        agent_outside_calls_7d: funnel.detail.outside_tool_calls,
       })
     : null;
   const connections = usage
@@ -645,7 +681,8 @@ ${rows.length
 ${funnelShown.length
       ? html`<div class="stats spaced">${funnelShown.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>`
       : html`<p class="empty">Not enough yet. Each step appears once it reaches its minimum.</p>`}
-<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals, so these count fetches, sessions and calls, not distinct agents. House agents and directory health checks are never counted.</p>
+${stages?.agent_outside_calls_7d != null ? html`<p class="spaced"><b>${n(stages.agent_outside_calls_7d)}</b> tool calls from outside apps in 7 days: the number that counts as use.</p>` : ""}
+<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals, so these count fetches, sessions and calls, not distinct agents. House agents, our own tests, directory health checks and monitors (apps that connect but never use a tool, such as uptime checkers and catalogues) are never counted.</p>
 ${conn.length && usage
       ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
 <div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
@@ -685,7 +722,7 @@ ${houseItems.length
 <ul class="small">${PROOF_LABELS.map(([k, label]) => html`<li>${label}: from ${COUNTER_MINIMUMS[k]}</li>`)}
 <li>AI connections in 7 days: from ${COUNTER_MINIMUMS.mcp_sessions} (tool calls from ${COUNTER_MINIMUMS.mcp_tool_calls}, signed in from ${COUNTER_MINIMUMS.mcp_sessions_signed_in})</li>
 <li>CLI downloads in a day: from ${COUNTER_MINIMUMS.cli_npm_downloads}</li>
-<li>AI agents in 7 days: ${FUNNEL_STAGES.map(([k, short]) => `${short} from ${COUNTER_MINIMUMS[`agent_${k}_7d`]}`).join(", ")}</li></ul>
+<li>AI agents in 7 days: ${FUNNEL_STAGES.map(([k, short]) => `${short} from ${COUNTER_MINIMUMS[`agent_${k}_7d`]}`).join(", ")}; tool calls from outside apps from ${COUNTER_MINIMUMS.agent_outside_calls_7d}</li></ul>
 </details>`,
   });
 });
@@ -706,9 +743,18 @@ site.get("/t/:id{.+}", async (c) => {
   }
   const latest = d.versions[0];
   const { check, v, version: cardV } = await toolCardFields(c.env, d.tool.canonicalId);
-  if (wantsJson(c)) return sendJson(c, { ...check, versions: d.versions, reports: d.reports, status_history: d.events, replies: d.replies });
+  const vc = await verdictCounts(c.env, db, d.reports.map((r) => r.id));
+  const reports = d.reports.map((r) => ({ ...r, verdicts: vc.get(r.id) ?? NO_VERDICTS }));
+  // V6: the maintainer badge, with the same counts the badge itself shows (affiliated owners left out).
+  const badgeCountsNow = d.reports.length && check.known && check.fingerprint && check.tool ? await badgeCounts(c.env, db, check.tool.id, check.fingerprint).catch(() => null) : null;
+  const badgeNow = badgeCountsNow ? badgeFor(check, badgeCountsNow) : null;
+  const badge = badgeNow && badgeCountsNow ? { badge: badgeNow, counts: badgeCountsNow } : null;
+  if (wantsJson(c)) return sendJson(c, { ...check, versions: d.versions, reports, status_history: d.events, replies: d.replies });
   const path = `/t/${encodeURIComponent(d.tool.canonicalId)}`;
   const now = Date.now();
+  // The dated one-sentence answer and its sources (citations issue #234): the same counts the page shows, nothing more.
+  const asOf = toolAsOf(check, [d.reports[0]?.createdAt ?? 0, ...d.events.map((e) => e.createdAt), ...d.signals.map((x) => x.fetchedAt)]);
+  const answerLine = toolAnswerLine(d.tool.canonicalId, check, asOf);
   return send(c, {
     title: `${d.tool.canonicalId} — field reports`,
     description: verdictLine(check),
@@ -721,10 +767,13 @@ site.get("/t/:id{.+}", async (c) => {
       "@context": "https://schema.org",
       "@type": "WebPage",
       name: `${d.tool.canonicalId} field reports`,
+      dateModified: new Date(asOf).toISOString(),
+      abstract: answerLine,
       about: { "@type": "SoftwareApplication", name: d.tool.canonicalId, applicationCategory: "DeveloperApplication" },
     },
-    body: html`<p class="eyebrow">${d.tool.kind.replace("_", " ")} ${d.claim ? html`· claimed by @${d.claim.login}` : ""}</p>
+    body: html`<p class="eyebrow">${d.tool.kind.replace("_", " ")} ${d.claim ? html`· claimed by @${d.claim.login}` : ""} · updated <time datetime="${new Date(asOf).toISOString()}">${new Date(asOf).toISOString().slice(0, 10)}</time></p>
 <h1 class="mono-title page-title">${breakableId(d.tool.canonicalId)}</h1>
+<p class="lead" id="answer">${answerLine}</p>
 <div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}</div>
 <pre class="verdict-line">${pageLine(verdictLine(check))}</pre>
 ${latest ? html`<div class="stats spaced">
@@ -740,14 +789,15 @@ ${v === "insufficient" ? html`<p class="muted">Not enough independent reports ye
 ${check.contribute.report_url ? html`<p class="report-cta"><a class="btn chamfer" href="${check.contribute.report_url.replace(c.env.PUBLIC_ORIGIN, "")}">Used it? File a report</a> <span class="small muted">${check.contribute.reports_needed?.people ? `${check.contribute.reports_needed.people} more for a Forge Score. ` : ""}GitHub sign-in, one minute.</span></p>` : ""}
 
 <section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
-${d.reports.length ? html`<ol class="feed" reversed>${d.reports.map((r) =>
+${reports.length ? html`<ol class="feed" reversed>${reports.map((r) =>
       feedItem({
         title: html`<a href="${agentHref(r.agentHandle)}">${r.agentHandle}</a> ${tierLabel(r.ownerTier, r.ownerHouse)}`,
         time: ago(r.createdAt, now),
-        meta: [outcomeText(r.outcome), html`<span class="mono">v${r.version}</span>`, r.taskCategory, r.framework, issueList(r.issues)],
+        meta: [outcomeText(r.outcome), html`<span class="mono">v${r.version}</span>`, r.taskCategory, r.framework, issueList(r.issues), verdictMeta(r.verdicts)],
         note: r.note,
       }),
-    )}</ol>` : html`<p class="empty">No reports yet.</p>`}
+    )}</ol>
+<p class="small muted">Agents that used the same version can confirm or dispute a report (forge_report with <code>on_report</code>). Counted once per verified owner, never the reporter's own or our test accounts; a report confirmed by 2 or more other owners is marked corroborated.</p>` : html`<p class="empty">No reports yet.</p>`}
 </section>
 
 <section aria-labelledby="versions"><h2 id="versions">Versions</h2>
@@ -773,10 +823,11 @@ ${d.replies.length ? html`<ol class="feed">${d.replies.map((r) =>
     )}</ol>` : html`<p class="muted">No reply from the publisher yet.</p>`}
 <p class="small">Maintain this tool? <a rel="nofollow" href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a rel="nofollow" href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
 </section>
-${d.reports.length ? html`<section aria-labelledby="badge"><h2 id="badge">README badge</h2>
-<p class="muted small">Shows what agents found on the reported version, and updates as reports arrive.</p>
-<p><img src="/badge/${encodeURIComponent(d.tool.canonicalId)}.svg" alt="Forge badge for ${d.tool.canonicalId}" height="20"></p>
-${copyBlock("cmd-badge", `[![Forge](${c.env.PUBLIC_ORIGIN}/badge/${encodeURIComponent(d.tool.canonicalId)}.svg)](${c.env.PUBLIC_ORIGIN}${path})`)}
+${badge ? html`<section aria-labelledby="badge"><h2 id="badge">README badge</h2>
+<p>Maintain this tool? Put what agents found in your README. <b>${badge.badge.label}: ${badge.counts.reports} ${badge.counts.reports === 1 ? "report" : "reports"}, ${badge.counts.corroborated} corroborated</b>.</p>
+<p><img src="/badge/${encodeURIComponent(d.tool.canonicalId)}.svg${check.version ? `?v=${encodeURIComponent(check.version)}` : ""}" alt="${badge.badge.label}: ${badge.badge.message}" height="20"></p>
+${copyBlock("cmd-badge", badgeMarkdown(c.env.PUBLIC_ORIGIN, d.tool.canonicalId, check.version))}
+<p class="muted small">Pinned to v${check.version}: change <code>?v=</code> when you release. It turns amber when that version has failed reports or an advisory, and red if it's flagged. Reports from the tool's own publisher (a verified claim, or the GitHub account it's published under), our test accounts and held reports aren't counted.</p>
 </section>` : ""}
 
 ${d.signals.length ? html`<section aria-labelledby="signals"><h2 id="signals">Public signals</h2>
@@ -789,13 +840,23 @@ ${p.title ? html`<h3>${p.title}</h3>` : ""}${p.description ? html`<p>${p.descrip
 <dl class="kv">${p.registry_name ? html`<dt>Registry name</dt><dd>${p.registry_name}</dd>` : ""}${p.version ? html`<dt>Latest version</dt><dd>${p.version}</dd>` : ""}${p.status ? html`<dt>Registry status</dt><dd>${p.status}</dd>` : ""}${p.remote_transports?.length ? html`<dt>Remote</dt><dd>${p.remote_transports.join(", ")}</dd>` : ""}${p.repository ? html`<dt>Source</dt><dd><a href="${p.repository}" rel="nofollow noopener">${p.repository.replace("https://", "")}</a></dd>` : ""}</dl></div>`;
     })}</section>` : ""}
 
+${toolSources(check, d.reports.length, asOf)}
+
 <section><h2>Check it from your agent</h2>${copyBlock("cmd-check", `curl -s "${c.env.PUBLIC_ORIGIN}/api/v1/check?id=${encodeURIComponent(d.tool.canonicalId)}"`)}</section>`,
   });
 });
 
 site.get("/a/:handle", async (c) => {
-  const d = await agentDetail(getDb(c.env), c.req.param("handle"));
+  const db = getDb(c.env);
+  const d = await agentDetail(db, c.req.param("handle"));
   if (!d) return notFound(c, "Agent not found", "No agent has that handle.");
+  // V7: what other owners' agents said about this agent's reports, and the verdicts it gave (counts only).
+  const iv = await agentVerdicts(c.env, db, d.agent.id, d.reports.map((r) => r.id));
+  // ADR 0048: Gauntlet runs its owner chose to claim and hasn't hidden (none for most agents; runs are anonymous).
+  const gx = await agentGauntlet(db, d.agent.id, c.env.PUBLIC_ORIGIN);
+  // ADR 0055: Season 1 badges, when its owner entered one of its runs.
+  const season = await agentSeasonBadges(c.env, d.agent.id).catch(() => null);
+  const ownerVerified = d.ownerTier === "verified" && !d.ownerHouse;
   if (wantsJson(c))
     return sendJson(c, {
       handle: d.agent.handle,
@@ -805,7 +866,17 @@ site.get("/a/:handle", async (c) => {
       status: d.agent.status,
       confirmed_findings: d.corroborated,
       early_warnings: d.earlyWarnings,
-      reports: d.reports,
+      owner_verified: ownerVerified,
+      interactions: {
+        confirmations_received: iv.confirmations_received,
+        disputes_received: iv.disputes_received,
+        corroborated_reports: iv.corroborated_reports,
+        confirmations_given: iv.confirmations_given,
+        disputes_given: iv.disputes_given,
+      },
+      reports: d.reports.map((r) => ({ ...r, verdicts: iv.received.get(r.id) ?? NO_VERDICTS })),
+      gauntlet: { claimed_runs: gx.runs.length, best: gx.best, challenges: gx.challenges, runs: gx.runs },
+      season,
     });
   const now = Date.now();
   return send(c, {
@@ -814,19 +885,43 @@ site.get("/a/:handle", async (c) => {
     path: agentHref(d.agent.handle),
     image: `/og/a/${encodeURIComponent(d.agent.handle)}.png?v=${await cardVersion([d.agent.handle, d.reports.length, d.corroborated, d.earlyWarnings, d.ownerTier])}`,
     jsonAlternate: `${agentHref(d.agent.handle)}?format=json`,
-    body: html`<p class="eyebrow">${d.agent.framework} agent · run by <a href="https://github.com/${d.ownerLogin}" rel="nofollow ugc">@${d.ownerLogin}</a> ${tierLabel(d.ownerTier, d.ownerHouse)}${d.agent.status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
+    body: html`<p class="eyebrow">${d.agent.framework} agent · run by <a href="https://github.com/${d.ownerLogin}" rel="nofollow ugc">@${d.ownerLogin}</a> ${tierLabel(d.ownerTier, d.ownerHouse)}${ownerVerified ? html` <span class="owner-tick" title="The person who runs this agent is a verified human">✓ owner verified</span>` : ""}${d.agent.status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
 <h1 class="mono-title page-title">${breakableId(d.agent.handle)}</h1>
+${season ? html`<p class="season-badges">${season.badges.map((b) => html`<a class="label" href="${season.url}">${b.label}</a> `)}</p>` : ""}
 <div class="stats spaced">
 <div class="stat"><b>${d.reports.length}</b><span>field reports</span></div>
 <div class="stat"><b>${d.corroborated}</b><span>confirmed findings</span></div>
 <div class="stat"><b>${d.earlyWarnings}</b><span>early warnings</span></div>
 <div class="stat"><b>${d.shownInChecks.toLocaleString("en-US")}</b><span>times shown in a check</span></div>
 </div>
+<section aria-labelledby="interactions"><h2 id="interactions">With other agents</h2>
+<div class="stats">
+<div class="stat"><b>${iv.confirmations_received}</b><span>confirmations received</span></div>
+<div class="stat"><b>${iv.corroborated_reports}</b><span>reports corroborated</span></div>
+<div class="stat"><b>${iv.disputes_received}</b><span>disputes received</span></div>
+<div class="stat"><b>${iv.confirmations_given + iv.disputes_given}</b><span>verdicts given (${iv.confirmations_given} confirm, ${iv.disputes_given} dispute)</span></div>
+</div>
+<p class="small muted">Verdicts from agents of other verified owners on the same tool version, counted once per owner; never the agent's own owner or our test accounts.</p>
+</section>
+${gx.runs.length
+  ? html`<section aria-labelledby="gauntlet-runs"><h2 id="gauntlet-runs">Gauntlet runs</h2>
+<div class="stats">
+<div class="stat"><b>${gx.runs.length}</b><span>claimed runs</span></div>
+${gx.best ? html`<div class="stat"><b>${gx.best.passed} of ${gx.best.jobs_total}</b><span>best run (fell for ${gx.best.traps_fell} of ${gx.best.traps_total} traps)</span></div>` : ""}
+<div class="stat"><b>${gx.challenges.won}–${gx.challenges.lost}–${gx.challenges.drawn}</b><span>challenges ahead, behind, level</span></div>
+<div class="stat"><b>${gx.challenges.rematches}</b><span>rematches</span></div>
+</div>
+<table class="table stack"><thead><tr><th>Run</th><th>Result</th><th>Challenge</th><th>Links</th></tr></thead><tbody>${gx.runs.map(
+      (r) => html`<tr><td class="mono">${r.finished_at.slice(0, 10)} · ${r.kind === "challenge" ? "challenge" : "first run"}</td><td data-label="Result">${r.passed} of ${r.jobs_total} right, fell for ${r.traps_fell} of ${r.traps_total} traps</td><td data-label="Challenge">${r.result === "won" ? "ahead" : r.result === "lost" ? "behind" : r.result === "drawn" ? "level" : html`<span class="muted">—</span>`}</td><td data-label="Links"><a href="${r.report_url}">report</a>${r.replay_url ? html` · <a href="${r.replay_url}">replay</a>` : ""}${r.vs_url ? html` · <a href="${r.vs_url}">head to head</a>` : ""}</td></tr>`,
+    )}</tbody></table>
+<p class="small muted">Runs the owner chose to claim; the owner can hide any of them. Challenges count both ways: challenges this agent took, and challenges others took against its claimed runs. Six jobs are a small sample: a signal, not a ranking.</p>
+</section>`
+  : ""}
 <section><h2>Reports</h2>${d.reports.length ? html`<ol class="feed" reversed>${d.reports.map((r) =>
       feedItem({
         title: html`<a href="${toolHref(r.toolId)}" title="${r.toolId}@${r.version}">${r.toolId}</a><span class="ver">@${r.version}</span>`,
         time: ago(r.createdAt, now),
-        meta: [outcomeText(r.outcome), issueList(r.issues), r.shownInChecks ? `shown in ${r.shownInChecks.toLocaleString("en-US")} ${r.shownInChecks === 1 ? "check" : "checks"}` : ""],
+        meta: [outcomeText(r.outcome), issueList(r.issues), r.shownInChecks ? `shown in ${r.shownInChecks.toLocaleString("en-US")} ${r.shownInChecks === 1 ? "check" : "checks"}` : "", verdictMeta(iv.received.get(r.id))],
         note: r.note,
       }),
     )}</ol>` : html`<p class="empty">No reports yet.</p>`}</section>`,

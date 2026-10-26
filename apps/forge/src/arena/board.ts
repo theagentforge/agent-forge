@@ -54,19 +54,42 @@ export async function gullibilityBoard(env: Pick<Env, "KV">, db: Db, now = Date.
   return board;
 }
 
-/** Ranked Hard-tier bouts (each lab's everyday model, no trap card) and how many set off a planted trap. Cached daily. */
+/**
+ * The frontier line under the Lab #3 band: the latest headline Hard event (25 Oct 2026: Crucible 2: Hard), each lab's
+ * everyday model with no trap card, and in how many of its bouts the referee marked a planted trap sprung. Counted like
+ * /arena/failures: a fall is a trap the referee marked triggered; running out of time or moves is never one (a
+ * knocked-out attempt still counts in the total). Embargoed models (ADR 0041) and events held for review are left
+ * out by `finishedRuns`, and so are Lab arm events and practice. One event, not several pooled: each Crucible uses a
+ * different version of the Hard jobs (Crucible 1: Hard v2, Crucible 2: Hard v3), so pooling would mix two tests.
+ * "Latest" is the event whose first public bout finished last, among card events with at least MIN_RUNS public Hard
+ * bouts (so a weekly headline bout, 18 attempts, never replaces a Crucible). Cached by the hour, so an event published
+ * mid-day (a held event set to running) shows the same hour.
+ */
 export interface FrontierHard {
+  event: { slug: string; name: string };
   runs: number;
   fell: number;
   models: number;
 }
 
-export async function frontierHard(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<FrontierHard> {
-  const key = `arena:frontier-hard:v1:${utcDay(now)}`;
-  const hit = await env.KV.get<FrontierHard>(key, "json");
-  if (hit) return hit;
+export const fellInRun = (r: { result: { traps?: { triggered: boolean }[] } }) => (r.result?.traps ?? []).some((t) => t.triggered);
+
+export async function frontierHard(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<FrontierHard | null> {
+  const key = `arena:frontier-hard:v3:${new Date(now).toISOString().slice(0, 13)}`;
+  const hit = await env.KV.get<FrontierHard | { none: true }>(key, "json");
+  if (hit) return "none" in hit ? null : hit;
   const runs = await finishedRuns(db, { tier: "hard", kinds: ["card"], now });
-  const out = { runs: runs.length, fell: runs.filter((r) => r.result.traps.some((t) => t.triggered)).length, models: new Set(runs.map((r) => r.summary.model)).size };
-  await env.KV.put(key, JSON.stringify(out), { expirationTtl: 2 * 86_400 });
+  const by = new Map<string, { name: string; first: number; runs: typeof runs }>();
+  for (const r of runs) {
+    const e = by.get(r.summary.event) ?? { name: r.summary.eventName, first: Infinity, runs: [] };
+    e.first = Math.min(e.first, r.summary.finishedAt);
+    e.runs.push(r);
+    by.set(r.summary.event, e);
+  }
+  const latest = [...by.entries()].filter(([, e]) => e.runs.length >= MIN_RUNS).sort((a, b) => b[1].first - a[1].first)[0];
+  const out: FrontierHard | null = latest
+    ? { event: { slug: latest[0], name: latest[1].name }, runs: latest[1].runs.length, fell: latest[1].runs.filter(fellInRun).length, models: new Set(latest[1].runs.map((r) => r.summary.model)).size }
+    : null;
+  await env.KV.put(key, JSON.stringify(out ?? { none: true }), { expirationTtl: 2 * 3_600 });
   return out;
 }

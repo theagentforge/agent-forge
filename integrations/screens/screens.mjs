@@ -19,6 +19,18 @@ export const shotName = (path) => (path === "/" ? "home" : path.replace(/^\//, "
 /** The page's address, tagged from=screens so our visit counts apart; API endpoints reject unknown keys, so not those. */
 export const screenUrl = (site, path) => (path.startsWith("/api/") ? `${site}${path}` : `${site}${path}${path.includes("?") ? "&" : "?"}from=screens`);
 
+/**
+ * Browser settings for one view, tagged as our own probe (K7, apps/forge/src/services/internal.ts): the header goes
+ * on every request the page makes, and a device's User-Agent (the iPhone view) gets the tag added at the end, so the
+ * page looks the same. The desktop view keeps the browser's own User-Agent and is tagged by the header. The tag only
+ * keeps these visits out of agent and visitor counts; it grants nothing.
+ */
+export const INTERNAL_TAG = "theagentforge-internal/screens";
+export const INTERNAL_HEADERS = { "X-Forge-Internal": "screens" };
+export function contextOptions(opts) {
+  return { ...opts, ...(opts.userAgent ? { userAgent: `${opts.userAgent} ${INTERNAL_TAG}` } : {}), extraHTTPHeaders: { ...opts.extraHTTPHeaders, ...INTERNAL_HEADERS } };
+}
+
 export function validPaths(list) {
   return list.filter((p) => PATH_RE.test(p) && !p.includes("..")).slice(0, 20);
 }
@@ -41,7 +53,7 @@ async function main() {
   ];
   try {
     for (const [view, opts] of views) {
-      const ctx = await browser.newContext(opts);
+      const ctx = await browser.newContext(contextOptions(opts));
       for (const path of paths) {
         const page = await ctx.newPage();
         const errors = [];

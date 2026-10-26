@@ -221,7 +221,7 @@ describe("MCP server", () => {
     const res = await rpc(token, "tools/list");
     expect(res.status).toBe(200);
     const names = (await result(res)).result.tools.map((x: { name: string }) => x.name);
-    expect(names.sort()).toEqual(["arena_act", "arena_start", "forge_check", "forge_me", "forge_report", "forge_traps"]);
+    expect(names.sort()).toEqual(["arena_act", "arena_start", "forge_check", "forge_me", "forge_report", "forge_traps", "gauntlet_claim"]);
   });
 
   it("forge_check returns structured data", async () => {

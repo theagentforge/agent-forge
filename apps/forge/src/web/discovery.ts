@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { MCP_SERVER_VERSION, SERVER_ICON_PATH, SERVERS } from "../server-info";
 import { site } from "./pages";
 
 // Discovery files (docs/launch/agent-channels.md §4.4): an AI Catalog at /.well-known/ai-catalog.json listing an MCP
@@ -8,25 +9,20 @@ import { site } from "./pages";
 export const SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json";
 // 2026-07-28 is served by createMcpHandler (agents SDK, MCP SDK v2): stateless, client identity in each request's _meta.
 export const PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"];
-const REPOSITORY = { url: "https://github.com/theagentforge/agent-forge", source: "github" };
-
-/** Our MCP servers: the two without sign-in get hosted cards; the signed-in one is described inline in the catalog. */
-export const SERVERS = [
-  { key: "public", path: "/mcp/public", name: "io.theagentforge/forge-public", title: "The Agent Forge (no sign-in)", description: "Check tools and scan skills before install; Arena trap data. Read only, no account." },
-  { key: "gauntlet", path: "/mcp/gauntlet", name: "io.theagentforge/forge-gauntlet", title: "The Forge Gauntlet", description: "Six everyday jobs with planted traps for your own agent, refereed. No account." },
-  { key: "signed-in", path: "/mcp", name: "io.theagentforge/forge", title: "The Agent Forge", description: "Check tools, file field reports and enter the Arena's Ranked Ladder. GitHub sign-in." },
-] as const;
+// The MIT connection-files repo that directories point to (ADR 0033), the same as the MCP Registry listing.
+const REPOSITORY = { url: "https://github.com/theagentforge/forge-mcp", source: "github" };
+export { SERVERS };
 
 export function serverCard(origin: string, s: (typeof SERVERS)[number]) {
   return {
     $schema: SERVER_CARD_SCHEMA,
     name: s.name,
-    version: "1.0.0",
+    version: MCP_SERVER_VERSION,
     title: s.title,
     description: s.description,
-    websiteUrl: `${origin}/connect`,
+    websiteUrl: `${origin}${s.websitePath}`,
     repository: REPOSITORY,
-    icons: [{ src: `${origin}/brand/forge-mark.svg`, mimeType: "image/svg+xml" }],
+    icons: [{ src: `${origin}${SERVER_ICON_PATH}`, mimeType: "image/svg+xml" }],
     remotes: [{ type: "streamable-http", url: `${origin}${s.path}`, supportedProtocolVersions: PROTOCOL_VERSIONS }],
   };
 }
@@ -50,6 +46,10 @@ const json = (c: Context<{ Bindings: Env }>, body: unknown, type: string) => c.b
 
 // Fetches are counted in the site middleware, before the cache (services/usage.ts discoveryCounters).
 site.get("/.well-known/ai-catalog.json", (c) => json(c, aiCatalog(c.env.PUBLIC_ORIGIN), "application/ai-catalog+json"));
+// ARD v0.91 (26 Aug 2026) moved the AI Catalog to /.well-known/ard.json; registries such as Ora's directory, HF Discover
+// and the apis.io grader crawl that path. The same document under both paths.
+export const ARD_PATH = "/.well-known/ard.json";
+site.get(ARD_PATH, (c) => json(c, aiCatalog(c.env.PUBLIC_ORIGIN), "application/ai-catalog+json"));
 for (const s of SERVERS.filter((x) => x.key !== "signed-in"))
   site.get(`${s.path}/server-card`, (c) => json(c, serverCard(c.env.PUBLIC_ORIGIN, s), "application/mcp-server-card+json"));
 // Older well-known spellings some clients and directories try first (Worker logs, 23 Oct). The no-sign-in card.
@@ -71,7 +71,8 @@ export function apiCatalog(origin: string) {
       entry("/mcp/public", [{ href: "/mcp/public/server-card", type: "application/mcp-server-card+json" }], "/connect"),
       entry("/mcp/gauntlet", [{ href: "/mcp/gauntlet/server-card", type: "application/mcp-server-card+json" }], "/gauntlet"),
       entry("/a2a", [{ href: "/.well-known/agent-card.json", type: "application/json" }], "/connect"),
-      entry("/api/v1", [{ href: "/llms.txt", type: "text/plain" }], "/methodology"),
+      // The OpenAPI 3.1 spec first (web/openapi.ts); llms.txt stays as a second, plain-text description.
+      entry("/api/v1", [{ href: "/openapi.json", type: "application/openapi+json" }, { href: "/llms.txt", type: "text/plain" }], "/methodology"),
     ],
   };
 }
@@ -93,6 +94,56 @@ site.get("/.well-known/openai-apps-challenge", async (c) => {
   if (!token || !/^[A-Za-z0-9._-]{8,200}$/.test(token)) return c.text("Not found", 404, { "Cache-Control": "no-store" });
   return c.text(token, 200, { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
 });
+
+/**
+ * security.txt (RFC 9116), read by security scanners: where to report a vulnerability, the same contact as SECURITY.md
+ * in the public code repo. Expires is required and must stay under a year away, so it is always 180 days ahead.
+ */
+export const SECURITY_TXT_PATH = "/.well-known/security.txt";
+export function securityTxt(origin: string, now = Date.now()) {
+  const expires = new Date(now + 180 * 86_400_000);
+  expires.setUTCHours(0, 0, 0, 0);
+  return [
+    "Contact: mailto:hello@theagentforge.io",
+    `Expires: ${expires.toISOString()}`,
+    "Preferred-Languages: en",
+    `Canonical: ${origin}${SECURITY_TXT_PATH}`,
+    "Policy: https://github.com/theagentforge/agent-forge/blob/main/SECURITY.md",
+    "",
+  ].join("\n");
+}
+site.get(SECURITY_TXT_PATH, (c) =>
+  c.body(securityTxt(c.env.PUBLIC_ORIGIN), 200, { ...open, "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=86400" }),
+);
+
+/**
+ * CORS preflights for the public, read-only discovery files. A plain GET needs none, but a browser-based agent that
+ * adds a header (MCP-Protocol-Version, If-None-Match) asks first, and got a 404 page (26 Oct check).
+ */
+export const PREFLIGHT_PATHS = [
+  "/.well-known/agent-card.json",
+  "/.well-known/agent.json",
+  "/.well-known/ai-catalog.json",
+  ARD_PATH,
+  "/.well-known/api-catalog",
+  "/.well-known/agent-skills/index.json",
+  SECURITY_TXT_PATH,
+  ...WELL_KNOWN_MCP,
+  "/openapi.json",
+  "/llms.txt",
+  "/skill.md",
+  "/trap-card.json",
+  "/trap-card.txt",
+];
+for (const path of PREFLIGHT_PATHS)
+  site.options(path, (c) =>
+    c.body(null, 204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+      "Access-Control-Max-Age": "86400",
+    }),
+  );
 
 /** Paths the MCP handlers would otherwise take (index.ts answers these from the site instead). */
 export const CARD_PATHS = SERVERS.filter((x) => x.key !== "signed-in").map((s) => `${s.path}/server-card`);

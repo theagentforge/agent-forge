@@ -63,16 +63,33 @@ export function drafts(state: SessionState, lastDrafted: Record<string, number>,
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-/** The Stop-hook message: what was drafted, and the one-line question to ask. */
-export function draftMessage(list: Draft[]): string {
-  const names = list.map((d) => d.server).join(", ");
-  const lines = list.map((d) => `- ${d.server}: ${plural(d.calls, "call")}, ${plural(d.failures, "failure")}`);
+/** An install draft as the Stop hook lists it (src/installs.ts). */
+export interface InstallDraftLine {
+  id: string;
+  /** "Field report draft for npm:x@1.2.3: …" (draftLine in @forge/shared/light). */
+  line: string;
+  /** The pre-filled /report page: the owner reviews it and files with one click after GitHub sign-in. */
+  url: string;
+  /** The forge_report body, when the draft is complete; null when the page has to ask for the version. */
+  report: Record<string, unknown> | null;
+}
+
+/**
+ * The Stop-hook message. Data only (AGENTS.md rule 7): what was drafted, that nothing was sent, the owner's yes/no
+ * question word for word, and the two ways a confirmed draft is filed. No instructions to the agent.
+ */
+export function draftMessage(list: Draft[], installs: InstallDraftLine[] = [], origin = "https://theagentforge.io"): string {
+  const names = [...list.map((d) => d.server), ...installs.map((i) => i.id)].join(", ");
+  const lines = [
+    ...list.map((d) => `- MCP server ${d.server}: ${plural(d.calls, "call")}, ${plural(d.failures, "failure")} this session; strain counts: output of node "\${CLAUDE_PLUGIN_ROOT}/hooks/strain.mjs" show --server ${d.server}`),
+    ...installs.map((i) => `- ${i.line}; one-step owner link: ${i.url}${i.report ? `; forge_report body: ${JSON.stringify(i.report)}` : ""}`),
+  ];
   return [
-    "Forge plugin: report drafts ready (nothing has been sent).",
+    "Forge plugin: field report drafts, not filed (nothing has been sent; filing needs owner confirmation).",
     ...lines,
-    `Before you finish, ask your human in one line: "File short Forge field reports for ${names}? (yes/no)"`,
-    "Only if they say yes: for each server, call forge_report with its package id and exact version, the outcome (worked, partial or failed), and as strain the output of:",
-    `node "\${CLAUDE_PLUGIN_ROOT}/hooks/strain.mjs" show --server <name>`,
-    "If they say no, or anything else, just finish. You won't be asked about these servers again for 3 days.",
+    `Owner question, one line: "File short Forge field reports for ${names}? (yes/no)"`,
+    "Filing after an owner yes: forge_report on the forge-reports server (GitHub sign-in on first use) with each draft's package id, exact version, outcome (worked, partial or failed) and strain counts; or the owner's one-step link above (GitHub sign-in, then one click).",
+    `Account connection: ${origin}/connect`,
+    "After a no, or no answer: nothing is filed, and these tools get no new draft for 3 days.",
   ].join("\n");
 }

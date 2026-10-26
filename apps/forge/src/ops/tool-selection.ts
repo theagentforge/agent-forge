@@ -56,10 +56,10 @@ const s = (description: string) => ({ type: "string", description });
 /** Our six public tools as an agent sees them over MCP (names, descriptions, inputs). */
 export const OUR_SPECS = [
   { name: "forge_check", description: PUBLIC_TOOLS.forge_check.description, parameters: obj({ id: s("Tool id, e.g. npm:@scope/name or github.com/owner/repo/path"), url: s("A web URL for the tool"), fingerprint: s("sha256:<64 hex> of the exact version") }) },
-  { name: "forge_traps", description: PUBLIC_TOOLS.forge_traps.description, parameters: obj({ task: s("One Arena task"), model: s("One model id") }) },
+  { name: "forge_traps", description: PUBLIC_TOOLS.forge_traps.description, parameters: obj({ task: s("One Arena task"), model: s("One model id"), tier: s("normal or hard") }) },
   { name: "forge_scan", description: PUBLIC_TOOLS.forge_scan.description, parameters: obj({ text: s("The full text of the file"), url: s("A public URL"), name: s("The skill or tool name") }) },
   { name: "forge_watch", description: PUBLIC_TOOLS.forge_watch.description, parameters: obj({ fingerprints: { type: "array", items: { type: "string" }, description: "sha256 of each installed skill" } }, ["fingerprints"]) },
-  { name: "arena_results", description: PUBLIC_TOOLS.arena_results.description, parameters: obj({ task: s("One Arena task") }) },
+  { name: "arena_results", description: PUBLIC_TOOLS.arena_results.description, parameters: obj({ task: s("One Arena task"), tier: s("normal or hard"), event: s("An event slug") }) },
   {
     name: "forge_exposure",
     description: PUBLIC_TOOLS.forge_exposure.description,

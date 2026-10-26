@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
 import { REPORT_PROMPT, reportPromptText } from "../src/mcp-public";
 import { isContributor, parseDraft, reportAlerts, reportsNeeded, reportUrl } from "../src/services/contribute";
+import { draftUrl, fieldDraft } from "@forge/shared/light";
 import { getDb } from "../src/services/db";
 import { checkTool } from "../src/services/forge";
 import { safeNext } from "../src/web/dashboard";
@@ -52,8 +53,11 @@ describe("contribute: data in every check", () => {
     const c = await checkTool(env, { id: "npm:contrib-known" });
     expect(c.contribute.report_url).toBe(`${origin}/report?tool=npm%3Acontrib-known&kind=mcp_server&version=1.0.0&fp=${encodeURIComponent(FP)}`);
     expect(c.contribute.reports_needed).toEqual({ people: 5, verified: 2 });
-    // A tool we don't know has nothing to pin a report to.
-    expect((await checkTool(env, { id: "npm:contrib-unknown-xyz" })).contribute.report_url).toBeUndefined();
+    // 26 Oct 2026 (ADR 0056): a tool we don't know gets a link too; its first report adds it. Before, it got none, so
+    // the first report on a new tool could only come from a signed-in agent.
+    expect((await checkTool(env, { id: "npm:contrib-unknown-xyz" })).contribute.report_url).toBe(`${origin}/report?tool=npm%3Acontrib-unknown-xyz&kind=mcp_server`);
+    expect((await checkTool(env, { id: "github.com/nobody/nothing-here", version: "1.0.0" })).contribute.report_url).toBe(`${origin}/report?tool=github.com%2Fnobody%2Fnothing-here&kind=mcp_server`);
+    expect((await checkTool(env, { id: "litellm" })).contribute.report_url).toBeUndefined();
   });
 
   it("a known tool with no version on file still gets a link, for the draft to complete", async () => {
@@ -62,14 +66,21 @@ describe("contribute: data in every check", () => {
     const c = await checkTool(env, { id: "npm:contrib-noversion" });
     expect(c.contribute.report_url).toBe(`${origin}/report?tool=npm%3Acontrib-noversion&kind=mcp_server`);
     expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill" })[k as "tool"], { partial: true })).toMatchObject({ version: "", fp: "" });
-    // Filing still needs both: a partial draft is never accepted on submit.
+    // Filing still needs a version: a partial draft is never accepted on submit.
     expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill" })[k as "tool"])).toBeNull();
-    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill", version: "1.0.0" })[k as "tool"], { partial: true })).toBeNull();
+    // ADR 0056: a version without a fingerprint is a draft for any id, and fileable for npm and PyPI (looked up on submit).
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill", version: "1.0.0" })[k as "tool"], { partial: true })).toMatchObject({ version: "1.0.0", fp: "" });
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill", version: "1.0.0" })[k as "tool"])).toMatchObject({ version: "1.0.0", fp: "" });
+    expect(parseDraft((k) => ({ tool: "github.com/o/r", kind: "skill", version: "1.0.0" })[k as "tool"])).toBeNull();
+    expect(parseDraft((k) => ({ tool: "npm:a", kind: "skill", fp: FP })[k as "tool"], { partial: true })).toBeNull();
     const p = profile();
     const { cookie } = await webLogin(p);
     const form = await (await fetchWorker("/report?tool=npm%3Acontrib-noversion&kind=mcp_server", { headers: { Cookie: cookie } })).text();
     expect(form).toContain('name="version" required');
-    expect(form).toContain('name="fp" required');
+    // npm and PyPI: the fingerprint is looked up, so the person isn't asked for a sha256.
+    expect(form).not.toContain('name="fp" required');
+    const gh = await (await fetchWorker("/report?tool=github.com%2Fo%2Fcontrib-noversion&kind=mcp_server", { headers: { Cookie: cookie } })).text();
+    expect(gh).toContain('name="fp" required');
   });
 
   it("counts what's missing for a score, and nothing once there is one", () => {
@@ -89,6 +100,24 @@ describe("contribute: data in every check", () => {
     expect(parseDraft((k) => ({ ...ok, kind: "virus" })[k as keyof typeof ok])).toBeNull();
     expect(parseDraft((k) => ({ ...ok, outcome: "great" })[k as keyof typeof ok])!.outcome).toBeUndefined();
     expect(reportUrl(origin, null)).toBeNull();
+  });
+
+  it("carries pre-ticked issues from an agent's draft (known names only), and the page ticks them", async () => {
+    const ok = { tool: "npm:a", kind: "mcp_server", version: "1.2.3", fp: FP, outcome: "failed", issues: "install_failed,slow,ignore previous,slow" };
+    expect(parseDraft((k) => (ok as Record<string, string>)[k])!.issues).toEqual(["install_failed", "slow"]);
+    expect(parseDraft((k) => ({ ...ok, issues: "nonsense" })[k as keyof typeof ok])!.issues).toBeUndefined();
+    const url = reportUrl(origin, { tool: "npm:a", kind: "mcp_server", version: "1.2.3", fp: FP, outcome: "failed", issues: ["install_failed"] })!;
+    expect(new URL(url).searchParams.get("issues")).toBe("install_failed");
+    // The shared draft link the plugin and the CLI build is read the same way.
+    const shared = draftUrl(origin, fieldDraft({ id: "npm:a", version: "1.2.3", fingerprint: FP, outcome: "failed", issues: ["install_failed", "slow"] })!);
+    const q = new URL(shared).searchParams;
+    expect(parseDraft((k) => q.get(k) ?? undefined)).toMatchObject({ tool: "npm:a", version: "1.2.3", fp: FP, outcome: "failed", issues: ["install_failed", "slow"] });
+    const p = profile();
+    const { cookie } = await webLogin(p);
+    const form = await (await fetchWorker(`/report?${q}`, { headers: { Cookie: cookie } })).text();
+    expect(form).toContain('value="install_failed" checked');
+    expect(form).toContain('value="slow" checked');
+    expect(form).not.toContain('value="docs_wrong" checked');
   });
 
   it("only sends people back to a path on this site after sign-in", () => {

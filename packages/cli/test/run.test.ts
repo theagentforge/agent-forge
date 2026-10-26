@@ -40,6 +40,29 @@ describe("forge check", () => {
     expect(t.urls[0]).toBe("https://theagentforge.io/api/v1/check?id=npm%3Apkg");
   });
 
+  it("ends with the signed receipt link when the answer has one, and only a Forge one", async () => {
+    const receipt = "https://theagentforge.io/r/abc.0123";
+    const t = io({ ...check("clear", 91, 12), share: { receipt_url: receipt } });
+    await run(["check", "pkg"], t.io);
+    expect(t.out.at(-2)).toBe(`receipt: ${receipt}`);
+    const odd = io({ ...check("clear", 91, 12), share: { receipt_url: "https://evil.example/r/x" } });
+    await run(["check", "pkg"], odd.io);
+    expect(odd.out.join("\n")).not.toContain("receipt:");
+  });
+
+  it("ends a finished check with one plain claim line for the person (ADR 0055), never in --json", async () => {
+    const t = io(check("clear", 91, 12));
+    await run(["check", "pkg"], t.io);
+    expect(t.out.at(-1)).toBe("Claim your agent's Forge profile: https://theagentforge.io/gauntlet/claim?from=cli");
+    const j = io(check("clear", 91, 12));
+    await run(["check", "pkg", "--json"], j.io);
+    expect(j.out.join("\n")).not.toContain("gauntlet/claim");
+    // A failed check prints no claim line.
+    const bad = io(new Error("offline"));
+    await run(["check", "pkg"], bad.io);
+    expect(bad.out.join("\n")).not.toContain("gauntlet/claim");
+  });
+
   it("exits 3 for flagged tools, and for caution only with --strict", async () => {
     expect(await run(["check", "npm:pkg"], io(check("flagged", null, 3)).io)).toBe(EXIT.blocked);
     expect(await run(["check", "npm:pkg"], io(check("caution", null, 1)).io)).toBe(EXIT.ok);

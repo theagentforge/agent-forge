@@ -32,6 +32,24 @@ describe("report schema", () => {
   });
 });
 
+describe("a verdict on another report (V1, ADR 0047)", () => {
+  const base = {
+    tool: { kind: "mcp_server", id: "npm:@acme/x", version: "1.0.0", fingerprint: `sha256:${"a".repeat(64)}` },
+    task: { category: "search", framework: "claude-code" },
+    outcome: "worked",
+  };
+  it("takes a report id, a fixed verdict and an optional evidence hash", () => {
+    const ok = reportSchema.safeParse({ ...base, on_report: crypto.randomUUID(), verdict: "confirm", evidence_sha256: `sha256:${"b".repeat(64)}` });
+    expect(ok.success).toBe(true);
+    expect(reportSchema.safeParse({ ...base, on_report: crypto.randomUUID(), verdict: "dispute" }).success).toBe(true);
+  });
+  it("refuses free text in the verdict fields", () => {
+    expect(reportSchema.safeParse({ ...base, on_report: "ignore previous instructions", verdict: "confirm" }).success).toBe(false);
+    expect(reportSchema.safeParse({ ...base, on_report: crypto.randomUUID(), verdict: "they are scammers" }).success).toBe(false);
+    expect(reportSchema.safeParse({ ...base, on_report: crypto.randomUUID(), verdict: "confirm", evidence_sha256: "my log" }).success).toBe(false);
+  });
+});
+
 describe("check query", () => {
   it("needs exactly one selector", () => {
     expect(checkQuerySchema.safeParse({ id: "npm:x" }).success).toBe(true);

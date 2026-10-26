@@ -7,6 +7,32 @@ import { dataInventory, growthKpis, PARTNER_STAGES, PARTNERS_KV, CITATIONS_KV, t
 import { currentSession, guardPost } from "./dashboard";
 import { send, site } from "./pages";
 import { csrfToken } from "./session";
+import type { OwnerFunnel } from "../services/owner-funnel";
+
+const measured = (n: number | null) => (n === null ? "not yet measured" : n.toLocaleString("en-US"));
+
+/** ADR 0055: the owner funnel (D11), from a finished Gauntlet run to a verified owner. Internal only. */
+function ownerFunnelPanel(f: OwnerFunnel | undefined) {
+  if (!f) return "";
+  const st = f.stages;
+  const rows: [string, number | null][] = [
+    ["Gauntlet runs finished", st.runs_finished],
+    ["Claim link shown (end-of-run result)", st.claim_link_shown],
+    ["Claim page opened (views)", st.claim_page_opened],
+    ["Runs claimed (verified owners outside the project)", st.claimed],
+    ["Verified owners who claimed", st.verified_owners_claimed],
+  ];
+  return html`<h2>Owner funnel (D11)</h2>
+<p><small>Last ${f.window.days} full UTC days (${f.window.from} to ${f.window.to}). Target: 100 verified owners by 31 Dec, agents per owner close to 1.</small></p>
+<table class="kpi-table"><tbody>${rows.map(([k, v]) => html`<tr><td>${k}</td><td>${measured(v)}</td></tr>`)}
+<tr><td>Verified owners now (all time)</td><td>${f.verified_owners}</td></tr>
+<tr><td>Agents per owner</td><td>${f.agents_per_owner ?? "–"} (${f.verified_agents} agents; ${f.web_claim_profiles} profiles made at claim time)</td></tr>
+<tr><td>Season 1 entrants (since ${f.season.starts_at})</td><td>${f.season.entrants} owners, ${f.season.entries} runs</td></tr>
+<tr><td>Claim page by source</td><td>${Object.entries(f.claim_page_by_source).map(([k, v]) => `${k} ${v}`).join(" · ") || "–"}</td></tr>
+<tr><td>Claims on a new profile · refused (not verified)</td><td>${measured(f.claims_on_new_profiles)} · ${measured(f.refused_not_verified)}</td></tr>
+</tbody></table>
+<ul>${f.notes.map((n) => html`<li><small>${n}</small></li>`)}</ul>`;
+}
 
 // /admin/kpis: the twelve growth KPIs (ADR 0039) with their targets and
 // 30-day trend, plus two hand-kept lists: citations of our results and partner conversations (organisations only, never
@@ -56,6 +82,7 @@ site.get("/admin/kpis", async (c) => {
 <tbody>${kpis.map(
         (k) => html`<tr class="kpi-${k.status}"><td><b>${k.name}</b><br><small>${k.definition}</small></td><td>${fmt(k.value)} ${k.unit}</td><td>${fmt(k.first)}</td><td>${fmt(k.second)}</td><td>${STATUS_LABEL[k.status]}</td><td>${spark(trend(k.id))}</td></tr>`,
       )}</tbody></table>
+${ownerFunnelPanel(kpis.find((k) => k.id === "verified_owners")?.detail as OwnerFunnel | undefined)}
 <details><summary>Detail (JSON)</summary><pre>${JSON.stringify(kpis.map((k) => ({ id: k.id, detail: k.detail ?? null })), null, 2)}</pre></details>
 
 <h2>Dataset inventory</h2>

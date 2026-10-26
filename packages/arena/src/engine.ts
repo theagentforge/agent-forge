@@ -149,13 +149,16 @@ export class Attempt<S = unknown> {
   }
 
   /** Records one model reply. Returns a knockout reason if a cap is now exceeded. */
-  recordTurn(t: { tokensIn: number; tokensOut: number; cost: number; latencyMs: number; provider?: string | null; text?: string | null }): EndReason | null {
+  recordTurn(t: { tokensIn: number; tokensOut: number; cost: number; latencyMs: number; provider?: string | null; text?: string | null; cachedTokens?: number; cacheWriteTokens?: number }): EndReason | null {
     this.turns++;
     this.tokensIn += t.tokensIn;
     this.tokensOut += t.tokensOut;
     this.cost += t.cost;
     this.modelMs += t.latencyMs;
-    this.push({ type: "turn", n: this.turns, tokensIn: t.tokensIn, tokensOut: t.tokensOut, cost: t.cost, latencyMs: t.latencyMs, provider: t.provider ?? null, text: t.text ?? null });
+    // Cached-token counts are logged only when the provider reports them (S1 prompt caching); they're part of
+    // tokensIn, so the token cap is the same with or without a cache.
+    const cache = { ...(t.cachedTokens !== undefined ? { cachedTokens: t.cachedTokens } : {}), ...(t.cacheWriteTokens !== undefined ? { cacheWriteTokens: t.cacheWriteTokens } : {}) };
+    this.push({ type: "turn", n: this.turns, tokensIn: t.tokensIn, tokensOut: t.tokensOut, cost: t.cost, latencyMs: t.latencyMs, provider: t.provider ?? null, text: t.text ?? null, ...cache });
     if (this.tokensIn + this.tokensOut > this.caps.tokens) return "knockout_tokens";
     if (this.activeMs > this.caps.ms) return "knockout_time";
     return null;

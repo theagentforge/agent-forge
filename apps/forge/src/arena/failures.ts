@@ -47,7 +47,7 @@ export function entriesFor(tier: FailTier): TrapEntry[] {
 }
 
 /** Ranked runs for a tier, newest first. Practice and Lab #3 events are left out by `finishedRuns` itself. */
-async function rankedRuns(db: Db, tier: FailTier) {
+export async function rankedRuns(db: Db, tier: FailTier) {
   const runs = await finishedRuns(db, { kinds: ["card", "guest"], ...(tier === "hard" ? { tier: "hard" } : tier === "all" ? { hard: true } : {}) });
   return tier === "all" ? runs : runs.filter((r) => tierOf(r.summary.task) === tier);
 }

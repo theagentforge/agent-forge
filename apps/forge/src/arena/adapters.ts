@@ -26,6 +26,10 @@ export interface ModelReply {
   costEstimated: boolean;
   latencyMs: number;
   provider: string | null;
+  /** Input tokens read from the provider's prompt cache, when it reports them (part of `tokensIn`, not extra). */
+  cachedTokens?: number;
+  /** Input tokens written to the prompt cache by this call, when the provider reports them. */
+  cacheWriteTokens?: number;
 }
 
 /** Default largest reply per turn on Workers AI (practice models); a route can set its own (`maxTokens`). */
@@ -42,7 +46,66 @@ export class ProviderError extends Error {
   }
 }
 
+/**
+ * Prompt caching (S1, docs/strategy/acquisition-build-framework.md §3). A bout resends the same tools, harness prompt
+ * and brief on every turn, then a growing history, so most input tokens are a prefix the provider has just seen.
+ * Caching only changes the bill: the text the model reads is byte-for-byte the same, and `tokensIn` (which the token
+ * cap counts) still includes every input token. Per OpenRouter's prompt-caching guide (checked 24 Oct 2026):
+ *  - OpenAI, Google Gemini (implicit caching), DeepSeek, Mistral and most others cache automatically: nothing to add.
+ *  - Anthropic needs `cache_control`. OpenRouter takes it at the top level of the request ("automatic caching": the
+ *    breakpoint sits on the last cacheable block and moves forward as the bout grows), so no message is touched.
+ *  - Alibaba (Qwen) needs an explicit breakpoint on a content block: the brief (the first user message, after the
+ *    tools and harness prompt) is sent as one text block with exactly the same text, plus `cache_control`.
+ * Workers AI caches prefixes on the replica that served the call; the `x-session-affinity` header keeps a bout's calls
+ * on one replica (Workers AI prompt-caching docs). Its cost here stays estimated at the full input price, which
+ * overstates it, so the daily allowances stop early rather than late.
+ */
+export interface CacheOptions {
+  /** Keeps a bout's Workers AI calls on one replica, so its prefix cache is reused. */
+  key?: string;
+}
+
+export type CacheHint = "top-level" | "brief-breakpoint" | "none";
+
+/** What a route needs for prompt caching (see CacheOptions). */
+export function cacheHint(route: Route): CacheHint {
+  if (route.kind !== "openrouter") return "none";
+  if (route.model.startsWith("anthropic/")) return "top-level";
+  if (route.model.startsWith("qwen/") && route.provider.toLowerCase() === "alibaba") return "brief-breakpoint";
+  return "none";
+}
+
+const EPHEMERAL = { type: "ephemeral" } as const;
+
+/** Models whose provider refused a cache hint (HTTP 400) in this isolate: sent without one from then on. */
+const cacheRefused = new Set<string>();
+
 const toolsParam = (tools: ToolSpec[]) => tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.parameters } }));
+
+/** The OpenRouter request body. With `cache`, the route's cache hint is added and nothing else changes. */
+export function openRouterBody(route: Extract<Route, { kind: "openrouter" }>, messages: ChatMessage[], tools: ToolSpec[], cache: CacheOptions | null) {
+  const brief = messages.findIndex((m) => m.role === "user");
+  let hint = cache && !cacheRefused.has(route.model) ? cacheHint(route) : "none";
+  if (hint === "brief-breakpoint" && brief < 0) hint = "none";
+  const sent =
+    hint === "brief-breakpoint"
+      ? messages.map((m, i) => (i === brief ? { role: "user" as const, content: [{ type: "text" as const, text: m.content ?? "", cache_control: EPHEMERAL }] } : m))
+      : messages;
+  return {
+    hint,
+    body: {
+      model: route.model,
+      messages: sent,
+      tools: toolsParam(tools),
+      tool_choice: "auto",
+      temperature: 0,
+      // Pinned provider, no fallbacks, no response caching; never used for training (ADR 0014 §9).
+      provider: { order: [route.provider], allow_fallbacks: false, data_collection: "deny" },
+      usage: { include: true },
+      ...(hint === "top-level" ? { cache_control: EPHEMERAL } : {}),
+    },
+  };
+}
 
 export async function callModel(
   env: Pick<Env, "AI"> & { OPENROUTER_API_KEY?: string },
@@ -50,24 +113,26 @@ export async function callModel(
   messages: ChatMessage[],
   tools: ToolSpec[],
   fetcher: typeof fetch = fetch,
+  /** Prompt caching on (null: off). The runner decides per event (runner.ts `promptCacheOn`). */
+  cache: CacheOptions | null = null,
 ): Promise<ModelReply> {
   const t0 = Date.now();
   if (route.kind === "openrouter") {
     if (!env.OPENROUTER_API_KEY) throw new ProviderError("OPENROUTER_API_KEY is not set", false);
-    const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, "Content-Type": "application/json", "HTTP-Referer": "https://theagentforge.io", "X-Title": "The Forge Arena" },
-      body: JSON.stringify({
-        model: route.model,
-        messages,
-        tools: toolsParam(tools),
-        tool_choice: "auto",
-        temperature: 0,
-        // Pinned provider, no fallbacks, no response caching; never used for training (ADR 0014 §9).
-        provider: { order: [route.provider], allow_fallbacks: false, data_collection: "deny" },
-        usage: { include: true },
-      }),
-    });
+    const post = (body: unknown) =>
+      fetcher("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, "Content-Type": "application/json", "HTTP-Referer": "https://theagentforge.io", "X-Title": "The Forge Arena" },
+        body: JSON.stringify(body),
+      });
+    const req = openRouterBody(route, messages, tools, cache);
+    let res = await post(req.body);
+    if (res.status === 400 && req.hint !== "none") {
+      // The provider refused the cache hint: send the same request without it (a 400 isn't billed) and stop adding it.
+      console.warn("arena_cache_hint_refused", route.model, (await res.text().catch(() => "")).slice(0, 200));
+      cacheRefused.add(route.model);
+      res = await post(openRouterBody(route, messages, tools, null).body);
+    }
     const body = (await res.json().catch(() => null)) as OpenAiShape | null;
     if (!res.ok || !body?.choices?.[0]) {
       const msg = `OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300);
@@ -81,7 +146,10 @@ export async function callModel(
 
   let out: unknown;
   try {
-    out = await env.AI.run(route.model as keyof AiModels, { messages, tools: toolsParam(tools), temperature: 0, max_tokens: route.maxTokens ?? WORKERS_AI_MAX_TOKENS } as never);
+    const input = { messages, tools: toolsParam(tools), temperature: 0, max_tokens: route.maxTokens ?? WORKERS_AI_MAX_TOKENS };
+    out = cache?.key
+      ? await env.AI.run(route.model as keyof AiModels, input as never, { extraHeaders: { "x-session-affinity": cache.key } })
+      : await env.AI.run(route.model as keyof AiModels, input as never);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // "Capacity temporarily exceeded" and 429s mean "slow down", not a failed bout.
@@ -113,12 +181,13 @@ function fromLegacy(o: (OpenAiShape & LegacyShape) | null, ms: number, route: Ex
     costEstimated: true,
     latencyMs: ms,
     provider: "cloudflare-workers-ai",
+    ...cacheCounts(o?.usage),
   };
 }
 
 interface OpenAiShape {
   choices?: { message?: { content?: string | null; reasoning?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null };
   provider?: string;
   error?: { message?: string };
 }
@@ -141,9 +210,20 @@ function fromOpenAi(o: OpenAiShape, ms: number, provider: string, estimated: boo
     })),
     tokensIn,
     tokensOut,
+    // OpenRouter's `usage.cost` is what the generation was billed, cache reads and writes included.
     cost: estimated ? (tokensIn * priceIn + tokensOut * priceOut) / 1e6 : (o.usage?.cost ?? 0),
     costEstimated: estimated,
     latencyMs: ms,
     provider,
+    ...cacheCounts(o.usage),
+  };
+}
+
+/** Cached-token counts from `usage.prompt_tokens_details`, only when the provider reports them. */
+function cacheCounts(u: OpenAiShape["usage"]): Pick<ModelReply, "cachedTokens" | "cacheWriteTokens"> {
+  const d = u?.prompt_tokens_details;
+  return {
+    ...(typeof d?.cached_tokens === "number" ? { cachedTokens: d.cached_tokens } : {}),
+    ...(typeof d?.cache_write_tokens === "number" ? { cacheWriteTokens: d.cache_write_tokens } : {}),
   };
 }

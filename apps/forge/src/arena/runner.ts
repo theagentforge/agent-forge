@@ -1,10 +1,10 @@
-import { Attempt, attemptScore, SEASON, taskById, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
-import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { Attempt, attemptScore, RULES_HISTORY, RULES_VERSION, SEASON, taskById, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
+import { and, asc, eq, gte, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as t from "../db/schema";
 import { getDb, newId } from "../services/db";
 import { signReport } from "../services/signing";
-import { callModel, ProviderError, type ChatMessage } from "./adapters";
+import { callModel, ProviderError, type CacheOptions, type ChatMessage } from "./adapters";
 import { armText, ARMS, type Arm } from "./arms";
 import { ALL_MODELS, modelById, type ArenaModel } from "./lineup";
 import { lastHeadlineSlot, slotDate, WEEKLY_ATTEMPTS, WEEKLY_QUEUE_WINDOW_MS, weeklyModels, weeklySlug, weeklyTask } from "./headline-slot";
@@ -48,10 +48,11 @@ export const monthlyCap = (now: number) =>
 export const PRACTICE_DAILY_CAP_USD = 0.1;
 /**
  * Headline (card and guest) events on Workers AI (DeepSeek V4 Pro) get their own daily allowance, so a ranked event
- * isn't held to practice's $0.10 (H1, Crucible 2: DeepSeek's 18 Hard v3 attempts are about $16 at list price, over
- * about 3 days). Practice running out never stops them, and this running out never stops OpenRouter.
+ * isn't held to practice's $0.10. Practice running out never stops them, and this running out never stops OpenRouter.
+ * Raised from $6 to $20 on 24 Oct (Crucible 2, spend approved by Dinike): the 18 attempts voided for the token cap
+ * spent $7.26 of 24 Oct, and the re-run (about $1 an attempt) now finishes in about a day instead of three. Same total.
  */
-export const HEADLINE_WORKERS_AI_DAILY_USD = 6;
+export const HEADLINE_WORKERS_AI_DAILY_USD = 20;
 export const LADDER_CAP_USD = 1.5;
 export const LAB3_CAP_USD = 8;
 /** When the cost guard took over (ADR 0027). */
@@ -108,7 +109,7 @@ export async function playBout(
   model: ArenaModel,
   run: Pick<RunRow, "task" | "seed">,
   twistId: string | null,
-  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number } = {},
+  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number; cache?: CacheOptions | null } = {},
 ): Promise<Finished | { suspended: BoutCheckpoint; rateLimited?: boolean }> {
   const task = taskById(run.task);
   if (!task) throw new Error(`Unknown task ${run.task}`);
@@ -147,7 +148,7 @@ export async function playBout(
     turnsThisTick++;
     let reply: Awaited<ReturnType<typeof callModel>>;
     try {
-      reply = await callModel(env, model.route, messages, a.toolSpecs(), opts.fetcher);
+      reply = await callModel(env, model.route, messages, a.toolSpecs(), opts.fetcher, opts.cache ?? null);
     } catch (e) {
       // Rate limited (429): nothing happened in the world, so pause here and carry on later, as at a deadline.
       if (e instanceof ProviderError && e.rateLimited) {
@@ -160,7 +161,16 @@ export async function playBout(
     }
     estimated ||= reply.costEstimated;
     provider = reply.provider;
-    const ko = a.recordTurn({ tokensIn: reply.tokensIn, tokensOut: reply.tokensOut, cost: reply.cost, latencyMs: reply.latencyMs, provider: reply.provider, text: reply.text?.slice(0, 2000) ?? null });
+    const ko = a.recordTurn({
+      tokensIn: reply.tokensIn,
+      tokensOut: reply.tokensOut,
+      cost: reply.cost,
+      latencyMs: reply.latencyMs,
+      provider: reply.provider,
+      text: reply.text?.slice(0, 2000) ?? null,
+      cachedTokens: reply.cachedTokens,
+      cacheWriteTokens: reply.cacheWriteTokens,
+    });
     messages.push({ role: "assistant", content: reply.text ?? "", ...(reply.toolCalls.length ? { tool_calls: reply.toolCalls } : {}) });
     if (ko) {
       a.end(ko);
@@ -190,6 +200,74 @@ function parseArgs(s: string): unknown {
   } catch {
     return { _unparseable: s.slice(0, 200) };
   }
+}
+
+/**
+ * Prompt caching (S1) starts for ranked (card and guest) events queued from this instant. An event already running
+ * keeps the conditions it started under, so every bout in it is billed alike (ADR 0021: the same conditions for
+ * every model in an event). Practice always has it. If this ships much later, set it to the release time.
+ */
+export const PROMPT_CACHE_FROM = Date.UTC(2026, 9, 26);
+export const promptCacheOn = (event: { kind: string; createdAt: number }) => event.kind === "practice" || event.createdAt >= PROMPT_CACHE_FROM;
+
+/** When the rules in force now took effect. */
+export function rulesInForceSince() {
+  const r = RULES_HISTORY.find((v) => v.version === RULES_VERSION) ?? RULES_HISTORY.at(-1)!;
+  return Date.parse(r.from ?? `${r.date}T00:00:00Z`);
+}
+
+/**
+ * Plain practice: no Lab arm and no twist. Only these skip solved jobs (S1). Ranked events keep their plans for
+ * fairness, and Lab events are pre-registered, so neither ever loses an attempt.
+ */
+export const isPlainPractice = (e: { kind: string; arm?: string | null; twist?: string | null }) => e.kind === "practice" && !e.arm && !e.twist;
+
+/**
+ * "Solved" (S1): the model got one version of the job (task and seed; the task id carries the tier) right on 3 or more
+ * attempts out of 3 or more, all under the rules in force now, in plain conditions (no arm, no twist: the published
+ * harness, as in a ranked bout). It's the published "right 3 times out of 3" (views.ts `consistency`). Returns
+ * `model:task` keys.
+ */
+export async function solvedPairs(env: Env, models: string[], tasks: string[]) {
+  if (!models.length || !tasks.length) return new Set<string>();
+  const rows = await getDb(env)
+    .select({ modelId: t.arenaRuns.modelId, task: t.arenaRuns.task })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(
+      and(
+        eq(t.arenaRuns.status, "done"),
+        gte(t.arenaRuns.finishedAt, rulesInForceSince()),
+        inArray(t.arenaRuns.modelId, models),
+        inArray(t.arenaRuns.task, tasks),
+        isNull(t.arenaEvents.arm),
+        isNull(t.arenaEvents.twist),
+      ),
+    )
+    .groupBy(t.arenaRuns.modelId, t.arenaRuns.task, t.arenaRuns.seed)
+    .having(sql`count(*) >= 3 and sum(case when ${t.arenaRuns.passed} = 1 then 1 else 0 end) = count(*)`);
+  return new Set(rows.map((r) => `${r.modelId}:${r.task}`));
+}
+
+/** Takes a solved pair's not-yet-started runs out of plain practice events (plus `alsoId`, the run just claimed). */
+async function dropSolved(env: Env, modelId: string, task: string, alsoId: string) {
+  const db = getDb(env);
+  const plain = db
+    .select({ id: t.arenaEvents.id })
+    .from(t.arenaEvents)
+    .where(and(eq(t.arenaEvents.kind, "practice"), isNull(t.arenaEvents.arm), isNull(t.arenaEvents.twist)));
+  const gone = await db
+    .delete(t.arenaRuns)
+    .where(
+      and(
+        eq(t.arenaRuns.modelId, modelId),
+        eq(t.arenaRuns.task, task),
+        inArray(t.arenaRuns.eventId, plain),
+        or(eq(t.arenaRuns.id, alsoId), and(eq(t.arenaRuns.status, "queued"), isNull(t.arenaRuns.checkpoint))),
+      ),
+    )
+    .returning({ id: t.arenaRuns.id });
+  return gone.length;
 }
 
 const monthStart = (now: number) => Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
@@ -226,7 +304,8 @@ export async function spend(env: Env, now = Date.now()) {
 /** Runs queued attempts until the deadline or a budget stops it. Returns a short log for the cron output. */
 export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, deadline: number, now = () => Date.now()) {
   const db = getDb(env);
-  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, skipped: [] as string[] };
+  /** `solved`: plain practice runs dropped because the model already got that job right 3 times out of 3 (S1). */
+  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, solved: 0, skipped: [] as string[] };
   /** Models that were rate limited this tick: skipped until the next one. */
   const cooling = new Set<string>();
   // A run left "running" by a Worker that died is re-queued (it never stored a result). Its checkpoint, if any, is
@@ -303,8 +382,15 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         continue;
       }
       const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.id, run.eventId));
+      // S1: a fresh plain-practice run of a job the model has already got right 3 times out of 3 isn't played. A
+      // suspended bout (it has a checkpoint) is finished, since part of it is already paid for.
+      if (event && isPlainPractice(event) && !run.checkpoint && (await solvedPairs(env, [run.modelId], [run.task])).size) {
+        out.solved += await dropSolved(env, run.modelId, run.task, run.id);
+        continue;
+      }
+      const cache = event && promptCacheOn(event) ? { key: run.id } : null;
       try {
-        const r = await playBout(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null, checkpoint: asCheckpoint(run.checkpoint), suspendAt: deadline });
+        const r = await playBout(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null, checkpoint: asCheckpoint(run.checkpoint), suspendAt: deadline, cache });
         if ("suspended" in r) {
           // Back in the queue with its checkpoint; nothing is signed or scored until the bout ends.
           await db.update(t.arenaRuns).set({ status: "queued", checkpoint: r.suspended, startedAt: null }).where(eq(t.arenaRuns.id, run.id));
@@ -368,7 +454,13 @@ export async function planEvent(
   } else {
     await db.insert(t.arenaEvents).values({ id: eventId, slug: p.slug, name: p.name, season: p.season, kind: p.kind, status: "running", twist: p.twist ?? null, arm: p.arm ?? null });
   }
-  const rows = p.tasks.flatMap((task) => p.seeds.flatMap((seed) => Array.from({ length: p.attempts }, (_, i) => p.models.map((modelId) => ({ id: newId(), eventId, modelId, task, seed, attemptNo: i + 1, status: "queued" as const })))).flat());
+  // S1: plain practice leaves out the jobs a model has already got right 3 times out of 3 under the rules in force.
+  // Ranked and Lab plans are queued exactly as written.
+  const solved = isPlainPractice(p) ? await solvedPairs(env, p.models, p.tasks) : new Set<string>();
+  const rows = p.tasks
+    .flatMap((task) => p.seeds.flatMap((seed) => Array.from({ length: p.attempts }, (_, i) => p.models.map((modelId) => ({ id: newId(), eventId, modelId, task, seed, attemptNo: i + 1, status: "queued" as const })))).flat())
+    .filter((r) => !solved.has(`${r.modelId}:${r.task}`));
+  if (solved.size) console.log("arena: plan skips solved practice", p.slug, [...solved].join(", "));
   // Models are interleaved, so a partial run still compares like with like. D1 allows 100 bound values per
   // statement and each row binds 9, so insert in batches of 10, all in one atomic batch (so a failure leaves no partial plan).
   const statements = [];

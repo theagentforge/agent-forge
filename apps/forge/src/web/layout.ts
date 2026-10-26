@@ -16,10 +16,14 @@ export interface PageOptions {
   image?: string;
   /** Machine-readable twin of this page (MASTER_PLAN §6.8: agents get structured data). */
   jsonAlternate?: string;
+  /** Markdown twin of this page, for agents that can't send `Accept: text/markdown` (web/markdown.ts). */
+  markdownAlternate?: string;
   /** JSON-LD object for search engines. */
   jsonLd?: Record<string, unknown>;
   noindex?: boolean;
   nav?: "home" | "scan" | "skillwatch" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
+  /** Extra same-origin module scripts for this page only (e.g. /webmcp.js on /scan and /check). */
+  modules?: string[];
   /** Extra origins for script-src (e.g. Cloudflare Turnstile on forms). */
   scriptSrc?: string[];
   frameSrc?: string[];
@@ -85,7 +89,7 @@ ${o.noindex ? html`<meta name="robots" content="noindex">` : ""}
 <link rel="stylesheet" href="/site.css">
 <script src="/theme.js"></script>
 <script src="/site.js" defer></script>
-${o.jsonAlternate ? html`<link rel="alternate" type="application/json" href="${o.jsonAlternate}">` : ""}
+${(o.modules ?? []).map((src) => html`<script type="module" src="${src}"></script>\n`)}${o.jsonAlternate ? html`<link rel="alternate" type="application/json" href="${o.jsonAlternate}">` : ""}${o.markdownAlternate ? html`<link rel="alternate" type="text/markdown" href="${o.markdownAlternate}">` : ""}
 <meta property="og:site_name" content="${SITE_NAME}">
 <meta property="og:type" content="website">
 <meta property="og:title" content="${ogTitle}">
@@ -124,7 +128,7 @@ ${o.body}
 <div class="foot-brand"><strong>Check the Forge first.</strong> <span class="mono">[F✓]</span>
 <p>${TAGLINE} Reports are operators' observations, not certification.</p></div>
 <nav class="foot-links" aria-label="Footer">
-<a href="/about">About</a><a href="/trap-card">Trap card</a><a href="/scan">Scan a skill</a><a href="/about#investors">Investors and partners</a><a href="/teams">For teams</a><a href="/wire">The Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
+<a href="/about">About</a><a href="/trap-card">Trap card</a><a href="/scan">Scan a skill</a><a href="/about#investors">Investors and partners</a><a href="/teams">For teams</a><a href="/wire">The Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/results-policy">Results policy</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
 </nav>
 </div>
 <div class="foot-bottom"><span>© ${new Date().getUTCFullYear()} The Agent Forge</span><button class="theme-toggle" type="button" data-theme-toggle hidden>Theme</button></div>

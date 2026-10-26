@@ -1,6 +1,7 @@
 import {
   displayVerdict,
   reportSchema,
+  TOOL_ID_PATTERN,
   scanNote,
   scoreToolVersion,
   TOOL_KINDS,
@@ -22,12 +23,16 @@ import { forgetContributor, isContributor, reportAlerts, reportsNeeded, reportUr
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
 import { gate } from "./counters";
-import { vouchesRemaining } from "./identity";
+import { countsAsHouse, vouchesRemaining } from "./identity";
+import { bump } from "./usage";
+import { withRegistryFingerprint } from "./registry";
+import { reportsWithVerdicts, saveVerdict, verdictTarget, type VerdictCounts, type VerdictRejection } from "./verdicts";
 import { moderateWithinBudget } from "./moderation";
 import type { AgentProps } from "./props";
 import { shownInChecks } from "./feedback";
 import { signReport } from "./signing";
-import { canonicalFromUrl, canonicalToolId, publisherFromId, toolPageUrl } from "./tools";
+import { sinceLastWeek } from "./digest";
+import { canonicalFromUrl, canonicalToolId, publisherFromId, splitInlineVersion, toolPageUrl, versionFromUrl } from "./tools";
 
 // The three agent operations (MASTER_PLAN §10.5). Responses are structured data only, never peer prose.
 
@@ -61,6 +66,8 @@ export interface CheckResult {
    */
   public_signals_summary: AdvisoryResult | null;
   page_url: string | null;
+  /** The version the agent asked about (from `version`, the id or the URL); `version` is the one the reports are on. */
+  asked_version?: string;
   /** Field reports on this exact version (any tier). */
   reports_for_this_version: number;
   /** True when no one has reported on this version yet: a report from this agent would be the first (ADR 0011 g). */
@@ -84,6 +91,13 @@ export interface CheckResult {
     report_url?: string | null;
     reports_needed?: { people: number; verified: number };
   };
+  /**
+   * V1 (ADR 0047): the newest field reports on this exact version, by report_id, so an agent that used the same
+   * version can confirm or dispute one (forge_report with on_report). Verdicts are counted by distinct verified owners.
+   */
+  reports: { report_id: string; outcome: "worked" | "partial" | "failed"; created_at: string; verdicts: VerdictCounts }[];
+  /** Reports on this version confirmed by at least 2 distinct other owners (and more confirms than disputes). */
+  corroborated_reports: number;
   /** For a tool we don't know: up to 5 known tools whose id contains the asked name, so a bare name isn't a dead end. */
   candidates?: { id: string; page_url: string }[];
 }
@@ -154,15 +168,24 @@ const worse = (a: SecurityStatus, b: SecurityStatus | null) => (b && STATUS_RANK
 
 async function advisoriesFor(env: Env, ids: string[], version: string | null) {
   const pkg = ids.map(osvPackageFor).find((p) => p);
-  const r = pkg ? await queryAdvisories(env, pkg, version) : null;
-  if (!r) return null;
-  // Marked on every check, not cached with the OSV answer, so a new KEV entry shows the day it's listed (C3).
-  const kev = await kevState(env);
-  return markExploited(r, kev.ids, kev.updated);
+  if (!pkg) return null;
+  // Marked on every check, not cached with the OSV answer, so a new KEV entry shows the day it's listed (C3). Both
+  // reads run at once (ADR 0056).
+  const [r, kev] = await Promise.all([queryAdvisories(env, pkg, version), kevState(env)]);
+  return r ? markExploited(r, kev.ids, kev.updated) : null;
 }
 
-export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
+export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResult> {
   const db = getDb(env);
+  // A version written into the id or the registry URL counts as the version asked about (24 Oct production check).
+  let q = asked;
+  if (!q.version && q.id) {
+    const split = splitInlineVersion(q.id);
+    if (split.version) q = { ...q, id: split.id, version: split.version };
+  } else if (!q.version && q.url) {
+    const v = versionFromUrl(q.url);
+    if (v) q = { ...q, version: v };
+  }
   let version: typeof t.toolVersions.$inferSelect | undefined;
   let tool: typeof t.tools.$inferSelect | undefined;
   let canonical: string | null = null;
@@ -176,7 +199,13 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   } else {
     canonical = q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!);
     tool = await findTool(db, canonical);
-    if (tool)
+    // The version asked about, when reports exist for it; otherwise the newest on file (asked_version says which).
+    if (tool && q.version)
+      version = await db.query.toolVersions.findFirst({
+        where: and(eq(t.toolVersions.toolId, tool.id), eq(t.toolVersions.version, q.version)),
+        orderBy: desc(t.toolVersions.firstSeenAt),
+      });
+    if (tool && !version)
       version = await db.query.toolVersions.findFirst({
         where: eq(t.toolVersions.toolId, tool.id),
         orderBy: desc(t.toolVersions.firstSeenAt),
@@ -184,11 +213,15 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   }
 
   if (!tool) {
-    const advisories = canonical ? await advisoriesFor(env, [canonical], q.version ?? null) : null;
+    const [advisories, candidates] = await Promise.all([
+      canonical ? advisoriesFor(env, [canonical], q.version ?? null) : null,
+      toolCandidates(db, env.PUBLIC_ORIGIN, canonical ? nameTerm(canonical) : null),
+    ]);
     const status = advisoryStatus(advisories);
     return {
       known: false,
       tool: null,
+      ...(q.version ? { asked_version: q.version } : {}),
       version: q.version ?? null,
       fingerprint: q.fingerprint ?? null,
       forge_score: null,
@@ -207,22 +240,31 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
       reports_for_this_version: 0,
       be_first: true,
       verdict: status ? verdictFor(status) : "insufficient",
-      contribute: contributeFor(env.PUBLIC_ORIGIN),
-      candidates: await toolCandidates(db, env.PUBLIC_ORIGIN, canonical ? nameTerm(canonical) : null),
+      // ADR 0056: a tool not on file can still get its first report (it is added when the report is filed).
+      contribute: {
+        ...contributeFor(env.PUBLIC_ORIGIN),
+        ...(canonical && TOOL_ID_PATTERN.test(canonical) ? { report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: canonical, kind: canonical.startsWith("pypi:") ? "api" : "mcp_server", version: q.version ?? "", fp: "" }) } : {}),
+        reports_needed: reportsNeeded(0, 0, false),
+      },
+      reports: [],
+      corroborated_reports: 0,
+      candidates,
     };
   }
 
-  const score = version
-    ? await db.query.toolScores.findFirst({ where: eq(t.toolScores.toolVersionId, version.id) })
-    : undefined;
-  const others = q.fingerprint
-    ? []
-    : await db
-        .select({ id: t.toolVersions.id, version: t.toolVersions.version, status: t.toolScores.securityStatus })
-        .from(t.toolScores)
-        .innerJoin(t.toolVersions, eq(t.toolScores.toolVersionId, t.toolVersions.id))
-        .where(and(eq(t.toolVersions.toolId, tool.id), ne(t.toolScores.securityStatus, "clear")))
-        .limit(20);
+  // Independent reads, sent together (ADR 0056: each D1 round trip added to every check).
+  const [score, others, aliasRows] = await Promise.all([
+    version ? db.query.toolScores.findFirst({ where: eq(t.toolScores.toolVersionId, version.id) }) : undefined,
+    q.fingerprint
+      ? []
+      : db
+          .select({ id: t.toolVersions.id, version: t.toolVersions.version, status: t.toolScores.securityStatus })
+          .from(t.toolScores)
+          .innerJoin(t.toolVersions, eq(t.toolScores.toolVersionId, t.toolVersions.id))
+          .where(and(eq(t.toolVersions.toolId, tool.id), ne(t.toolScores.securityStatus, "clear")))
+          .limit(20),
+    db.select({ alias: t.toolAliases.alias }).from(t.toolAliases).where(eq(t.toolAliases.toolId, tool.id)).limit(20),
+  ]);
   const otherFlagged = others
     .filter((o) => o.id !== version?.id)
     .sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status]);
@@ -230,13 +272,20 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
   const reportCount = breakdown.worked + breakdown.partial + breakdown.failed;
   const ownStatus = score?.securityStatus ?? "clear";
   const inherited = ownStatus === "clear" && score?.successScore == null ? otherFlagged[0]?.status : undefined;
-  const aliases = (await db.select({ alias: t.toolAliases.alias }).from(t.toolAliases).where(eq(t.toolAliases.toolId, tool.id)).limit(20)).map((a) => a.alias);
-  const advisories = await advisoriesFor(env, [tool.canonicalId, ...aliases], q.version ?? version?.version ?? null);
-  if (advisories) await recordAdvisories(db, tool.id, advisories).catch(() => {});
+  const aliases = aliasRows.map((a) => a.alias);
+  const onAsked = !(q.version && version?.version !== q.version);
+  const [advisories, listed] = await Promise.all([
+    advisoriesFor(env, [tool.canonicalId, ...aliases], q.version ?? version?.version ?? null).then(async (a) => {
+      if (a) await recordAdvisories(db, tool.id, a).catch(() => {});
+      return a;
+    }),
+    version && onAsked && reportCount ? reportsWithVerdicts(env, db, version.id, 100) : [],
+  ]);
   const status = worse(inherited ?? ownStatus, advisoryStatus(advisories));
   return {
     known: true,
     tool: { kind: tool.kind, id: tool.canonicalId },
+    ...(q.version ? { asked_version: q.version } : {}),
     version: version?.version ?? null,
     fingerprint: version?.fingerprint ?? null,
     forge_score: score?.successScore ?? null,
@@ -251,14 +300,17 @@ export async function checkTool(env: Env, q: CheckQuery): Promise<CheckResult> {
     other_versions_flagged: otherFlagged.map((o) => ({ version: o.version, security_status: verdictFor(o.status) })),
     public_signals_summary: advisories,
     page_url: toolPageUrl(env.PUBLIC_ORIGIN, tool.canonicalId),
-    reports_for_this_version: reportCount,
-    be_first: reportCount === 0,
+    reports_for_this_version: q.version && version?.version !== q.version ? 0 : reportCount,
+    be_first: q.version && version?.version !== q.version ? true : reportCount === 0,
     contribute: {
       ...contributeFor(env.PUBLIC_ORIGIN),
-      report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", version: version?.version ?? "", fp: version?.fingerprint ?? "" }),
+      // The version asked about when it isn't on file yet (its fingerprint is looked up on filing for npm and PyPI).
+      report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", ...(onAsked ? { version: version?.version ?? q.version ?? "", fp: version?.fingerprint ?? "" } : { version: q.version!, fp: "" }) }),
       reports_needed: reportsNeeded(score?.distinctOwners ?? 0, score?.verifiedOwners ?? 0, score?.successScore != null),
     },
     verdict: displayVerdict({ security_status: verdictFor(status), forge_score: score?.successScore ?? null }),
+    reports: listed.slice(0, 20),
+    corroborated_reports: listed.filter((r) => r.verdicts.corroborated).length,
   };
 }
 
@@ -270,7 +322,8 @@ export type ReportRejection =
   | "note_contains_credential"
   | "note_contains_file_path"
   | "note_contains_link"
-  | "publisher_cannot_report_own_tool";
+  | "publisher_cannot_report_own_tool"
+  | VerdictRejection;
 
 export type ReportResult =
   | {
@@ -280,8 +333,10 @@ export type ReportResult =
       counted: boolean;
       reason: "counted" | "sandbox_reduced_weight" | "held_for_review";
       note_status: "none" | "published" | "pending_moderation" | "removed_by_moderation";
+      /** V1: the verdict this report recorded on another report, when `on_report` was given. */
+      verdict?: { on_report: string; verdict: "confirm" | "dispute"; replaced: boolean; counted: boolean };
     }
-  | { ok: false; counted: false; reason: ReportRejection; detail?: string };
+  | { ok: false; counted: false; reason: ReportRejection; detail?: string; field?: string };
 
 /** Resolves the agent behind a grant, or null when it was revoked or never existed. */
 export async function activeAgent(db: Db, props: AgentProps) {
@@ -292,9 +347,11 @@ export async function activeAgent(db: Db, props: AgentProps) {
 }
 
 export async function submitReport(env: Env, props: AgentProps, input: unknown, now = Date.now()): Promise<ReportResult> {
-  const parsed = reportSchema.safeParse(input);
+  // ADR 0056: an npm or PyPI version's fingerprint is looked up when the report leaves it out.
+  const parsed = reportSchema.safeParse(await withRegistryFingerprint(env, input));
   if (!parsed.success) {
-    return { ok: false, counted: false, reason: "invalid_report", detail: parsed.error.issues[0]?.message };
+    const issue = parsed.error.issues[0];
+    return { ok: false, counted: false, reason: "invalid_report", detail: issue?.message, ...(issue?.path.length ? { field: issue.path.join(".") } : {}) };
   }
   const report: Report = parsed.data;
   const db = getDb(env);
@@ -320,6 +377,10 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
   if (owners.some((o) => o === props.githubLogin.toLowerCase() || props.githubOrgs.includes(o))) {
     return { ok: false, counted: false, reason: "publisher_cannot_report_own_tool" };
   }
+
+  // V1: a verdict on another report is checked before anything is stored, so a refused verdict files nothing.
+  const target = await verdictTarget(db, who, report, { toolId: known?.id ?? null, fingerprint: report.tool.fingerprint });
+  if (typeof target === "string") return { ok: false, counted: false, reason: target };
 
   const tool = known ?? (await upsertTool(db, canonicalId, report.tool.kind, publisherFromId(canonicalId)));
   const version = await upsertToolVersion(db, tool.id, report.tool.version, report.tool.fingerprint, now);
@@ -365,6 +426,13 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
   await db.insert(t.reports).values({ ...fields, serverSignature: await signReport(env.REPORT_SIGNING_KEY, fields) });
   await rescoreToolVersion(db, version, now);
   if (!held) await forgetContributor(env, who.human.id);
+  let verdict: Extract<ReportResult, { ok: true }>["verdict"];
+  if (target && report.verdict) {
+    const saved = await saveVerdict(db, { reportId: target.id, byReportId: id, agentId: who.agent.id, humanId: who.human.id, verdict: report.verdict, evidenceSha256: report.evidence_sha256 ?? null }, now);
+    const counted = !held && !countsAsHouse(env, who.human);
+    verdict = { on_report: target.id, verdict: report.verdict, replaced: saved.replaced, counted };
+    if (counted) await bump(env, [`verdict:${report.verdict}`], now).catch(() => {});
+  }
 
   return {
     ok: true,
@@ -379,6 +447,7 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
         : noteState === "pending"
           ? "pending_moderation"
           : "removed_by_moderation",
+    ...(verdict ? { verdict } : {}),
   };
 }
 
@@ -487,7 +556,7 @@ export async function rescoreToolVersion(db: Db, version: typeof t.toolVersions.
 export const HOUSE_TESTER_NOTE =
   /^House handshake test: (started with npx, no credentials, and listed \d{1,4} tools? in \d{1,4}s\.|started and answered initialize, but tools\/list failed\.|npx could not install this version\.)$/;
 
-export async function describeMe(env: Env, props: AgentProps) {
+export async function describeMe(env: Env, props: AgentProps, input: { watch?: unknown; gauntlet_ids?: unknown } = {}) {
   const db = getDb(env);
   const who = await activeAgent(db, props);
   if (!who) return null;
@@ -525,6 +594,8 @@ export async function describeMe(env: Env, props: AgentProps) {
     alerts: await reportAlerts(db, env.PUBLIC_ORIGIN, who.human.id),
     /** ADR 0038: a counted report in the last 30 days raises this agent's check limit. */
     contributor: await isContributor(env, db, who.human.id),
+    /** V5: what changed in the last 7 days (data only; watched fingerprints and Gauntlet ids come from the agent). */
+    since_last_week: await sinceLastWeek(env, db, { agentId: who.agent.id, humanId: who.human.id }, input),
   };
 }
 

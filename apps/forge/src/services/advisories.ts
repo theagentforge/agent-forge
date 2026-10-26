@@ -229,10 +229,18 @@ export async function queryAdvisoriesBatch(
       if (res.ok) results = ((await res.json()) as { results?: { vulns?: { id?: unknown }[] }[] }).results ?? null;
     } catch {}
     if (!results) continue;
+    const idsOf = chunk.map((_, i) => (results![i]?.vulns ?? []).map((v) => v.id).filter((id): id is string => typeof id === "string" && ID_RE.test(id)));
+    // Every record this chunk needs, each read once and all at the same time (ADR 0056: one item at a time made a
+    // 500-package list wait on each match in turn).
+    const wanted = [...new Set(idsOf.flatMap((ids) => ids.slice(0, MAX_ADVISORIES)))];
+    const records = new Map(await Promise.all(wanted.map(async (id) => [id, await vulnById(env, id, fetcher)] as const)));
     for (let i = 0; i < chunk.length; i++) {
-      const ids = (results[i]?.vulns ?? []).map((v) => v.id).filter((id): id is string => typeof id === "string" && ID_RE.test(id));
-      const vulns = await Promise.all(ids.slice(0, MAX_ADVISORIES).map((id) => vulnById(env, id, fetcher)));
-      const list = vulns.map((v) => (v ? parseOsvVuln(v, chunk[i]!.pkg, chunk[i]!.version) : null)).filter((x): x is Advisory => !!x);
+      const ids = idsOf[i]!;
+      const list = ids
+        .slice(0, MAX_ADVISORIES)
+        .map((id) => records.get(id))
+        .map((v) => (v ? parseOsvVuln(v, chunk[i]!.pkg, chunk[i]!.version) : null))
+        .filter((x): x is Advisory => !!x);
       out[start + i] = { ...summarise(chunk[i]!.pkg, chunk[i]!.version, list, now), total: ids.length };
     }
   }

@@ -3,7 +3,7 @@
 // the Worker posts it with the Moltbook key, which lives only in Cloudflare secrets. Moltbook asks new content to pass
 // a short, scrambled arithmetic question (its anti-spam check for AI agents): a Workers AI model reads the question
 // into two numbers and an operation, and this code does the arithmetic. One post per approval, no comments, votes,
-// follows or messages, so nothing here can turn into spam (Moltbook rules.md: "Quality over quantity").
+// follows or messages here; answers to questions on our own posts are in moltbook-replies.ts (ADR 0044).
 
 export const MOLTBOOK_API = "https://www.moltbook.com/api/v1";
 export const CHALLENGE_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
@@ -205,7 +205,7 @@ export const AGENT_NAMES = ["TheAgentForge", "AgentForgeArena", "ForgeArena", "T
 export const AGENT_NAME = AGENT_NAMES[0]!;
 export const ERROR_KV = "moltbook:register-error";
 export const AGENT_DESCRIPTION =
-  "The Agent Forge's agent (theagentforge.io): refereed Arena bouts where AI models do everyday jobs with planted traps, Forge Lab results, and skill scans. Every post links its evidence. Run by Dinike; each post is approved by a human.";
+  "The Agent Forge's agent (theagentforge.io): refereed Arena bouts where AI models do everyday jobs with planted traps, Forge Lab results, and skill scans. Every post links its evidence. Run by Dinike: each post is approved by a human; answers to questions on our own posts are automated, built only from our published data.";
 
 /**
  * Registers the agent on Moltbook, once, when an admin presses the button on /admin/moltbook. The key is kept in KV

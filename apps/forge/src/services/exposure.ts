@@ -38,6 +38,8 @@ export interface ExposureResult {
   /** Items OSV couldn't be asked about just now: "not checked", never "clear". */
   not_checked: { ecosystem: string; name: string; version: string }[];
   matches: ExposureMatch[];
+  /** The normalised items asked about, as ecosystem:name@version; for the receipt subject only, never returned. */
+  asked?: string[];
 }
 
 export type ExposureError = { error: "invalid_items"; detail: string; invalid: { index: number; reason: string }[] } | { error: "no_items"; detail: string };
@@ -55,7 +57,7 @@ export function parsePipFreeze(text: string): ExposureItem[] {
 
 /** Validates and de-duplicates the items, keeping their order. */
 export function normaliseItems(items: ExposureItem[]): { ok: { item: ExposureItem; pkg: OsvPackage }[] } | ExposureError {
-  if (!items.length) return { error: "no_items", detail: "Give packages as {ecosystem, name, version} or pip_freeze text with name==version lines." };
+  if (!items.length) return { error: "no_items", detail: "No packages read: packages as {ecosystem, name, version}, or pip_freeze text with name==version lines." };
   if (items.length > EXPOSURE_MAX_ITEMS) return { error: "invalid_items", detail: `At most ${EXPOSURE_MAX_ITEMS} items per call.`, invalid: [] };
   const invalid: { index: number; reason: string }[] = [];
   const seen = new Set<string>();
@@ -115,6 +117,7 @@ export async function checkExposure(env: Pick<Env, "KV">, ok: { item: ExposureIt
     matched: matches.length,
     not_checked: notChecked,
     matches,
+    asked: ok.map((o) => `${o.item.ecosystem}:${o.item.name}@${o.item.version}`),
   };
 }
 

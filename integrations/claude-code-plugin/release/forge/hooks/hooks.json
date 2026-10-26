@@ -1,9 +1,9 @@
 {
-  "description": "The Agent Forge: trap card at session start, pre-install check, local failure counts and end-of-session report drafts. Every hook fails open.",
+  "description": "The Agent Forge: trap card and weekly check at session start, pre-install check with what changed since the last check, local failure counts and end-of-session report drafts. Every hook fails open.",
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"", "timeout": 5 }]
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"", "timeout": 10 }]
       }
     ],
     "PreToolUse": [
@@ -26,7 +26,7 @@
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/strain.mjs\" stop", "timeout": 5 }]
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/strain.mjs\" stop", "timeout": 10 }]
       }
     ]
   }

@@ -51,6 +51,8 @@ export const COUNTER_MINIMUMS = {
   agent_used_7d: 25,
   agent_returned_7d: 10,
   agent_contributed_7d: 10,
+  /** Tool calls from outside clients (ADR 0050): House, our probes, directories and monitors left out. */
+  agent_outside_calls_7d: 25,
 } as const;
 
 export type CounterKey = keyof typeof COUNTER_MINIMUMS;

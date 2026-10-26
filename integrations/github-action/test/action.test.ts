@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { dedupe, parseJsonc, serversIn, serverTarget, toolTarget } from "../src/discover";
-import { readInputs, run, type Inputs, type Io } from "../src/run";
+import { checkHeaders, readInputs, run, type Inputs, type Io } from "../src/run";
+import { AGENT_DIRECTED } from "../../../apps/forge/test/wording";
 
 describe("discover", () => {
   it("reads JSON with comments and trailing commas, leaving strings alone", () => {
@@ -49,6 +50,15 @@ describe("inputs", () => {
     expect(i.configs).toContain(".mcp.json");
     expect(readInputs({ "INPUT_FAIL-ON": "sometimes" })).toMatch(/fail-on/);
     expect(readInputs({ INPUT_ORIGIN: "http://evil.example" })).toMatch(/https/);
+  });
+
+  it("tags checks as internal only in our own repositories (K7)", () => {
+    expect((readInputs({ GITHUB_REPOSITORY: "someone/app" }) as Inputs).internal).toBe(false);
+    expect((readInputs({}) as Inputs).internal).toBe(false);
+    expect((readInputs({ GITHUB_REPOSITORY_OWNER: "theagentforge", GITHUB_REPOSITORY: "theagentforge/forge" }) as Inputs).internal).toBe(true);
+    expect((readInputs({ GITHUB_REPOSITORY: "TheAgentForge/agent-forge" }) as Inputs).internal).toBe(true);
+    expect(checkHeaders(false)).toEqual({ Accept: "application/json", "User-Agent": "theagentforge-action/1" });
+    expect(checkHeaders(true)).toMatchObject({ "X-Forge-Internal": "action", "User-Agent": expect.stringMatching(/^theagentforge-action\/1 theagentforge-internal\/action$/) });
   });
 });
 
@@ -113,6 +123,8 @@ describe("run", () => {
     const h = harness({}, { "npm:x": 503 });
     expect(await run({ ...base, tools: ["npm:x"] }, h.io)).toBe(0);
     expect(h.commands[0]).toMatch(/^::warning/);
+    // No claim line when no check answered.
+    expect(h.summary).not.toContain("gauntlet/claim");
     expect(await run({ ...base, tools: ["npm:x"], failOnError: true }, harness({}, { "npm:x": 503 }).io)).toBe(1);
   });
 
@@ -124,6 +136,42 @@ describe("run", () => {
     expect(await run(base, h.io)).toBe(0);
     expect(h.urls.length).toBe(2);
     expect(h.summary).toContain(".mcp.json › good; .cursor/mcp.json › good");
+  });
+
+  it("with a state file, says what changed since the last run, and lists each answer's receipt", async () => {
+    const state = new Map<string, string>();
+    const withState = (h: ReturnType<typeof harness>, day: string) => {
+      h.io.readState = (p) => state.get(p) ?? null;
+      h.io.writeState = (p, text) => void state.set(p, text);
+      h.io.now = () => Date.parse(day);
+      return h;
+    };
+    const inputs = { ...base, tools: ["npm:x"], stateFile: "/runner/temp/forge-check-state.json" };
+    const receipt = "https://theagentforge.io/r/tok.sig";
+    const first = withState(harness({}, { "npm:x": result({ reports_for_this_version: 6, outcome_breakdown: { worked: 6, partial: 0, failed: 0 }, share: { receipt_url: receipt } }) }), "2026-10-19T00:00:00Z");
+    await run(inputs, first.io);
+    expect(first.log).toEqual([expect.stringContaining("[F✓]"), "  since last check: first check of this version from here", `  receipt: ${receipt}`]);
+    expect(first.outputs.changed).toBe("0");
+    expect(first.summary).toContain("### Receipts");
+    expect(first.summary.trimEnd().split("\n").at(-3)).toBe(`- \`npm:x\`: ${receipt}`);
+    // ADR 0055: the summary ends with one plain claim line for the person.
+    expect(first.summary.trimEnd().split("\n").at(-1)).toBe("Claim your agent's Forge profile: https://theagentforge.io/gauntlet/claim?from=action");
+
+    const second = withState(harness({}, { "npm:x": result({ reports_for_this_version: 8, outcome_breakdown: { worked: 6, partial: 0, failed: 2 }, public_signals_summary: { advisories: [{ id: "GHSA-9999-8888-7777", kind: "vulnerability" }] } }) }), "2026-10-26T00:00:00Z");
+    await run(inputs, second.io);
+    const since = "since last check (2026-10-19): 2 new field reports (2 failed); new published advisory GHSA-9999-8888-7777";
+    expect(second.log[1]).toBe(`  ${since}`);
+    expect(second.summary).toContain(`- **\`npm:x\`**: ${since}`);
+    expect(second.outputs.changed).toBe("1");
+    expect(second.log.join("\n")).not.toMatch(AGENT_DIRECTED);
+    // The state stays in the file; nothing about it is sent.
+    expect(second.urls).toEqual(["https://theagentforge.io/api/v1/check?id=npm%3Ax"]);
+  });
+
+  it("reads the state-file input", () => {
+    const i = readInputs({ "INPUT_STATE-FILE": "/tmp/s.json" }) as Inputs;
+    expect(i.stateFile).toBe("/tmp/s.json");
+    expect((readInputs({}) as Inputs).stateFile).toBe("");
   });
 
   it("says so when there's nothing to check, and reports bad JSON as not checked", async () => {

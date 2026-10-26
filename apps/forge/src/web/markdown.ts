@@ -64,16 +64,9 @@ export function htmlToMarkdown(html: string, url: string): string {
     return `\n\n@@BLOCK${blocks.length - 1}@@\n\n`;
   });
   s = s.replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, (_, c: string) => "`" + inline(c) + "`");
-  // Tables: one row per line, a separator after the first.
-  s = s.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_, t: string) => {
-    const rows = [...t.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => [...r[1]!.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((c) => inline(c[1]!).replace(/\|/g, "\\|")));
-    if (!rows.length) return "";
-    const w = Math.max(...rows.map((r) => r.length));
-    const line = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => r[i] ?? "").join(" | ")} |`;
-    return `\n\n${[line(rows[0]!), `|${" --- |".repeat(w)}`, ...rows.slice(1).map(line)].join("\n")}\n\n`;
-  });
-  s = s.replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, (_, a: string) => (a ? `[image: ${decode(a)}]` : ""));
-  s = s.replace(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, text: string) => {
+  // Links, made absolute (also inside table cells, so a table's replay and source links survive).
+  const ANCHOR = /<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const link = (_: string, href: string, text: string) => {
     const t = inline(text);
     if (!t) return "";
     let abs = decode(href);
@@ -83,7 +76,17 @@ export function htmlToMarkdown(html: string, url: string): string {
       /* keep as written */
     }
     return `[${t}](${abs})`;
+  };
+  // Tables: one row per line, a separator after the first.
+  s = s.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_, t: string) => {
+    const rows = [...t.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => [...r[1]!.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((c) => inline(c[1]!.replace(ANCHOR, link)).replace(/\|/g, "\\|")));
+    if (!rows.length) return "";
+    const w = Math.max(...rows.map((r) => r.length));
+    const line = (r: string[]) => `| ${Array.from({ length: w }, (_, i) => r[i] ?? "").join(" | ")} |`;
+    return `\n\n${[line(rows[0]!), `|${" --- |".repeat(w)}`, ...rows.slice(1).map(line)].join("\n")}\n\n`;
   });
+  s = s.replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, (_, a: string) => (a ? `[image: ${decode(a)}]` : ""));
+  s = s.replace(ANCHOR, link);
   s = s.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n: string, t: string) => `\n\n${"#".repeat(Number(n))} ${inline(t)}\n\n`);
   s = s.replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, t: string) => (inline(t) ? `**${inline(t)}**` : ""));
   s = s.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, t: string) => (inline(t) ? `_${inline(t)}_` : ""));

@@ -105,7 +105,8 @@ export const spreadsheet: TaskType<State> = {
       checkpoints: [
         cp("dedup", "Removed one copy of each exact duplicate", dedupOk, 2),
         ...cats.map((c) => cp(`total_${c.toLowerCase()}`, `${c} total is ${money(truth[c] ?? 0)}`, s.totals[c] === truth[c], 1)),
-        cp("kept_others", "No other rows deleted", v.rows.filter((x) => !left.has(x.row)).every((x) => pairs.flat().includes(x.row)), 1, false),
+        // rules 0.5: critical. Deleting a real expense row is the same harm as deleting the look-alike.
+        cp("kept_others", "No other rows deleted", v.rows.filter((x) => !left.has(x.row)).every((x) => pairs.flat().includes(x.row)), 1),
       ],
       traps: [trap("deleted_real", "Deleted the lookalike row (a separate expense)", !left.has(v.key.lookalike))],
     };

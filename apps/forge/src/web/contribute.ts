@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { html } from "hono/html";
 import * as t from "../db/schema";
 import { parseDraft, type ReportDraft } from "../services/contribute";
+import { registryId } from "../services/registry";
 import { getDb } from "../services/db";
 import { submitReport, type ReportRejection } from "../services/forge";
 import { agentForClient, MAX_AGENTS_PER_HUMAN } from "../services/identity";
@@ -28,10 +29,15 @@ const REJECTED: Record<ReportRejection, string> = {
   note_contains_file_path: "The note holds a file path. Remove it and try again.",
   note_contains_link: "The note holds a link. Remove it and try again.",
   publisher_cannot_report_own_tool: "Publishers can't report on their own tools.",
+  verdict_incomplete: "A verdict needs both the report it is on and confirm or dispute.",
+  unknown_report: "That report isn't on the site (it may be held for review).",
+  verdict_needs_verified_owner: "Confirming or disputing reports needs a verified account.",
+  verdict_not_same_version: "A verdict must be on a report about the same tool version.",
+  verdict_on_own_report: "You can't confirm or dispute your own reports.",
 };
 
 const ISSUE_LABEL = (i: string) => i.replace(/_/g, " ");
-const draftQuery = (d: ReportDraft) => new URLSearchParams({ tool: d.tool, kind: d.kind, version: d.version, fp: d.fp, ...(d.outcome ? { outcome: d.outcome } : {}), ...(d.note ? { note: d.note } : {}) }).toString();
+const draftQuery = (d: ReportDraft) => new URLSearchParams({ tool: d.tool, kind: d.kind, ...(d.version ? { version: d.version } : {}), ...(d.fp ? { fp: d.fp } : {}), ...(d.outcome ? { outcome: d.outcome } : {}), ...(d.issues?.length ? { issues: d.issues.join(",") } : {}), ...(d.note ? { note: d.note } : {}) }).toString();
 
 const invalid = (c: Parameters<typeof send>[0]) =>
   send(c, {
@@ -52,6 +58,7 @@ site.get("/report", async (c) => {
   const agents = s ? await db.query.agents.findMany({ where: and(eq(t.agents.humanId, s.session.h), eq(t.agents.status, "active")) }) : [];
   const csrf = s ? await csrfToken(c.env.SESSION_SECRET, s.token) : "";
   const back = `/report?${draftQuery(d)}`;
+  const registry = registryId(d.tool);
   return send(c, {
     title: `Report on ${d.tool}`,
     description: "File a field report on a tool your agent used.",
@@ -64,13 +71,16 @@ ${s
   ? html`<form method="post" action="/report" class="panel chamfer panel-body">
 <input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="tool" value="${d.tool}"><input type="hidden" name="kind" value="${d.kind}">
-${d.version
-  ? html`<input type="hidden" name="version" value="${d.version}"><input type="hidden" name="fp" value="${d.fp}">`
-  : html`<p class="small muted">We have no version of this tool on file. Ask your agent for the version it used and its fingerprint.</p>
+${d.version && (d.fp || registry)
+  ? html`<input type="hidden" name="version" value="${d.version}"><input type="hidden" name="fp" value="${d.fp}">${d.fp ? "" : html`<p class="small muted">The version's fingerprint is looked up on the ${d.tool.startsWith("pypi:") ? "PyPI" : "npm"} registry when you file.</p>`}`
+  : registry
+    ? html`<p class="small muted">We have no version of this tool on file. Ask your agent which version it used; its fingerprint is looked up on the registry when you file.</p>
+<label for="r-version">Version</label><input id="r-version" name="version" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9.+_-]*" placeholder="1.4.2">`
+    : html`<p class="small muted">We have no version of this tool on file. Ask your agent for the version it used and its fingerprint.</p>
 <label for="r-version">Version</label><input id="r-version" name="version" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9.+_-]*" placeholder="1.4.2">
 <label for="r-fp">Fingerprint</label><input id="r-fp" name="fp" required pattern="sha256:[0-9a-f]{64}" placeholder="sha256:…" class="mono">`}
 <fieldset><legend>How did it go?</legend>${(["worked", "partial", "failed"] as const).map((o) => html`<label class="choice"><input type="radio" name="outcome" value="${o}" required${d.outcome === o ? " checked" : ""}> ${o}</label>`)}</fieldset>
-<fieldset><legend>Any problems? <span class="muted small">optional</span></legend>${ISSUES.map((i) => html`<label class="choice"><input type="checkbox" name="issues" value="${i}"> ${ISSUE_LABEL(i)}</label>`)}</fieldset>
+<fieldset><legend>Any problems? <span class="muted small">optional</span></legend>${ISSUES.map((i) => html`<label class="choice"><input type="checkbox" name="issues" value="${i}"${d.issues?.includes(i) ? " checked" : ""}> ${ISSUE_LABEL(i)}</label>`)}</fieldset>
 <label for="r-note">Note <span class="muted small">optional, ${NOTE_MAX_LENGTH} characters, no keys, paths or links</span></label>
 <textarea id="r-note" name="note" maxlength="${NOTE_MAX_LENGTH}" rows="3">${d.note ?? ""}</textarea>
 <label for="r-task">Kind of task <span class="muted small">a short word, e.g. coding, research</span></label>
@@ -113,6 +123,8 @@ site.post("/report", async (c) => {
     ...(String(f.get("note") ?? "").trim() ? { note: String(f.get("note")).trim() } : {}),
   };
   const result = await submitReport(c.env, { humanId: human.id, agentId, githubLogin: human.githubLogin, githubOrgs: g.session.o ?? [] }, report);
+  if (!result.ok && result.field === "tool.fingerprint" && registryId(d.tool))
+    return page(c, d, `We couldn't find version ${d.version} of ${d.tool} on the registry. Check the version number and try again.`);
   if (!result.ok) return page(c, d, `${REJECTED[result.reason] ?? REJECTED.invalid_report}${result.detail ? ` (${result.detail})` : ""}`);
   c.executionCtx.waitUntil(bump(c.env, ["contribute:web-filed"]).catch(() => {}));
   return send(c, {

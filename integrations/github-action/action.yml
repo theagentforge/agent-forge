@@ -25,11 +25,17 @@ inputs:
     description: Forge address.
     required: false
     default: https://theagentforge.io
+  state-file:
+    description: "A file for the last run's answers, so the summary says what changed since then (new field reports, new advisories, a changed verdict). Keep it between runs with actions/cache, for example ${{ runner.temp }}/forge-check-state.json; don't commit it. Default empty: no memory."
+    required: false
+    default: ""
 outputs:
   checked:
     description: How many tools were checked.
   blocked:
     description: Comma-separated ids of the tools that failed the job.
+  changed:
+    description: How many tools' answers changed since the last run (with state-file).
 runs:
   using: node24
   main: dist/index.mjs

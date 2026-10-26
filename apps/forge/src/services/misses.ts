@@ -1,5 +1,6 @@
 import { and, eq, like, sql } from "drizzle-orm";
 import * as t from "../db/schema";
+import { osvPackageFor, queryAdvisories } from "./advisories";
 import { getDb } from "./db";
 import { day } from "./proof";
 import { bump } from "./usage";
@@ -36,6 +37,18 @@ export async function recordMiss(env: Env, kind: "check" | "scan", label: string
   } catch (e) {
     console.error("recordMiss failed", e);
   }
+}
+
+/**
+ * Issue #203: a check of an unknown npm or PyPI id that OSV answered with at least one published advisory got a real
+ * answer (the advisory), so it isn't a miss. Unknown ids with no advisory, and every other kind of id, still are.
+ * Reads the same 6-hour OSV cache as the check itself. When OSV can't be reached, it counts as a miss.
+ */
+export async function answeredByAdvisories(env: Pick<Env, "KV">, id: string, version: string | null) {
+  const pkg = osvPackageFor(id);
+  if (!pkg) return false;
+  const r = await queryAdvisories(env, pkg, version);
+  return !!r && r.advisories.length > 0;
 }
 
 /** The host of a scan link we don't read from (fetchSkillText said "unsupported_url"), as the miss label. */

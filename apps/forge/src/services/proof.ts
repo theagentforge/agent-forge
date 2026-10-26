@@ -3,6 +3,8 @@ import * as t from "../db/schema";
 import { getDb } from "./db";
 import { dataInventory, dataSnapshotValues, growthKpis, kpiSnapshotValues } from "./kpis";
 import { isLean } from "./ops-mode";
+import { type InternalComponent, internalKey } from "./internal";
+import { bump } from "./usage";
 
 // The proof scoreboard (MASTER_PLAN §7.5, ADR 0006). Every number is split into external and House, so proof of
 // concept is measured on people outside the project only.
@@ -25,9 +27,13 @@ export function checkKind(userAgent: string | undefined, fallback: CheckKind = "
   return fallback;
 }
 
-/** Records that a source ran a check today. Raw IPs are never stored. Errors never affect the check itself. */
-export async function recordCheck(env: Env, kind: CheckKind, raw: string, opts: { house?: boolean; hashed?: boolean; now?: number } = {}) {
+/**
+ * Records that a source ran a check today. Raw IPs are never stored. Errors never affect the check itself. Our own
+ * callers (`internal`, services/internal.ts) are never a check source: they add `internal:<component>:checks` instead.
+ */
+export async function recordCheck(env: Env, kind: CheckKind, raw: string, opts: { house?: boolean; hashed?: boolean; now?: number; internal?: InternalComponent | null } = {}) {
   try {
+    if (opts.internal) return await bump(env, [internalKey(opts.internal, "checks")], opts.now);
     if (await isLean(env)) return;
     const d = day(opts.now ?? Date.now());
     const source = opts.hashed === false ? raw : await sourceHash(env.SESSION_SECRET, d, raw);

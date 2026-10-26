@@ -9,6 +9,13 @@ const PKG = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}$/;
 const FP = /^sha256:[0-9a-f]{64}$/;
 
+/**
+ * Headers for every call to our site. House is already kept apart by its OIDC-verified House account; the internal
+ * tag (K7, apps/forge/src/services/internal.ts) also keeps it out of agent counts by name. It grants nothing.
+ */
+export const INTERNAL_UA = "theagentforge-internal/house (theagentforge-house-tester)";
+export const houseHeaders = (token) => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json", "User-Agent": INTERNAL_UA, "X-Forge-Internal": "house" });
+
 /** Builds the field report for one probe result, or null if the result doesn't look exactly as step 1 writes it. */
 export function toReport(r) {
   if (!r || !OUTCOMES.has(r.outcome) || !PKG.test(r.pkg ?? "") || !VERSION.test(r.version ?? "") || !FP.test(r.fingerprint ?? "")) return null;
@@ -104,7 +111,7 @@ async function main() {
   for (const rep of reports) {
     const res = await postReport(`${origin}/api/v1/house/report`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${await fresh()}`, "Content-Type": "application/json", "User-Agent": "theagentforge-house-tester" },
+      headers: houseHeaders(await fresh()),
       body: JSON.stringify(rep),
     });
     const body = await res.json().catch(() => ({}));
@@ -116,7 +123,7 @@ async function main() {
   const entries = results.map(toRunEntry).filter(Boolean).slice(0, 1000);
   const run = await fetch(`${origin}/api/v1/house/run`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${await fresh()}`, "Content-Type": "application/json", "User-Agent": "theagentforge-house-tester" },
+    headers: houseHeaders(await fresh()),
     body: JSON.stringify({ probedAt: probedAt ?? new Date().toISOString(), entries }),
   });
   console.log(`House Report run: ${run.status} (${entries.length} servers)`);

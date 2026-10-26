@@ -30,8 +30,12 @@ import { testedModels } from "../arena/lineup";
 import type { Context } from "hono";
 import { html } from "hono/html";
 import { getDb } from "../services/db";
-import { consistencyBoard, divisionRankings, eventCard, finishedRuns, isKnockout, modelName, parseTier, playlist, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
+import { datasetWithProvenance, licenceInfo, runProvenance } from "../services/provenance";
+import { consistencyBoard, DATASET_LICENCE, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
+import { eventCsv, eventData, eventDatasetLd } from "../arena/results";
+import { answerPagePath, questionForTask } from "../arena/answers";
 import { channelDuels } from "../arena/featured";
+import { fellInRun } from "../arena/board";
 import { duelPlayer } from "./duel";
 import { copyBlock } from "./components";
 import { failCard, shortRunId, verifiedReplay } from "../arena/fail-card";
@@ -136,7 +140,7 @@ ${headlineSlotLine(Date.now())}
 ${tierSwitch("/arena", "hard")}
 <section>
 <h2>Hard rankings</h2>
-<p><a href="/arena/failures?tier=hard">Which model falls for which trap</a></p>
+<p><a href="/arena/failures?tier=hard">Which model falls for which trap</a> · <a href="/arena/business?tier=hard">Business agent reliability</a></p>
 ${divisionLists(ranks, runs.length > 0, "the first Hard event")}
 <h3>Right every time</h3>
 ${consistencyTable(board)}
@@ -207,7 +211,7 @@ ${(() => {
 </section>
 <section>
 <h2>Rankings</h2>
-<p><a href="/arena/failures">Failure modes: which model falls for which trap</a></p>
+<p><a href="/arena/failures">Failure modes: which model falls for which trap</a> · <a href="/arena/business">Business agent reliability: how often agents break business policy</a></p>
 ${divisionLists(ranks, headline.length > 0, SEASON.event)}
 <h3>Right every time</h3>
 ${consistencyTable(board)}
@@ -220,15 +224,22 @@ ${NOT_AFFILIATED}`,
 });
 
 site.get("/arena/event/:slug", async (c) => {
-  const card = await eventCard(getDb(c.env), c.req.param("slug"));
+  const db = getDb(c.env);
+  const card = await eventCard(db, c.req.param("slug"));
   if (!card) return c.notFound();
   if (json(c)) return c.json({ event: { slug: card.event.slug, name: card.event.name, kind: card.event.kind, twist: card.event.twist }, bouts: card.bouts.map((b) => ({ task: b.task.id, outcome: b.outcome, models: b.rows })), runs: card.runs });
+  // A ranked event's attempts are published as a dataset (JSON and CSV), described for crawlers in schema.org terms.
+  const data = isRankedEvent(card.event) ? await eventData(db, card.event.slug, c.env.PUBLIC_ORIGIN) : null;
+  const files = `/arena/events/${card.event.slug}`;
   return send(c, {
     title: card.event.name,
     description: `${card.event.name}: every model, every task, checked by the referee.`,
     path: `/arena/event/${card.event.slug}`,
+    ...(data ? { jsonLd: eventDatasetLd(data, c.env.PUBLIC_ORIGIN) } : {}),
     body: html`<p class="eyebrow">${card.event.kind === "practice" ? "Practice · not ranked" : SEASON.name}</p>
 <h1 class="page-title">${card.event.name}</h1>
+<p class="small"><a href="/arena/event/${card.event.slug}/falls">Attempts that fell for a trap</a></p>
+${data ? html`<p class="muted">Every attempt, one row each: <a href="${files}.csv" download>CSV</a> · <a href="${files}.json">JSON</a>. ${DATASET_LICENCE}</p>` : ""}
 ${card.bouts.map(
   (b) => html`<section><div class="section-head"><h2>${b.task.title}</h2><a class="more" href="/best/${b.task.id}">Task guide</a></div>
 <p class="muted">${b.task.summary} Traps: ${b.task.traps.map((t) => t.label.toLowerCase()).join("; ")}.</p>
@@ -239,6 +250,47 @@ ${scoreTable(b.rows.map((r) => ({ name: r.name, stats: r.stats, consistency: r.c
     .map((r) => html`<li><a href="/arena/run/${r.id}">${modelName(r.model)} · variant ${r.seed} · attempt ${r.attempt}</a> ${r.passed ? html`<span class="outcome o-worked">✓ pass</span>` : html`<span class="outcome o-failed">✕ fail</span>`}</li>`)}</ul></details>
 </section>`,
 )}
+${NOT_AFFILIATED}`,
+  });
+});
+
+/**
+ * Every attempt in one event where the referee marked a planted trap sprung (the home page's frontier line links here,
+ * 25 Oct 2026). Counted like /arena/failures and `frontierHard`: running out of time or moves is never a fall, so a
+ * knocked-out attempt is listed only if a trap fired too. Held events 404; embargoed models are left out by
+ * `finishedRuns`. JSON twin: ids, codes and numbers only (AGENTS.md rule 7).
+ */
+site.get("/arena/event/:slug/falls", async (c) => {
+  const db = getDb(c.env);
+  const event = await publicEvent(db, c.req.param("slug"));
+  if (!event) return c.notFound();
+  const runs = await finishedRuns(db, { eventId: event.id });
+  const falls = runs
+    .filter(fellInRun)
+    .map((r) => ({ ...r.summary, traps: r.result.traps.filter((x) => x.triggered).map((x) => ({ id: x.id, label: x.label, public_id: publicTrapId(r.summary.task, x.id) })) }))
+    .sort((a, b) => a.task.localeCompare(b.task) || modelName(a.model).localeCompare(modelName(b.model)) || a.seed - b.seed || a.attempt - b.attempt);
+  const path = `/arena/event/${event.slug}`;
+  if (json(c))
+    return c.json({
+      event: { slug: event.slug, name: event.name, kind: event.kind, url: path },
+      rule: { fell: "trap_marked_triggered_by_referee", knockout: "not_a_fall" },
+      attempts: runs.length,
+      fell: falls.length,
+      falls: falls.map((f) => ({ id: f.id, url: `/arena/run/${f.id}`, model: f.model, task: f.task, seed: f.seed, attempt: f.attempt, finished_at: new Date(f.finishedAt).toISOString(), traps: f.traps.map((x) => ({ id: x.id, public_id: x.public_id })) })),
+    });
+  return send(c, {
+    title: `${event.name}: traps sprung`,
+    description: `${event.name}: the ${falls.length} of ${runs.length} attempts where the AI fell for a planted trap, checked by the referee.`,
+    path: `${path}/falls`,
+    nav: "arena",
+    jsonAlternate: `${path}/falls?format=json`,
+    body: html`<p class="eyebrow"><a href="${path}">${event.name}</a> · Traps sprung</p>
+<h1 class="page-title">${falls.length} of ${runs.length} attempts fell for a trap</h1>
+<p class="lead">Each attempt where the referee found a planted trap sprung in ${event.name}. Running out of time or moves isn't counted as a fall.</p>
+${falls.length
+  ? html`<ul class="runs">${falls.map((f) => html`<li><a href="/arena/run/${f.id}">${modelName(f.model)} · ${taskById(f.task)?.title ?? f.task} · variant ${f.seed} · attempt ${f.attempt}</a> <span class="outcome o-failed">⚠ ${f.traps.map((x) => x.label).join("; ")}</span>${f.traps.filter((x) => x.public_id).map((x) => html` <a class="muted" href="/arena/failures/${x.public_id}">${x.public_id}</a>`)}</li>`)}</ul>`
+  : html`<p class="empty">No trap sprung in this event.</p>`}
+<p class="small"><a href="${path}">Every attempt in ${event.name}</a> · <a href="/arena/failures?tier=${tierOf(runs[0]?.summary.task ?? "")}">Which model falls for which trap</a></p>
 ${NOT_AFFILIATED}`,
   });
 });
@@ -270,7 +322,7 @@ const briefOf = (log: LogEvent[]) => {
 /** "Next headline bout: Thu 22 Oct, 8 pm ET (Fri 00:00 UTC)" with the calendar link (ADR 0023 §2). */
 function headlineSlotLine(now: number) {
   const slot = nextHeadlineSlot(now);
-  return html`<p class="next-headline"><b>Next headline bout:</b> <time datetime="${new Date(slot).toISOString()}">${formatSlot(slot)}</time>. Each lab's everyday model, one job, every Thursday. <a href="/arena/headline.ics">Add to calendar (.ics)</a> · <a href="/arena/rules#weekly">How the job is picked</a></p>`;
+  return html`<p class="next-headline"><b>Next headline bout:</b> <time datetime="${new Date(slot).toISOString()}">${formatSlot(slot)}</time>. Each lab's everyday model, one job, every Thursday. <a href="/arena/headline.ics">Add to calendar (.ics)</a> · <a href="/arena/rules#weekly">How the job is picked</a> · <a href="/arena/fail-of-the-week">Fail of the Week</a></p>`;
 }
 
 /** The replay, key moments and scorecard sections, shared by House bouts and Proving Ground attempts. */
@@ -299,7 +351,7 @@ site.get("/arena/run/:id{[A-Za-z0-9_-]+\\.json}", async (c) => {
   const id = c.req.param("id").replace(/\.json$/, "");
   const r = await runWithLog(getDb(c.env), id);
   if (!r) return c.notFound();
-  return c.json({ id, event: r.event.slug, kind: r.event.kind, task: r.run.task, tier: tierOf(r.run.task), model: r.run.modelId, provider: r.run.provider, cost_estimated: r.run.costEstimated, result: r.result, log: r.log, signature: r.run.signature, frames: frames(r.log), moments: moments(r.log) }, 200, {
+  return c.json({ id, event: r.event.slug, kind: r.event.kind, task: r.run.task, tier: tierOf(r.run.task), model: r.run.modelId, provider: r.run.provider, cost_estimated: r.run.costEstimated, result: r.result, log: r.log, signature: r.run.signature, frames: frames(r.log), moments: moments(r.log), ...licenceInfo(c.env.PUBLIC_ORIGIN), provenance: runProvenance({ model: r.run.modelId, provider: r.run.provider, finishedAt: r.run.finishedAt! }) }, 200, {
     "Cache-Control": "public, max-age=3600",
   });
 });
@@ -476,6 +528,10 @@ site.get("/best/:task", async (c) => {
     body: html`<p class="eyebrow">Task guide${task.tier === "hard" ? " · Hard tier" : ""}${practice ? " · practice data only (not ranked)" : ""}</p>
 <h1 class="page-title">${task.title}: which AI should you use?</h1>
 <p class="lead">${task.summary}</p>
+${(() => {
+  const q = questionForTask(task.id);
+  return q ? html`<p class="small">In one answer, with dates and sample sizes: <a href="${answerPagePath(q)}">${q.question}</a></p>` : "";
+})()}
 ${task.tier === "hard" ? html`<p class="muted">${HARD_EXPLAINER} <a href="/best?tier=hard">All Hard jobs</a> · <a href="/best/${task.id.replace(/-hard$/, "")}">Normal version</a></p>` : ""}
 <p>Title: ${title.holder ? html`<b>${title.holder.name}</b>` : title.contested ? html`<b>contested</b> <span class="muted">(no model is clearly ahead yet)</span>` : html`<b>vacant</b>`}</p>
 ${rows.length ? html`${paretoChart(rows)}
@@ -496,16 +552,34 @@ ${NOT_AFFILIATED}`,
 site.get("/arena/dataset.json", async (c) => {
   // Both tiers, each run labelled (ADR 0021); lab arms stay out as before.
   const runs = await finishedRuns(getDb(c.env), { hard: true });
+  // ADR 0053: the licence id and link, and a provenance block on every run, are added by the wrapper.
   return c.json(
-    {
+    datasetWithProvenance({
       name: `${PUBLIC_NAME} dataset`,
       season: SEASON.id,
-      licence: "Free to use with attribution and a link to theagentforge.io/arena. Bulk resale needs permission (Terms §8).",
+      licence: DATASET_LICENCE,
+      // Ranked events, each as its own file of attempts (no logs): /arena/events/<slug>.json and .csv.
+      events: (await rankedEvents(getDb(c.env))).map((e) => ({ slug: e.slug, name: e.name, kind: e.kind, runs: e.runs, page: `/arena/event/${e.slug}`, json: `/arena/events/${e.slug}.json`, csv: `/arena/events/${e.slug}.csv` })),
       runs: runs.map((r) => ({ ...r.summary, tier: tierOf(r.summary.task), rules_version: rulesVersionAt(r.summary.finishedAt), task_version: taskVersion(r.summary.task, r.summary.finishedAt), traps_triggered: (r.result.traps ?? []).filter((x) => x.triggered).map((x) => publicTrapId(r.summary.task, x.id) ?? x.id), log: `/arena/run/${r.summary.id}.json` })),
-    },
+    }, c.env.PUBLIC_ORIGIN),
     200,
     { "Cache-Control": "public, max-age=300" },
   );
+});
+
+/** One ranked event's attempts as data (no logs, no model output). 404 when unknown, held for review or not ranked. */
+site.get("/arena/events/:file{[a-z0-9][a-z0-9.-]*}", async (c) => {
+  const [, slug, ext] = /^([a-z0-9][a-z0-9-]*)\.(json|csv)$/.exec(c.req.param("file")) ?? [];
+  if (!slug) return c.notFound();
+  const d = await eventData(getDb(c.env), slug, c.env.PUBLIC_ORIGIN);
+  if (!d) return c.notFound();
+  if (ext === "json") return c.json(d, 200, { "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" });
+  return c.body(eventCsv(d), 200, {
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": `attachment; filename="forge-arena-${d.event.slug}.csv"`,
+    "Cache-Control": "public, max-age=300",
+    "X-Content-Type-Options": "nosniff",
+  });
 });
 
 site.get("/arena/headline.ics", () =>

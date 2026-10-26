@@ -1,6 +1,6 @@
 import { and, eq, gte, like, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
-import { agentFunnel, directorySessions, isDirectoryClient } from "./agent-funnel";
+import { agentFunnel, clientKind, daysBefore, directorySessions, isDirectoryClient, isOurClient, notDemandOn } from "./agent-funnel";
 import { getDb } from "./db";
 import { dataInventory, growthKpis } from "./kpis";
 import { topMisses } from "./misses";
@@ -16,6 +16,8 @@ const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
  * - clients: MCP client names with their first day in our counts, so a name first seen yesterday is a new surface;
  * - discovery: fetches of our discovery files (agent card, ai-catalog, server cards, llms.txt...);
  * - funnel: the agent funnel's 7-day stages (services/agent-funnel.ts).
+ * Our own client names (forge-scout, theagentforge-internal-*) are never listed (issue #171). Each listed name has a
+ * `kind` (ADR 0050): "directory", "monitor" (sessions but no tool call under its name in 7 days) or "agent".
  */
 export async function scoutSignals(env: Env, now = Date.now()) {
   const db = getDb(env);
@@ -64,9 +66,10 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     else c.sessions_7d += Number(r.n);
     c.yesterday += Number(r.yday);
   }
-  const list = [...clients.values()]
+  const theirs = [...clients.values()].filter((c) => !isOurClient(c.name));
+  const list = theirs
     .filter((c) => c.sessions_7d + c.calls_7d > 0 || c.first_seen === yesterday)
-    .map((c) => ({ ...c, directory: isDirectoryClient(c.name) }))
+    .map((c) => ({ ...c, directory: isDirectoryClient(c.name), kind: clientKind(c.name, c.sessions_7d, c.calls_7d) }))
     .sort((a, b) => b.sessions_7d + b.calls_7d - (a.sessions_7d + a.calls_7d) || a.name.localeCompare(b.name))
     .slice(0, 50);
 
@@ -77,11 +80,16 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     data_inventory,
     misses: { yesterday: missesDay, last_7_days: missesWeek },
     mcp_clients: list,
-    new_clients: [...clients.values()].filter((c) => c.first_seen === yesterday).map((c) => c.name).sort(),
+    new_clients: theirs.filter((c) => c.first_seen === yesterday).map((c) => c.name).sort(),
+    /** Directories, catalogues, checkers and monitors over the funnel's 7 days: catalog coverage, kept apart from demand. */
+    monitors_and_catalogs_7d: funnel.detail.monitors_and_catalogs,
+    /** MCP tool calls from outside clients plus A2A requests, the funnel's 7 days (ADR 0050). */
+    outside_tool_calls_7d: funnel.detail.outside_tool_calls,
+    connect_steps_7d: connectSteps(conversion.slice(-7)),
     discovery_fetches: Object.fromEntries(discRows.map((r) => [r.key.slice(5), Number(r.n)])),
     funnel_7d: funnel,
     conversion,
-    excludes: ["house", "crawlers (misses)", "founder accounts (funnel contributions)"],
+    excludes: ["house", "our own probes (tagged, and the old forge-scout name)", "crawlers (misses)", "founder accounts (funnel contributions)", "monitors and catalogs (funnel, outside tool calls, agent connections)"],
   };
 }
 
@@ -94,6 +102,14 @@ export async function scoutSignals(env: Env, now = Date.now()) {
  * - humans: browsers that ran site.js (the honest people count; `people` is inflated by crawlers posing as browsers);
  * - per_1k_page_views, per_100_people and per_100_humans: connections per 1,000 page views, per 100 people and per
  *   100 humans (null when 0).
+ * Added 26 Oct (ADR 0050; the fields above keep their meaning):
+ * - connect_humans: real people opening /connect (site.js beacon); connect_tiles / connect_copied: app tiles chosen and
+ *   install links pressed or commands copied (the test question apart, connect_test_prompt_copied), with `_by_app`;
+ *   connect_code_shown: the test code scrolled into view;
+ *   connect_tests_passed_by_channel: which path the AI's test check came by (web: the site's own check form);
+ * - agent_connections: connections less monitors (names with sessions but no tool call under their name in the 7 days
+ *   to that day); monitor_sessions; outside_tool_calls: MCP tool calls less those named by directories, monitors and
+ *   our own names, plus A2A requests; agent_per_100_humans and outside_calls_per_100_humans.
  */
 export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
   const db = getDb(env);
@@ -105,16 +121,28 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
       and(
         gte(t.usageDaily.day, first),
         sql`${t.usageDaily.day} <= ${last}`,
-        sql`(${t.usageDaily.key} in ('visit:all', 'visit:crawler', 'visit:arrivals', 'visit:human', 'scan:web', 'contribute:report-page', 'contribute:web-filed', 'visit:connect', 'connect:test-passed', 'a2a:requests', 'mcp:public:sessions', 'mcp:gauntlet:sessions', 'mcp:signed_in:sessions', 'mcp:public:calls', 'mcp:gauntlet:calls', 'mcp:signed_in:calls') or ${t.usageDaily.key} like 'mcp:client:%')`,
+        sql`(${t.usageDaily.key} in ('visit:all', 'visit:crawler', 'visit:arrivals', 'visit:human', 'visit:human:connect', 'scan:web', 'contribute:report-page', 'contribute:web-filed', 'visit:connect', 'a2a:requests', 'mcp:public:sessions', 'mcp:gauntlet:sessions', 'mcp:signed_in:sessions', 'mcp:public:calls', 'mcp:gauntlet:calls', 'mcp:signed_in:calls') or ${t.usageDaily.key} like 'mcp:client:%' or ${t.usageDaily.key} like 'connect:%')`,
       ),
     );
+  // Client names over six more days, so each day's monitors are read over the 7 days ending that day.
+  const clientRows = await db
+    .select({ day: t.usageDaily.day, key: t.usageDaily.key, n: t.usageDaily.n })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, daysBefore(first, 6)), sql`${t.usageDaily.day} <= ${last}`, or(like(t.usageDaily.key, "mcp:client:%"), like(t.usageDaily.key, "mcp:clientcall:%"))));
   const rate = (x: number, of: number, per: number) => (of > 0 ? Math.round((x / of) * per * 10) / 10 : null);
   return Array.from({ length: days }, (_, i) => {
     const d = day(now - (days - i) * 86_400_000);
     const r = rows.filter((x) => x.day === d);
     const get = (k: string) => r.filter((x) => x.key === k).reduce((a, x) => a + x.n, 0);
+    const byPrefix = (p: string) => Object.fromEntries(r.filter((x) => x.key.startsWith(p)).map((x) => [x.key.slice(p.length), x.n]));
+    const total = (p: string) => r.filter((x) => x.key.startsWith(p)).reduce((a, x) => a + x.n, 0);
     const directory = directorySessions(r);
-    const connections = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directory) + get("a2a:requests");
+    const sessions = get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions");
+    const calls = get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls");
+    const connections = Math.max(0, sessions - directory) + get("a2a:requests");
+    const away = notDemandOn(clientRows, d);
+    const agentConnections = Math.max(0, sessions - directory - away.monitorSessions) + get("a2a:requests");
+    const outsideCalls = Math.max(0, calls - away.catalogCalls) + get("a2a:requests");
     const pageViews = get("visit:all"), people = get("visit:arrivals");
     return {
       day: d,
@@ -129,11 +157,47 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
       web_reports: get("contribute:web-filed"),
       connect_page: get("visit:connect"),
       connect_tests_passed: get("connect:test-passed"),
+      connect_humans: get("visit:human:connect"),
+      connect_tiles: total("connect:tile:"),
+      connect_tiles_by_app: byPrefix("connect:tile:"),
+      connect_copied: total("connect:copied:") - get("connect:copied:test-prompt"),
+      connect_test_prompt_copied: get("connect:copied:test-prompt"),
+      connect_copied_by_app: byPrefix("connect:copied:"),
+      connect_code_shown: get("connect:code-shown"),
+      connect_tests_passed_by_channel: byPrefix("connect:test-passed:"),
       connections,
+      agent_connections: agentConnections,
+      monitor_sessions: away.monitorSessions,
+      outside_tool_calls: outsideCalls,
       tool_uses: get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls") + get("a2a:requests"),
       per_1k_page_views: rate(connections, pageViews, 1000),
       per_100_people: rate(connections, people, 100),
       per_100_humans: rate(connections, get("visit:human"), 100),
+      agent_per_100_humans: rate(agentConnections, get("visit:human"), 100),
+      outside_calls_per_100_humans: rate(outsideCalls, get("visit:human"), 100),
     };
   });
+}
+
+/**
+ * The /connect steps added up over some days, in order, each with its share of the step before, and the step with
+ * the biggest drop (ADR 0050). Opening the page is counted by people only (site.js beacon), never crawlers.
+ */
+export function connectSteps(days: { connect_humans: number; connect_tiles: number; connect_copied: number; connect_code_shown: number; connect_tests_passed: number }[]) {
+  const sum = (k: keyof (typeof days)[number]) => days.reduce((a, d) => a + d[k], 0);
+  const steps = [
+    { step: "opened /connect", n: sum("connect_humans") },
+    { step: "chose an app tile", n: sum("connect_tiles") },
+    { step: "copied a command or pressed an install link", n: sum("connect_copied") },
+    { step: "saw the test code", n: sum("connect_code_shown") },
+    { step: "test passed", n: sum("connect_tests_passed") },
+  ].map((x, i, all) => ({ ...x, pct_of_step_before: i && all[i - 1]!.n ? Math.round((x.n / all[i - 1]!.n) * 1000) / 10 : null }));
+  // Tiles are optional (the page opens on a guessed app), so the biggest drop is read on the main path only.
+  const main = [steps[0]!, steps[2]!, steps[3]!, steps[4]!];
+  let stop: string | null = null, worst = -1;
+  for (let i = 1; i < main.length; i++) {
+    const lost = main[i - 1]!.n - main[i]!.n;
+    if (main[i - 1]!.n > 0 && lost > worst) (worst = lost), (stop = `${main[i - 1]!.step} → ${main[i]!.step}`);
+  }
+  return { days: days.length, steps, biggest_drop: stop };
 }

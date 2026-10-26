@@ -1,9 +1,9 @@
-import { gte, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { isLean } from "./ops-mode";
-import { aiAgentStats, usageStats, visitStats, skillStats } from "./usage";
-import { agentFunnel } from "./agent-funnel";
+import { aiAgentStats, bump, usageStats, visitStats, skillStats } from "./usage";
+import { agentFunnel, outsidePeople } from "./agent-funnel";
 
 // ADR 0011 leading indicators that the Ops Digest reads: tool claims and sites embedding a Forge badge.
 
@@ -25,6 +25,27 @@ export async function recordBadgeReferrer(env: Pick<Env, "KV" | "PUBLIC_ORIGIN">
   const hosts = ((await env.KV.get(refKey(now), "json")) as string[] | null) ?? [];
   if (hosts.includes(host) || hosts.length >= MAX_HOSTS_PER_DAY) return;
   await env.KV.put(refKey(now), JSON.stringify([...hosts, host]), { expirationTtl: 10 * 86_400 });
+}
+
+/**
+ * V6: a README badge was served (an embed shown; GitHub's image proxy and the edge cache both count once per fetch) and
+ * the referring site, if any. Daily totals only. Click-ins from badges are the `?from=badge` arrivals (visit:tag:badge).
+ */
+export async function recordBadgeServe(env: Env, referer: string | null | undefined, now = Date.now()) {
+  await bump(env, ["badge:serve"], now);
+  await recordBadgeReferrer(env, referer, now);
+}
+
+/** Badge serves and badge click-ins over the last `days` days (today included). */
+export async function badgeStats(env: Env, now = Date.now(), days = 7) {
+  const since = day(now - (days - 1) * 86_400_000);
+  const rows = await getDb(env)
+    .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, since), inArray(t.usageDaily.key, ["badge:serve", "visit:tag:badge"])))
+    .groupBy(t.usageDaily.key);
+  const n = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
+  return { serves: n("badge:serve"), clickins: n("visit:tag:badge") };
 }
 
 const clickKey = (ms: number) => `home-click:${day(ms)}`;
@@ -62,7 +83,7 @@ export async function trapCardUses(env: Pick<Env, "KV">, e: TrapCardEvent, now =
 }
 
 /** The Gauntlet funnel (ADR 0024) over 7 days: started, finished, and measured re-runs finished. Counts only. */
-async function gauntletStats(db: ReturnType<typeof getDb>, now: number) {
+async function gauntletStats(env: Pick<Env, "ADMIN_GITHUB_IDS">, db: ReturnType<typeof getDb>, now: number) {
   const since = now - 7 * 86_400_000;
   const [r] = await db
     .select({
@@ -72,7 +93,13 @@ async function gauntletStats(db: ReturnType<typeof getDb>, now: number) {
     })
     .from(t.arenaGauntlets)
     .where(gte(t.arenaGauntlets.startedAt, since));
-  return { gauntlets_started_7d: Number(r?.started ?? 0), gauntlets_finished_7d: Number(r?.finished ?? 0), gauntlet_reruns_finished_7d: Number(r?.reruns ?? 0) };
+  // ADR 0048: opt-in claims in the same 7 days, by owners outside the project (House and founders left out).
+  const [cl] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(t.gauntletClaims)
+    .innerJoin(t.humans, eq(t.gauntletClaims.humanId, t.humans.id))
+    .where(and(gte(t.gauntletClaims.claimedAt, since), outsidePeople(env)));
+  return { gauntlets_started_7d: Number(r?.started ?? 0), gauntlets_finished_7d: Number(r?.finished ?? 0), gauntlet_reruns_finished_7d: Number(r?.reruns ?? 0), gauntlet_claims_7d: Number(cl?.n ?? 0) };
 }
 
 export async function growthStats(env: Env, now = Date.now()) {
@@ -85,10 +112,14 @@ export async function growthStats(env: Env, now = Date.now()) {
     claims: claims?.total ?? 0,
     claims_verified: verified?.n ?? 0,
     badge_sites_7d: sites.size,
+    ...(await badgeStats(env, now).then(
+      (b) => ({ badge_serves_7d: b.serves, badge_clickins_7d: b.clickins }),
+      () => ({}),
+    )),
     home_clickins_yesterday: await homeClicks(env, now - 86_400_000, 1),
     home_clickins_7d: await homeClicks(env, now),
     trap_card_copies_7d: await trapCardUses(env, "copy", now),
-    ...(await gauntletStats(db, now)),
+    ...(await gauntletStats(env, db, now)),
     trap_card_downloads_7d: (await trapCardUses(env, "txt", now)) + (await trapCardUses(env, "json", now)),
     ...(await usageStats(env, now).then(
       (u) => ({ mcp_sessions_7d: u.mcp_sessions, mcp_sessions_signed_in_7d: u.mcp_sessions_signed_in, mcp_tool_calls_7d: u.mcp_tool_calls, mcp_top_clients_7d: u.top_clients }),
@@ -103,7 +134,7 @@ export async function growthStats(env: Env, now = Date.now()) {
       () => ({}),
     )),
     ...(await agentFunnel(env, now - 86_400_000, 1).then(
-      (f) => ({ agent_funnel_yesterday: f.stages }),
+      (f) => ({ agent_funnel_yesterday: f.stages, outside_tool_calls_yesterday: f.detail.outside_tool_calls }),
       () => ({}),
     )),
     ...(await aiAgentStats(env, now).then(

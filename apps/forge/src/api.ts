@@ -1,15 +1,19 @@
 import { checkQuerySchema } from "@forge/shared";
+import { provenance } from "./services/provenance";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
+import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { arenaStatus } from "./arena/status";
 import { agentView, fetchSkillText, scanAndRecord, scanByFingerprint, scanPath, watchStatus } from "./services/scans";
 import { SCAN_MAX_BYTES } from "@forge/shared";
 import { growthStats } from "./services/growth";
 import { mcpHandler } from "./mcp";
 import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
+import { checkShare, scanShare } from "./services/receipts";
+import { exposureAnswer, restCheckAnswer, scanRelated, watchAnswer } from "./services/compact";
 import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsToken, verifyHouseToken } from "./services/house";
 import { postToMoltbook, validatePost } from "./social/moltbook";
+import { takeReport } from "./social/moltbook-replies";
 import { DAILY_CAP_USD, PROMPTS, runSelection, SELECTION_MODELS } from "./ops/tool-selection";
 import { CITATION_MODELS, CITATION_QUESTIONS, runCitations } from "./ops/citations";
 import { recordToolCheck } from "./services/feedback";
@@ -18,6 +22,7 @@ import { scoutSignals } from "./services/scout-signals";
 import { connectTestSeen } from "./services/connect-test";
 import { storeRun } from "./services/house-report";
 import { checkKind, recordCheck } from "./services/proof";
+import { internalCaller, internalKey, internalOf } from "./services/internal";
 import type { AgentProps } from "./services/props";
 import { eq } from "drizzle-orm";
 import * as t from "./db/schema";
@@ -30,19 +35,25 @@ import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
 const CHECK_CACHE_SECONDS = 60;
+const CHECK_KEYS = new Set(["id", "url", "fingerprint", "version"]);
 
 export const publicApi = new Hono<{ Bindings: Env }>();
 
 /** GET /api/v1/check — public, rate-limited per IP, edge-cached for 60 seconds. */
 publicApi.get("/api/v1/check", async (c) => {
+  // Only the four query keys count: link tags such as ?from= or utm_* are ignored rather than refused (24 Oct check:
+  // 37 refusals a day), and they don't split the cache.
   const url = new URL(c.req.url);
+  for (const k of [...url.searchParams.keys()]) if (!CHECK_KEYS.has(k)) url.searchParams.delete(k);
   const parsed = checkQuerySchema.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return c.json({ error: "invalid_query", detail: parsed.error.issues[0]?.message, ...CHECK_QUERY_HELP }, 400);
 
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5).
-  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip));
-  c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent") }));
+  // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5). Our own
+  // probes (services/internal.ts) are counted apart; the tag changes nothing else (same limits, same answer).
+  const internal = internalCaller(c.req.raw.headers);
+  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal }));
+  c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent"), internal, channel: "api" }));
 
   const cache = caches.default;
   const cacheKey = new Request(url.toString(), { method: "GET" });
@@ -52,7 +63,10 @@ publicApi.get("/api/v1/check", async (c) => {
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
   if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
 
-  const res = c.json(await checkTool(c.env, parsed.data), 200, {
+  const checked = await checkTool(c.env, parsed.data);
+  const share = await checkShare(c.env, checked, parsed.data.id ?? parsed.data.url ?? parsed.data.fingerprint ?? "");
+  // The full shape the plugin, CLI and Action read, with `summary` first and `related` added (ADR 0056).
+  const res = c.json(restCheckAnswer({ ...checked, share }, parsed.data), 200, {
     "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}`,
   });
   c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
@@ -107,6 +121,16 @@ publicApi.post("/api/v1/social/moltbook", async (c) => {
   if (typeof post === "string") return c.json({ ok: false, error: post }, 422);
   const r = await postToMoltbook(c.env, post);
   return c.json(r, r.ok ? 201 : r.error === "moltbook_not_connected" ? 409 : r.error.startsWith("too_soon") ? 429 : 502);
+});
+
+/**
+ * GET /api/v1/social/moltbook/replies — what the automatic Moltbook replies did since the last call (ADR 0044), for
+ * moltbook.yml to report on a `moltbook-replies` issue. GitHub OIDC from moltbook.yml on main; marks the entries reported.
+ */
+publicApi.get("/api/v1/social/moltbook/replies", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("moltbook.yml")))) return c.json({ error: "unauthorized" }, 401);
+  return c.json(await takeReport(c.env), 200, { "Cache-Control": "no-store" });
 });
 
 /** GET /api/v1/ops/scout-signals — our own daily signals for Forge Scout, from scout-collect.yml (GitHub OIDC, ADR 0031). */
@@ -198,8 +222,9 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
     sourceUrl = got.url;
   } else return c.json({ error: "give text or url" }, 400);
   const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
-  c.executionCtx.waitUntil(bump(c.env, scanCounters("api", result.verdict)).catch(() => {}));
-  return c.json(agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), 200, { "Cache-Control": "no-store" });
+  const internal = internalCaller(c.req.raw.headers);
+  c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "scans")] : scanCounters("api", result.verdict)).catch(() => {}));
+  return c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }) }, 200, { "Cache-Control": "no-store" });
 }
 
 publicApi.post("/api/v1/scan", async (c) => {
@@ -213,10 +238,18 @@ publicApi.get("/api/v1/scan/:fp", async (c) => {
   if (!FP.test(fp)) return c.json({ error: "not_found" }, 404);
   const row = await scanByFingerprint(getDb(c.env), fp.startsWith("sha256:") ? fp : `sha256:${fp}`);
   if (!row || !row.public) return c.json({ error: "not_found" }, 404);
-  return c.json({ verdict: row.verdict, fingerprint: row.fingerprint, rules_version: row.rulesVersion, counts: row.counts, findings: (row.findings as { rule: string; family: string; severity: string; line: number; column: number }[]).map((f) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })), source_url: row.sourceUrl, page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(row.fingerprint)}`, first_seen: new Date(row.firstSeen).toISOString(), scans: row.scans, guarantee: false }, 200, { "Cache-Control": "public, max-age=300" });
+  return c.json({ verdict: row.verdict, fingerprint: row.fingerprint, rules_version: row.rulesVersion, counts: row.counts, findings: (row.findings as { rule: string; family: string; severity: string; line: number; column: number }[]).map((f) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })), source_url: row.sourceUrl, page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(row.fingerprint)}`, first_seen: new Date(row.firstSeen).toISOString(), scans: row.scans, guarantee: false, provenance: provenance("scan", row.lastSeen) }, 200, { "Cache-Control": "public, max-age=300" });
 });
 
 /** The weekly watch (ADR 0026): fingerprints in, status out. Reads only. */
+// POST-only endpoints answer a GET with how to call them, not a bare 404 (24 Oct check).
+const POST_ONLY: Record<string, unknown> = {
+  "/api/v1/watch": { body: { fingerprints: ["sha256:<64 hex>"] } },
+  "/api/v1/exposure": { body: { packages: [{ ecosystem: "npm", name: "<package>", version: "<version>" }] }, or_body: { pip_freeze: "<output of pip freeze>" } },
+};
+for (const [path, usage] of Object.entries(POST_ONLY))
+  publicApi.get(path, (c) => c.json({ error: "method_not_allowed", method: "POST", content_type: "application/json", ...(usage as object), docs: `${c.env.PUBLIC_ORIGIN}/openapi.json` }, 405, { Allow: "POST" }));
+
 publicApi.post("/api/v1/watch", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `watch:${ip}` });
@@ -225,8 +258,9 @@ publicApi.post("/api/v1/watch", async (c) => {
   const raw = Array.isArray(body.fingerprints) ? body.fingerprints : [];
   if (!raw.length || raw.length > 100) return c.json({ error: "give 1 to 100 fingerprints" }, 400);
   const fps = raw.filter((x): x is string => typeof x === "string" && FP.test(x)).map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
-  c.executionCtx.waitUntil(bump(c.env, watchCounters(fps.length)).catch(() => {}));
-  return c.json(await watchStatus(getDb(c.env), fps), 200, { "Cache-Control": "no-store" });
+  const internal = internalCaller(c.req.raw.headers);
+  c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "watch")] : watchCounters(fps.length)).catch(() => {}));
+  return c.json(await watchAnswer(c.env, await watchStatus(getDb(c.env), fps), fps), 200, { "Cache-Control": "no-store" });
 });
 
 /** "Was my agent stack hit?" (crisis-wave plan C4): names and versions in, advisory matches out. Counts only. */
@@ -235,11 +269,12 @@ publicApi.post("/api/v1/exposure", async (c) => {
   const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
   if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
   if (Number(c.req.header("content-length") ?? 0) > EXPOSURE_MAX_TEXT * 2) return c.json({ error: "too_large", max_bytes: EXPOSURE_MAX_TEXT * 2 }, 413);
-  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip));
+  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal: internalCaller(c.req.raw.headers) }));
   const r = await exposureRequest(c.env, await bodyOf(c));
   if ("error" in r) return c.json(r, 400);
   c.executionCtx.waitUntil(bump(c.env, exposureCounters(r)).catch(() => {}));
-  return c.json(r, 200, { "Cache-Control": "no-store" });
+  const { asked, ...result } = r;
+  return c.json(await exposureAnswer(c.env, result, asked ?? []), 200, { "Cache-Control": "no-store" });
 });
 
 // The Gauntlet over plain HTTP (ADR 0024), for agents that can fetch but don't speak MCP. Same calls as /mcp/public.
@@ -249,9 +284,11 @@ publicApi.post("/api/v1/gauntlet", async (c) => {
   const body = await bodyOf(c);
   const cardFrom = typeof body.card_from === "string" && GAUNTLET_ID.test(body.card_from) ? body.card_from : undefined;
   if (body.card_from !== undefined && !cardFrom) return c.json({ error: "invalid_card_from" }, 400);
+  const challenge = typeof body.challenge === "string" && CHALLENGE_PATTERN.test(body.challenge) ? body.challenge : undefined;
+  if (body.challenge !== undefined && !challenge) return c.json({ error: "invalid_challenge" }, 400);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const r = await startGauntlet(c.env, ip, { cardFrom });
-  if (!("error" in r)) c.executionCtx.waitUntil(recordCheck(c.env, "api", ip));
+  const r = await startGauntlet(c.env, ip, { cardFrom, challenge });
+  if (!("error" in r)) c.executionCtx.waitUntil(recordCheck(c.env, "api", ip, { internal: internalCaller(c.req.raw.headers) }));
   return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
 });
 
@@ -282,13 +319,15 @@ export const protectedApi = new Hono<{ Bindings: Env }>();
 protectedApi.all("/mcp", async (c) => {
   const props = propsOf(c);
   // Usage counts (services/usage.ts) from a copy of the body, only when accepted; our own accounts count as "house".
+  // Our own tagged callers (services/internal.ts) are counted apart, here and in recordMcp.
+  const internal = await internalOf(c.req.raw);
   const copy = c.req.method === "POST" ? c.req.raw.clone() : null;
-  const res = await mcpHandler(c.env, props)(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext);
+  const res = await mcpHandler(c.env, props, internal)(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext);
   if (copy && res.status < 400)
     c.executionCtx.waitUntil(
       getDb(c.env)
         .query.humans.findFirst({ where: eq(t.humans.id, props.humanId), columns: { isHouse: true, githubId: true } })
-        .then((h) => recordMcp(c.env, h && countsAsHouse(c.env, h) ? "house" : "signed_in", copy))
+        .then((h) => recordMcp(c.env, h && countsAsHouse(c.env, h) ? "house" : "signed_in", copy, Date.now(), internal))
         .catch(() => {}),
     );
   return res;
@@ -308,7 +347,8 @@ protectedApi.post("/api/v1/report", async (c) => {
 });
 
 protectedApi.get("/api/v1/me", async (c) => {
-  const me = await describeMe(c.env, propsOf(c));
+  // V5: optional ?watch=<fingerprints>&gauntlet_ids=<ids> (comma-separated) for since_last_week.
+  const me = await describeMe(c.env, propsOf(c), { watch: c.req.query("watch"), gauntlet_ids: c.req.query("gauntlet_ids") });
   return me ? c.json(me) : c.json({ error: "agent_inactive" }, 403);
 });
 

@@ -140,6 +140,40 @@ export const reports = sqliteTable(
   ],
 );
 
+/**
+ * V1 (ADR 0047): one agent's verdict on another agent's field report on the same tool version. Agent B files its own
+ * report with `on_report` and a fixed verdict; `byReportId` is that report (its note went through the usual
+ * moderation). One verdict per human owner per report: re-filing replaces it. Counted by distinct verified owners,
+ * never House or founder accounts. Fixed choices and a hash only, so nothing here is prose.
+ */
+export const reportVerdicts = sqliteTable(
+  "report_verdicts",
+  {
+    id: id(),
+    reportId: text("report_id")
+      .notNull()
+      .references(() => reports.id),
+    byReportId: text("by_report_id")
+      .notNull()
+      .references(() => reports.id),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    verdict: text("verdict", { enum: ["confirm", "dispute"] }).notNull(),
+    evidenceSha256: text("evidence_sha256"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("report_verdicts_one_per_owner").on(t.reportId, t.humanId),
+    index("report_verdicts_agent").on(t.agentId, t.updatedAt),
+    index("report_verdicts_updated").on(t.updatedAt),
+  ],
+);
+
 export const toolScores = sqliteTable("tool_scores", {
   toolVersionId: text("tool_version_id")
     .primaryKey()
@@ -448,12 +482,89 @@ export const arenaGauntlets = sqliteTable(
     status: text("status", { enum: ["open", "done"] }).notNull(),
     cardFrom: text("card_from"),
     card: text("card"),
+    /**
+     * V2 (ADR 0047): the run this one challenges, a gauntlet id or `model:<id>` for a headline model's stored runs.
+     * `challenge` holds the six seeds it plays and, for a model, the arena run ids those seeds came from.
+     */
+    challengeOf: text("challenge_of"),
+    challenge: text("challenge", { mode: "json" }).$type<{ seeds: number[]; runs?: (string | null)[] }>(),
     current: integer("current").notNull().default(0),
     summary: text("summary", { mode: "json" }),
     startedAt: integer("started_at").notNull(),
     finishedAt: integer("finished_at"),
+    /**
+     * ADR 0048: SHA-256 (hex) of the run's private claim key, returned once by gauntlet_start to whoever started it.
+     * Only first runs and challenges get one (null for measured re-runs and older runs). The key itself is never stored.
+     */
+    claimKeyHash: text("claim_key_hash").unique(),
   },
-  (t) => [index("arena_gauntlets_card_from").on(t.cardFrom), index("arena_gauntlets_started").on(t.startedAt)],
+  (t) => [index("arena_gauntlets_card_from").on(t.cardFrom), index("arena_gauntlets_started").on(t.startedAt), index("arena_gauntlets_challenge_of").on(t.challengeOf)],
+);
+
+/**
+ * ADR 0048: an opt-in claim of a Gauntlet run by a verified owner, for one of their agents. One claim per run (the
+ * primary key). While `hidden` is false the run shows on the agent's page and its name on head-to-head pages; hidden
+ * runs are anonymous again everywhere public. Unclaimed runs have no row and stay exactly as before.
+ */
+export const gauntletClaims = sqliteTable(
+  "gauntlet_claims",
+  {
+    gauntletId: text("gauntlet_id")
+      .primaryKey()
+      .references(() => arenaGauntlets.id),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at").notNull(),
+  },
+  (t) => [index("gauntlet_claims_agent").on(t.agentId), index("gauntlet_claims_human").on(t.humanId)],
+);
+
+/**
+ * ADR 0055: a Gauntlet season. The row is written the first time the season code runs in an environment (the release
+ * date on production), with `starts_at` at that UTC midnight; `ends_at` is fixed in code (exclusive).
+ */
+export const gauntletSeasons = sqliteTable("gauntlet_seasons", {
+  id: id(),
+  startsAt: integer("starts_at").notNull(),
+  endsAt: integer("ends_at").notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * ADR 0055: a claimed run the owner chose to enter in a season (opt-in, separate from claiming). Leaving the season
+ * deletes the row; hiding the run takes it off the board too.
+ */
+export const gauntletSeasonEntries = sqliteTable(
+  "gauntlet_season_entries",
+  {
+    seasonId: text("season_id").notNull(),
+    gauntletId: text("gauntlet_id")
+      .notNull()
+      .references(() => arenaGauntlets.id),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    enteredAt: integer("entered_at").notNull(),
+  },
+  (t) => [uniqueIndex("gauntlet_season_entries_run").on(t.seasonId, t.gauntletId), index("gauntlet_season_entries_human").on(t.humanId)],
+);
+
+/** ADR 0055: the season board frozen at the end of each week (ranks, run ids, results). Shown minus hidden runs. */
+export const gauntletSeasonSnapshots = sqliteTable(
+  "gauntlet_season_snapshots",
+  {
+    seasonId: text("season_id").notNull(),
+    week: integer("week").notNull(),
+    asOf: integer("as_of").notNull(),
+    takenAt: integer("taken_at").notNull(),
+    entries: text("entries", { mode: "json" }).notNull(),
+  },
+  (t) => [uniqueIndex("gauntlet_season_snapshots_week").on(t.seasonId, t.week)],
 );
 
 /** One job of a Gauntlet run. `calls` rebuild the sandbox by replay; `result` and `log` are the referee's verdict. */
@@ -501,3 +612,16 @@ export const skillScans = sqliteTable(
   },
   (t) => [index("skill_scans_verdict_seen").on(t.verdict, t.lastSeen), index("skill_scans_source").on(t.sourceUrl)],
 );
+
+/**
+ * V5 (weekly digest without email): one private Atom feed per owner, at /feed/<token>.atom. Only a SHA-256 hash of the
+ * token is stored, so the link can't be rebuilt from the database; the owner sees it once, when it's made, and can
+ * revoke it (the row is deleted) or replace it from the dashboard. No email address, ever (Privacy Policy).
+ */
+export const digestFeeds = sqliteTable("digest_feeds", {
+  humanId: text("human_id")
+    .primaryKey()
+    .references(() => humans.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: integer("created_at").notNull(),
+});

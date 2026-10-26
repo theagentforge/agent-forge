@@ -46,7 +46,7 @@ export const PASTE_GUIDES: { id: string; app: string; steps: string[]; note?: st
 ];
 
 // Downloads are counted in the page cache middleware (pages.ts), before the cache, so cached copies count too.
-site.get("/trap-card.txt", (c) => c.text(trapCardText(), 200, { "Cache-Control": "public, max-age=3600" }));
+site.get("/trap-card.txt", (c) => c.text(trapCardText(), 200, { "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" }));
 
 /** The Copy button on /trap-card pings this (sendBeacon). One per IP per minute window counts, so it can't be pumped. */
 site.post("/trap-card/copied", async (c) => {
@@ -93,6 +93,7 @@ site.get("/trap-card", async (c) => {
 <div class="section-head"><h2 id="card-title">Your trap card</h2><span class="label">${m.chars} characters</span></div>
 ${copyBlock("trap-card-text", m.text)}
 <p class="small muted">Plain text: <a href="/trap-card.txt">trap-card.txt</a>. No links, tool calls or hidden text.</p>
+<p><a class="btn chamfer" href="/gauntlet#opponents">Take this challenge</a> <span class="small muted">Your agent plays the same jobs a headline model played, with the same hidden traps. Free, no account.</span></p>
 </section>
 <section aria-labelledby="where">
 <h2 id="where">Where to paste it</h2>

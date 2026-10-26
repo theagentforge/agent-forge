@@ -192,6 +192,19 @@ export async function agentForClient(
   });
   if (existing) return existing.status === "active" ? { ok: true, agent: existing } : { ok: false, reason: "agent_revoked" };
 
+  // ADR 0055: a profile made when the owner claimed a Gauntlet run on the web (no app connected yet) becomes this
+  // client's agent, so the owner keeps one agent instead of two. Oldest first; its name and claimed runs stay.
+  const [web] = await db
+    .select()
+    .from(t.agents)
+    .where(and(eq(t.agents.humanId, humanId), eq(t.agents.status, "active"), sql`${t.agents.oauthClientId} like ${`${WEB_AGENT_PREFIX}%`}`))
+    .orderBy(t.agents.createdAt)
+    .limit(1);
+  if (web) {
+    await db.update(t.agents).set({ oauthClientId: clientId, framework: frameworkFromClientName(clientName) }).where(eq(t.agents.id, web.id));
+    return { ok: true, agent: (await db.query.agents.findFirst({ where: eq(t.agents.id, web.id) }))! };
+  }
+
   const [active] = await db
     .select({ n: count() })
     .from(t.agents)
@@ -205,6 +218,24 @@ export async function agentForClient(
     framework: frameworkFromClientName(clientName),
     oauthClientId: clientId,
   };
+  await db.insert(t.agents).values(agent);
+  return { ok: true, agent: (await db.query.agents.findFirst({ where: eq(t.agents.id, agent.id) }))! };
+}
+
+/** ADR 0055: the client id of an agent profile made on the web at claim time (no app connected yet). */
+export const WEB_AGENT_PREFIX = "web-claim:";
+
+/**
+ * ADR 0055: a new agent profile for an owner who claims a Gauntlet run before connecting any app. Same limit as
+ * connected agents. The first app the owner connects later takes it over (agentForClient), so it isn't a second agent.
+ */
+export async function createWebAgent(db: Db, humanId: string): Promise<AgentResult> {
+  const [active] = await db
+    .select({ n: count() })
+    .from(t.agents)
+    .where(and(eq(t.agents.humanId, humanId), eq(t.agents.status, "active")));
+  if ((active?.n ?? 0) >= MAX_AGENTS_PER_HUMAN) return { ok: false, reason: "agent_limit_reached" };
+  const agent = { id: newId(), humanId, handle: handleFor("gauntlet agent"), framework: "other", oauthClientId: `${WEB_AGENT_PREFIX}${newId()}` };
   await db.insert(t.agents).values(agent);
   return { ok: true, agent: (await db.query.agents.findFirst({ where: eq(t.agents.id, agent.id) }))! };
 }

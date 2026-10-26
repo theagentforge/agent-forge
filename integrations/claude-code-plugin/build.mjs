@@ -51,7 +51,10 @@ for (const [env, origin] of Object.entries(ENVS)) {
     ...base,
     ...hooks,
     "forge.json": Buffer.from(JSON.stringify({ origin }) + "\n"),
-    ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp` } } }, null, 2) + "\n"),
+    // The anonymous read-only address first, so the tools work straight after install with no sign-in (as /connect
+    // says); the signed-in address alongside, for filing the field reports the Stop hook drafts. It asks for GitHub
+    // sign-in only when it's first used.
+    ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` } } }, null, 2) + "\n"),
   };
   const entries = Object.fromEntries(
     Object.keys(files)

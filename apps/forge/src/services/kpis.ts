@@ -3,8 +3,9 @@ import * as t from "../db/schema";
 import { agentFunnel, outsidePeople } from "./agent-funnel";
 import { HARD3_TASKS, HARD_TASKS, TASKS } from "@forge/arena";
 import { getDb } from "./db";
+import { ownerFunnel } from "./owner-funnel";
 
-// The growth KPIs (ADR 0039). Twelve numbers, each with an exact
+// The growth KPIs (ADR 0039; ADR 0050 renamed the conversion KPI and added outside tool calls). Thirteen numbers, each with an exact
 // definition, today's value and its two targets (a first and a second). Internal only: /admin/kpis, Forge
 // Scout and the Monday digest. Never on public pages (Dinike, 23 Oct: no real-people numbers on the site).
 //
@@ -35,7 +36,7 @@ export interface Kpi {
 
 /** Third-party listings (KPI 8). Statuses change as reviews land; review-watch keeps them current. */
 export const DISTRIBUTION: { name: string; url: string; status: "live" | "pending" | "rejected" | "blocked" }[] = [
-  { name: "Claude Code plugin (our marketplace)", url: "https://theagentforge.io/plugins", status: "live" },
+  { name: "Claude Code plugin (our marketplace)", url: "https://theagentforge.io/marketplace.json", status: "live" },
   { name: "npm CLI (@theagentforge/cli)", url: "https://www.npmjs.com/package/@theagentforge/cli", status: "live" },
   { name: "Agent Plugins package (forge-mcp)", url: "https://github.com/theagentforge/forge-mcp", status: "live" },
   { name: "OpenClaw skill repo (forge-check-before-install)", url: "https://github.com/theagentforge/forge-check-before-install", status: "live" },
@@ -134,6 +135,12 @@ async function counters(env: Env, now: number, days: number, keys: string[], pre
   return { get, pre };
 }
 
+/** `AND <column> NOT IN (founder ids)`, or nothing when no founder ids are set. */
+function founderClause(env: Pick<Env, "ADMIN_GITHUB_IDS">, column: ReturnType<typeof sql>) {
+  const ids = (env.ADMIN_GITHUB_IDS ?? "").split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
+  return ids.length ? sql`AND ${column} NOT IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})` : sql``;
+}
+
 /** The twelve growth KPIs as of `now` (windows are full UTC days before today, so a re-run gives the same). */
 export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: string; kpis: Kpi[] }> {
   const db = getDb(env);
@@ -143,6 +150,7 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
   const prevAgentDays = series.slice(0, 7).reduce((a, d) => a + d.agents, 0);
 
   const funnel = await agentFunnel(env, now - DAY, 7);
+  const funnelYesterday = await agentFunnel(env, now - DAY, 1);
   const retention = await signedInRetention(env, now);
 
   const [verified] = await db
@@ -150,11 +158,22 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
     .from(t.agents)
     .innerJoin(t.humans, eq(t.agents.humanId, t.humans.id))
     .where(and(outside, eq(t.agents.status, "active"), eq(t.humans.tier, "verified")));
-  const [newVerified] = await db
+  // KPI 3, new per week (K5): active agents of verified people outside the project, by the week they connected.
+  const newRows = await db
+    .select({ createdAt: t.agents.createdAt })
+    .from(t.agents)
+    .innerJoin(t.humans, eq(t.agents.humanId, t.humans.id))
+    .where(and(outside, eq(t.agents.status, "active"), eq(t.humans.tier, "verified"), gte(t.agents.createdAt, now - 28 * DAY)));
+  const newByWeek = [3, 2, 1, 0].map((w) => ({
+    week_from: day(now - (w + 1) * 7 * DAY),
+    agents: newRows.filter((r) => r.createdAt >= now - (w + 1) * 7 * DAY && r.createdAt < now - w * 7 * DAY).length,
+  }));
+  // Every signed-in agent of people outside the project, sandbox included: verified agents are the subset above.
+  const [signedIn] = await db
     .select({ n: count() })
     .from(t.agents)
     .innerJoin(t.humans, eq(t.agents.humanId, t.humans.id))
-    .where(and(outside, eq(t.humans.tier, "verified"), gte(t.agents.createdAt, now - 7 * DAY)));
+    .where(and(outside, eq(t.agents.status, "active")));
 
   const c7 = await counters(env, now, 7, ["scan:api", "watch:calls", "a2a:requests", "visit:arrivals", "visit:all", "visit:crawler", "visit:human"], ["mcp:tool:", "visit:tag:", "visit:src:"]);
   const checksScans = c7.get("mcp:tool:forge_check") + c7.get("mcp:tool:forge_scan") + c7.get("mcp:tool:forge_watch") + c7.get("scan:api");
@@ -168,6 +187,36 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
     .from(t.reports)
     .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
     .where(and(outside, gte(t.reports.createdAt, now - 7 * DAY)));
+
+  // V1 (ADR 0047): corroboration. Of shown reports from people outside the project in the last 30 days, the share
+  // with at least one confirm from a different verified owner outside the project (whose own report isn't held).
+  const recentReports = await db
+    .select({ id: t.reports.id })
+    .from(t.reports)
+    .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
+    .where(and(outside, eq(t.reports.held, false), gte(t.reports.createdAt, now - 30 * DAY)));
+  const verdictRows = recentReports.length
+    ? await db.all<{ report_id: string; verdict: string; owners: number }>(sql`
+        SELECT v.report_id AS report_id, v.verdict AS verdict, COUNT(DISTINCT v.human_id) AS owners
+        FROM report_verdicts v
+        JOIN humans h ON h.id = v.human_id
+        JOIN reports r ON r.id = v.report_id
+        JOIN reports b ON b.id = v.by_report_id
+        WHERE h.tier = 'verified' AND h.is_house = 0 ${founderClause(env, sql`h.github_id`)} AND b.held = 0 AND v.human_id <> r.human_id
+          AND r.held = 0 AND r.created_at >= ${now - 30 * DAY}
+        GROUP BY v.report_id, v.verdict`)
+    : [];
+  const confirmedIds = new Set(verdictRows.filter((r) => r.verdict === "confirm").map((r) => r.report_id));
+  const recentIds = new Set(recentReports.map((r) => r.id));
+  const confirmed30 = [...confirmedIds].filter((id) => recentIds.has(id)).length;
+  const corroborated30 = verdictRows.filter((r) => r.verdict === "confirm" && Number(r.owners) >= 2 && recentIds.has(r.report_id)).length;
+  const c7v = await counters(env, now, 7, ["verdict:confirm", "verdict:dispute", "gauntlet:claim"]);
+  // ADR 0048: opt-in claims of Gauntlet runs by owners outside the project (House and founders left out, as elsewhere).
+  const [claims] = await db
+    .select({ n: count(), recent: sql<number>`sum(case when ${t.gauntletClaims.claimedAt} >= ${now - 30 * DAY} then 1 else 0 end)` })
+    .from(t.gauntletClaims)
+    .innerJoin(t.humans, eq(t.gauntletClaims.humanId, t.humans.id))
+    .where(outside);
 
   const [ranked30] = await db
     .select({ n: count() })
@@ -190,11 +239,15 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
   const engagedOrgs = new Set(partners.filter((b) => ENGAGED.includes(b.stage)).map((b) => b.org.toLowerCase())).size;
 
   const people = c7.get("visit:human");
+  const per100 = (x: number) => (people > 0 ? Math.round((x / people) * 1000) / 10 : null);
+  // ADR 0050: the funnel's "connected" leaves monitors out; the old reading (monitors in) stays in the detail.
   const connections = funnel.stages.connected;
-  const conversion = people > 0 ? Math.round((connections / people) * 1000) / 10 : null;
+  const connectionsWithMonitors = connections + funnel.detail.monitor_sessions;
   const tagged = c7.pre("visit:tag:");
 
   const live = DISTRIBUTION.filter((d) => d.status === "live").length;
+  // ADR 0055 (D11): owners first. The funnel from a finished Gauntlet run to a verified owner.
+  const owners = await ownerFunnel(env, now);
 
   const kpis: Kpi[] = [
     kpi({
@@ -205,8 +258,14 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       first: 500,
       second: 5000,
       definition:
-        "For each of the last 7 full UTC days, distinct agents that ran a check, scan, watch check-in or Gauntlet (MCP, A2A, API, plugin, CLI, CI; one-day code), summed. House and people on the website left out.",
-      detail: { previous_7_days: prevAgentDays, change_pct: prevAgentDays ? Math.round(((agentDays - prevAgentDays) / prevAgentDays) * 1000) / 10 : null, daily: series },
+        "For each of the last 7 full UTC days, distinct agents that ran a check, scan, watch check-in or Gauntlet (MCP, A2A, API, plugin, CLI, CI; one-day code), summed. House, our own probes (tagged, K7) and people on the website left out.",
+      detail: {
+        previous_7_days: prevAgentDays,
+        change_pct: prevAgentDays ? Math.round(((agentDays - prevAgentDays) / prevAgentDays) * 1000) / 10 : null,
+        daily: series,
+        /** Requests by our own probes in the funnel's window, by component (K7): left out of every number above. */
+        internal_left_out: funnel.detail.internal_by_component,
+      },
     }),
     kpi({
       id: "retention",
@@ -225,8 +284,15 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       unit: "active agents",
       first: 1000,
       second: 10000,
-      definition: "Active agents whose owner is a GitHub-verified person outside the project (not House, not a founder).",
-      detail: { humans: Number(verified?.humans ?? 0), agents_per_human: verified?.humans ? Math.round((Number(verified.agents) / Number(verified.humans)) * 10) / 10 : null, new_in_7_days: Number(newVerified?.n ?? 0) },
+      definition:
+        "Active agents connected through GitHub sign-in whose owner is a verified person outside the project (not House, not a founder), cumulative; new per week by the week the agent connected.",
+      detail: {
+        humans: Number(verified?.humans ?? 0),
+        agents_per_human: verified?.humans ? Math.round((Number(verified.agents) / Number(verified.humans)) * 10) / 10 : null,
+        new_in_7_days: newByWeek.at(-1)!.agents,
+        new_by_week: newByWeek,
+        signed_in_agents_any_tier: Number(signedIn?.n ?? 0),
+      },
     }),
     kpi({
       id: "checks",
@@ -246,7 +312,17 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       first: 50,
       second: 500,
       definition: "Reports filed in the last 7 days by agents of people outside the project.",
-      detail: { distinct_owners: Number(reports7?.owners ?? 0) },
+      detail: {
+        distinct_owners: Number(reports7?.owners ?? 0),
+        /** V1: share of the last 30 days' reports (outside the project) confirmed by at least one other verified owner. */
+        corroboration: {
+          reports_30_days: recentReports.length,
+          confirmed_by_another_owner: confirmed30,
+          rate_pct: recentReports.length ? Math.round((confirmed30 / recentReports.length) * 1000) / 10 : null,
+          corroborated_2plus_owners: corroborated30,
+          verdicts_7_days: { confirm: c7v.get("verdict:confirm"), dispute: c7v.get("verdict:dispute") },
+        },
+      },
     }),
     kpi({
       id: "results",
@@ -256,7 +332,13 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       first: 100,
       second: 1000,
       definition: "Gauntlet runs started in the last 30 days (any agent; our install tests included, so read with the detail).",
-      detail: { finished: Number(gauntletsDone?.n ?? 0), ranked_bouts_30_days: Number(ranked30?.n ?? 0), ranked_models_all_time: Number(models?.n ?? 0) },
+      detail: {
+        finished: Number(gauntletsDone?.n ?? 0),
+        ranked_bouts_30_days: Number(ranked30?.n ?? 0),
+        ranked_models_all_time: Number(models?.n ?? 0),
+        /** ADR 0048: runs claimed by owners outside the project (all time, last 30 days) and the 7-day counter. */
+        gauntlet_claims: { total: Number(claims?.n ?? 0), last_30_days: Number(claims?.recent ?? 0), counted_7_days: c7v.get("gauntlet:claim") },
+      },
     }),
     kpi({
       id: "citations",
@@ -279,14 +361,41 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       detail: { pending: DISTRIBUTION.filter((d) => d.status === "pending").length, listings: DISTRIBUTION },
     }),
     kpi({
-      id: "conversion",
-      name: "Connections per 100 people",
-      value: conversion,
+      id: "conversion_agents",
+      name: "Agent connections per 100 people",
+      value: per100(connections),
       unit: "per 100",
       first: 8,
       second: 12,
-      definition: "MCP and A2A connections (directory checks left out) per 100 real people on the site (browsers that ran site.js), last 7 days.",
-      detail: { connections, people, connect_tests_passed: funnel.detail.connect_tests_passed },
+      definition:
+        "MCP sessions from apps that use tools, plus A2A requests, per 100 real people on the site (browsers that ran site.js), last 7 days. Left out: directory health checks, our own probes, House, and monitors (client names with sessions but no tool call under their name in 7 days; agent apps whose calls can't carry their name, such as claude.ai, are never monitors). Replaced \"conversion\" on 26 Oct (ADR 0050).",
+      detail: {
+        connections,
+        people,
+        connect_tests_passed: funnel.detail.connect_tests_passed,
+        monitors_and_catalogs: funnel.detail.monitors_and_catalogs,
+        /** The retired "conversion" KPI's reading (connections with monitors), for comparison. */
+        previous_definition: { id: "conversion", connections: connectionsWithMonitors, value: per100(connectionsWithMonitors) },
+      },
+    }),
+    kpi({
+      id: "outside_tool_calls",
+      name: "Tool calls from outside clients",
+      value: funnel.detail.outside_tool_calls,
+      unit: "in 7 days",
+      first: 350,
+      second: 3500,
+      definition:
+        "MCP tool calls on our three endpoints plus A2A requests, last 7 full days. Left out: House, our own probes (tagged, K7), and calls made under the name of a directory, catalogue, checker or monitor. The honest demand number (ADR 0050); targets 50 and 500 a day, proposed.",
+      detail: {
+        yesterday: funnelYesterday.detail.outside_tool_calls,
+        per_100_people: per100(funnel.detail.outside_tool_calls),
+        mcp_tool_calls_all: funnel.detail.tool_calls,
+        a2a_requests: funnel.detail.a2a_requests,
+        monitors_and_catalogs: funnel.detail.monitors_and_catalogs,
+        house_left_out: { sessions: funnel.detail.house_mcp_sessions },
+        internal_left_out: funnel.detail.internal_by_component,
+      },
     }),
     kpi({
       id: "virality",
@@ -307,6 +416,17 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       second: 15,
       definition: "Organisations on the partner list that replied, met, use our data or came to us (logged on /admin/kpis; organisations only, no personal names).",
       detail: { by_stage: Object.fromEntries(PARTNER_STAGES.map((s) => [s, partners.filter((b) => b.stage === s).length])) },
+    }),
+    kpi({
+      id: "verified_owners",
+      name: "Verified owners (D11)",
+      value: owners.verified_owners,
+      unit: "owners",
+      first: 100,
+      second: 1000,
+      definition:
+        "Verified people outside the project (not House, not a founder) with at least one active agent, cumulative. First target 100 by 31 Dec 2026 (D11); second proposed. Keep agents per owner close to 1. Detail: the owner funnel for the last 30 full days (runs finished, claim link shown, claim page opened, claimed, verified owners who claimed) and Season 1 entrants (ADR 0055).",
+      detail: owners as unknown as Record<string, unknown>,
     }),
     kpi({
       id: "company_readiness",

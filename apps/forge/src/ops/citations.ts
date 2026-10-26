@@ -1,6 +1,7 @@
 // The weekly "cited in AI search" check (docs/launch/agent-channels.md §4.5 and §6): ten fixed "is <popular skill or
 // MCP server> safe?" questions, asked of a Claude, a GPT and a Perplexity model with web search through OpenRouter.
-// For each answer it records whether theagentforge.io is cited (in the citations or the text). The questions are
+// For each answer it records whether theagentforge.io is cited (in the citations or the text), and which domains were
+// cited instead (top 10), so their pages can be compared with ours. The questions are
 // fixed so the score moves only when the web does. Spend shares the ops daily cap with the tool-selection test.
 
 export const CITATION_QUESTIONS = [
@@ -33,6 +34,30 @@ export function citedUrls(body: unknown): string[] {
   return [...new Set([...fromAnnotations, ...fromList])];
 }
 
+/** How many cited domains each answer keeps (issue #234: compare the pages answer engines cite with ours). */
+export const TOP_DOMAINS = 10;
+
+/**
+ * The domains an answer cites, most-cited first (by distinct URLs; ties in citation order), without "www.", at most
+ * TOP_DOMAINS. Only plain hostnames are kept, so the list is safe to put inside an HTML comment.
+ */
+export function citedDomains(body: unknown, max = TOP_DOMAINS): string[] {
+  const counts = new Map<string, number>();
+  // Counted by distinct cited URL: a domain cited on three pages outranks one cited once.
+  for (const u of citedUrls(body)) {
+    let host: string;
+    try {
+      host = new URL(u).hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+    } catch {
+      continue;
+    }
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) continue;
+    counts.set(host, (counts.get(host) ?? 0) + 1);
+  }
+  const order = [...counts.keys()];
+  return [...order].sort((x, y) => counts.get(y)! - counts.get(x)! || order.indexOf(x) - order.indexOf(y)).slice(0, max);
+}
+
 export function wasCited(body: unknown): boolean {
   const text = (body as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
   return citedUrls(body).some((u) => OURS.test(u)) || (typeof text === "string" && OURS.test(text));
@@ -42,6 +67,8 @@ export interface CitationRow {
   i: number;
   cited: boolean | null;
   urls: number;
+  /** The cited domains, most-cited first (citedDomains); empty when the call failed. From the same reply: no extra call. */
+  domains: string[];
 }
 
 /** Asks questions [from, to) of one model. `cited` is null when the call failed. */
@@ -59,9 +86,9 @@ export async function runCitations(env: { OPENROUTER_API_KEY?: string }, key: st
       });
       const body = (await res.json().catch(() => null)) as { usage?: { cost?: number } } | null;
       cost += Number(body?.usage?.cost ?? 0);
-      rows.push(res.ok && body ? { i, cited: wasCited(body), urls: citedUrls(body).length } : { i, cited: null, urls: 0 });
+      rows.push(res.ok && body ? { i, cited: wasCited(body), urls: citedUrls(body).length, domains: citedDomains(body) } : { i, cited: null, urls: 0, domains: [] });
     } catch {
-      rows.push({ i, cited: null, urls: 0 });
+      rows.push({ i, cited: null, urls: 0, domains: [] });
     }
   }
   return { model: key, rows, cost: Math.round(cost * 10_000) / 10_000 };

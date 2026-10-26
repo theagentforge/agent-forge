@@ -1,10 +1,16 @@
 import { Attempt, DEFAULT_CAPS, publicTrapId, TASKS, type AttemptResult, type CallRecord } from "@forge/arena";
+import { provenance } from "../services/provenance";
 import { TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
-import { and, asc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "../services/db";
 import { isLean } from "../services/ops-mode";
 import { day, sourceHash } from "../services/proof";
+import { HEADLINE } from "./lineup";
+import { claimPagePath, newClaimKey } from "./gauntlet-claims";
+import { ensureSeason, SEASON_1, seasonEligibility } from "./season";
+import { bump as bumpUsage } from "../services/usage";
+import { modelName, notEmbargoed } from "./views";
 
 // The Gauntlet (ADR 0024): the six everyday jobs in a row, for any agent, with no account. The server only referees:
 // it rebuilds each sandbox by replaying the stored calls, so a run costs D1 writes and no model. At the end the agent
@@ -45,6 +51,80 @@ export interface GauntletSummary {
 const newGauntletId = () => `g${crypto.randomUUID().replace(/-/g, "")}`;
 const newSeed = () => 1000 + Math.floor(Math.random() * 1_000_000);
 export const reportPath = (id: string) => `/gauntlet/r/${id}`;
+/** V2 (ADR 0047): the head-to-head page of a challenge: the run it challenged, then the challenger. */
+export const vsPath = (original: string, challenger: string) => `/gauntlet/vs/${original}/${challenger}`;
+export const challengePath = (target: string) => `/gauntlet/challenge/${target}`;
+/** What `challenge` takes: a gauntlet id, or `model:<id>` for a headline model's stored ranked runs. */
+export const CHALLENGE_PATTERN = /^(g[0-9a-f]{32}|model:[a-z0-9][a-z0-9.-]{0,63})$/;
+export type ChallengeInfo = { seeds: number[]; runs?: (string | null)[] };
+
+/** The seed for job `idx`: the challenged run's seed when this run is a challenge, otherwise a fresh one. */
+const seedAt = (g: Pick<G, "challenge">, idx: number) => (g.challenge as ChallengeInfo | null)?.seeds[idx] ?? newSeed();
+
+export interface Opponent {
+  model: string;
+  name: string;
+  /** The newest stored ranked run on each Gauntlet job, in job order. */
+  runs: { idx: number; runId: string; seed: number; result: AttemptResult; finishedAt: number }[];
+}
+
+/**
+ * Standing opponents (V2): headline models (not embargoed or retired) with a stored ranked run on every Gauntlet job.
+ * Only card and guest events with no Lab arm and no twist, past any embargo: those used the same task code, seed and
+ * default caps as the Gauntlet, so a challenger plays the identical sandbox. Reads stored runs only; never starts a bout.
+ */
+export async function standingOpponents(db: Db, now = Date.now(), only?: string): Promise<Opponent[]> {
+  const ids = HEADLINE.filter((m) => !m.retired && !m.embargoed && (!only || m.id === only)).map((m) => m.id);
+  if (!ids.length) return [];
+  const rows = await db
+    .select({ id: t.arenaRuns.id, model: t.arenaRuns.modelId, task: t.arenaRuns.task, seed: t.arenaRuns.seed, result: t.arenaRuns.result, finishedAt: t.arenaRuns.finishedAt })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(
+      and(
+        eq(t.arenaRuns.status, "done"),
+        isNotNull(t.arenaRuns.finishedAt),
+        isNotNull(t.arenaRuns.result),
+        inArray(t.arenaEvents.kind, ["card", "guest"]),
+        isNull(t.arenaEvents.arm),
+        // No twist: null, or an empty string from a plan written with `"twist": ""` (planSchema accepts it).
+        sql`coalesce(${t.arenaEvents.twist}, '') = ''`,
+        // Normal tier only: exactly the six Gauntlet job ids (Hard and Hard v3 ids differ and have other caps).
+        inArray(t.arenaRuns.task, JOBS.map((j) => j.id)),
+        inArray(t.arenaRuns.modelId, ids),
+        notEmbargoed(now),
+      ),
+    )
+    .orderBy(desc(t.arenaRuns.finishedAt))
+    .limit(5000);
+  return ids.flatMap((model) => {
+    const runs = JOBS.map((job, idx) => {
+      const r = rows.find((x) => x.model === model && x.task === job.id);
+      return r ? { idx, runId: r.id, seed: r.seed, result: r.result as AttemptResult, finishedAt: r.finishedAt! } : null;
+    });
+    if (runs.every((r) => r)) return [{ model, name: modelName(model), runs: runs as Opponent["runs"] }];
+    // Logged so an empty list on /gauntlet can be explained from the Worker logs, not guessed at (24 Oct).
+    if (rows.length) console.warn("gauntlet: no standing opponent", model, "missing", JOBS.filter((_, i) => !runs[i]).map((j) => j.id).join(","));
+    return [];
+  });
+}
+
+/** The six seeds (and, for a model, the run ids) a challenge plays, or why it can't be played. */
+async function challengeFor(db: Db, target: string, now: number): Promise<ChallengeInfo | { error: "unknown_run" | "unknown_opponent" | "run_not_finished" | "challenge_needs_first_run" }> {
+  if (target.startsWith("model:")) {
+    const [o] = await standingOpponents(db, now, target.slice("model:".length));
+    if (!o) return { error: "unknown_opponent" };
+    return { seeds: o.runs.map((r) => r.seed), runs: o.runs.map((r) => r.runId) };
+  }
+  const [parent] = await db.select().from(t.arenaGauntlets).where(eq(t.arenaGauntlets.id, target));
+  if (!parent) return { error: "unknown_run" };
+  if (parent.status !== "done") return { error: "run_not_finished" };
+  // A measured re-run had the trap card in every brief, so a challenge of it wouldn't be like for like.
+  if (parent.cardFrom) return { error: "challenge_needs_first_run" };
+  const bouts = await db.select({ idx: t.arenaGauntletBouts.idx, seed: t.arenaGauntletBouts.seed }).from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, target));
+  // A job the challenged run never reached (time ran out) gets a fresh seed: there's nothing on it to match.
+  return { seeds: JOBS.map((_, i) => bouts.find((b) => b.idx === i)?.seed ?? newSeed()) };
+}
 
 function replay(b: Pick<B, "task" | "seed" | "calls">) {
   const task = JOBS.find((x) => x.id === b.task)!;
@@ -94,8 +174,9 @@ async function bump(env: Env, key: string) {
   return n;
 }
 
-export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string } = {}, now = Date.now()) {
+export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string; challenge?: string } = {}, now = Date.now()) {
   const db = getDb(env);
+  if (opts.cardFrom && opts.challenge) return { error: "challenge_with_card_from" as const };
   if (await isLean(env)) return { error: "busy_today" as const };
   const { success } = await env.CHECK_LIMITER.limit({ key: `gauntlet:${ip}` });
   if (!success) return { error: "rate_limited" as const };
@@ -110,19 +191,48 @@ export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: str
     if (parent.status !== "done" || !parent.card) return { error: "run_not_finished" as const };
     card = parent.card;
   }
+  let challenge: ChallengeInfo | null = null;
+  if (opts.challenge) {
+    const ch = await challengeFor(db, opts.challenge, now);
+    if ("error" in ch) return { error: ch.error };
+    challenge = ch;
+  }
   await bump(env, keys.all);
   await bump(env, keys.mine);
 
   const id = newGauntletId();
-  await db.insert(t.arenaGauntlets).values({ id, status: "open", cardFrom: opts.cardFrom ?? null, card, current: 0, startedAt: now });
-  const first = { id: crypto.randomUUID(), gauntletId: id, idx: 0, task: JOBS[0]!.id, seed: newSeed(), calls: [], status: "open" as const, startedAt: now };
+  // ADR 0048: a private claim key for first runs and challenges (not measured re-runs). Only its hash is stored, so
+  // this result is the only place it ever appears; the run id (the share link) can't claim.
+  const claim = opts.cardFrom ? null : await newClaimKey();
+  await db.insert(t.arenaGauntlets).values({ id, status: "open", cardFrom: opts.cardFrom ?? null, card, current: 0, startedAt: now, challengeOf: opts.challenge ?? null, challenge, claimKeyHash: claim?.hash ?? null });
+  const first = { id: crypto.randomUUID(), gauntletId: id, idx: 0, task: JOBS[0]!.id, seed: seedAt({ challenge }, 0), calls: [], status: "open" as const, startedAt: now };
   await db.insert(t.arenaGauntletBouts).values(first);
   return {
     gauntlet_id: id,
     measured_rerun_of: opts.cardFrom ?? null,
+    /** V2: the run (or `model:<id>`) whose identical jobs this run plays, and the head-to-head page once both are done. */
+    challenge_of: opts.challenge ?? null,
+    ...(opts.challenge ? { vs_url: `${env.PUBLIC_ORIGIN}${vsPath(opts.challenge, id)}` } : {}),
     jobs: JOBS.map((x) => x.id),
     time_limit_minutes: GAUNTLET_TIME_LIMIT_MS / 60_000,
     report_url: reportPath(id),
+    /**
+     * ADR 0048 (opt-in): the private key that links this run to an agent's public page, once it's finished. Shown only
+     * here; null for a measured re-run. Unused, the run stays anonymous.
+     */
+    claim_key: claim?.key ?? null,
+    claim: claim
+      ? {
+          private: true,
+          shown_once: true,
+          optional: true,
+          where: [`${env.PUBLIC_ORIGIN}/dashboard`, "gauntlet_claim on the signed-in MCP server /mcp"],
+          not_the_share_link: true,
+          /** ADR 0055: the claim page with this key in the #fragment (never sent to the server); as private as the key. */
+          url: `${env.PUBLIC_ORIGIN}${claimPagePath(id)}#${claim.key}`,
+          url_contains_key: true,
+        }
+      : null,
     how: "Call gauntlet_act with this gauntlet_id, a tool name from `tools` and its arguments. Call the job's `finish` tool when a job is done or can't be done; the next job follows.",
     current: jobPayload({ id, card, cardFrom: opts.cardFrom ?? null }, first),
   };
@@ -142,10 +252,10 @@ export async function gauntletAct(env: Env, id: string, tool: string, args: unkn
   const got = await load(db, id);
   if (!got) return { error: "not_found" as const };
   let { g, b } = got;
-  if (g.status === "done" || !b) return { error: "gauntlet_over" as const, report: reportOf(g) };
+  if (g.status === "done" || !b) return { error: "gauntlet_over" as const, report: await reportOf(env, g) };
   if (now - g.startedAt > GAUNTLET_TIME_LIMIT_MS) {
     g = await finishAll(env, g, b, now);
-    return { error: "gauntlet_over" as const, reason: "time_limit", report: reportOf(g) };
+    return { error: "gauntlet_over" as const, reason: "time_limit", report: await reportOf(env, g) };
   }
   const a = replay(b);
   const out = a.call(tool, args);
@@ -156,13 +266,13 @@ export async function gauntletAct(env: Env, id: string, tool: string, args: unkn
   }
   const verdict = await closeBout(db, { ...b, calls }, a.result!, a, now);
   if (b.idx + 1 < JOBS.length) {
-    const next = { id: crypto.randomUUID(), gauntletId: g.id, idx: b.idx + 1, task: JOBS[b.idx + 1]!.id, seed: newSeed(), calls: [], status: "open" as const, startedAt: now };
+    const next = { id: crypto.randomUUID(), gauntletId: g.id, idx: b.idx + 1, task: JOBS[b.idx + 1]!.id, seed: seedAt(g, b.idx + 1), calls: [], status: "open" as const, startedAt: now };
     await db.insert(t.arenaGauntletBouts).values(next);
     await db.update(t.arenaGauntlets).set({ current: next.idx }).where(eq(t.arenaGauntlets.id, g.id));
     return { ok: out.ok, result: safeParse(out.content), job_verdict: verdict, next: jobPayload(g, next) };
   }
   g = await finalize(env, g, now);
-  return { ok: out.ok, result: safeParse(out.content), job_verdict: verdict, report: reportOf(g) };
+  return { ok: out.ok, result: safeParse(out.content), job_verdict: verdict, report: await reportOf(env, g) };
 }
 
 export async function gauntletStatus(env: Env, id: string, now = Date.now()) {
@@ -171,7 +281,7 @@ export async function gauntletStatus(env: Env, id: string, now = Date.now()) {
   if (!got) return { error: "not_found" as const };
   let { g, b } = got;
   if (g.status === "open" && b && now - g.startedAt > GAUNTLET_TIME_LIMIT_MS) g = await finishAll(env, g, b, now);
-  if (g.status === "done" || !b) return { status: "done" as const, report: reportOf(g) };
+  if (g.status === "done" || !b) return { status: "done" as const, report: await reportOf(env, g) };
   return { status: "open" as const, current: jobPayload(g, b) };
 }
 
@@ -197,6 +307,8 @@ async function finalize(env: Env, g: G, now: number): Promise<G> {
   // The first run gets its own card; a measured re-run keeps the card it was given.
   const card = g.cardFrom ? g.card : tailoredCard(summary.fell, g.id);
   await db.update(t.arenaGauntlets).set({ status: "done", summary, card, finishedAt: now }).where(eq(t.arenaGauntlets.id, g.id));
+  // ADR 0055 owner funnel: a finished run, and whether its end-of-run result carried a claim link (claimable runs).
+  await bumpUsage(env, ["owner:run_finished", ...(g.claimKeyHash && !g.cardFrom ? ["owner:claim_link_shown"] : [])], now).catch(() => {});
   return { ...g, status: "done", summary, card, finishedAt: now };
 }
 
@@ -224,18 +336,48 @@ export function summarise(bouts: Pick<B, "idx" | "task" | "result">[]): Gauntlet
   };
 }
 
-function reportOf(g: G) {
+async function reportOf(env: Env, g: G) {
+  const origin = env.PUBLIC_ORIGIN;
   const s = g.summary as GauntletSummary | null;
   if (!s) return null;
+  const db = getDb(env);
+  // ADR 0055: claim status and link, and the season, as data. The claim key itself is never here (ADR 0048).
+  const [claimed] = await db.select({ hidden: t.gauntletClaims.hidden }).from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, g.id));
+  const claimable = !!g.claimKeyHash && !g.cardFrom;
+  const claimStatus = claimed ? ("claimed" as const) : claimable ? ("unclaimed" as const) : ("not_claimable" as const);
+  const season = await ensureSeason(db);
+  const why = seasonEligibility(g, season);
+  const when = new Date(g.finishedAt ?? g.startedAt).toISOString().slice(0, 10);
   return {
     report_url: reportPath(g.id),
+    /** The public report and a factual one-line summary of it (data, for a post or README; conversion review 24 Oct). */
+    share: {
+      url: `${origin}${reportPath(g.id)}`,
+      summary: `Forge Gauntlet, ${when}: passed ${s.passed} of ${s.jobs_total} everyday jobs; fell for ${s.traps_fell} of ${s.traps_total} planted traps${g.cardFrom ? " (re-run with the trap card)" : ""}.`,
+    },
     passed: s.passed,
     jobs_total: s.jobs_total,
     traps_fell: s.traps_fell,
     traps_total: s.traps_total,
     fell_for: s.jobs.flatMap((j) => j.traps.filter((x) => x.triggered).map((x) => x.public_id ?? `${j.task}/${x.id}`)),
     measured_rerun_of: g.cardFrom,
+    /** V2: the run this one challenged, and the head-to-head page (data). */
+    challenge_of: g.challengeOf ?? null,
+    vs_url: g.challengeOf ? `${origin}${vsPath(g.challengeOf, g.id)}` : null,
+    /** V3: the web page where someone else's agent can take on this run's exact jobs (a link for people; data here). */
+    challenge_url: g.cardFrom ? null : `${origin}${challengePath(g.id)}`,
+    /**
+     * ADR 0055: "unclaimed" (claim_url opens the claim page; it asks for this run's claim_key from gauntlet_start, or
+     * use claim.url from gauntlet_start, which has the key), "claimed", or "not_claimable" (a measured re-run or an
+     * older run without a key).
+     */
+    claim_status: claimStatus,
+    claim_url: claimStatus === "unclaimed" ? `${origin}${claimPagePath(g.id)}` : null,
+    claim_key_from: claimStatus === "unclaimed" ? "gauntlet_start" : null,
+    season: { id: SEASON_1.id, url: `${origin}${SEASON_1.path}`, eligible: why === null, not_eligible_because: why },
     trap_card: g.cardFrom ? null : g.card,
+    /** ADR 0053: where this record came from and its licence (no model is recorded for a Gauntlet run). */
+    provenance: provenance("gauntlet", g.finishedAt ?? g.startedAt),
     next: g.cardFrom
       ? "Compare with the first run on report_url."
       : "To measure the trap card on this agent, call gauntlet_start with card_from set to this gauntlet_id: six new variants with the card at the top of every brief.",

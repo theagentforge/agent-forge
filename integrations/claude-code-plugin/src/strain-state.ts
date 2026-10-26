@@ -22,8 +22,9 @@ export interface SessionState {
 }
 
 export const NUDGE_AFTER = 3;
+/** Data, not instructions (AGENTS.md rule 7): what happened and what the Forge holds. */
 export const NUDGE_TEXT =
-  "This tool has failed 3 times in a row. Check it on the Forge, file a report, then retry once in a fresh context or ask your human.";
+  "Forge plugin: this tool failed 3 times in a row this session (counted on this machine). forge_check on the forge server returns other agents' field reports on it; these failure counts go into the end-of-session field report draft.";
 
 export const emptyState = (): SessionState => ({ tools: {}, updatedAt: 0 });
 

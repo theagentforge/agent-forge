@@ -5,7 +5,7 @@ import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { growthKpis, agentDaysSeries, PARTNERS_KV, CITATIONS_KV, DISTRIBUTION, kpiSnapshotValues, dataInventory, dataSnapshotValues, DATA_CONTROLS } from "../src/services/kpis";
 import { recordCheck } from "../src/services/proof";
-import { connectApprovedAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
+import { connectAgent, connectApprovedAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
 import "../src/index";
 
 // The growth KPIs (ADR 0039): exact, crawler-free, House-free.
@@ -89,6 +89,33 @@ describe("the other KPIs", () => {
     expect(Number(r.value)).toBeGreaterThan(0);
   });
 
+  it("KPI 3 counts verified agents cumulative and new per week, without House, founders, sandbox or revoked agents (K5)", async () => {
+    const db = getDb(env);
+    const v = async () => byId(await growthKpis(env, Date.now() + DAY), "verified_agents");
+    const before = await v();
+    const weeks = (k: typeof before) => (k.detail!.new_by_week as { week_from: string; agents: number }[]).map((w) => w.agents);
+    expect(weeks(before)).toHaveLength(4);
+    // A verified person with two agents: one connected now, one 10 days ago (last week's bucket).
+    const a = await connectApprovedAgent(profile({ id: 777_101, login: "k5-verified" }));
+    const b = await connectAgent({ profile: profile({ id: 777_101, login: "k5-verified" }), clientName: "Codex" });
+    expect(b.human.id).toBe(a.human.id);
+    await db.update(t.agents).set({ createdAt: Date.now() - 10 * DAY }).where(eq(t.agents.id, b.agent.id));
+    // Left out: a House person's agent, a sandbox person's agent (counted only in the any-tier detail), a revoked one.
+    const house = await connectApprovedAgent(profile({ id: 777_102, login: "k5-house" }));
+    await db.update(t.humans).set({ isHouse: true }).where(eq(t.humans.id, house.human.id));
+    await connectAgent({ profile: profile({ id: 777_103, login: "k5-sandbox", public_repos: 0, public_gists: 0, followers: 0 }) });
+    const revoked = await connectApprovedAgent(profile({ id: 777_104, login: "k5-revoked" }));
+    await db.update(t.agents).set({ status: "revoked" }).where(eq(t.agents.id, revoked.agent.id));
+
+    const after = await v();
+    expect(Number(after.value) - Number(before.value)).toBe(2);
+    expect(Number(after.detail!.humans) - Number(before.detail!.humans)).toBe(1);
+    expect(Number(after.detail!.signed_in_agents_any_tier) - Number(before.detail!.signed_in_agents_any_tier)).toBe(3);
+    const diff = weeks(after).map((n, i) => n - weeks(before)[i]!);
+    expect(diff).toEqual([0, 0, 1, 1]);
+    expect(after.detail!.new_in_7_days).toBe(weeks(after).at(-1));
+  });
+
   it("lists distribution honestly, counts engaged partners by organisation, and snapshots only numbers", async () => {
     await env.KV.put(PARTNERS_KV, JSON.stringify([{ org: "Org A", stage: "contacted", date: "2026-11-01" }, { org: "Org A", stage: "replied", date: "2026-11-03" }, { org: "org a", stage: "met", date: "2026-11-09" }, { org: "Org B", stage: "researched", date: "2026-11-02" }]));
     await env.KV.put(CITATIONS_KV, JSON.stringify([{ url: "https://example.org/a", title: "A", date: "2026-11-01" }]));
@@ -100,7 +127,7 @@ describe("the other KPIs", () => {
     const snap = kpiSnapshotValues(k.kpis);
     expect(Object.keys(snap)).toContain("kpi_north_star");
     expect(Object.keys(snap)).not.toContain("kpi_company_readiness");
-    expect(k.kpis).toHaveLength(12);
+    expect(k.kpis).toHaveLength(14);
     await env.KV.delete(PARTNERS_KV);
     await env.KV.delete(CITATIONS_KV);
   });

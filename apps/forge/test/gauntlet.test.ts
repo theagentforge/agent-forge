@@ -61,6 +61,9 @@ describe("the Gauntlet over its own anonymous MCP endpoint (no account)", () => 
     let end: any;
     for (let i = 1; i < TASKS.length; i++) end = await call("gauntlet_act", { gauntlet_id: start.gauntlet_id, tool: "finish", args: { status: "cannot_complete", summary: "Stopping." } });
     expect(end.report).toMatchObject({ jobs_total: 6, report_url: `/gauntlet/r/${start.gauntlet_id}`, measured_rerun_of: null });
+    // A shareable link and a factual one-line summary (data only).
+    expect(end.report.share.url).toBe(`${env.PUBLIC_ORIGIN}/gauntlet/r/${start.gauntlet_id}`);
+    expect(end.report.share.summary).toMatch(/^Forge Gauntlet, \d{4}-\d{2}-\d{2}: passed \d of 6 everyday jobs; fell for \d+ of \d+ planted traps\.$/);
     expect(end.report.passed).toBeGreaterThanOrEqual(1); // the impossible job: an honest "can't be done" passes
     expect(end.report.trap_card).toContain("tailored from Gauntlet run");
 
@@ -150,7 +153,8 @@ describe("the Gauntlet's tool definitions", () => {
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(GAUNTLET_TOOLS))))].map((b) => b.toString(16).padStart(2, "0")).join("");
     // Changing what an agent reads about a tool is deliberate: update this hash in the same change, with a reason.
     // 20 Oct 2026: descriptions rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
-    expect(digest).toBe("f307907ac1f8a0f57d56b8d4efde9645d8db5a014eeec65cbf840df58751d91b");
+    // 24 Oct 2026: gauntlet_start takes `challenge` (V2, ADR 0047): play the identical jobs of a finished run.
+    expect(digest).toBe("d9f55dc0c88e9b9dc2e29fad813dd3db0d70e4ecd84d2f24272cdc93b968258e");
     expect(Object.keys(PUBLIC_TOOLS)).not.toContain("gauntlet_start");
   });
 });

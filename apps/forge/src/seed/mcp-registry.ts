@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, newId, type Db } from "../services/db";
 import { canonicalToolId } from "../services/tools";
@@ -31,6 +31,8 @@ export interface SeedTool {
   sourceUrl: string | null;
   publisherGithub: string | null;
   signal: Record<string, unknown>;
+  /** The tool kind for a new tool (default mcp_server); an existing tool keeps its own. */
+  kind?: string;
 }
 
 const OFFICIAL = "io.modelcontextprotocol.registry/official";
@@ -95,7 +97,7 @@ export async function upsertSeedTools(db: Db, items: SeedTool[], now: number, so
     stmts.push(
       prev
         ? db.update(t.tools).set({ sourceUrl: prev.sourceUrl ?? it.sourceUrl, registryRefs: refs, publisherGithub: prev.publisherGithub ?? it.publisherGithub }).where(eq(t.tools.id, toolId))
-        : db.insert(t.tools).values({ id: toolId, kind: "mcp_server", canonicalId: it.canonicalId, sourceUrl: it.sourceUrl, registryRefs: refs, publisherGithub: it.publisherGithub, createdAt: now }),
+        : db.insert(t.tools).values({ id: toolId, kind: it.kind ?? "mcp_server", canonicalId: it.canonicalId, sourceUrl: it.sourceUrl, registryRefs: refs, publisherGithub: it.publisherGithub, createdAt: now }),
     );
   }
   items.forEach((it, i) => {
@@ -103,7 +105,10 @@ export async function upsertSeedTools(db: Db, items: SeedTool[], now: number, so
       stmts.push(db.insert(t.toolAliases).values({ alias, toolId: toolIds[i]! }).onConflictDoNothing());
     }
   });
-  stmts.push(db.delete(t.publicSignals).where(inArray(t.publicSignals.toolId, toolIds)));
+  // Each seeder replaces only its own signal, so a tool seeded from two sources (or holding OSV advisories) keeps both.
+  // In chunks: D1 binds at most 100 parameters per statement (a page is 100 tools, plus the source).
+  for (let i = 0; i < toolIds.length; i += 90)
+    stmts.push(db.delete(t.publicSignals).where(and(inArray(t.publicSignals.toolId, toolIds.slice(i, i + 90)), eq(t.publicSignals.source, source))));
   items.forEach((it, i) =>
     stmts.push(db.insert(t.publicSignals).values({ id: newId(), toolId: toolIds[i]!, source, payload: it.signal, fetchedAt: now })),
   );

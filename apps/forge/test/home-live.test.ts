@@ -21,7 +21,7 @@ describe("the trap card's measured value on the home page", () => {
     expect(body).toContain("A placebo text: 73.");
     expect(body).toContain("Clear effect on 3 of 6 model–job pairs");
     expect(body).toContain("95% interval 48–59% fewer");
-    expect(body).toContain("In our tests on frontier models, the card didn't measurably reduce traps");
+    expect(body).toContain("<b>Frontier models fell for a trap in about 3 in 10 bouts.</b> Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it");
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
     // It sits straight after the hero, before the Arena.
     expect(body.indexOf('class="lab-band')).toBeGreaterThan(body.indexOf('class="hero2"'));
@@ -120,3 +120,5 @@ describe("trap card results by kind of job", () => {
     expect(body).not.toContain("NaN");
   });
 });
+
+// 25 Oct 2026: the frontier line under the Lab #3 band is tested with seeded events in test/frontier-hard.test.ts.

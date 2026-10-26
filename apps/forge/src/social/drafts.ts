@@ -5,7 +5,8 @@ import { gullibilityBoard } from "../arena/board";
 import { clipIndex } from "../arena/clips";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { failCard } from "../arena/fail-card";
-import { easternDaylight, nextHeadlineSlot, slotDate, weeklyModels, weeklySlug, weeklyTask } from "../arena/headline-slot";
+import { failOfTheWeek, fotwPath } from "../arena/fail-of-the-week";
+import { easternDaylight, lastHeadlineSlot, nextHeadlineSlot, slotDate, weeklyModels, weeklySlug, weeklyTask } from "../arena/headline-slot";
 import { modelById } from "../arena/lineup";
 import { finishedRuns, modelName, notEmbargoedModel, runWithLog } from "../arena/views";
 import * as t from "../db/schema";
@@ -30,7 +31,8 @@ export type PostType =
   | "bout-result"
   | "recap"
   | "trap-card-tip"
-  | "milestone";
+  | "milestone"
+  | "fail-of-the-week";
 
 export interface Draft {
   type: PostType;
@@ -47,6 +49,13 @@ export interface Draft {
   reply?: string;
   /** A milestone post (social/milestones.ts): its id, filed once ever and always approved by hand. */
   milestone?: string;
+  /**
+   * V4: never auto-published. The drafter files it without the "auto" label, so it waits for Dinike's approve, and
+   * files the Moltbook draft beside it (its own approve-to-post issue).
+   */
+  approveOnly?: boolean;
+  /** V4: a Moltbook post draft (submolt, title, content), filed as its own approve-only "moltbook" issue. */
+  moltbook?: { submolt: string; title: string; content: string };
   /** What the verifier re-checks, from public pages: runs by id, and every number that appears in the text. */
   facts: { runs?: { id: string; model: string; fell: boolean; passed: boolean }[]; numbers: number[]; names: string[]; sources: string[] };
 }
@@ -63,6 +72,8 @@ export const CALENDAR: { day: number; hour: number; type: PostType }[] = [
   { day: 5, hour: 9, type: "bout-result" },
   { day: 5, hour: 13, type: "recap" },
   { day: 6, hour: 11, type: "catch-card" },
+  // V4: Saturday afternoon, after Thursday night's headline bout is refereed and its clip recorded. Approve only.
+  { day: 6, hour: 15, type: "fail-of-the-week" },
 ];
 
 /** A US Eastern wall-clock time on a date, as a UTC timestamp. */
@@ -345,6 +356,66 @@ async function milestone(env: Env, db: Db, now: number, at: string): Promise<Dra
   };
 }
 
+/** "Business email compromise: a hijacked …" → "business email compromise" (the pattern's name, before the colon). */
+const patternName = (p: string | null) => (p ? lowerFirst(p.split(":")[0]!.trim()) : null);
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+/**
+ * V4, Fail of the Week: the last weekly headline bout's pick (arena/fail-of-the-week.ts), as an X post and a Moltbook
+ * post. Claims are at most two sentences; every number is on /arena/fail-of-the-week/<date>. Approve only.
+ */
+async function failOfTheWeekDraft(env: Env, _db: Db, now: number, at: string): Promise<Draft | null> {
+  const slot = lastHeadlineSlot(Date.parse(at));
+  if (slot === null || slot > now) return null;
+  const f = await failOfTheWeek(env, slot, now);
+  if (!f) return null;
+  const s = dropDot(f.card.sentence);
+  const job = bare(f.task.title);
+  const pattern = patternName(f.trap.pattern);
+  const when = fmtDate(Date.parse(`${f.date}T12:00:00Z`));
+  const texts = [
+    ...(pattern ? [`Fail of the Week: ${s}, in Thursday's ${job} bout.\n\nThe trap is modelled on a real pattern: ${pattern}.`] : []),
+    `Fail of the Week (${when}): ${s}.\n\nOne refereed attempt in our weekly ${job} bout, with a verified replay.`,
+    `${s} in Thursday's headline bout.\n\nFail of the Week, ${when}: the replay shows every call.`,
+    ...(pattern ? [`Thursday's ${job} bout, Fail of the Week: ${s}.\n\nThe trap copies ${pattern}.`] : []),
+  ];
+  const attempts = sum(f.bout.map((b) => b.attempts));
+  const fell = sum(f.bout.map((b) => b.fell));
+  const passed = sum(f.bout.map((b) => b.passed));
+  const page = `https://theagentforge.io${fotwPath(f.date)}`;
+  const trapLine = f.trap.public_id && f.trap.description ? ` (${f.trap.public_id}: ${lowerFirst(f.trap.description)})` : "";
+  const parts = [
+    `Every Thursday each lab's flagship model gets the same everyday job in a sandbox with planted traps, and a referee checks the end state. This week's job: ${f.task.title}.`,
+    `${s}${trapLine}. The referee's verdict: FAIL.`,
+    ...(f.trap.pattern ? [`The trap models a real pattern: ${dropDot(f.trap.pattern)}.${f.trap.source ? ` Source: ${f.trap.source.title}.` : ""}`] : []),
+    `Across the bout, ${fell} of ${attempts} attempts sprang a trap and ${passed} passed.`,
+    `Replay, every call refereed: ${page}`,
+    "Which part of this would your stack catch?",
+  ];
+  let content = parts.join("\n\n");
+  // Moltbook posts run 500–1,000 characters (moltbook-strategy §2): drop the source title first if it's too long.
+  if (content.length > 1000) content = content.replace(/ Source: [^\n]*\./, "");
+  return {
+    type: "fail-of-the-week",
+    at,
+    texts,
+    approveOnly: true,
+    image: `/og/x/arena/run/${f.run.id}.png`,
+    alt: `The Agent Forge bout card stamped TRAP for ${f.run.name} in ${f.task.title}: ${f.card.sentence}. From a refereed bout on theagentforge.io.`,
+    reply: `Replay, clip and the trap's source: ${page}?from=x-fail-of-the-week`,
+    moltbook: { submolt: "general", title: `${s} in Thursday's weekly bout`, content },
+    facts: {
+      runs: [{ id: f.run.id, model: f.run.model, fell: true, passed: false }],
+      // The template sentence's own numbers ("over $150") are on the page too, in the same sentence.
+      numbers: [attempts, fell, passed, ...(s.replace(f.run.name, "").match(/\d[\d,]*(\.\d+)?/g) ?? []).map((n) => Number(n.replace(/,/g, "")))],
+      // Catalogue strings shown on the page as they are (trap id, description, pattern, source title), so their digits
+      // ("30-day", "11 Sep 2024") aren't read as claims.
+      names: [f.run.name, f.task.title, job, ...[f.trap.public_id, f.trap.description, f.trap.description && lowerFirst(f.trap.description), f.trap.pattern && dropDot(f.trap.pattern), f.trap.source?.title].filter((x): x is string => !!x)],
+      sources: [`${fotwPath(f.date)}?format=json`, `/arena/run/${f.run.id}.json`],
+    },
+  };
+}
+
 const BUILDERS: Record<PostType, (env: Env, db: Db, now: number, at: string) => Promise<Draft | null>> = {
   "trap-of-the-day": trapOfTheDay,
   "catch-card": catchCard,
@@ -357,6 +428,7 @@ const BUILDERS: Record<PostType, (env: Env, db: Db, now: number, at: string) => 
   "bout-result": boutResult,
   recap,
   milestone,
+  "fail-of-the-week": failOfTheWeekDraft,
 };
 
 /**

@@ -113,6 +113,41 @@
       "when": 1792394684991,
       "tag": "0015_skill_scans",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1792839765236,
+      "tag": "0016_report_verdicts",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1792840681184,
+      "tag": "0017_gauntlet_challenges",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792844521643,
+      "tag": "0018_digest_feeds",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792851028301,
+      "tag": "0019_gauntlet_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792990940320,
+      "tag": "0022_owners_first_season",
+      "breakpoints": true
     }
   ]
 }

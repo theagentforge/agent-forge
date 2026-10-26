@@ -10,19 +10,22 @@ import {
   summary,
   type SessionState,
 } from "../strain-state";
-import { byServer, draftMessage, drafts, mergeCounts } from "../report-draft";
+import { byServer, draftMessage, drafts, MAX_DRAFTS, mergeCounts, type InstallDraftLine } from "../report-draft";
 import { toStrain } from "../strain-state";
-import { emit, optionOn, readStdin } from "./common";
+import { draftableInstalls, installDraft, ledgerKey, markOutcome, parseInstalls } from "../installs";
+import { draftReport } from "@forge/shared/light";
+import { commandHash, dataRoot, emit, forgeOrigin, installsPath, optionOn, readStdin, readText, sha256Hex, writeText } from "./common";
 
 // PostToolUseFailure / PostToolUse: count failures per tool in a local session file (MASTER_PLAN §6.10).
 // `show` prints the counts for the most recent session, for the agent to attach to a field report.
-// `stop` (Stop hook, ADR 0011 f) drafts reports for the MCP servers used this session and asks the agent to confirm
-// with its human in one line. Never sends anything anywhere: the report is filed by the agent, and only the counts
-// go in it.
+// `stop` (Stop hook, ADR 0011 f) drafts reports for the MCP servers used this session, and for tools the pre-install
+// hook checked that were then installed (src/installs.ts), with the owner's one-line yes/no question as data. Never
+// sends a report anywhere: filing needs the owner's confirmation. The only network call is the npm registry lookup
+// of an installed version's fingerprint.
 
 const WEEK_MS = 7 * 86_400_000;
 
-const dataDir = () => join(process.env.CLAUDE_PLUGIN_DATA || join(process.env.HOME || ".", ".claude-forge"), "strain");
+const dataDir = () => join(dataRoot(), "strain");
 
 function load(file: string): SessionState {
   try {
@@ -46,6 +49,15 @@ const inputHash = (input: unknown) => createHash("sha256").update(JSON.stringify
 async function record(mode: "failure" | "success") {
   const ev = (await readStdin()) as { session_id?: unknown; tool_name?: unknown; tool_input?: unknown; is_interrupt?: unknown };
   if (typeof ev.tool_name !== "string" || ev.is_interrupt === true) return;
+  // An install the pre-install hook checked: note whether it worked, for its field report draft.
+  const command = (ev.tool_input as { command?: unknown } | null)?.command;
+  if (ev.tool_name === "Bash" && typeof command === "string") {
+    const text = readText(installsPath());
+    if (text) {
+      const installs = parseInstalls(text);
+      if (markOutcome(installs, safeSessionId(ev.session_id), commandHash(command), mode === "success")) writeText(installsPath(), JSON.stringify(installs));
+    }
+  }
   const dir = dataDir();
   mkdirSync(dir, { recursive: true });
   const now = Date.now();
@@ -74,11 +86,18 @@ async function stop() {
   } catch {}
   const now = Date.now();
   const list = drafts(state, ledger, now);
-  if (!list.length) return;
+  const pending = draftableInstalls(parseInstalls(readText(installsPath())), safeSessionId(ev.session_id), ledger, now, MAX_DRAFTS - list.length);
+  const origin = forgeOrigin();
+  const signal = AbortSignal.timeout(2500);
+  const installs = (await Promise.all(pending.map((i) => installDraft(i, origin, { fetch, sha256Hex, signal }))))
+    .filter((d) => d !== null)
+    .map((d): InstallDraftLine => ({ id: d.draft.tool.id, line: d.line, url: d.url, report: draftReport(d.draft) }));
+  if (!list.length && !installs.length) return;
   for (const d of list) ledger[d.server] = now;
-  writeFileSync(ledgerFile, JSON.stringify(ledger));
-  // "block" keeps the agent going for one more turn so it can ask; stop_hook_active stops it asking twice.
-  emit({ decision: "block", reason: draftMessage(list) });
+  for (const i of installs) ledger[ledgerKey(i.id)] = now;
+  writeText(ledgerFile, JSON.stringify(ledger));
+  // "block" keeps the agent going for one more turn, with the drafts as data; stop_hook_active stops a second round.
+  emit({ decision: "block", reason: draftMessage(list, installs, origin) });
 }
 
 function show(args: string[]) {

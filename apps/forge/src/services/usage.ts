@@ -2,6 +2,7 @@ import { and, gte, like, sql } from "drizzle-orm";
 import { isLean } from "./ops-mode";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { type InternalComponent, internalCaller, internalClient, internalKey } from "./internal";
 
 // Proof of use (Dinike, 16 Oct 2026): how many AI apps connect to the Forge's MCP endpoints, and what they call.
 // Daily totals only, in the spirit of the Privacy Policy's "daily count": the request body is read for its JSON-RPC
@@ -29,6 +30,13 @@ export function metaClient(meta: unknown): string | null {
   return null;
 }
 
+/** The raw client name in a request's `_meta` (before squeezing), for spotting our own callers. */
+function metaClientName(meta: unknown): unknown {
+  if (!meta || typeof meta !== "object") return null;
+  for (const [k, v] of Object.entries(meta).slice(0, 20)) if (/clientinfo$/i.test(k) && v && typeof v === "object") return (v as { name?: unknown }).name;
+  return null;
+}
+
 /** True for a 2026-07-28-era request: its `_meta` carries the per-request protocol version, so there's no `initialize`. */
 export function isModernRequest(meta: unknown) {
   if (!meta || typeof meta !== "object") return false;
@@ -42,11 +50,19 @@ export function isModernRequest(meta: unknown) {
  * client in `_meta` also adds `mcp:clientcall:<name>`. First-seen client names are worked out from these daily rows
  * (services/scout-signals.ts).
  */
-export function mcpCounters(endpoint: McpEndpoint, body: unknown): string[] {
+export function mcpCounters(endpoint: McpEndpoint, body: unknown, internal: InternalComponent | null = null): string[] {
   const msgs = (Array.isArray(body) ? body : [body]).slice(0, 10) as { method?: unknown; params?: { name?: unknown; clientInfo?: { name?: unknown }; _meta?: unknown } }[];
   const keys: string[] = [];
   for (const m of msgs) {
     if (!m || typeof m !== "object") continue;
+    // Our own callers (services/internal.ts), by header or by client name, add only `internal:<component>:*`: never a
+    // session, a client name or a tool call in the agent counts.
+    const ours = internal ?? internalClient(m.params?.clientInfo?.name) ?? internalClient(metaClientName(m.params?._meta));
+    if (ours) {
+      if (m.method === "initialize" || (m.method === "tools/list" && isModernRequest(m.params?._meta))) keys.push(internalKey(ours, "sessions"));
+      if (m.method === "tools/call") keys.push(internalKey(ours, "calls"));
+      continue;
+    }
     // House sessions add only their own totals, never the app or tool lists people outside the project make.
     const house = endpoint === "house";
     if (m.method === "initialize") keys.push(`mcp:${endpoint}:sessions`, ...(house ? [] : [`mcp:client:${clientLabel(m.params?.clientInfo?.name)}`]));
@@ -72,11 +88,14 @@ export async function bump(env: Env, keys: string[], now = Date.now()) {
     .onConflictDoUpdate({ target: [t.usageDaily.day, t.usageDaily.key], set: { n: sql`${t.usageDaily.n} + excluded.n` } });
 }
 
-/** Reads a POSTed MCP request's body (without consuming the original) and counts it. Never throws. */
-export async function recordMcp(env: Env, endpoint: McpEndpoint, request: Request, now = Date.now()) {
+/**
+ * Reads a POSTed MCP request's body (without consuming the original) and counts it. Never throws. `internal` is set
+ * for our own callers (services/internal.ts), whose traffic is counted apart.
+ */
+export async function recordMcp(env: Env, endpoint: McpEndpoint, request: Request, now = Date.now(), internal: InternalComponent | null = null) {
   try {
     if (request.method !== "POST" || Number(request.headers.get("content-length") ?? 0) > 65_536) return;
-    await bump(env, mcpCounters(endpoint, JSON.parse(await request.text())), now);
+    await bump(env, mcpCounters(endpoint, JSON.parse(await request.text()), internal ?? internalCaller(request.headers)), now);
   } catch {
     // Not JSON, or the database is busy: usage counts must never break the endpoint.
   }
@@ -152,6 +171,8 @@ export function sourceLabel(referer: string | null | undefined, origin: string) 
  */
 export function visitCounters(req: { method: string; url: string; headers: Headers }, origin: string): string[] {
   if (req.method !== "GET") return [];
+  // Our own probes (services/internal.ts) stay in the gross page views only, like everything else, and nowhere else.
+  if (internalCaller(req.headers)) return ["visit:all"];
   if (BOT_UA.test(req.headers.get("user-agent") ?? "")) return ["visit:all", "visit:crawler"];
   // People opening /connect, from anywhere (our own pages included): the step before an AI connects.
   const connect = new URL(req.url).pathname === "/connect" ? ["visit:connect"] : [];
@@ -169,7 +190,7 @@ export function visitCounters(req: { method: string; url: string; headers: Heade
  * and other sites' pages aren't counted. Nothing about the person is kept.
  */
 export function humanCounters(req: { method: string; headers: Headers }, origin: string): string[] {
-  if (req.method !== "POST" || BOT_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  if (req.method !== "POST" || BOT_UA.test(req.headers.get("user-agent") ?? "") || internalCaller(req.headers)) return [];
   const site = req.headers.get("sec-fetch-site");
   const from = req.headers.get("origin") ?? req.headers.get("referer") ?? "";
   if (site ? site !== "same-origin" : !from.startsWith(origin)) return [];
@@ -237,7 +258,7 @@ export const aiPageKind = (path: string) =>
   path.startsWith("/tools/") ? "tools" : path === "/llms.txt" ? "llms" : path === "/skill.md" || path.startsWith("/.well-known/agent-skills/") || path.startsWith("/.well-known/skills/") ? "skills" : path.startsWith("/scan/") ? "scan" : path.startsWith("/.well-known/") ? "discovery" : "other";
 
 export function aiAgentCounters(req: { method: string; url: string; headers: Headers }): string[] {
-  if (req.method !== "GET") return [];
+  if (req.method !== "GET" || internalCaller(req.headers)) return [];
   const ua = req.headers.get("user-agent") ?? "";
   const hit = AI_AGENTS.find(([re]) => re.test(ua));
   if (!hit) return [];
@@ -252,8 +273,12 @@ export function aiAgentCounters(req: { method: string; url: string; headers: Hea
 export function discoveryCounters(req: { method: string; url: string; headers: Headers }): string[] {
   if (req.method !== "GET") return [];
   const path = new URL(req.url).pathname;
+  // Our own Scout collector reads these files every day for listing health: counted apart, never as discovery.
+  const ours = internalCaller(req.headers);
+  if (ours) return [internalKey(ours, "fetches")];
   if (path === "/.well-known/agent-card.json" || path === "/.well-known/agent.json") return ["disc:agent-card"];
   if (path === "/.well-known/ai-catalog.json") return ["disc:ai-catalog"];
+  if (path === "/.well-known/ard.json") return ["disc:ard"];
   if (path === "/.well-known/api-catalog") return ["disc:api-catalog"];
   if (path === "/mcp/public/server-card") return ["disc:server-card-public"];
   if (path === "/mcp/gauntlet/server-card") return ["disc:server-card-gauntlet"];
@@ -293,7 +318,7 @@ export const watchCounters = (fingerprints: number) => ["watch:calls", ...Array<
 const CRAWLER_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|lighthouse|monitor/i;
 /** A fetch of the agent skill file: a browser (someone reading it), an agent (curl, fetch tools, MCP clients), or a crawler (not counted). */
 export function skillFileCounters(req: { method: string; headers: Headers }): string[] {
-  if (req.method !== "GET" || CRAWLER_UA.test(req.headers.get("user-agent") ?? "")) return [];
+  if (req.method !== "GET" || CRAWLER_UA.test(req.headers.get("user-agent") ?? "") || internalCaller(req.headers)) return [];
   return [/text\/html/.test(req.headers.get("accept") ?? "") ? "skillmd:browser" : "skillmd:agent"];
 }
 

@@ -1,9 +1,11 @@
-import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanSkill, type ScanFinding, type ScanSeverity } from "@forge/shared/skill-scan";
+import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSkill, type ScanFinding, type ScanSeverity } from "@forge/shared/skill-scan";
 
 // The skill-scan action (ADR 0026): scans the agent instruction files in a repository (SKILL.md, AGENTS.md,
 // CLAUDE.md, Cursor and Copilot rules) with the Forge's rules, on the runner. Nothing about the repository is sent
 // to the Forge: the only network calls are to GitHub's own API, for the files a pull request changed and its one
 // comment. Wording rule: "matches pattern X at line N", never "malicious".
+// With `state-file` (kept between runs by actions/cache, committed nowhere) the summary also says what changed since
+// the last run: newer scan rules, files whose text changed, and findings that appeared or went away.
 
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
 export const MARKER = "<!-- forge-skill-scan -->";
@@ -35,6 +37,8 @@ export interface Inputs {
   sarifFile: string;
   token: string;
   origin: string;
+  /** Where the last run's results are kept (empty: no memory). */
+  stateFile?: string;
 }
 
 export interface Event {
@@ -55,6 +59,10 @@ export interface Io {
   summary: (markdown: string) => void;
   output: (name: string, value: string) => void;
   writeFile: (path: string, text: string) => void;
+  /** The state file's text, or null; writes it back (inside the workspace or the runner's temp folder only). */
+  readState?: (path: string) => string | null;
+  writeState?: (path: string, text: string) => void;
+  now?: () => number;
 }
 
 export interface FileResult {
@@ -85,7 +93,52 @@ export function readInputs(env: Record<string, string | undefined>): Inputs | st
     sarifFile: get("sarif-file"),
     token: get("github-token"),
     origin,
+    stateFile: get("state-file"),
   };
+}
+
+/** What one run remembers per file: its fingerprint and finding counts, under which rules. Nothing else. */
+export interface ScanState {
+  v: 1;
+  rules: string;
+  at: string;
+  files: Record<string, { fp: string; high: number; medium: number; low: number }>;
+}
+
+export function parseScanState(text: string | null): ScanState | null {
+  try {
+    const st = JSON.parse(text ?? "") as ScanState;
+    return st && st.v === 1 && typeof st.rules === "string" && st.files && typeof st.files === "object" ? st : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lines of data on what changed since the last run, and the state to keep. Files not scanned this time (a pull
+ * request that didn't touch them) keep their last entry.
+ */
+export async function sinceLastScan(prev: ScanState | null, results: FileResult[], texts: Map<string, string>, at: string): Promise<{ lines: string[]; next: ScanState }> {
+  const files: ScanState["files"] = { ...(prev?.files ?? {}) };
+  const lines: string[] = [];
+  const day = prev?.at.slice(0, 10) ?? "";
+  if (prev && prev.rules !== SCAN_RULES_VERSION) lines.push(`Scan rules ${prev.rules} → ${SCAN_RULES_VERSION} since the last run (${day}).`);
+  for (const r of results) {
+    const n = { high: 0, medium: 0, low: 0 } as Record<ScanSeverity, number>;
+    for (const f of r.findings) n[f.severity]++;
+    const fp = await scanFingerprint(texts.get(r.path) ?? "");
+    const before = prev?.files[r.path];
+    files[r.path] = { fp, high: n.high, medium: n.medium, low: n.low };
+    if (!prev) continue;
+    const delta = (["high", "medium", "low"] as const)
+      .map((sv) => [sv, n[sv] - (before?.[sv] ?? 0)] as const)
+      .filter(([, d]) => d !== 0)
+      .map(([sv, d]) => `${d > 0 ? "+" : ""}${d} ${sv}`);
+    if (!before) lines.push(`\`${r.path}\`: new since the last run${r.findings.length ? ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"})` : ""}.`);
+    else if (before.fp !== fp || delta.length) lines.push(`\`${r.path}\`: ${before.fp !== fp ? "text changed" : "same text"}${delta.length ? `; findings ${delta.join(", ")}` : "; same findings"}.`);
+  }
+  if (prev && !lines.length) lines.push(`No change since the last run (${day}).`);
+  return { lines, next: { v: 1, rules: SCAN_RULES_VERSION, at, files } };
 }
 
 /** A glob as used in `paths`: `**` crosses folders, `*` and `?` stay inside one. Matched against repo-relative paths. */
@@ -262,13 +315,22 @@ export async function run(inputs: Inputs, event: Event, io: Io): Promise<number>
   const paths = candidates.filter((p) => wanted(p) && !ignored(p)).sort().slice(0, MAX_FILES);
   const results: FileResult[] = [];
   const skipped: string[] = [];
+  const texts = new Map<string, string>();
   for (const p of paths) {
     const text = io.readFile(p);
     if (text === null || text.length > SCAN_MAX_BYTES || text.includes("\u0000")) {
       skipped.push(p);
       continue;
     }
+    texts.set(p, text);
     results.push(await scanFile(p, text));
+  }
+  let since: string[] = [];
+  if (inputs.stateFile && io.readState) {
+    const r = await sinceLastScan(parseScanState(io.readState(inputs.stateFile)), results, texts, new Date(io.now?.() ?? Date.now()).toISOString());
+    since = r.lines;
+    io.writeState?.(inputs.stateFile, JSON.stringify(r.next));
+    for (const l of since) io.log(`Since the last run: ${l}`);
   }
   const all = results.flatMap((r) => r.findings.map((f) => ({ ...f, path: r.path })));
   for (const f of all)
@@ -288,6 +350,7 @@ export async function run(inputs: Inputs, event: Event, io: Io): Promise<number>
       ...(perFile.length ? ["| File | Findings |", "|---|---|", ...perFile, ""] : ["No known risky patterns.", ""]),
       ...(skipped.length ? [`Not scanned (unreadable, binary or over 256 KB): ${skipped.map((s) => `\`${s}\``).join(", ")}`, ""] : []),
       ...(results.some((r) => r.suppressed) ? [`Silenced with \`forge-scan: ignore\`: ${results.reduce((n, r) => n + r.suppressed, 0)}.`, ""] : []),
+      ...(since.length ? ["### Since the last run", "", ...since.map((l) => `- ${l}`), ""] : []),
       `Rules: ${inputs.origin}/scan/rules · Check any skill: ${inputs.origin}/scan?from=skill-scan-action`,
       "",
     ].join("\n"),

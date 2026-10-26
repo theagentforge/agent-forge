@@ -2,17 +2,21 @@ import { SCAN_RULES, type ScanFinding } from "@forge/shared";
 import { and, eq, gte, lt } from "drizzle-orm";
 import { html } from "hono/html";
 import * as t from "../db/schema";
+import { answerPagePath, ANSWERS_PATH, ARENA_QUESTIONS } from "../arena/answers";
 import { getDb, type Db } from "../services/db";
 import { scanPath, skillLabel } from "../services/scans";
 import { breakableId } from "./components";
 import { notFound, send, sendJson, site, wantsJson } from "./pages";
 import { toolDetail } from "./queries";
+import { PUBLICATIONS } from "./publications";
 import { patternPhrase } from "./scan-words";
 
 // Answer pages (docs/launch/agent-channels.md §3.7 and §4.2): one indexable page per tool or skill that answers
 // "Is <it> safe to install?" from the Forge's own data, written the way AI search reads pages (KDD 2024 GEO): the
 // answer first, then statistics, quotations from field reports, cited sources (the exact source line, the rule, the
 // scan record), versions and dates. A page with no Forge data is noindex (ADR 0011). Nothing on it addresses agents.
+
+const forgeOrg = (origin: string) => ({ "@type": "Organization", name: "The Agent Forge", url: `${origin}/about` });
 
 export const ANSWER_PREFIX = "/tools/";
 const GH_RAW = /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/;
@@ -97,6 +101,9 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
   const findings = (scan?.findings ?? []) as ScanFinding[];
   const path = answerPath(id);
   const updated = Math.max(scan?.lastSeen ?? 0, detail?.reports[0]?.createdAt ?? 0);
+  // When the question was first answerable here: the earliest scan or report we have, else the last update.
+  const firsts = [scans.length ? Math.min(...scans.map((x) => x.firstSeen ?? x.lastSeen)) : 0, ...(detail?.reports ?? []).map((r) => r.createdAt)].filter((x) => x > 0);
+  const published = firsts.length ? Math.min(...firsts) : updated;
   const quotes = (detail?.reports ?? []).filter((r) => r.note).slice(0, 3);
 
   if (wantsJson(c))
@@ -121,12 +128,31 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
       "@context": "https://schema.org",
       "@type": "QAPage",
       dateModified: new Date(updated).toISOString(),
-      mainEntity: { "@type": "Question", name: question, answerCount: 1, acceptedAnswer: { "@type": "Answer", text: answer, dateCreated: new Date(updated).toISOString(), author: { "@type": "Organization", name: "The Agent Forge" } } },
+      // Google's QAPage fields (Search Console, 24 Oct): author and datePublished on the question; url, upvoteCount and
+      // an author url on the answer. There's no voting here, so upvoteCount is an honest 0.
+      mainEntity: {
+        "@type": "Question",
+        name: question,
+        text: question,
+        answerCount: 1,
+        author: forgeOrg(c.env.PUBLIC_ORIGIN),
+        datePublished: new Date(published).toISOString(),
+        dateCreated: new Date(published).toISOString(),
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: answer,
+          url: `${c.env.PUBLIC_ORIGIN}${path}#answer`,
+          upvoteCount: 0,
+          datePublished: new Date(updated).toISOString(),
+          dateCreated: new Date(updated).toISOString(),
+          author: forgeOrg(c.env.PUBLIC_ORIGIN),
+        },
+      },
       about: { "@type": "SoftwareSourceCode", name: label.title, codeRepository: `https://${id.split("/").slice(0, 3).join("/")}` },
     },
     body: html`<p class="eyebrow">Answer page · updated ${day(updated)}</p>
 <h1 class="page-title">${question}</h1>
-<p class="lead">${answer}</p>
+<p class="lead" id="answer">${answer}</p>
 <p class="small mono muted">${breakableId(id)}</p>
 ${scan
       ? html`<section aria-labelledby="scan"><h2 id="scan">Skill scan</h2>
@@ -158,9 +184,20 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
   });
 });
 
-// The sitemap (agent-channels §4.2): static pages, an answer page for every public scan with a GitHub source, and every
+// The sitemap (agent-channels §4.2): static pages (with the Arena's answer pages, /answers/<question>), an answer page for every public scan with a GitHub source, and every
 // tool with field reports. Built from the database, edge-cached for 6 hours.
-export const SITEMAP_STATIC = ["/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/connect", "/methodology", "/about", "/stats", "/wire", "/watchlist", "/reports/skill-scan-2026-10", "/guides/check-before-install", "/advisories/2026-10"];
+// Every live publication (reports, Lab write-ups, guides) is listed from PUBLICATIONS, so a new one can't be missed
+// (26 Oct check: the Lab results and the Registry census were in no sitemap).
+export const SITEMAP_STATIC = [
+  ...new Set([
+    "/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/gauntlet/season-1", "/connect", "/methodology", "/results-policy", "/about", "/stats", "/wire", "/watchlist",
+    "/reports/skill-scan-2026-10", "/arena/business", "/reports/business-agents-2026-10", "/guides/check-before-install", "/advisories/2026-10",
+    "/arena/rules", "/arena/methodology", "/arena/proving-ground", "/arena/failures", "/scouts", "/teams", "/privacy", "/terms",
+    ...PUBLICATIONS.filter((p) => p.live).map((p) => p.path),
+    ANSWERS_PATH,
+    ...ARENA_QUESTIONS.map(answerPagePath),
+  ]),
+];
 const SITEMAP_MAX = 45_000;
 const xml = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
 

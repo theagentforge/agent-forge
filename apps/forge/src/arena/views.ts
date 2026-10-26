@@ -1,4 +1,4 @@
-import { boutOutcome, conservative, glicko2, HARD3_TASKS, HARD_TASKS, NEW_RATING, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { boutOutcome, conservative, glicko2, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
@@ -10,7 +10,7 @@ export type Kind = "card" | "guest" | "practice";
 
 /** The Normal card (TASKS) and the Hard tier (HARD_TASKS, ADR 0021): the same six jobs, shown as separate sections. */
 export type Tier = "normal" | "hard";
-const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS].map((x) => x.id);
+const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].map((x) => x.id);
 export const tierOf = (task: string): Tier => (HARD_IDS.includes(task) ? "hard" : "normal");
 export const tierTasks = (tier: Tier) => (tier === "hard" ? HARD_TASKS : TASKS);
 /** `?tier=hard` picks the Hard tier; anything else (or nothing) is Normal. */
@@ -200,11 +200,41 @@ export async function consistencyBoard(db: Db, tier: Tier = "normal") {
   return { tier, tasks: tasks.map((x) => ({ id: x.id, title: x.title })), models };
 }
 
+/** The terms every Arena download carries (the dataset, event files and their schema.org Dataset markup): ADR 0053. */
+export { DATASET_LICENCE } from "../services/provenance";
+
+/** Event kinds that are ranked (headline) results. */
+export const RANKED_KINDS: Kind[] = ["card", "guest"];
+
+/** An event any public surface may show: it exists and isn't held for review (status "planned"). */
+export async function publicEvent(db: Db, slug: string) {
+  const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
+  return event && event.status !== "planned" ? event : null;
+}
+
+/** A ranked event: card or guest, and not a Lab #3 arm (those change the prompt). */
+export const isRankedEvent = (e: { kind: Kind; arm: string | null }) => RANKED_KINDS.includes(e.kind) && !e.arm;
+
+/**
+ * Ranked events with at least one public run (so held events and embargoed-only events never show), newest first,
+ * with the first and last finish times of their public runs.
+ */
+export async function rankedEvents(db: Db, now = Date.now()) {
+  const last = sql<number>`max(${t.arenaRuns.finishedAt})`;
+  return db
+    .select({ slug: t.arenaEvents.slug, name: t.arenaEvents.name, kind: t.arenaEvents.kind, runs: sql<number>`count(*)`, first: sql<number>`min(${t.arenaRuns.finishedAt})`, last })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(and(eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(now), inArray(t.arenaEvents.kind, RANKED_KINDS), isNull(t.arenaEvents.arm)))
+    .groupBy(t.arenaEvents.id)
+    .orderBy(desc(last));
+}
+
 /** One event's card: for each task, every model's stats and the head-to-head winner against the runner-up. */
 export async function eventCard(db: Db, slug: string) {
-  const [event] = await db.select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, slug));
   // An event held for review isn't public yet.
-  if (!event || event.status === "planned") return null;
+  const event = await publicEvent(db, slug);
+  if (!event) return null;
   const runs = await finishedRuns(db, { eventId: event.id });
   const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();

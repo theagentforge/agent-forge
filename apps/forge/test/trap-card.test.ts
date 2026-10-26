@@ -119,7 +119,11 @@ describe("/mcp/public (ADR 0017 §3)", () => {
     // 20 Oct 2026: every description rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
     // 23 Oct 2026: forge_check takes an optional version and returns published OSV advisories (crisis-wave plan C2).
     // 23 Oct 2026: forge_exposure added (crisis-wave plan C4); names and versions in, advisory matches out; reads only.
-    expect(digest).toBe("34ab5eff8a62bb822fc998645f8c423109bc29e4e2a0965f0cc264929afed45c");
+    // 24 Oct 2026: arena_results takes tier and event (Crucible 2: Hard) and returns intervals, 3-of-3, trap ids,
+    // knockouts and replays; forge_traps takes tier. Both read only.
+    // 25 Oct 2026: Glama's tool-quality review: each description gives parameter formats and names the sibling tool for
+    // the neighbouring question (as data, "File text: forge_scan"); forge_watch drops "Reads only" (readOnlyHint says it).
+    expect(digest).toBe("50966df4f146004e01cc4c00161909863fec47482afeb693ec40c4d4c4bde870");
   });
 });
 

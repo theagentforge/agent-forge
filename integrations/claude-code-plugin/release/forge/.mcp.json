@@ -2,6 +2,10 @@
   "mcpServers": {
     "forge": {
       "type": "http",
+      "url": "https://theagentforge.io/mcp/public"
+    },
+    "forge-reports": {
+      "type": "http",
       "url": "https://theagentforge.io/mcp"
     }
   }

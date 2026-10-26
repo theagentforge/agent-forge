@@ -3,11 +3,14 @@ import type { Context } from "hono";
 import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
+import { checkShare, scanShare } from "./services/receipts";
+import { agentCheckAnswer, type Related } from "./services/compact";
 import { recordCheck } from "./services/proof";
 import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
 import { bump, scanCounters } from "./services/usage";
 import { site } from "./web/pages";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
+import { CHECK_NEEDED, firstIssue, inputNeeded, SCAN_NEEDED } from "./services/input-help";
 
 // Agent-to-agent discovery (A2A protocol, a2a-protocol.org, v1.0 and the still-common v0.3). Other agents and agent
 // platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The three
@@ -25,7 +28,7 @@ export const A2A_SKILLS = [
     description:
       "Use this when a task is about to rely on a specific skill, MCP server, plugin or API and the question is whether other agents had problems with it. Give a data part {\"skill\":\"check-tool\"} with one of id, url or fingerprint, or a text part holding the tool's URL or id. Returns field reports for that version: verdict, Forge Score, report counts, security status.",
     tags: ["tools", "mcp", "skills", "trust", "security", "reviews"],
-    examples: ["https://github.com/modelcontextprotocol/servers/tree/main/src/fetch", "npm:@modelcontextprotocol/server-filesystem"],
+    examples: ["https://github.com/modelcontextprotocol/servers/tree/main/src/fetch", "npm:@modelcontextprotocol/server-filesystem", "check pypi:litellm==1.107.0"],
   },
   {
     id: "scan-skill",
@@ -76,7 +79,7 @@ export function agentCard(origin: string) {
 
 type Part = { text?: unknown; data?: unknown; kind?: unknown };
 export type A2ARequest =
-  | { skill: "check-tool"; query: { id?: string; url?: string; fingerprint?: string } }
+  | { skill: "check-tool"; query: { id?: string; url?: string; fingerprint?: string; version?: string }; detail?: "full" }
   | { skill: "scan-skill"; url?: string; text?: string; name?: string }
   | { skill: "trap-card" };
 
@@ -90,7 +93,7 @@ export function readRequest(parts: unknown): A2ARequest | null {
     if (!d) continue;
     if (d.skill === "trap-card") return { skill: "trap-card" };
     if (d.skill === "scan-skill") return { skill: "scan-skill", url: str(d.url, 2048), text: str(d.text, SCAN_MAX_BYTES), name: str(d.name, 80) };
-    if (d.skill === "check-tool") return { skill: "check-tool", query: { id: str(d.id, 512), url: str(d.url, 512), fingerprint: str(d.fingerprint, 80) } };
+    if (d.skill === "check-tool") return { skill: "check-tool", query: { id: str(d.id, 512), url: str(d.url, 512), fingerprint: str(d.fingerprint, 80), version: str(d.version, 128) }, ...(d.detail === "full" ? { detail: "full" as const } : {}) };
   }
   const text = (parts as Part[])
     .map((p) => (p && typeof p.text === "string" ? p.text : ""))
@@ -104,14 +107,52 @@ export function readRequest(parts: unknown): A2ARequest | null {
   if (url) return { skill: "check-tool", query: { url } };
   const fingerprint = /\bsha256:[0-9a-f]{64}\b/.exec(text)?.[0];
   if (fingerprint) return { skill: "check-tool", query: { fingerprint } };
-  const id = /\b(?:npm|mcp-registry):[^\s]+|\bgithub\.com\/[^\s]+/i.exec(text)?.[0];
+  // A bare /connect test id ("forge-test-<code>", without npm:) is a check too (issue #224).
+  const id = /\b(?:npm|pypi|mcp-registry):[^\s]+|\bgithub\.com\/[^\s]+|\bforge-test-[a-z0-9]{6}\b/i.exec(text)?.[0];
   if (id) return { skill: "check-tool", query: { id } };
+  // "check litellm": a bare name after "check" (a bare name returns candidates). A lone word stays unrecognized.
+  const bare = /^\s*check\s+([@a-z0-9][a-z0-9._/@-]{0,213})\s*\??\s*$/i.exec(text)?.[1];
+  if (bare) return { skill: "check-tool", query: { id: bare } };
   return null;
+}
+
+/** Messages that work, one per skill, as A2A message parts (v1.0 and v0.3 both read `text` and `data`). */
+export const A2A_EXAMPLES = {
+  "check-tool": [
+    { parts: [{ text: "check pypi:litellm==1.107.0" }] },
+    { parts: [{ data: { skill: "check-tool", id: "npm:@modelcontextprotocol/sdk" } }] },
+    { parts: [{ data: { skill: "check-tool", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch" } }] },
+  ],
+  "scan-skill": [
+    { parts: [{ data: { skill: "scan-skill", text: "---\nname: release-notes\ndescription: Drafts release notes from merged pull requests.\n---\nThis skill lists merged pull request titles under Added, Changed and Fixed." } }] },
+    { parts: [{ text: "scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md" }] },
+  ],
+  "trap-card": [{ parts: [{ text: "trap card" }] }],
+};
+
+const A2A_SKILL_OF: Partial<Record<Related["tool"], SkillId>> = { forge_check: "check-tool", forge_scan: "scan-skill" };
+
+/** `related` in A2A terms: each next call as the data part that sends it; calls with no A2A skill are left out. */
+function a2aRelated<T extends { related?: Related[] }>(answer: T) {
+  const { related, ...rest } = answer;
+  const parts = (related ?? []).flatMap((x) => {
+    const skill = A2A_SKILL_OF[x.tool];
+    return skill ? [{ relation: x.relation, skill, data: { skill, ...x.arguments } }] : [];
+  });
+  return { ...rest, ...(parts.length ? { related: parts } : {}) };
 }
 
 /** Runs one request. Always structured data; errors are data too, so a calling agent can branch on them. */
 export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Promise<Record<string, unknown>> {
-  if (!req) return { error: "unrecognized_request", skills: A2A_SKILLS.map((s) => ({ id: s.id, description: s.description })) };
+  if (!req)
+    return {
+      ...inputNeeded("a2a", {
+        error: "unrecognized_request",
+        needed: "One skill: check-tool (id, url or fingerprint; version optional), scan-skill (url or text) or trap-card, as a data part naming the skill or as text.",
+        examples: [A2A_EXAMPLES["check-tool"][0]!, A2A_EXAMPLES["check-tool"][1]!, A2A_EXAMPLES["scan-skill"][1]!, A2A_EXAMPLES["trap-card"][0]!],
+      }),
+      skills: A2A_SKILLS.map((s) => ({ id: s.id, description: s.description })),
+    };
   if (!(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
   await bump(env, ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
   if (req.skill === "trap-card") {
@@ -119,10 +160,14 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Pr
   }
   if (req.skill === "check-tool") {
     const q = checkQuerySchema.safeParse(Object.fromEntries(Object.entries(req.query).filter(([, v]) => v !== undefined)));
-    if (!q.success) return { skill: "check-tool", error: "invalid_query", detail: q.error.issues[0]?.message ?? null, ...CHECK_QUERY_HELP };
-    await recordCheck(env, "api", ip);
-    await recordToolCheck(env, q.data);
-    return { skill: "check-tool", result: await checkTool(env, q.data) };
+    if (!q.success) {
+      const sent = Object.values(req.query).some((v) => v !== undefined);
+      return { skill: "check-tool", ...inputNeeded("check-tool", { error: "invalid_query", needed: CHECK_NEEDED, detail: sent ? firstIssue(q.error) : null, examples: A2A_EXAMPLES["check-tool"], extra: { ...CHECK_QUERY_HELP } }) };
+    }
+    const [, , r] = await Promise.all([recordCheck(env, "api", ip), recordToolCheck(env, q.data, Date.now(), { channel: "a2a" }), checkTool(env, q.data)]);
+    const share = await checkShare(env, r, q.data.id ?? q.data.url ?? q.data.fingerprint ?? "");
+    // Compact by default, like /mcp/public (ADR 0056); a data part with "detail":"full" gets every field.
+    return { skill: "check-tool", result: a2aRelated(agentCheckAnswer({ ...r, share }, q.data, req.detail ?? "compact")) };
   }
   let body = req.text ?? "";
   let sourceUrl: string | null = null;
@@ -130,15 +175,15 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null): Pr
     const got = await fetchSkillText(req.url);
     if (!got.ok) {
       await recordMiss(env, "scan", scanMissLabel(req.url, got.error));
-      return { skill: "scan-skill", error: got.error };
+      return { skill: "scan-skill", ...inputNeeded("scan-skill", { error: got.error, needed: SCAN_NEEDED, detail: `url: ${got.error}`, examples: A2A_EXAMPLES["scan-skill"] }) };
     }
     body = got.text;
     sourceUrl = got.url;
   }
-  if (!body) return { skill: "scan-skill", error: "give text or url" };
+  if (!body) return { skill: "scan-skill", ...inputNeeded("scan-skill", { needed: SCAN_NEEDED, examples: A2A_EXAMPLES["scan-skill"] }) };
   const { result, isPublic } = await scanAndRecord(env, body, { name: req.name, sourceUrl });
   await bump(env, scanCounters("a2a", result.verdict)).catch(() => {});
-  return { skill: "scan-skill", result: agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }) };
+  return { skill: "scan-skill", result: { ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), share: await scanShare(env, result, { isPublic, sourceUrl }) } };
 }
 
 // JSON-RPC method names: v1.0 first, then the v0.3 spellings.

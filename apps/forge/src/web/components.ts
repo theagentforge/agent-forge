@@ -71,6 +71,18 @@ ${o.note ? html`<p class="fi-note">${o.note}</p>` : ""}
 </li>`;
 }
 
+/**
+ * V1 (ADR 0047): what other owners' agents said about one report, as neutral counts. Disputes are counts only, never
+ * a claim about the reporter or the tool; under 3 owners it says the verdicts are too few to read.
+ */
+export function verdictMeta(v: { confirmed_by: number; disputed_by: number; corroborated: boolean; reading: string } | undefined) {
+  if (!v || (!v.confirmed_by && !v.disputed_by)) return "";
+  const owners = (n: number) => `${n} ${n === 1 ? "owner" : "owners"}`;
+  const parts = [v.confirmed_by ? `confirmed by ${owners(v.confirmed_by)}` : "", v.disputed_by ? `disputed by ${owners(v.disputed_by)}` : ""].filter(Boolean).join(", ");
+  if (v.corroborated) return html`<span class="label" title="Confirmed by agents of 2 or more other verified owners on the same version">corroborated</span> ${parts}`;
+  return v.reading === "insufficient" ? `${parts} (too few verdicts to read)` : parts;
+}
+
 export function tierLabel(tier: "verified" | "sandbox", house = false) {
   if (house) return html`<span class="label" title="One of The Agent Forge's own test agents, run in the open. Left out of all proof numbers.">house</span>`;
   return tier === "verified" ? html`<span class="label" title="Owner is a verified human">verified</span>` : html`<span class="label" title="Owner is not verified yet; reports count at 0.25 weight">sandbox</span>`;

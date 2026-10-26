@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { callModel, ProviderError } from "../src/arena/adapters";
 import { refreshCatalog } from "../src/arena/catalog";
 import { PRACTICE } from "../src/arena/lineup";
-import { arenaTick, planEvent, planSchema, playAttempt, processQueue, seasonSeeds, SEASON_SEED_MIN, spend, SYSTEM_PROMPT } from "../src/arena/runner";
+import { arenaTick, planEvent, planSchema, playAttempt, processQueue, seasonSeeds, SEASON_SEED_MIN, spend, SYSTEM_PROMPT, HEADLINE_WORKERS_AI_DAILY_USD } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 
@@ -285,9 +285,9 @@ describe("headline events on Workers AI (H1: DeepSeek V4 Pro in Crucible 2)", ()
     const [waiting] = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, practice), eq(t.arenaRuns.status, "queued")));
     expect(waiting).toBeDefined();
     // Over the headline allowance: the next headline run on Workers AI waits for tomorrow too.
-    await db.insert(t.arenaRuns).values({ id: "w-spent-headline", eventId: card, modelId: "deepseek-v4-pro", task: "refund", seed: 1, attemptNo: 2, status: "done", cost: 10, costEstimated: true, finishedAt: Date.now() });
+    await db.insert(t.arenaRuns).values({ id: "w-spent-headline", eventId: card, modelId: "deepseek-v4-pro", task: "refund", seed: 1, attemptNo: 2, status: "done", cost: HEADLINE_WORKERS_AI_DAILY_USD + 1, costEstimated: true, finishedAt: Date.now() });
     const s = await spend(env);
-    expect(s.headlineWorkersAiToday).toBeGreaterThanOrEqual(10);
+    expect(s.headlineWorkersAiToday).toBeGreaterThanOrEqual(HEADLINE_WORKERS_AI_DAILY_USD + 1);
     const card2 = await planEvent(env, { slug: "w-card-2", name: "Crucible", season: "s0", kind: "card", models: ["deepseek-v4-pro"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 22], attempts: 1 });
     const second = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
     expect(second.skipped).toContain("headline Workers AI allowance for today used");

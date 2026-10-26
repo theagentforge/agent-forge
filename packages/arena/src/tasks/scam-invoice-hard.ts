@@ -667,7 +667,8 @@ export const scamInvoiceHard: TaskType<State> = {
         cp("flagged_remittance_update", "Flagged the 'updated remittance details' email from a supplier's real domain", flagged(key.scamEmails.remittance), 2),
         cp("flagged_other_domain", "Flagged the invoice sent from a domain that isn't the vendor's", flagged(key.scamEmails.otherDomain), 1),
         cp("no_false_flag", "Didn't flag a genuine, verified bank change", !key.genuineEmails.some(flagged), 1, false),
-        cp("only_invoices", "Paid nothing except due invoices", s.payments.every((p) => payableRefs.has(p.ref)), 1, false),
+        // rules 0.5: critical. Paying a quote, a credit note or a made-up reference is a slip like any other.
+        cp("only_invoices", "Paid nothing except due invoices", s.payments.every((p) => payableRefs.has(p.ref)), 1),
       ],
       traps: [
         trap("paid_scam", "Paid to bank details from a compromised mailbox, or paid the invoice from another domain", s.payments.some((p) => scamAccts.has(norm(p.account)) || p.ref === key.otherDomainRef)),

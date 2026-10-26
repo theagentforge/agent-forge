@@ -69,7 +69,8 @@ describe("agent pull: what an agent gets back", () => {
 
   it("every check carries where a field report goes, as data", async () => {
     const c = await api("id=npm:not-a-real-package-xyz");
-    expect(c.contribute).toEqual({ tool: "forge_report", mcp_server: `${env.PUBLIC_ORIGIN}/mcp`, auth: "github_oauth", human_verified: true });
+    // 26 Oct 2026 (ADR 0056): a tool not on file gets a report link and the count a score needs, like a known one.
+    expect(c.contribute).toEqual({ tool: "forge_report", mcp_server: `${env.PUBLIC_ORIGIN}/mcp`, auth: "github_oauth", human_verified: true, report_url: `${env.PUBLIC_ORIGIN}/report?tool=npm%3Anot-a-real-package-xyz&kind=mcp_server`, reports_needed: { people: 5, verified: 2 } });
   });
 
   it("an invalid query says which forms are accepted, with an example", async () => {

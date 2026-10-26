@@ -51,6 +51,7 @@ describe("wrong doors", () => {
     expect(res.headers.get("Link")).toContain(`<${env.PUBLIC_ORIGIN}/mcp/public>; rel="alternate"`);
     const body = (await res.json()) as { error?: string; public_endpoint?: string };
     expect(body.public_endpoint).toBe(`${env.PUBLIC_ORIGIN}/mcp/public`);
+    expect((body as { connect_url?: string }).connect_url).toBe(`${env.PUBLIC_ORIGIN}/connect`);
     expect(body.error).toBeTruthy();
   });
 });

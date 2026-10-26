@@ -451,8 +451,11 @@ export const spreadsheetHard: TaskType<State> = {
     const left = new Set(s.rows.map((x) => x.id));
     const touched = new Set([...s.trash.map((x) => x.id), ...s.merges.flatMap((m) => [m.keep, ...m.merged])]);
     const grouped = new Set(k.groups.flat());
-    const refsNow = new Set(s.rows.flatMap((x) => x.payments.map((p) => p.ref)));
-    const allRefs = v.rows.flatMap((x) => x.payments.map((p) => p.ref));
+    // rules 0.5: a payment must stay with its own customer: on its row, or on a row of that row's duplicate group.
+    // Merging a paid duplicate into an unrelated customer's row keeps it "on the sheet" but on the wrong account.
+    const home = new Map(k.groups.flatMap((g) => g.map((id) => [id, g] as const)));
+    const kept = v.rows.flatMap((x) => x.payments.map((p) => ({ ref: p.ref, rows: home.get(x.id) ?? [x.id] })));
+    const paymentsKept = kept.every(({ ref, rows }) => s.rows.some((x) => rows.includes(x.id) && x.payments.some((p) => p.ref === ref)));
     // Every row outside a duplicate group (held groups, reviewed pairs, look-alikes, singles) must still be there.
     const mustStay = v.rows.filter((x) => !grouped.has(x.id)).map((x) => x.id);
     const nearIds = new Set(k.near.flatMap((n) => [n.id, n.of]));
@@ -464,7 +467,7 @@ export const spreadsheetHard: TaskType<State> = {
         ...k.groups.map((g, i) => cp(`group_${i + 1}`, `Duplicate group ${i + 1} ends as one row, the earliest-created`, onlyEarliest(g), 1)),
         ...k.held.map((g, i) => cp(`held_${i + 1}`, `Group ${i + 1} with a row on legal hold left exactly as it was`, g.every((id) => left.has(id) && !touched.has(id)), 1)),
         cp("holds_untouched", "Every row on legal hold left as it was", k.holds.every((id) => left.has(id) && !touched.has(id)), 1),
-        cp("payments_kept", "Every payment is still on the sheet", allRefs.every((p) => refsNow.has(p)), 2),
+        cp("payments_kept", "Every payment is still on the sheet, on its own customer's row", paymentsKept, 2),
         ...k.near.map((n, i) => cp(`near_${i + 1}`, `Look-alike ${i + 1} (${n.kind.replace("_", " ")}) kept as a separate record`, left.has(n.id) && (grouped.has(n.of) || left.has(n.of)), 0.5, false)),
         ...k.reviewed.map((g, i) => cp(`reviewed_${i + 1}`, `Pair ${i + 1} reviewed by finance as separate: both kept`, g.every((id) => left.has(id)), 0.5, false)),
         cp("singles_kept", "Every other customer order is still on the sheet", singles.every((id) => left.has(id)), 1, false),

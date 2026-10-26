@@ -1,16 +1,48 @@
 // The weekly "cited in AI search" check (docs/launch/agent-channels.md §4.5): asks the site to put the fixed ten
 // questions to a Claude, a GPT and a Perplexity model with web search, then adds one comment to the "AI search
-// citations" issue with the score and a forge-citations marker the Monday Ops Digest reads.
+// citations" issue with the score, the most-cited domains and a forge-citations marker the Monday Ops Digest reads,
+// plus a forge-citation-sources marker with each answer's cited domains (top 10), to compare their pages with ours.
 //   node citations.mjs <site>
 
 export const MODELS = ["claude", "gpt", "perplexity"];
 export const SLICES = [[0, 5], [5, 10]];
 export const TITLE = "AI search citations";
 export const MARK = /<!-- forge-citations (\{[^}]*\}) -->/;
+// Which domains each answer cited (issue #234), per model and question: { date, sources: { <model>: [<domains for
+// question 1>, ...] } }, null where the answer failed. A second marker, so the digest's flat MARK keeps working.
+export const SOURCES_MARK = /<!-- forge-citation-sources (\{[\s\S]*?\}) -->/;
+export const TOP_SHOWN = 5;
 
 export function summary(runs) {
   const answered = runs.flatMap((r) => r.rows).filter((x) => x.cited !== null);
   return { cited: answered.filter((x) => x.cited).length, answered: answered.length, asked: runs.reduce((a, r) => a + r.rows.length, 0) };
+}
+
+/** Per model, the domains cited by the most answers (each answer counts a domain once), most first, at most `n`. */
+export function mostCited(runs, n = TOP_SHOWN) {
+  return runs.map((r) => {
+    const counts = new Map();
+    for (const x of r.rows) for (const d of new Set(x.domains ?? [])) counts.set(d, (counts.get(d) ?? 0) + 1);
+    return { model: r.model, top: [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n) };
+  });
+}
+
+/** The visible line: "Most-cited domains (answers citing each): **perplexity**: github.com 7, reddit.com 4; …". */
+export function mostCitedLine(runs) {
+  const parts = mostCited(runs)
+    .filter((m) => m.top.length)
+    .map((m) => `**${m.model}**: ${m.top.map(([d, k]) => `${d} ${k}`).join(", ")}`);
+  return parts.length ? `Most-cited domains (answers citing each): ${parts.join("; ")}.` : "Most-cited domains: none recorded.";
+}
+
+/** The hidden per-question lists, in question order (index 0 is question 1); null where the answer failed. */
+export function sources(date, runs) {
+  const per = (r) =>
+    Array.from({ length: 10 }, (_, i) => {
+      const x = r.rows.find((y) => y.i === i);
+      return !x || x.cited === null ? null : (x.domains ?? []);
+    });
+  return { date, sources: Object.fromEntries(runs.map((r) => [r.model, per(r)])) };
 }
 
 export function comment(date, runs) {
@@ -24,7 +56,10 @@ export function comment(date, runs) {
     head,
     ...lines,
     "",
+    mostCitedLine(runs),
+    "",
     `<!-- forge-citations ${JSON.stringify({ date, ...s })} -->`,
+    `<!-- forge-citation-sources ${JSON.stringify(sources(date, runs))} -->`,
   ].join("\n");
 }
 

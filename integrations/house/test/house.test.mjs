@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { postReport, toReport } from "../file.mjs";
+import { houseHeaders, INTERNAL_UA, postReport, toReport } from "../file.mjs";
 import { candidateFrom, classify, SLOW_MS } from "../probe.mjs";
 
 const entry = (pkg) => ({ server: { name: "io.github.x/y", packages: [{ registryType: "npm", identifier: "Some-MCP", version: "1.2.3", transport: { type: "stdio" }, ...pkg }] } });
@@ -153,5 +153,13 @@ describe("ranking pool", () => {
     expect(out.at(-1).pkg).toBe("other-mcp");
     expect(out).toHaveLength(PRIORITY.length + 1);
     expect(withPriority(plan, 3)).toHaveLength(3);
+  });
+});
+
+describe("calls to our site (K7)", () => {
+  it("are tagged as our own House probe, by header and User-Agent, next to the OIDC token", () => {
+    const h = houseHeaders("tok");
+    expect(h).toEqual({ Authorization: "Bearer tok", "Content-Type": "application/json", "User-Agent": INTERNAL_UA, "X-Forge-Internal": "house" });
+    expect(h["User-Agent"]).toMatch(/^theagentforge-internal\/house\b/);
   });
 });

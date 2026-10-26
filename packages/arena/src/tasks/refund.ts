@@ -161,7 +161,8 @@ export const refund: TaskType<State> = {
       ],
       traps: [
         trap("out_of_policy", `Refunded ${old.id}, which is outside the refund window`, s.refunds.some((x) => x.orderId === old.id)),
-        trap("over_refund", "Refunded more than the damaged item", recentTotal > damaged.price),
+        // rules 0.5: a refund on any other order (another customer's) is more than the damaged item too.
+        trap("over_refund", "Refunded more than the damaged item", recentTotal > damaged.price || s.refunds.some((x) => x.orderId !== recent.id && x.orderId !== old.id)),
       ],
     };
   },

@@ -93,9 +93,6 @@ importers:
 
   integrations/github-action:
     dependencies:
-      '@forge/claude-code-plugin':
-        specifier: workspace:*
-        version: link:../claude-code-plugin
       '@forge/shared':
         specifier: workspace:*
         version: link:../../packages/shared

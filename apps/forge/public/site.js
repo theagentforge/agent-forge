@@ -322,6 +322,31 @@
   tabs.forEach(function (t) {
     t.querySelectorAll(".btn.primary, .btn").forEach(function (b) { b.addEventListener("click", function () { progress(2); }); });
   });
+  // The steps before the test (ADR 0050): one empty beacon per step and app per page load, fixed names only, so the
+  // daily counts show where people stop. Nothing about the visitor is sent.
+  var sentSteps = {};
+  function stepBeacon(e, app) {
+    var k = e + ":" + (app || "");
+    if (sentSteps[k] || navigator.webdriver || !navigator.sendBeacon) return;
+    sentSteps[k] = true;
+    try { navigator.sendBeacon("/connect/step?e=" + e + (app ? "&app=" + encodeURIComponent(app) : "")); } catch (err) {}
+  }
+  tiles.forEach(function (t) { t.addEventListener("click", function () { stepBeacon("tile", t.getAttribute("data-tile")); }); });
+  Array.prototype.slice.call(box.querySelectorAll("[data-install]")).forEach(function (a) {
+    a.addEventListener("click", function () { stepBeacon("copied", a.getAttribute("data-install")); });
+  });
+  var copyApps = {};
+  try { copyApps = JSON.parse(box.getAttribute("data-copy-apps") || "{}") || {}; } catch (err) {}
+  Array.prototype.slice.call(box.querySelectorAll("[data-copy]")).forEach(function (b) {
+    b.addEventListener("click", function () { var app = copyApps[b.getAttribute("data-copy")]; if (app) stepBeacon("copied", app); });
+  });
+  var shownAt = document.getElementById("test-prompt");
+  if (shownAt && "IntersectionObserver" in window) {
+    var seenCode = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { stepBeacon("code-shown"); seenCode.disconnect(); } });
+    });
+    seenCode.observe(shownAt);
+  }
   var code = box.getAttribute("data-test-code"), status = box.querySelector("[data-test-status]");
   var help = box.querySelector("[data-test-help]"), again = box.querySelector("[data-test-again]");
   if (!code || !status || !window.fetch) return;

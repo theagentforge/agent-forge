@@ -5,6 +5,7 @@ export * from "./glicko";
 export * from "./hero";
 export * from "./gauntlet";
 export * from "./ranking";
+export * from "./rescore";
 export * from "./rng";
 export * from "./scorecard";
 export * from "./tasks/index";

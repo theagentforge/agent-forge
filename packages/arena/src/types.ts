@@ -112,7 +112,7 @@ export interface Caps {
 /** One line of the referee's log. The broadcast draws only from these (ADR 0013 §3). */
 export type LogEvent =
   | { t: number; type: "start"; task: string; seed: number; twist: string | null; caps: Caps; brief: string; traps: { id: string; label: string }[] }
-  | { t: number; type: "turn"; n: number; tokensIn: number; tokensOut: number; cost: number; latencyMs: number; provider: string | null; text: string | null }
+  | { t: number; type: "turn"; n: number; tokensIn: number; tokensOut: number; cost: number; latencyMs: number; provider: string | null; text: string | null; cachedTokens?: number; cacheWriteTokens?: number }
   | { t: number; type: "call"; n: number; name: string; args: Record<string, unknown> }
   | { t: number; type: "result"; n: number; name: string; ok: true; result: unknown }
   | { t: number; type: "hit"; n: number; name: string; ok: false; error: string; status?: number; repeat: boolean }

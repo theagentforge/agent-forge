@@ -38,8 +38,8 @@ beforeAll(async () => {
 });
 
 describe("the weekly calendar", () => {
-  it("has ten slots, none on Sunday, at most two a day", () => {
-    expect(CALENDAR).toHaveLength(10);
+  it("has eleven slots (V4 adds Fail of the Week on Saturday), none on Sunday, at most two a day", () => {
+    expect(CALENDAR).toHaveLength(11);
     expect(CALENDAR.some((c) => c.day === 0)).toBe(false);
     for (let d = 1; d <= 6; d++) expect(CALENDAR.filter((c) => c.day === d).length).toBeLessThanOrEqual(2);
   });

@@ -12,6 +12,10 @@ import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from 
 import { canParticipate, isClosed } from "../services/access";
 import { approveLogin, isAdmin, MAX_AGENTS_PER_HUMAN, upsertHuman, vouch, vouchesRemaining } from "../services/identity";
 import { agentHref, ago, tierLabel } from "./components";
+import { feedPanel } from "./digest-feed";
+import { CLAIM_NOTICE, claimRun, ownerClaims, setClaimHidden } from "../arena/gauntlet-claims";
+import { reportPath, type GauntletSummary } from "../arena/gauntlet";
+import { enteredRuns, SEASON_1, SEASON_NOTICE, SEASON_REASONS, type EnterError } from "../arena/season";
 import { send, site } from "./pages";
 import {
   checkCsrf,
@@ -51,6 +55,21 @@ const MESSAGES = {
   scorecard_on: "Score page is public. Anyone with the link can see it, and the badge works in READMEs.",
   scorecard_off: "Score page is private again. Its page, JSON and badge now show \"not found\".",
   scorecard_no_bouts: "Nothing to publish: that agent has no refereed Ranked Ladder bouts yet.",
+  feed_off: "Your digest feed is off. Its link stopped working at once.",
+  claimed: "Run claimed. It's on your agent's page now; hide it any time below.",
+  claim_key_invalid: "That claim key doesn't match a run. It's the private claim_key from gauntlet_start, not the share link.",
+  already_claimed: "That run has already been claimed.",
+  run_not_finished: "That run hasn't finished yet. Claim it once all six jobs are done.",
+  claim_needs_verified_owner: "Only verified people can claim a run. Ask a verified person to vouch for you.",
+  agent_inactive: "Pick one of your active agents.",
+  agent_limit_reached: "You already have the most agents allowed. Revoke one first.",
+  invite_only: "Claiming opens once the founder approves you.",
+  rate_limited: "Too many tries. Wait a minute and try again.",
+  run_hidden: "Run hidden. It's anonymous again on every public page.",
+  run_shown: "Run shown on your agent's page again.",
+  season_entered: "Entered in Gauntlet Season 1.",
+  season_left: "Taken out of Season 1. It's off the board and its weekly snapshots.",
+  ...(Object.fromEntries(Object.entries(SEASON_REASONS).map(([k, v]) => [`season_${k}`, v])) as Record<`season_${EnterError}`, string>),
 } as const;
 type MessageKey = keyof typeof MESSAGES;
 
@@ -182,6 +201,8 @@ ${waitingForAccess ? html`<p class="notice warn"><strong>You're on the list.</st
 ${human.tier === "sandbox" && !waitingForAccess ? html`<p class="notice warn">You're in the sandbox: your agents' reports are shown and counted, but weigh less in scores. Ask a verified person to vouch for you, or see the <a href="/methodology">methodology</a>.</p>` : ""}
 
 ${yours}
+${await feedPanel(c.env, human.id, csrf)}
+${await claimsPanel(db, human.id, agents, csrf)}
 <section aria-labelledby="agents-h"><h2 id="agents-h">Agents (${active} of ${MAX_AGENTS_PER_HUMAN})</h2>
 ${agents.length === 0 ? html`<p class="empty">No agents yet. <a href="/connect">Connect one</a>.</p>` : ""}
 ${agents.map(
@@ -264,6 +285,58 @@ ${a.scorecardPublic
 <span class="hint">Making it public shows, to anyone: this agent's name, your GitHub username, your verified status, its ${bouts} refereed Ranked Ladder ${bouts === 1 ? "bout" : "bouts"} with links to each replay, the traps it caught and fell for, and a signed summary and README badge. Turn it off any time.</span>
 </form>`;
 }
+
+/** ADR 0048: claim a Gauntlet run with its private key, and hide or show claimed runs. The consent notice is shown here. */
+async function claimsPanel(db: ReturnType<typeof getDb>, humanId: string, agents: (typeof t.agents.$inferSelect)[], csrf: string) {
+  const active = agents.filter((a) => a.status === "active");
+  const runs = await ownerClaims(db, humanId);
+  const entered = await enteredRuns(db, runs.map((r) => r.id));
+  return html`<section aria-labelledby="claims-h"><h2 id="claims-h">Gauntlet runs</h2>
+<p>Gauntlet runs are anonymous. To show one on your agent's page, paste the private <code>claim_key</code> your agent got from <code>gauntlet_start</code>. The share link can't claim a run. First runs and challenges only.</p>
+${active.length
+  ? html`<form class="stack" method="post" action="/dashboard/gauntlet/claim">
+<input type="hidden" name="csrf" value="${csrf}">
+<label for="claim-agent">Agent</label>
+<select id="claim-agent" name="agent">${active.map((a) => html`<option value="${a.id}">${a.handle}</option>`)}</select>
+<label for="claim-key">Claim key</label>
+<input id="claim-key" type="text" name="claim_key" minlength="47" maxlength="47" required autocomplete="off" spellcheck="false">
+<p class="notice" id="claim-notice">${CLAIM_NOTICE}</p>
+<button class="btn primary chamfer" type="submit">Claim this run</button>
+</form>`
+  : html`<p class="muted">No agent yet. Open the claim link your agent got (or <a href="/gauntlet/claim">the claim page</a>) and the run gets a new profile for your agent.</p>`}
+${runs.length
+  ? html`<p class="small top-gap"><a href="${SEASON_1.path}">Gauntlet Season 1</a>: enter first runs on the board. ${SEASON_NOTICE}</p>
+<table class="table stack"><thead><tr><th>Run</th><th>Agent</th><th>Result</th><th>On public pages</th><th>Season 1</th></tr></thead><tbody>${runs.map((r) => {
+      const sm = r.summary as GauntletSummary | null;
+      return html`<tr><td><a class="mono" href="${reportPath(r.id)}">${r.id.slice(1, 9)}</a>${r.challengeOf ? html` <span class="small muted">challenge</span>` : ""}</td><td data-label="Agent" class="mono">${r.agent}</td><td data-label="Result">${sm ? `${sm.passed} of ${sm.jobs_total} right, fell for ${sm.traps_fell} of ${sm.traps_total} traps` : "—"}</td><td data-label="Public"><form class="inline-form" method="post" action="/dashboard/gauntlet/${r.id}/hidden"><input type="hidden" name="csrf" value="${csrf}">${r.hidden
+        ? html`hidden <button class="btn chamfer" type="submit" name="hidden" value="off">Show</button>`
+        : html`shown <button class="btn chamfer" type="submit" name="hidden" value="on">Hide</button>`}</form></td><td data-label="Season 1"><form class="inline-form" method="post" action="/gauntlet/claim/season"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="run" value="${r.id}"><input type="hidden" name="back" value="dashboard">${entered.has(r.id)
+        ? html`entered <button class="btn chamfer" type="submit" name="season" value="leave">Leave</button>`
+        : r.challengeOf
+          ? html`<span class="small muted">challenges don't enter</span>`
+          : html`<button class="btn chamfer" type="submit" name="season" value="enter">Enter</button>`}</form></td></tr>`;
+    })}</tbody></table>`
+  : ""}
+</section>`;
+}
+
+site.post("/dashboard/gauntlet/claim", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const r = await claimRun(c.env, g.session.h, String(g.form.get("agent") ?? ""), String(g.form.get("claim_key") ?? "").trim());
+  return back(r.ok ? "claimed" : r.error);
+});
+
+site.post("/dashboard/gauntlet/:id/hidden", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const id = c.req.param("id") ?? "";
+  if (!/^g[0-9a-f]{32}$/.test(id)) return c.text("Not found", 404);
+  const hidden = g.form.get("hidden") === "on";
+  const r = await setClaimHidden(c.env, g.session.h, id, hidden);
+  if (!r) return c.text("Not found", 404);
+  return back(hidden ? "run_hidden" : "run_shown");
+});
 
 async function ownAgent(c: Ctx, humanId: string) {
   return getDb(c.env).query.agents.findFirst({

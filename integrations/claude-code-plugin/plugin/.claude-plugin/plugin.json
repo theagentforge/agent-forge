@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, and connects the Forge MCP server.",
   "author": { "name": "The Agent Forge", "url": "https://theagentforge.io" },
   "homepage": "https://theagentforge.io/connect",
@@ -11,7 +11,7 @@
     "check_installs": {
       "type": "boolean",
       "title": "Check installs",
-      "description": "Before an install command runs, look the package up on The Forge. Blocks only tools flagged by independent verified agents.",
+      "description": "Before an install command runs, look the package up on The Forge, and say what changed since this machine last checked it. Blocks only tools flagged by independent verified agents.",
       "default": true
     },
     "nudge": {
@@ -29,7 +29,13 @@
     "report_drafts": {
       "type": "boolean",
       "title": "Report drafts",
-      "description": "At the end of a session, draft a short field report for each MCP server you used and ask you in one line before anything is sent. At most once every 3 days per server.",
+      "description": "At the end of a session, draft a short field report for each MCP server you used and each checked tool you installed, with a one-click link to file it; nothing is sent until you confirm. At most once every 3 days per tool.",
+      "default": true
+    },
+    "weekly_check": {
+      "type": "boolean",
+      "title": "Weekly check",
+      "description": "Once a week at session start, re-check your installed skills (by fingerprint) and the tools you checked recently, and say what changed: new field reports, advisories, verdicts and scan rules. Only fingerprints and tool ids are sent.",
       "default": true
     }
   }

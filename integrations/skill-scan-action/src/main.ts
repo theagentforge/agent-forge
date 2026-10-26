@@ -1,5 +1,5 @@
-import { appendFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readInputs, run, type Event } from "./run";
 
 const root = resolve(process.env.GITHUB_WORKSPACE ?? process.cwd());
@@ -9,6 +9,12 @@ const inside = (p: string) => {
 };
 const append = (file: string | undefined, text: string) => {
   if (file) appendFileSync(file, text);
+};
+// The state file may live in the workspace or the runner's temp folder (where actions/cache restores it), nowhere else.
+const temp = process.env.RUNNER_TEMP ? resolve(process.env.RUNNER_TEMP) : null;
+const statePath = (p: string) => {
+  const full = isAbsolute(p) ? resolve(p) : resolve(join(root, p));
+  return [root, temp].some((d) => d && (full === d || full.startsWith(d + sep))) ? full : null;
 };
 const SKIP_DIRS = new Set([".git", "node_modules", "vendor", "dist", ".venv", "target"]);
 
@@ -71,6 +77,23 @@ if (typeof inputs === "string") {
     writeFile: (p, text) => {
       const full = inside(p);
       if (full) writeFileSync(full, text);
+    },
+    readState: (p) => {
+      const full = statePath(p);
+      if (!full) return null;
+      try {
+        return readFileSync(full, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    writeState: (p, text) => {
+      const full = statePath(p);
+      if (!full) return void process.stdout.write("::warning title=forge-skill-scan::state-file must be inside the workspace or the runner's temp folder\n");
+      try {
+        mkdirSync(dirname(full), { recursive: true });
+        writeFileSync(full, text);
+      } catch {}
     },
   }).then(
     (code) => {

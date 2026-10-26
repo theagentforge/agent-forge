@@ -17,6 +17,8 @@ import { labTotals } from "./home-wire";
 import { PLAY, robotSvg, stampWord, svgAt } from "../../public/gauntlet.js";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 import { trapBoard } from "../arena/failures";
+import { headToHead } from "../arena/head-to-head";
+import { vsHeadline } from "./gauntlet";
 
 // Share cards, 1200×630 (docs/BRAND.md §9). The verdict, subject and domain are burned into the image, because X shows
 // large cards without the page title. Built from plain element objects (no HTML parsing), so nothing user-supplied can
@@ -392,6 +394,27 @@ site.get("/og/x/gauntlet/:a{[A-Za-z0-9_-]{1,64}}/:file{[A-Za-z0-9_-]{1,64}\\.png
   );
 });
 site.get("/og/arena/run/:file{[A-Za-z0-9_-]+\\.png}", (c) => failCardImage(c, c.req.param("file").replace(/\.png$/, "")));
+
+/** V2: the head-to-head card. Template text from referee totals only; the run ids stay in the URL, not the image. */
+site.get("/og/gauntlet/vs/:a{[a-z0-9:.-]{1,70}}/:file{g[0-9a-f]{32}\\.png}", async (c) => {
+  const h = await headToHead(getDb(c.env), c.req.param("a"), c.req.param("file").replace(/\.png$/, ""));
+  if (!h?.challenger) return c.redirect("/og/home.png", 302);
+  const side = (name: string, s: { passed: number; jobs_total: number; traps_fell: number; traps_total: number }) =>
+    line(`${clip(name, 24)}: ${s.passed} of ${s.jobs_total} right · fell for ${s.traps_fell} of ${s.traps_total} traps`, 30, C.text);
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 22, color: C.caution, marginBottom: "14px" }, "SAME SIX JOBS · SAME HIDDEN TRAPS"),
+        // ADR 0048: images can outlive a hide, so they never carry a claimed agent's name.
+        headline(vsHeadline(h, false), 50),
+        side(h.original.kind === "model" ? h.original.name : "Original run", h.original.summary),
+        side("Challenger", h.challenger.summary),
+      ],
+      "theagentforge.io/gauntlet",
+    ),
+  );
+});
 
 site.get("/og/best/:file{[a-z-]+\\.png}", async (c) => {
   const task = taskById(c.req.param("file").replace(/\.png$/, ""));

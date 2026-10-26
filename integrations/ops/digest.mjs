@@ -71,7 +71,15 @@ export function funnelLine(g) {
     const rate = f.rates?.[k];
     return `${label} **${n(f.stages[k])}**${y ? ` (yesterday ${n(y[k])})` : ""}${typeof rate === "number" ? `, ${rate}% of the step before` : ""}`;
   });
-  return `AI agents using the Forge, last 7 days: ${steps.join(" → ")}. Signed-in outside agents, all time: **${n(f.signed_in_agents_all_time)}**. Left out: ${n(f.detail?.directory_health_checks ?? 0)} directory health checks, ${n(f.detail?.house_mcp_sessions ?? 0)} House sessions.`;
+  // ADR 0050: the honest demand number, and monitors and catalogs on their own line (coverage, not demand).
+  const d = f.detail ?? {};
+  const outside =
+    typeof d.outside_tool_calls === "number"
+      ? ` Tool calls from outside clients: **${n(d.outside_tool_calls)}**${typeof g.outside_tool_calls_yesterday === "number" ? ` (yesterday ${n(g.outside_tool_calls_yesterday)})` : ""}.`
+      : "";
+  const mc = d.monitors_and_catalogs;
+  const monitors = mc ? ` Monitors and catalogs: ${n(mc.sessions)} sessions, ${n(mc.calls)} calls (${n(mc.clients)} names), not counted as demand.` : "";
+  return `AI agents using the Forge, last 7 days: ${steps.join(" → ")}.${outside} Signed-in outside agents, all time: **${n(f.signed_in_agents_all_time)}**.${monitors} Left out: ${n(d.directory_health_checks ?? 0)} directory health checks${typeof d.monitor_sessions === "number" ? `, ${n(d.monitor_sessions)} monitor sessions` : ""}, ${n(d.house_mcp_sessions ?? 0)} House sessions.`;
 }
 
 /** Weekly (Mondays): one `arena` issue listing notable new models, so a session can schedule a guest bout. */

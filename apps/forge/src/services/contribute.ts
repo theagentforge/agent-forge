@@ -1,6 +1,7 @@
-import { MIN_OWNERS_FOR_SCORE, MIN_VERIFIED_FOR_SCORE, TOOL_ID_PATTERN, TOOL_KINDS, VERSION_PATTERN, verdictFor } from "@forge/shared";
+import { ISSUES, MIN_OWNERS_FOR_SCORE, MIN_VERIFIED_FOR_SCORE, TOOL_ID_PATTERN, TOOL_KINDS, VERSION_PATTERN, verdictFor } from "@forge/shared";
 import { and, eq, gte, inArray, ne } from "drizzle-orm";
 import * as t from "../db/schema";
+import { registryId } from "./registry";
 import { toolPageUrl } from "./tools";
 import type { Db } from "./db";
 
@@ -19,21 +20,34 @@ export interface ReportDraft {
   version: string;
   fp: string;
   outcome?: "worked" | "partial" | "failed";
+  /** Pre-ticked problems from the agent's draft (the issues enum only); the person can change them before filing. */
+  issues?: (typeof ISSUES)[number][];
   note?: string;
 }
 
-/** The pre-filled report link; without a version on file it carries only the tool, for the draft to complete. */
+/** `issues=a,b` from a draft link: known issue names only, each once; anything else is dropped. */
+export function draftIssues(v: string | undefined): (typeof ISSUES)[number][] {
+  const known = new Set<string>(ISSUES);
+  return [...new Set((v ?? "").split(",").map((s) => s.trim()).filter((s) => known.has(s)))] as (typeof ISSUES)[number][];
+}
+
+/**
+ * The pre-filled report link. Without a version it carries only the tool, for the draft to complete; a version without
+ * a fingerprint is kept for npm and PyPI ids, whose fingerprint the Forge looks up when the report is filed (ADR 0056).
+ */
 export function reportUrl(origin: string, d: ReportDraft | null): string | null {
   if (!d) return null;
-  const q = new URLSearchParams({ tool: d.tool, kind: d.kind, ...(d.version && d.fp ? { version: d.version, fp: d.fp } : {}) });
+  const q = new URLSearchParams({ tool: d.tool, kind: d.kind, ...(d.version && (d.fp || registryId(d.tool)) ? { version: d.version, ...(d.fp ? { fp: d.fp } : {}) } : {}) });
   if (d.outcome) q.set("outcome", d.outcome);
+  if (d.issues?.length) q.set("issues", d.issues.join(","));
   if (d.note) q.set("note", d.note);
   return `${origin}/report?${q}`;
 }
 
 /**
  * Reads a draft from /report parameters; null when anything given is invalid. With `partial`, the version and
- * fingerprint may be missing (the page then asks for them); a report is only ever filed from a complete draft.
+ * fingerprint may be missing (the page then asks for them). Filing needs a version, and a fingerprint unless the id is
+ * npm: or pypi: (looked up from the registry on submit, ADR 0056).
  */
 export function parseDraft(q: (k: string) => string | undefined, opts: { partial?: boolean } = {}): ReportDraft | null {
   const tool = (q("tool") ?? "").trim();
@@ -42,19 +56,19 @@ export function parseDraft(q: (k: string) => string | undefined, opts: { partial
   const fp = (q("fp") ?? "").trim();
   if (!tool || tool.length > 512 || !TOOL_ID_PATTERN.test(tool)) return null;
   if (!TOOL_KINDS.includes(kind)) return null;
-  const missing = !version && !fp;
-  if (!(opts.partial && missing)) {
-    if (!version || version.length > 128 || !VERSION_PATTERN.test(version)) return null;
-    if (!/^sha256:[0-9a-f]{64}$/.test(fp)) return null;
-  }
+  if (version && (version.length > 128 || !VERSION_PATTERN.test(version))) return null;
+  if (fp && (!version || !/^sha256:[0-9a-f]{64}$/.test(fp))) return null;
+  if (!opts.partial && (!version || (!fp && !registryId(tool)))) return null;
   const outcome = q("outcome");
   const note = (q("note") ?? "").trim().slice(0, 280);
+  const issues = draftIssues(q("issues"));
   return {
     tool,
     kind,
     version,
     fp,
     ...(outcome === "worked" || outcome === "partial" || outcome === "failed" ? { outcome } : {}),
+    ...(issues.length ? { issues } : {}),
     ...(note ? { note } : {}),
   };
 }

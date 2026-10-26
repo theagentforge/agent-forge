@@ -1,7 +1,7 @@
 import { taskById } from "@forge/arena";
 import type { ScanFinding } from "@forge/shared";
 import { html } from "hono/html";
-import type { Board } from "../arena/board";
+import type { Board, FrontierHard } from "../arena/board";
 import { finishedRuns, modelName } from "../arena/views";
 import type { Db } from "../services/db";
 import { recentPublic, scanPath, skillLabel } from "../services/scans";
@@ -190,7 +190,7 @@ export function labJobRows(rows = labByCategory()) {
 /** Lab #3's pre-registered interval (Mantel–Haenszel, lab/003-trap-cards/RESULTS.md). */
 const LAB3_INTERVAL = "48–59%";
 
-export function labBand(frontier?: { runs: number; fell: number; models: number } | null) {
+export function labBand(frontier?: FrontierHard | null) {
   const t = labTotals();
   if (!t.none.n || !t.card.n) return "";
   const bar = (label: string, v: number, cls: string) => html`<li class="${cls}"><span class="lab-arm">${label}</span><span class="lab-bar" aria-hidden="true">${barSvg(v, "lab-fill")}</span><span class="lab-v">${v} in 100</span></li>`;
@@ -199,7 +199,7 @@ export function labBand(frontier?: { runs: number; fell: number; models: number 
 <p class="eyebrow">Forge Lab #3 · pre-registered · 18 Oct 2026</p>
 <h2 id="lab-title"><b>${t.fewer}% fewer traps</b> with the free trap card.</h2>
 <p>Small open models fell for <b>${t.in100.card} in 100</b> traps with the card, ${t.in100.none} without. A placebo text: ${t.in100.placebo}.</p>
-<p class="small lab-frontier"><b>In our tests on frontier models, the card didn't measurably reduce traps</b> (<a href="/lab/4/results?from=home-lab">Lab #4</a>, 210 bouts).${frontier && frontier.runs >= 30 ? html` Without it, they fell for ${frontier.fell} of ${frontier.runs} Hard traps. <a href="/arena?tier=hard&amp;from=home-lab">See them</a>` : ""}</p>
+<p class="small lab-frontier"><b>Frontier models fell for a trap in about 3 in 10 bouts.</b> Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it (<a href="/lab/4/results?from=home-lab">Lab #4</a>), so <a href="/lab/5?from=home-lab">Lab #5</a> tests a new card built from their own mistakes from 1 Nov.${frontier && frontier.runs >= 30 ? html` <a href="/arena/event/${frontier.event.slug}/falls?from=home-lab">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}</p>
 <p class="small muted">Clear effect on 3 of 6 model–job pairs · ${t.card.n.toLocaleString("en-US")} bouts per arm · 95% interval ${LAB3_INTERVAL} fewer · ${t.extraCost}% more compute</p>
 <p class="small"><a href="/lab/3/results?from=home-lab">Method and results →</a> · <a href="/trap-card?from=home-lab">Get the trap card</a></p>
 </div>

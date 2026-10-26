@@ -2,6 +2,8 @@ import { ATTEMPTS, CHANGELOG, citation, PUBLIC_NAME, RULES_HISTORY, RULES_VERSIO
 import { html } from "hono/html";
 import { copyBlock } from "./components";
 import { send, site } from "./pages";
+import { CROISSANT_PATH } from "./croissant";
+import { DATASET_LICENCE, LICENCE_ID, LICENCE_PATH } from "../services/provenance";
 
 // The citable Arena methodology (ADR 0023 §5): how a bout is refereed, the trap catalog with stable public IDs and
 // provenance, the versions every result runs under, how to cite it, and a dated changelog. JSON twin: data only.
@@ -25,6 +27,7 @@ export function methodologyData(origin: string) {
       traps: e.traps,
     })),
     citation: citation(origin),
+    licence: { id: LICENCE_ID, text: DATASET_LICENCE, url: `${origin}${LICENCE_PATH}`, croissant: `${origin}${CROISSANT_PATH}`, results_policy: `${origin}/results-policy` },
   };
 }
 
@@ -53,7 +56,7 @@ site.get("/arena/methodology", async (c) => {
 <p>The scoring weights, caps and tie rules are on the <a href="/arena/rules">rules page</a>.</p>
 
 <h2 id="catalog">Trap catalogue</h2>
-<p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families.${reserved.length ? html` Reserved for traps in a later task version: ${reserved.map((f) => html`<b>${f}</b> (${TRAP_FAMILIES[f].name.toLowerCase()})`)}.` : ""} How often each model falls for each trap is on <a href="/arena/failures">the failure-mode board</a>.</p>
+<p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families.${reserved.length ? html` Reserved for traps in a later task version: ${reserved.map((f) => html`<b>${f}</b> (${TRAP_FAMILIES[f].name.toLowerCase()})`)}.` : ""} How often each model falls for each trap is on <a href="/arena/failures">the failure-mode board</a>; the same traps grouped by business task (refunds, payments, bookings, stock, records, truthful "done", permissions) are on <a href="/arena/business">business agent reliability</a>.</p>
 <div class="table-wrap"><table class="table stack trap-catalog">
 <thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Based on (real-world pattern)</th><th scope="col">Since</th></tr></thead>
 <tbody>${TRAP_CATALOG.map(
@@ -70,7 +73,16 @@ site.get("/arena/methodology", async (c) => {
 ${copyBlock("cite-text", cite.text)}
 <p>BibTeX:</p>
 <pre class="verdict-line" id="cite-bibtex">${cite.bibtex}</pre>
-<p class="muted">Cite a single trap by its ID and this page, for example "FA-PAY-002, ${cite.title} (${RULES_VERSION})". Data from <a href="/arena/dataset.json">the dataset</a> is free to use with attribution.</p>
+<p class="muted">Cite a single trap by its ID and this page, for example "FA-PAY-002, ${cite.title} (${RULES_VERSION})". Data from <a href="/arena/dataset.json">the dataset</a> is free to use for evaluation, research and reporting, with attribution (<a href="#licence">licence</a>).</p>
+
+<h2 id="licence">Data licence and provenance</h2>
+<p>${DATASET_LICENCE}</p>
+<ul>
+<li><b>Allowed:</b> evaluating and comparing models and agents, research, journalism and reports, with a link to theagentforge.io/arena.</li>
+<li><b>Not allowed:</b> training or fine-tuning AI models on the dataset, the event files or the run logs.</li>
+<li><b>Model outputs:</b> the run logs contain what each model wrote. Those outputs stay subject to the terms of the company that made or served the model.</li>
+</ul>
+<p>Every row of <a href="/arena/dataset.json">the dataset</a>, every event file and every run log carries a <code>provenance</code> block: where the record came from (a bout we ran ourselves), the exact model id and the lab that makes it, the provider that served it, the run date, the Terms and Privacy versions in force on that date, and the licence id <code>${LICENCE_ID}</code>. A machine-readable description of the dataset (MLCommons Croissant 1.0 with its Responsible AI fields) is at <a href="${CROISSANT_PATH}">${CROISSANT_PATH}</a>. How we publish results that name a model or its maker: the <a href="/results-policy">results policy</a>.</p>
 
 <h2 id="changelog">Changelog</h2>
 <ul class="changelog">${[...CHANGELOG].reverse().map((x) => html`<li><time datetime="${x.date}">${fmtDate(x.date)}</time> · <b>${x.version}</b>: ${x.change}</li>`)}</ul>

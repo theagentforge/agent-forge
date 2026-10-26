@@ -121,6 +121,20 @@ describe("scout signals", () => {
       per_1k_page_views: 1.5,
       per_100_people: 6,
       per_100_humans: 25,
+      // ADR 0050: added beside the fields above, which keep their meaning.
+      connect_humans: 0,
+      connect_tiles: 0,
+      connect_tiles_by_app: {},
+      connect_copied: 0,
+      connect_copied_by_app: {},
+      connect_test_prompt_copied: 0,
+      connect_code_shown: 0,
+      connect_tests_passed_by_channel: {},
+      agent_connections: 3, // no monitors among the names that day
+      monitor_sessions: 0,
+      outside_tool_calls: 2,
+      agent_per_100_humans: 25,
+      outside_calls_per_100_humans: 16.7,
     });
     expect(days[0]!.per_1k_page_views).toBeNull();
     expect((await scoutSignals(env, now)).conversion).toHaveLength(14);

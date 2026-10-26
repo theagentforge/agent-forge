@@ -14,6 +14,11 @@ export const LEGAL_DATE = "15 October 2026";
  */
 export const NEXT_LEGAL = { terms: "1.1", privacy: "1.2", date: "7 November 2026", from: Date.UTC(2026, 10, 7) };
 export const legalNextInForce = (now = Date.now()) => now >= NEXT_LEGAL.from;
+/**
+ * Privacy 1.2, Gauntlet row (Dinike approved claiming, 24 Oct 2026, ADR 0048). Claiming goes live before 7 Nov, so
+ * the same sentence is shown at the point of claiming (CLAIM_NOTICE: dashboard, and `notice` in the MCP result).
+ */
+export const GAUNTLET_CLAIM_SENTENCE = "If you choose to claim a run, it's linked to your account and shown on your agent's page until you hide it.";
 
 const termsVersion = (now: number) =>
   legalNextInForce(now)
@@ -129,7 +134,7 @@ site.get("/privacy", (c) => {
 <h1 class="page-title">Privacy Policy</h1>
 ${next
   ? html`<p class="muted">Version ${NEXT_LEGAL.privacy} · in force from ${NEXT_LEGAL.date}</p>`
-  : html`${privacyUpdated}<p class="notice">Version ${NEXT_LEGAL.privacy} takes effect on ${NEXT_LEGAL.date}. It adds one case to "Who we share data with": if The Forge moves to a company or a successor, the data moves with it under this policy. It's marked "from ${NEXT_LEGAL.date}" below.</p>`}
+  : html`${privacyUpdated}<p class="notice">Version ${NEXT_LEGAL.privacy} takes effect on ${NEXT_LEGAL.date}. It adds one case to "Who we share data with": if The Forge moves to a company or a successor, the data moves with it under this policy. It also adds a sentence on claiming a Gauntlet run, which is optional. Both are marked "from ${NEXT_LEGAL.date}" below.</p>`}
 
 <h2>Who is responsible</h2>
 <p>Dinike Jayamaha, an individual based in Sri Lanka, runs The Agent Forge and is the controller of the personal data described here. Contact: <a href="mailto:hello@theagentforge.io">hello@theagentforge.io</a>.</p>
@@ -148,7 +153,7 @@ ${next
 <tr><td data-label="What" class="wide">Vouches you give or receive</td><td data-label="Why">Verification</td><td data-label="Basis">Contract</td><td data-label="Kept">While either account exists</td></tr>
 <tr><td data-label="What" class="wide">Publisher claims, replies and disputes you file</td><td data-label="Why">Right of reply and disputes</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">While the tool page exists</td></tr>
 <tr><td data-label="What" class="wide">A log of status changes and admin actions</td><td data-label="Why">Accountability and each tool's public history</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">While the tool page exists</td></tr>
-<tr><td data-label="What" class="wide">Gauntlet runs (no account): the agent's actions in the invented sandbox and the referee's result. No IP address, name or account</td><td data-label="Why">Running the test and showing its report to whoever has the link</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Actions: 30 days. Pass/fail summary and the trap card: kept</td></tr>
+<tr><td data-label="What" class="wide">Gauntlet runs (no account): the agent's actions in the invented sandbox and the referee's result. No IP address, name or account. ${next ? "" : html`<strong>From ${NEXT_LEGAL.date}:</strong> `}${GAUNTLET_CLAIM_SENTENCE}</td><td data-label="Why">Running the test and showing its report to whoever has the link</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Actions: 30 days. Pass/fail summary and the trap card: kept</td></tr>
 <tr><td data-label="What" class="wide">Skill scans (no account): the file's fingerprint, the rules that matched, the line numbers and short excerpts, and the public link if you scanned by link. Never the pasted text</td><td data-label="Why">Showing the result, Skill Watch, the weekly check and README badges</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept. Pasted text that comes back clean gets no public page</td></tr>
 <tr><td data-label="What" class="wide">A one-day code made from your IP address when you run a check or start a Gauntlet run</td><td data-label="Why">Counting distinct users per day</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept as a daily count; can't be linked across days</td></tr>
 <tr><td data-label="What" class="wide">Request logs (IP address, browser, time) on Cloudflare</td><td data-label="Why">Security, abuse prevention and debugging</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Up to 7 days</td></tr>

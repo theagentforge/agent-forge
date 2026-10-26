@@ -9,7 +9,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@forge/claude-code-plugin": "workspace:*",
     "@forge/shared": "workspace:*"
   },
   "devDependencies": {

@@ -11,7 +11,7 @@ import { AGENT_LINE } from "./agent-line";
 import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
 import { copyBlock } from "./components";
-import { send, site } from "./pages";
+import { send, site, WEBMCP_SCRIPT } from "./pages";
 
 // Skill scan pages (ADR 0026): paste or link a skill and see what it asks an agent to do; a shareable page per
 // public result; the rules; and Skill Watch, the public feed of flagged skills. Wording: "matches pattern X at line
@@ -89,6 +89,7 @@ site.get("/scan", async (c) => {
     description: "Free: paste or link an agent skill, plugin or MCP server and see the hidden instructions, piped installs and credential reads that virus scanners miss.",
     path: "/scan",
     nav: "scan",
+    modules: [WEBMCP_SCRIPT],
     body: html`<p class="eyebrow">Free · no account · ${SCAN_RULES.length} rules</p>
 <h1 class="page-title">Scan a skill before your agent installs it.</h1>
 <p class="lead">Skills are text your agent obeys. We check it for what virus scanners miss: hidden instructions, downloads piped into a shell, key reads, and data sent to throwaway servers.</p>
@@ -132,6 +133,7 @@ site.post("/scan", async (c) => {
       description: "A free skill scan from The Agent Forge.",
       path: "/scan",
       nav: "scan",
+      modules: [WEBMCP_SCRIPT],
       noindex: true,
       body: html`<h1 class="page-title">Skill scan</h1>${body}${scanForm({ url })}`,
     },
@@ -140,8 +142,16 @@ site.post("/scan", async (c) => {
 });
 
 /** The agent skill file, served from static assets; the Worker sees it first only to count fetches (pages.ts). */
-site.get("/skill.md", (c) => c.env.ASSETS.fetch(new Request(new URL("/skill.md", c.req.url), { headers: c.req.raw.headers })));
-site.get("/llms.txt", (c) => c.env.ASSETS.fetch(new Request(new URL("/llms.txt", c.req.url), { headers: c.req.raw.headers })));
+// CORS-open like the other discovery files, so a browser-based agent on another site can read them too.
+const openAsset = async (c: { env: Env; req: { url: string; raw: Request } }, path: string) => {
+  const res = await c.env.ASSETS.fetch(new Request(new URL(path, c.req.url), { headers: c.req.raw.headers }));
+  const headers = new Headers(res.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(res.body, { status: res.status, headers });
+};
+site.get("/skill.md", (c) => openAsset(c, "/skill.md"));
+site.get("/llms.txt", (c) => openAsset(c, "/llms.txt"));
 
 site.get("/scan/rules", (c) =>
   send(c, {
@@ -259,4 +269,40 @@ site.get("/scan/badge.svg", async (c) => {
         ? { label: "forge scan", message: "caution", color: "#c27c0e" }
         : { label: "forge scan", message: "no risky patterns", color: "#2e9e6b" };
   return c.body(badgeSvg(b), 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" });
+});
+
+/** Links that point at a skill file (or a page that holds one), which the one box on the home page scans. */
+export function looksLikeSkillLink(q: string) {
+  if (!/^https?:\/\//i.test(q)) return false;
+  let u: URL;
+  try {
+    u = new URL(q);
+  } catch {
+    return false;
+  }
+  return u.hostname === "clawhub.ai" || u.hostname.endsWith(".clawhub.ai") || u.hostname === "gist.github.com" || /\.md$/i.test(u.pathname) || /\/skills?\//i.test(u.pathname);
+}
+
+/**
+ * The one box (conversion review, 24 Oct): paste anything. A link to a skill file is fetched and scanned, and the
+ * result page opens; anything else (npm:…, pypi:…, a GitHub repository, a bare name) opens the check page. POST only,
+ * so crawlers following links never trigger a scan.
+ */
+site.post("/go", async (c) => {
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  const q = (typeof form.q === "string" ? form.q : "").trim().slice(0, 2048);
+  const from = typeof form.from === "string" && /^[a-z0-9-]{1,32}$/.test(form.from) ? form.from : "go";
+  if (!q) return c.redirect("/scan", 303);
+  c.executionCtx.waitUntil(bump(c.env, [`go:${looksLikeSkillLink(q) ? "scan" : "check"}`, `go:from:${from}`]).catch(() => {}));
+  if (looksLikeSkillLink(q)) {
+    const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+    const { success } = await c.env.CHECK_LIMITER.limit({ key: `scan:${ip}` });
+    const got = success ? await fetchSkillText(q) : null;
+    if (got?.ok) {
+      const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
+      c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), `scan:from:${from}`]).catch(() => {}));
+      if (isPublic) return c.redirect(`${scanPath(result.fingerprint)}?from=${from}`, 303);
+    }
+  }
+  return c.redirect(`/check?q=${encodeURIComponent(q.slice(0, 512))}&from=${from}`, 303);
 });

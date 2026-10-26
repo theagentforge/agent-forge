@@ -1,4 +1,4 @@
-import { idsInWords } from "@forge/claude-code-plugin/src/install-parse";
+import { idsInWords } from "@forge/shared/install-parse";
 
 // Finds the third-party tools a repository configures for its agents: MCP servers in the usual config files,
 // plus anything listed by hand. Conservative like the plugin hook: anything it can't map to a Forge id is

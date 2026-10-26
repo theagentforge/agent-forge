@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { draftMessage, drafts, MIN_CALLS, REDRAFT_AFTER_MS, serverOf } from "../src/report-draft";
-import { emptyState, recordFailure, recordSuccess } from "../src/strain-state";
+import { emptyState, NUDGE_TEXT, recordFailure, recordSuccess } from "../src/strain-state";
+import { AGENT_DIRECTED } from "../../../apps/forge/test/wording";
 
 const NOW = 1_800_000_000_000;
 
@@ -35,11 +36,27 @@ describe("report drafts", () => {
     expect(drafts(session(), { github: NOW - REDRAFT_AFTER_MS }, NOW)).toHaveLength(1);
   });
 
-  it("asks for a one-line yes/no and says nothing was sent", () => {
+  it("gives the owner's one-line yes/no as data and says nothing was sent", () => {
     const m = draftMessage(drafts(session(), {}, NOW));
-    expect(m).toContain("nothing has been sent");
-    expect(m).toContain('"File short Forge field reports for github? (yes/no)"');
-    expect(m).toContain("github: 8 calls, 3 failures");
-    expect(m).toContain("show --server <name>");
+    expect(m).toContain("nothing has been sent; filing needs owner confirmation");
+    expect(m).toContain('Owner question, one line: "File short Forge field reports for github? (yes/no)"');
+    expect(m).toContain("MCP server github: 8 calls, 3 failures this session");
+    expect(m).toContain("show --server github");
+    expect(m).toContain("https://theagentforge.io/connect");
+    expect(m).not.toMatch(AGENT_DIRECTED);
+  });
+
+  it("lists install drafts with their one-step owner link and report body", () => {
+    const report = { tool: { kind: "mcp_server", id: "npm:x", version: "1.2.3", fingerprint: `sha256:${"c".repeat(64)}` }, outcome: "worked" };
+    const m = draftMessage([], [{ id: "npm:x", line: "Field report draft for npm:x@1.2.3: outcome worked; issues none; not filed; filing needs owner confirmation", url: "https://theagentforge.io/report?tool=npm%3Ax", report }]);
+    expect(m).toContain("- Field report draft for npm:x@1.2.3: outcome worked; issues none; not filed; filing needs owner confirmation; one-step owner link: https://theagentforge.io/report?tool=npm%3Ax; forge_report body: {");
+    expect(m).toContain('"File short Forge field reports for npm:x? (yes/no)"');
+    expect(m).not.toMatch(AGENT_DIRECTED);
+  });
+
+  it("words the loop nudge as data, not instructions", () => {
+    expect(NUDGE_TEXT).toContain("failed 3 times in a row");
+    expect(NUDGE_TEXT).not.toMatch(AGENT_DIRECTED);
+    expect(NUDGE_TEXT).not.toMatch(/\b(check it|file a report|retry once|ask your human)\b/i);
   });
 });

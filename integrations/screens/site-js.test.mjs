@@ -30,7 +30,7 @@ function el({ attrs = {}, kids = {}, text = "" } = {}) {
 }
 
 /** Runs site.js on a page made of `found` (selector → elements) and returns what it touched. */
-function run({ found = {}, byId = {}, hash = "" } = {}) {
+function run({ found = {}, byId = {}, hash = "", navigator = { webdriver: true } } = {}) {
   const fetched = [];
   const doc = el({ kids: found });
   doc.documentElement = { dataset: {} };
@@ -39,7 +39,7 @@ function run({ found = {}, byId = {}, hash = "" } = {}) {
   const store = new Map();
   const win = {
     document: doc,
-    navigator: { webdriver: true },
+    navigator,
     location: { hash },
     history: { replaceState() {} },
     sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) },
@@ -61,10 +61,12 @@ function run({ found = {}, byId = {}, hash = "" } = {}) {
 /** The /connect page as connect.ts renders it, cut down to what site.js reads. */
 function connectPage() {
   const tile = (id) => el({ attrs: { "data-tile": id } });
+  const install = el({ attrs: { "data-install": "cursor" } });
+  const copy = (id) => el({ attrs: { "data-copy": id } });
   const tab = (id) => el({ attrs: { "data-tab": id }, kids: { ".btn.primary, .btn": [el()] } });
   const again = el();
   const box = el({
-    attrs: { "data-default-tab": "claude", "data-test-code": "abc123" },
+    attrs: { "data-default-tab": "claude", "data-test-code": "abc123", "data-copy-apps": JSON.stringify({ cc: "claude-code" }) },
     kids: {
       "[data-tab]": [tab("claude"), tab("chatgpt")],
       "[data-tile]": [tile("claude"), tile("chatgpt")],
@@ -73,10 +75,12 @@ function connectPage() {
       "[data-test-status]": [el()],
       "[data-test-help]": [el()],
       "[data-test-again]": [again],
+      "[data-install]": [install],
+      "[data-copy]": [copy("cc"), copy("not-counted")],
     },
   });
   const prompt = el({ text: "Use The Agent Forge to check the tool npm:forge-test-abc123" });
-  return { box, again, prompt, found: { "[data-connect]": [box] }, byId: { "test-prompt": prompt } };
+  return { box, again, prompt, install, found: { "[data-connect]": [box] }, byId: { "test-prompt": prompt } };
 }
 
 describe("site.js in a page", () => {
@@ -92,6 +96,25 @@ describe("site.js in a page", () => {
     expect(doc.listeners.visibilitychange).toHaveLength(1);
     expect(fetched).toEqual(["/api/v1/connect-test/abc123"]);
     expect(p.box.querySelector("[data-test-status]").textContent).toBe("Waiting for your first check…");
+  });
+
+  it("/connect: counts a tile, an install link and a copy once each per page load, by fixed names (ADR 0050)", () => {
+    const p = connectPage();
+    const beacons = [];
+    run({ found: p.found, byId: p.byId, navigator: { sendBeacon: (u) => beacons.push(u) } });
+    const click = (e) => (e.listeners.click ?? []).forEach((fn) => fn({ preventDefault() {} }));
+    const [claudeTile] = p.box.querySelectorAll("[data-tile]");
+    click(claudeTile);
+    click(claudeTile);
+    click(p.install);
+    for (const b of p.box.querySelectorAll("[data-copy]")) click(b);
+    expect(beacons).toEqual(["/v", "/connect/step?e=tile&app=claude", "/connect/step?e=copied&app=cursor", "/connect/step?e=copied&app=claude-code"]);
+    // Automated browsers send nothing.
+    const q = connectPage();
+    const none = [];
+    run({ found: q.found, byId: q.byId, navigator: { webdriver: true, sendBeacon: (u) => none.push(u) } });
+    click(q.box.querySelectorAll("[data-tile]")[0]);
+    expect(none).toEqual([]);
   });
 
   it("/connect: a #tab- link opens that tab and the test still starts", () => {

@@ -31,6 +31,15 @@ describe("Markdown for agents (agent readiness)", () => {
     expect(md).not.toMatch(/alert|menu|<\w/);
   });
 
+  it("keeps links inside table cells, made absolute (an answer page's replays and trap ids)", () => {
+    const md = htmlToMarkdown(
+      `<main><table><tr><th>Model</th><th>Replays</th></tr><tr><td>A</td><td><a href="/arena/run/r1">replay 1</a> · <a class="mono" href="/arena/failures/FA-PAY-002">FA-PAY-002</a></td></tr></table><p><a href="/x">after</a></p></main>`,
+      "https://theagentforge.io/answers/q",
+    );
+    expect(md).toContain("| A | [replay 1](https://theagentforge.io/arena/run/r1) · [FA-PAY-002](https://theagentforge.io/arena/failures/FA-PAY-002) |");
+    expect(md).toContain("[after](https://theagentforge.io/x)");
+  });
+
   it("serves real pages as Markdown on request, with Vary, Content-Signal and discovery Links; HTML stays the default", async () => {
     const md = await fetchWorker("/methodology?t=md", { headers: { Accept: "text/markdown" } });
     expect(md.status).toBe(200);

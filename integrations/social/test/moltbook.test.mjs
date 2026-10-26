@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalHash, approve, due, parseMoltbook, parseMoltbookPosts, tagLinks } from "../moltbook.mjs";
+import { approvalHash, approve, due, parseMoltbook, parseMoltbookPosts, REPLIES_LABEL, replies, repliesReport, tagLinks } from "../moltbook.mjs";
 
 // The Forge's agent on Moltbook: one approved post per issue, sent through the site with the job's OIDC token.
 
@@ -168,5 +168,49 @@ describe("a week of Moltbook posts", () => {
     await due("https://theagentforge.io", env, sim(st), Date.parse("2026-10-25T15:12Z"));
     expect(st.sent).toEqual([]);
     expect(st.comments.at(-1).body).toMatch(/more than a day late/);
+  });
+});
+
+describe("the automatic-replies report (ADR 0044)", () => {
+  const report = {
+    paused: null,
+    skipped: 2,
+    entries: [
+      { action: "escalated", author: "vi@na", post_id: "p1", question: "Pricing? ```js\n@team <!-- x -->", reason: "A money question: yours to answer." },
+      { action: "replied", author: "lilt", post_id: "p1", question: "Docker tags?", reply: "We only match npm and PyPI versions." },
+    ],
+  };
+
+  it("quotes other agents' words as inert data, with no mentions, fences or HTML comments", () => {
+    const md = repliesReport(report);
+    expect(md).toMatch(/### Needs you \(1\)/);
+    expect(md).toMatch(/### Answered automatically \(1\)/);
+    expect(md).toMatch(/2 comments were skipped/);
+    expect(md).not.toMatch(/```/);
+    expect(md).not.toMatch(/(^|\s)@team/);
+    expect(md).not.toMatch(/<!--/);
+    expect(repliesReport({ paused: null, skipped: 3, entries: [] })).toBeNull();
+    expect(repliesReport({ paused: "two verification questions failed", skipped: 0, entries: [] })).toMatch(/Replies are paused/);
+  });
+
+  it("opens one issue a day and comments on it after that", async () => {
+    const gh = [];
+    let open = [];
+    const fetcher = async (url, init = {}) => {
+      const u = String(url);
+      if (u.startsWith("https://oidc.example")) return json({ value: "oidc" });
+      if (u === "https://theagentforge.io/api/v1/social/moltbook/replies") return json(report);
+      gh.push([init.method ?? "GET", u.replace("https://api.github.com/repos/theagentforge/forge", ""), init.body ? JSON.parse(init.body) : null]);
+      if (u.includes("/issues?state=open")) return json(open);
+      if (u.endsWith("/issues") && init.method === "POST") return json({ number: 300 });
+      return json({});
+    };
+    const env = { GITHUB_REPOSITORY: "theagentforge/forge", GITHUB_TOKEN: "t", ACTIONS_ID_TOKEN_REQUEST_URL: "https://oidc.example/?x=1", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "r" };
+    const now = Date.parse("2026-10-24T14:12Z");
+    expect(await replies("https://theagentforge.io", env, fetcher, now)).toEqual(["#300: opened"]);
+    expect(gh.find(([m, p]) => m === "POST" && p === "/issues")[2].title).toBe("Moltbook replies: 2026-10-24");
+    expect(gh.find(([m, p]) => p === "/issues/300/labels")[2]).toEqual({ labels: [REPLIES_LABEL] });
+    open = [{ number: 300, title: "Moltbook replies: 2026-10-24" }];
+    expect(await replies("https://theagentforge.io", env, fetcher, now)).toEqual(["#300: commented"]);
   });
 });

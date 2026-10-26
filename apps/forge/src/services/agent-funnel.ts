@@ -1,6 +1,7 @@
-import { and, eq, gte, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, like, lte, notInArray, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
+import { isInternalClient } from "./internal";
 
 // The agent funnel (Dinike, 20 Oct 2026: "a metric on our site that shows the numbers of agents that have used our
 // site... monitor this very clearly and actively"). From the daily counters, five stages over a window:
@@ -16,14 +17,106 @@ export const DIRECTORY_CLIENTS = ["glama", "smithery", "pulsemcp", "mcp-registry
 // so a name pattern catches them (forge-scout, our own collector, too).
 const CHECKER_NAME = /probe|prober|catalog|index|crawl|scan|scrape|check|health|registry|inventory|score|rank|monitor|watch|triage|snapshot|research|collector|bench|tlog|spike|scout|(^|-)ping|(^|-)ci$/i;
 
-/** True when an MCP client name is a directory, catalogue or checker rather than an agent doing work. */
-export const isDirectoryClient = (name: string) => DIRECTORY_CLIENTS.includes(name) || CHECKER_NAME.test(name);
+/**
+ * Our own callers' client names, never agents (K7): the names they used before they were tagged, plus the tagged
+ * form `theagentforge-internal-<component>` (services/internal.ts). Tagged traffic is counted as `internal:*` and never
+ * reaches `mcp:client:*`; this keeps older rows out of the agent counts too.
+ */
+export const OUR_CLIENTS = ["forge-scout", "theagentforge-house-tester"];
+export const isOurClient = (name: string) => OUR_CLIENTS.includes(name) || isInternalClient(name);
+
+/** True when an MCP client name is a directory, catalogue or checker, or one of ours, rather than an agent doing work. */
+export const isDirectoryClient = (name: string) => isOurClient(name) || DIRECTORY_CLIENTS.includes(name) || CHECKER_NAME.test(name);
+
+/**
+ * Agent apps people use, by the name they report. Most of them (claude.ai among them) speak the 2025 protocol, whose
+ * tool calls don't carry the client's name, so "no calls under its name" proves nothing: these are never monitors.
+ */
+export const AGENT_APPS =
+  /^(anthropicclaudeai|claude-ai|claude|claude-code|claude-desktop|cursor|vscode|visual studio code|copilot|github-copilot|codex|gemini|gemini-cli|cline|clinecore|roo|roo-code|kilo|kilo-code|goose|lm studio|lmstudio|windsurf|zed|continue|openai-mcp|chatgpt|perplexity|mistral|le-chat|jetbrains|warp|amp|opencode|librechat|msty|raycast|cherry studio)([ ._-]|$)/;
+
+/**
+ * What a client name is, from its own name and the 7 days of counts ending on the day read (ADR 0050):
+ * - ours: our own probes (K7), never counted;
+ * - directory: a directory, catalogue or checker that names itself (glama, *-probe, *-scanner...);
+ * - monitor: any other name with sessions but not one tool call under its name in those 7 days (mcpbeat, histor):
+ *   catalog coverage, not demand. "unknown" (clients that give no name) and the AGENT_APPS are never monitors;
+ * - agent: everything else, counted as demand.
+ */
+export type ClientKind = "ours" | "directory" | "monitor" | "agent";
+export function clientKind(name: string, sessions7d: number, calls7d: number): ClientKind {
+  if (isOurClient(name)) return "ours";
+  if (isDirectoryClient(name)) return "directory";
+  if (sessions7d > 0 && calls7d === 0 && name !== "unknown" && !AGENT_APPS.test(name)) return "monitor";
+  return "agent";
+}
+
+/** Each client name's sessions and named calls among `mcp:client:<name>` and `mcp:clientcall:<name>` rows. */
+export function clientTotals(rows: { key: string; n: number | string }[]) {
+  const out = new Map<string, { sessions: number; calls: number }>();
+  for (const r of rows) {
+    const m = /^mcp:client(call)?:(.+)$/.exec(r.key);
+    if (!m) continue;
+    const c = out.get(m[2]!) ?? { sessions: 0, calls: 0 };
+    if (m[1]) c.calls += Number(r.n);
+    else c.sessions += Number(r.n);
+    out.set(m[2]!, c);
+  }
+  return out;
+}
+
+/** Client kinds from rows that cover the 7 days to classify over. */
+export function clientKinds(rows: { key: string; n: number | string }[]) {
+  return new Map([...clientTotals(rows)].map(([name, c]) => [name, clientKind(name, c.sessions, c.calls)] as const));
+}
+
+/**
+ * The parts of a window's connection and call counts that aren't demand, from its client rows and the kinds: sessions
+ * of monitors (name-matched directories are directorySessions), sessions under our own older names, and tool calls
+ * named by ours, directories and monitors (each is in `mcp:<endpoint>:calls` too, so these are subtracted).
+ */
+export function notDemand(rows: { key: string; n: number | string }[], kinds: Map<string, ClientKind>) {
+  let monitorSessions = 0, ownSessions = 0, catalogSessions = 0, catalogCalls = 0;
+  const names = new Set<string>();
+  for (const [name, c] of clientTotals(rows)) {
+    const kind = kinds.get(name) ?? clientKind(name, c.sessions, c.calls);
+    if (kind === "agent") continue;
+    catalogCalls += c.calls;
+    if (kind === "monitor") monitorSessions += c.sessions;
+    if (kind === "ours") ownSessions += c.sessions;
+    else {
+      catalogSessions += c.sessions;
+      if (c.sessions + c.calls > 0) names.add(name);
+    }
+  }
+  return { monitorSessions, ownSessions, catalogCalls, monitorsAndCatalogs: { clients: names.size, sessions: catalogSessions, calls: catalogCalls } };
+}
+
+/** The UTC day `n` days before day `d` (YYYY-MM-DD). */
+export const daysBefore = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+
+/** For one day: the client kinds over the 7 days ending that day, and that day's counts that aren't demand. */
+export function notDemandOn(rows: { day: string; key: string; n: number | string }[], d: string) {
+  const from = daysBefore(d, 6);
+  const kinds = clientKinds(rows.filter((r) => r.day >= from && r.day <= d));
+  return notDemand(rows.filter((r) => r.day === d), kinds);
+}
 
 /** Sessions from directory and checker clients among `mcp:client:<name>` counter rows. */
 export const directorySessions = (rows: { key: string; n: number | string }[]) =>
   rows.filter((r) => r.key.startsWith("mcp:client:") && isDirectoryClient(r.key.slice("mcp:client:".length))).reduce((a, r) => a + Number(r.n), 0);
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/** `internal:<component>:<what>` rows summed by component, e.g. { scout: 12, screens: 40 }. */
+export function internalByComponent(rows: { key: string; n: number | string }[]) {
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const m = /^internal:([a-z0-9-]+):/.exec(r.key);
+    if (m) out[m[1]!] = (out[m[1]!] ?? 0) + Number(r.n);
+  }
+  return out;
+}
 
 /** People outside the project: not House, not a founder account (ADMIN_GITHUB_IDS). A condition on `humans`. */
 export function outsidePeople(env: Pick<Env, "ADMIN_GITHUB_IDS">) {
@@ -34,13 +127,16 @@ export function outsidePeople(env: Pick<Env, "ADMIN_GITHUB_IDS">) {
 export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   const db = getDb(env);
   const since = day(now - (days - 1) * 86_400_000);
+  // Whole UTC days up to `now`'s day: a window that ends yesterday doesn't take in today's partial counts.
+  const until = day(now);
   const rows = await db
     .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
     .from(t.usageDaily)
     .where(
       and(
         gte(t.usageDaily.day, since),
-        sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} like 'skillmd:%' or ${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'connect:%')`,
+        lte(t.usageDaily.day, until),
+        sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} like 'skillmd:%' or ${t.usageDaily.key} like 'scan:%' or ${t.usageDaily.key} like 'watch:%' or ${t.usageDaily.key} like 'connect:%' or ${t.usageDaily.key} like 'internal:%')`,
       ),
     )
     .groupBy(t.usageDaily.key);
@@ -53,16 +149,26 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
   const skillFiles = get("skillmd:agent") + get("skills:index") + sum("skills:file:");
   const found = aiFetches + discovery + skillFiles;
 
-  // Connected: MCP sessions on our three endpoints, less directory health checks, plus A2A requests.
+  // Which client names are monitors: the 7 days ending on `now`'s day, whatever the window (ADR 0050).
+  const trailing = await db
+    .select({ key: t.usageDaily.key, n: sql<number>`sum(${t.usageDaily.n})` })
+    .from(t.usageDaily)
+    .where(and(gte(t.usageDaily.day, day(now - 6 * 86_400_000)), lte(t.usageDaily.day, until), or(like(t.usageDaily.key, "mcp:client:%"), like(t.usageDaily.key, "mcp:clientcall:%"))))
+    .groupBy(t.usageDaily.key);
+  const away = notDemand(rows, clientKinds(trailing));
+
+  // Connected: MCP sessions on our three endpoints, less directory health checks and monitors, plus A2A requests.
   const directoryChecks = directorySessions(rows);
-  const mcpSessions = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directoryChecks);
+  const mcpSessions = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - directoryChecks - away.monitorSessions);
   const a2a = get("a2a:requests");
   const connected = mcpSessions + a2a;
 
-  // Used a tool: MCP tool calls, A2A skill calls and API scans. (Each A2A request runs one skill, counted once.)
+  // Used a tool: MCP tool calls from outside clients, A2A skill calls and API scans. (Each A2A request runs one skill,
+  // counted once.) Calls that a directory, a monitor or one of ours made under its own name are left out.
   const toolCalls = get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls");
+  const outsideMcpCalls = Math.max(0, toolCalls - away.catalogCalls);
   const apiScans = get("scan:api");
-  const used = toolCalls + a2a + apiScans;
+  const used = outsideMcpCalls + a2a + apiScans;
 
   // Came back: weekly-watch check-ins (an agent re-checking what it installed, by itself).
   const returned = get("watch:calls");
@@ -103,11 +209,27 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
       tool_calls: toolCalls,
       api_scans: apiScans,
       directory_health_checks: directoryChecks,
+      /** Sessions from names with no tool call under their name in 7 days (ADR 0050), in no stage. */
+      monitor_sessions: away.monitorSessions,
+      /** Directories, catalogues, checkers and monitors together: catalog coverage, not demand (ADR 0050). */
+      monitors_and_catalogs: away.monitorsAndCatalogs,
+      /** Sessions under our own older client names (forge-scout...); they are inside directory_health_checks. */
+      own_client_sessions: away.ownSessions,
+      /** MCP tool calls from outside clients (House, ours, directories and monitors left out) plus A2A requests. */
+      outside_tool_calls: outsideMcpCalls + a2a,
       house_mcp_sessions: get("mcp:house:sessions"),
       found_with_intent: foundWithIntent,
       mcp_client_apps_on_2plus_days: repeatClients,
       /** People who finished /connect: their AI checked the page's one-time test code. */
       connect_tests_passed: get("connect:test-passed"),
+      /** The /connect steps before it (ADR 0050): tile chosen, install link or command copied, test code shown. */
+      connect_tiles_chosen: sum("connect:tile:"),
+      connect_copied: sum("connect:copied:") - get("connect:copied:test-prompt"),
+      connect_test_prompt_copied: get("connect:copied:test-prompt"),
+      connect_code_shown: get("connect:code-shown"),
+      /** Our own probes (K7: Scout, CI install tests, House, screens, our Action), in no stage above. */
+      internal_requests: sum("internal:"),
+      internal_by_component: internalByComponent(rows),
     },
     signed_in_agents_all_time: Number(a?.n ?? 0),
   };
@@ -116,20 +238,22 @@ export async function agentFunnel(env: Env, now = Date.now(), days = 7) {
 /** Daily totals of the first three stages for the last `days` days, oldest first, in one query. */
 export async function agentFunnelDaily(env: Env, now = Date.now(), days = 14) {
   const db = getDb(env);
-  const since = day(now - (days - 1) * 86_400_000);
+  // Six days more than shown, so each day's monitors are read over the 7 days ending that day.
+  const since = day(now - (days - 1 + 6) * 86_400_000);
   const rows = await db
     .select({ day: t.usageDaily.day, key: t.usageDaily.key, n: t.usageDaily.n })
     .from(t.usageDaily)
-    .where(and(gte(t.usageDaily.day, since), sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} = 'skillmd:agent' or ${t.usageDaily.key} = 'scan:api')`));
+    .where(and(gte(t.usageDaily.day, since), lte(t.usageDaily.day, day(now)), sql`(${t.usageDaily.key} like 'mcp:%' or ${t.usageDaily.key} like 'a2a:%' or ${t.usageDaily.key} like 'ai:%' or ${t.usageDaily.key} like 'disc:%' or ${t.usageDaily.key} like 'skills:%' or ${t.usageDaily.key} = 'skillmd:agent' or ${t.usageDaily.key} = 'scan:api')`));
   return Array.from({ length: days }, (_, i) => {
     const d = day(now - (days - 1 - i) * 86_400_000);
     const r = rows.filter((x) => x.day === d);
     const get = (k: string) => r.filter((x) => x.key === k).reduce((a, x) => a + x.n, 0);
     const pre = (p: string) => r.filter((x) => x.key.startsWith(p)).reduce((a, x) => a + x.n, 0);
     const dir = directorySessions(r);
+    const away = notDemandOn(rows, d);
     const found = get("ai:indexer") + get("ai:live") + get("ai:coding") + pre("disc:") + get("skillmd:agent") + get("skills:index") + pre("skills:file:");
-    const connected = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - dir) + get("a2a:requests");
-    const used = get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls") + get("a2a:requests") + get("scan:api");
+    const connected = Math.max(0, get("mcp:public:sessions") + get("mcp:gauntlet:sessions") + get("mcp:signed_in:sessions") - dir - away.monitorSessions) + get("a2a:requests");
+    const used = Math.max(0, get("mcp:public:calls") + get("mcp:gauntlet:calls") + get("mcp:signed_in:calls") - away.catalogCalls) + get("a2a:requests") + get("scan:api");
     return { day: d, found, connected, used };
   });
 }
@@ -137,8 +261,8 @@ export async function agentFunnelDaily(env: Env, now = Date.now(), days = 14) {
 /** The five stages in order, with their plain-English labels. */
 export const FUNNEL_STAGES = [
   ["found", "found us", "AI agents fetched our pages, discovery files or skill files"],
-  ["connected", "connected", "AI apps opened an MCP session or sent an A2A request (directory health checks left out)"],
-  ["used", "used a tool", "tool calls, A2A skill calls and API scans"],
+  ["connected", "connected", "AI apps opened an MCP session or sent an A2A request (directory health checks and monitors left out)"],
+  ["used", "used a tool", "tool calls from outside apps, A2A skill calls and API scans"],
   ["returned", "came back", "weekly-watch check-ins: an agent re-checking what it installed, by itself"],
   ["contributed", "contributed", "field reports from agents of people outside the project"],
 ] as const;
@@ -189,8 +313,8 @@ export async function liveAgentCounts(env: Env, now = Date.now()) {
     .where(and(eq(t.usageDaily.key, "visit:all"), gte(t.usageDaily.day, PAGE_VIEWS_SINCE)));
   const all = {
     found: f.stages.found,
-    connected: d.mcp_sessions + d.directory_health_checks + d.house_mcp_sessions + d.a2a_requests,
-    used: f.stages.used + houseCalls,
+    connected: d.mcp_sessions + d.directory_health_checks + d.monitor_sessions + d.house_mcp_sessions + d.a2a_requests,
+    used: f.stages.used + d.monitors_and_catalogs.calls + houseCalls,
   };
   const shown = (v: number) => (v > 0 ? v : null);
   return {

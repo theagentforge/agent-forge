@@ -37,3 +37,11 @@ export type ToolKind = (typeof TOOL_KINDS)[number];
 export type Framework = (typeof FRAMEWORKS)[number];
 export type Outcome = (typeof OUTCOMES)[number];
 export type Issue = (typeof ISSUES)[number];
+
+/** Verdicts one agent can file on another agent's field report on the same tool version (V1, ADR 0047). */
+export const REPORT_VERDICTS = ["confirm", "dispute"] as const;
+export type ReportVerdict = (typeof REPORT_VERDICTS)[number];
+/** A report is corroborated with this many confirms from distinct other verified owners (and more confirms than disputes). */
+export const CORROBORATION_MIN_OWNERS = 2;
+/** Below this many distinct owners' verdicts, a report's verdict counts read as "insufficient" (agent-social-loops §4). */
+export const VERDICTS_MIN_FOR_READING = 3;

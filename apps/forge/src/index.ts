@@ -7,15 +7,22 @@ import { protectedApi, publicApi } from "./api";
 import { auth } from "./auth";
 import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
 import { type McpEndpoint, recordMcp } from "./services/usage";
+import { type InternalComponent, internalOf } from "./services/internal";
 import { seedRun } from "./seed/mcp-registry";
 import { seedReferenceServers } from "./seed/reference-servers";
+import { seedAiStack } from "./seed/ai-stack";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
+import { rescoreTick } from "./arena/rescore-job";
 import { refreshClipIndex } from "./arena/clips";
 import { sweepGauntletLogs } from "./arena/gauntlet";
+import { writeSeasonSnapshot } from "./arena/season";
 import { importSkillSeed } from "./services/skill-seed";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
+import { getDb } from "./services/db";
+import { writeLadderSnapshot } from "./services/digest";
+import { runMoltbookReplies } from "./social/moltbook-replies";
 import { notFound, site } from "./web/pages";
 import "./web/static-pages";
 import "./web/about";
@@ -28,11 +35,17 @@ import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
 import "./web/gauntlet";
+import "./web/gauntlet-season";
 import "./web/scan";
 import "./web/arena-agent";
 import "./web/arena-methodology";
+import "./web/croissant";
+import "./web/results-policy";
 import "./web/arena-clip";
 import "./web/arena-failures";
+import "./web/arena-fotw";
+import "./web/arena-business";
+import "./web/arena-answers";
 import "./web/badge";
 import "./web/registry";
 import "./web/house-report";
@@ -40,11 +53,14 @@ import "./web/trap-card";
 import "./web/connect";
 import "./web/contribute";
 import "./web/dashboard";
+import "./web/digest-feed";
 import "./web/publishers";
 import "./web/og";
 import "./a2a";
 import "./web/answers";
 import "./web/skills-index";
+import "./web/receipt";
+import "./web/openapi";
 import { CARD_PATHS } from "./web/discovery";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
@@ -110,6 +126,13 @@ export default {
       } catch (e) {
         console.error("arena_tick_failed", String(e));
       }
+      // Re-scoring stored runs under the current referee, when a job is set in KV (arena/rescore-job.ts).
+      try {
+        const r = await rescoreTick(env);
+        if (r) console.log("arena_rescore", JSON.stringify({ mode: r.mode, checked: r.checked, changed: r.changed.length, unfaithful: r.unfaithful.length, errors: r.errors.length, done: r.done }));
+      } catch (e) {
+        console.error("arena_rescore_failed", String(e));
+      }
       return;
     }
     ctx.waitUntil(
@@ -145,6 +168,12 @@ export default {
       ),
     );
     ctx.waitUntil(
+      seedAiStack(env).then(
+        (n) => n && console.log("seed_ai_stack", n),
+        (e) => console.error("seed_ai_stack_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
       seedRun(env).then(
         (r) => console.log("seed_run", JSON.stringify(r)),
         (e) => console.error("seed_failed", String(e)),
@@ -168,12 +197,35 @@ export default {
         (e) => console.error("gauntlet_sweep_failed", String(e)),
       ),
     );
+    // ADR 0055: Gauntlet Season 1's weekly snapshot, frozen once at the end of each season week.
+    ctx.waitUntil(
+      writeSeasonSnapshot(env, controller.scheduledTime).then(
+        (r) => r.written && console.log("season_snapshot", JSON.stringify(r)),
+        (e) => console.error("season_snapshot_failed", String(e)),
+      ),
+    );
+    // V5: one Ranked Ladder snapshot a day (written once), so the weekly digest can show rank moves.
+    ctx.waitUntil(
+      writeLadderSnapshot(env, getDb(env), controller.scheduledTime).then(
+        (r) => r.written && console.log("ladder_snapshot", JSON.stringify(r)),
+        (e) => console.error("ladder_snapshot_failed", String(e)),
+      ),
+    );
     ctx.waitUntil(
       sweepPendingNotes(env).then(
         (r) => console.log("note_sweep", JSON.stringify(r)),
         (e) => console.error("note_sweep_failed", String(e)),
       ),
     );
+    // Answers to questions on our own Moltbook posts (ADR 0044). Awaited, not waitUntil: replies are 25 s apart, longer
+    // than waitUntil allows after the handler returns. Pages are read from this Worker itself, as JSON.
+    const readPage = async (path: string) => {
+      const sep = path.includes("?") ? "&" : "?";
+      const r = await app.fetch(new Request(`${env.PUBLIC_ORIGIN}${path}${sep}format=json`), env, ctx);
+      return r.ok ? r.text() : null;
+    };
+    // Production only: staging shares no comments with it, and two Workers answering the same thread would double up.
+    if (env.ENVIRONMENT === "production") console.log("moltbook_replies", JSON.stringify(await runMoltbookReplies(env, readPage)));
   },
   fetch(request, env, ctx) {
     // The anonymous, read-only MCP endpoint (ADR 0017 §3) is answered before the OAuth provider, which would
@@ -184,11 +236,24 @@ export default {
       url.pathname = PUBLIC_MCP_ROUTE;
       request = new Request(url, request);
     }
+    // Clients that send no Accept, or */*, on an MCP POST were refused with 406 (24 Oct check); the answer is the same
+    // JSON-RPC either way, so they get the pair the MCP handler expects.
+    if (request.method === "POST" && (url.pathname === PUBLIC_MCP_ROUTE || url.pathname === GAUNTLET_MCP_ROUTE)) {
+      const accept = request.headers.get("accept") ?? "";
+      if (!accept.trim() || accept.trim() === "*/*") {
+        const headers = new Headers(request.headers);
+        headers.set("Accept", "application/json, text/event-stream");
+        request = new Request(request, { headers });
+      }
+    }
     const path = url.pathname;
     // Usage counts (services/usage.ts): read from a copy of the body, counted only when the endpoint accepted it.
-    const counted = (endpoint: McpEndpoint, res: Response | Promise<Response>, copy: Request | null) =>
+    const counted = (endpoint: McpEndpoint, res: Response | Promise<Response>, copy: Request | null, internal: InternalComponent | null = null) =>
       Promise.resolve(res).then((r) => {
-        if (copy && r.status < 400) ctx.waitUntil(recordMcp(env, endpoint, copy));
+        if (copy && r.status < 400) ctx.waitUntil(recordMcp(env, endpoint, copy, Date.now(), internal));
+        // Refusals are logged with the JSON-RPC method and protocol version (no arguments), so they can be traced.
+        else if (copy && r.status === 400)
+          ctx.waitUntil(copy.json().then((b) => console.warn("mcp_400", endpoint, String((b as { method?: unknown })?.method ?? "").slice(0, 60), (request.headers.get("mcp-protocol-version") ?? "").slice(0, 20)), () => console.warn("mcp_400", endpoint, "unparsable")));
         return r;
       });
     const copyIfPost = () => (request.method === "POST" ? request.clone() : null);
@@ -204,13 +269,16 @@ export default {
       if (accept.includes("text/html")) return Response.redirect(`${env.PUBLIC_ORIGIN}${route === PUBLIC_MCP_ROUTE ? "/connect" : "/gauntlet"}`, 302);
       return app.fetch(new Request(new URL(`${route}/server-card`, request.url), request), env, ctx);
     }
+    // Our own probes (services/internal.ts), by header, User-Agent or MCP client name: counted apart, served the same.
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
-      return counted("public", publicMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return internalOf(request).then((internal) => counted("public", publicMcpHandler(env, ip, internal)(request, env, ctx), copy, internal));
     }
     if (path === GAUNTLET_MCP_ROUTE || path.startsWith(`${GAUNTLET_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
-      return counted("gauntlet", gauntletMcpHandler(env, request.headers.get("CF-Connecting-IP") ?? "unknown")(request, env, ctx), copy);
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return internalOf(request).then((internal) => counted("gauntlet", gauntletMcpHandler(env, ip, internal)(request, env, ctx), copy, internal));
     }
     let provider = providers.get(env.PUBLIC_ORIGIN);
     if (!provider) {
@@ -234,7 +302,8 @@ export default {
         }
         headers.set("Content-Type", "application/json");
         headers.delete("Content-Length");
-        return new Response(JSON.stringify({ ...body, public_endpoint: `${env.PUBLIC_ORIGIN}${PUBLIC_MCP_ROUTE}` }), { status: 401, headers });
+        // ADR 0056: and where a person connects an agent, the one step that filing reports needs (data, not a prompt).
+        return new Response(JSON.stringify({ ...body, public_endpoint: `${env.PUBLIC_ORIGIN}${PUBLIC_MCP_ROUTE}`, connect_url: `${env.PUBLIC_ORIGIN}/connect` }), { status: 401, headers });
       });
     });
   },

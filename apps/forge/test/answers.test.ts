@@ -51,6 +51,16 @@ describe("GET /tools/<id>", () => {
     expect(body).toContain(`https://github.com/acme-ans/skills/blob/${SHA}/skills/pdf-merge/SKILL.md#L4`);
     expect(body).toContain('href="/scan/rules#FS-EXE-001"');
     expect(body).toContain('"@type":"QAPage"');
+    // Every field Google's Search Console asked for on Q&A pages (24 Oct email).
+    const ld = [...body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]!)).find((x) => x["@type"] === "QAPage");
+    const q = ld.mainEntity;
+    expect(q.author).toMatchObject({ "@type": "Organization", name: "The Agent Forge" });
+    expect(q.author.url).toMatch(/\/about$/);
+    expect(q.datePublished).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(q.acceptedAnswer.url).toMatch(/\/tools\/github\.com\/acme-ans\/skills\/skills\/pdf-merge#answer$/);
+    expect(q.acceptedAnswer.upvoteCount).toBe(0);
+    expect(q.acceptedAnswer.author.url).toMatch(/\/about$/);
+    expect(body).toContain('id="answer"');
     expect(body).not.toMatch(/name="robots" content="noindex/);
     expect(body).not.toMatch(/\bsafe from\b|\bguarantee[ds]\b|\bprotects?\b/i);
   });

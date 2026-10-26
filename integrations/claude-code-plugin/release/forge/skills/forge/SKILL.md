@@ -39,9 +39,15 @@ For a whole MCP server (all its tools together), use `show --server <server name
 `show --server github` for the tools named `mcp__github__…`.
 
 ## Report drafts at the end of a session
-When a session used an MCP server at least 3 times, the plugin drafts a report for it when you finish, and asks you to
-check with your human first. Ask in one line exactly as the plugin words it. File the reports only after a clear yes.
-Otherwise just finish. The plugin won't ask about the same server again for 3 days.
+When a session used an MCP server at least 3 times, or installed a tool the plugin checked, the plugin lists field
+report drafts when you finish, with the owner's yes/no question word for word. Each install draft has a one-step link
+your human can open to file it with one click, and a ready `forge_report` body. File only after a clear yes from your
+human; nothing is filed otherwise. The plugin won't draft the same tool again for 3 days.
+
+## What changed since the last check
+On a repeat check of the same tool version, and once a week at session start, the plugin lists what changed since
+this machine's last answer: new reports, new advisories, a changed verdict, or skills that need a fresh scan. It's
+data about the tool, kept on this machine; the receipt link is a signed record of the answer.
 
 ## When a tool keeps failing
 If the plugin says a tool failed 3 times in a row: check it on the Forge, file a report, then retry once in a fresh

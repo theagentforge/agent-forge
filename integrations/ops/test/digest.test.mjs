@@ -73,6 +73,24 @@ describe("ops digest", () => {
     expect(render({ now: {}, history: [] }, "2026-10-21", null, g)).toContain("AI agents using the Forge, last 7 days");
     expect(funnelLine({})).toBeNull();
   });
+
+  it("leads with tool calls from outside clients and keeps monitors and catalogs on their own line (ADR 0050)", () => {
+    const g = {
+      agent_funnel_7d: {
+        days: 7,
+        stages: { found: 1178, connected: 30, used: 40, returned: 2, contributed: 0 },
+        rates: {},
+        detail: { directory_health_checks: 663, monitor_sessions: 236, house_mcp_sessions: 50, outside_tool_calls: 35, monitors_and_catalogs: { clients: 60, sessions: 899, calls: 1 } },
+        signed_in_agents_all_time: 1,
+      },
+      agent_funnel_yesterday: { found: 100, connected: 4, used: 6, returned: 0, contributed: 0 },
+      outside_tool_calls_yesterday: 5,
+    };
+    const line = funnelLine(g);
+    expect(line).toContain("Tool calls from outside clients: **35** (yesterday 5).");
+    expect(line).toContain("Monitors and catalogs: 899 sessions, 1 calls (60 names), not counted as demand.");
+    expect(line).toContain("Left out: 663 directory health checks, 236 monitor sessions, 50 House sessions.");
+  });
 });
 
 describe("the growth KPIs in the digest (ADR 0039)", () => {

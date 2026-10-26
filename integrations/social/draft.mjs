@@ -38,11 +38,12 @@ export function tagLinks(text, type) {
  * Picks the first wording whose opening hasn't been used in the last 14 days and that fits X's limit. Main posts never
  * carry a URL (it's stripped), and the link reply is dropped if today already has one. Returns null if nothing fits.
  */
-export function chooseDraft(draft, { recentOpenings, linkReplyToday }) {
+export function chooseDraft(draft, { recentOpenings, linkReplyToday, accept = () => true }) {
   for (const raw of draft.texts) {
     const text = raw.replace(URL_RE, "").replace(/[ \t]+\n/g, "\n").trim();
     if (!text || weightedLength(text) > 280) continue;
     if (recentOpenings.has(opening(text))) continue;
+    if (!accept(text)) continue;
     const reply = draft.reply && !linkReplyToday ? tagLinks(draft.reply, draft.type) : null;
     return { text, reply };
   }
@@ -50,7 +51,7 @@ export function chooseDraft(draft, { recentOpenings, linkReplyToday }) {
 }
 
 /** The issue body for one draft: the post block (and its reply), and the facts the verifier re-checks. */
-export function draftBody(draft, chosen, date, swap = null) {
+export function draftBody(draft, chosen, date, swap = null, moltbookIssue = null) {
   const lines = [chosen.text];
   if (draft.image) lines.push(`image: ${draft.image}`);
   if (draft.alt) lines.push(`alt: ${draft.alt.replace(/\s+/g, " ").slice(0, 1000)}`);
@@ -64,7 +65,9 @@ export function draftBody(draft, chosen, date, swap = null) {
     `**Auto-drafted ${draft.type}** for ${date} (US Eastern), from live data (social strategy §6, ADR 0010).`,
     draft.milestone
       ? "A milestone (outside agents only). **It waits for your `approve`.** Before approving, thank or tag the people behind it by hand if they said yes; the pipeline never mentions anyone."
-      : "It posts by itself at the time below once the verifier labels it `verified`, unless you comment `hold`. The first post of each type waits for your `approve`.",
+      : draft.approveOnly
+        ? `Fail of the Week (V4). **It waits for your \`approve\`; it never posts by itself.** Every number is on ${draft.facts?.sources?.[0] ? `\`${draft.facts.sources[0].replace(/\?format=json$/, "")}\`` : "its page"}; open the replay before approving.${moltbookIssue ? ` The Moltbook draft is #${moltbookIssue} (its own \`approve\`; skip it if another Moltbook post is planned that day).` : ""}`
+        : "It posts by itself at the time below once the verifier labels it `verified`, unless you comment `hold`. The first post of each type waits for your `approve`.",
     "",
     ...blocks,
     "",
@@ -174,16 +177,32 @@ export async function draft(site, env = process.env, fetcher = fetch, now = Date
       log.push(`${d.type}: another post is within 3 hours of ${d.at}; skipped`);
       continue;
     }
-    const chosen = chooseDraft(d, { recentOpenings, linkReplyToday });
+    // Approve-only drafts never meet the verifier (it only reads "auto" issues), so its wording and number checks run
+    // here, before filing: no banned words, and every number in the post is one of the recorded facts.
+    const accept = d.approveOnly ? (text) => approveOnlyProblems(text, d).length === 0 : undefined;
+    const chosen = chooseDraft(d, { recentOpenings, linkReplyToday, accept });
     if (!chosen) {
-      log.push(`${d.type}: every wording repeats a recent opening or is too long; skipped`);
+      log.push(`${d.type}: every wording repeats a recent opening, is too long or fails the checks; skipped`);
       continue;
     }
-    const body = draftBody(d, chosen, date, swap);
+    let moltbookIssue = null;
+    if (d.moltbook) {
+      try {
+        const mb = await moltbookDraftBody(d, date);
+        const made = await gh("POST", `/issues`, { title: `Moltbook: ${d.type} (${date})`, body: mb, labels: ["moltbook", `type:${d.type}`] });
+        moltbookIssue = made?.number ?? null;
+        log.push(`${d.type}: Moltbook draft filed${moltbookIssue ? ` as #${moltbookIssue}` : ""}`);
+      } catch (e) {
+        log.push(`${d.type}: Moltbook draft not filed (${String(e?.message ?? e)})`);
+      }
+    }
+    const body = draftBody(d, chosen, date, swap, moltbookIssue);
     validatePosts(parsePosts(body));
-    // Milestones are claims about us, so they always go through approve (no "auto" label, so never auto-published).
-    const labels = d.milestone ? ["post", `type:${d.type}`] : ["post", "auto", `type:${d.type}`];
-    await gh("POST", `/issues`, { title: d.milestone ? `X milestone: ${d.milestone} (${date})` : `X auto: ${d.type} (${date})`, body, labels });
+    // Milestones are claims about us, and approve-only types (Fail of the Week) name a model's fail, so both always go
+    // through approve: no "auto" label, so never auto-published.
+    const manual = d.milestone || d.approveOnly;
+    const labels = manual ? ["post", `type:${d.type}`] : ["post", "auto", `type:${d.type}`];
+    await gh("POST", `/issues`, { title: d.milestone ? `X milestone: ${d.milestone} (${date})` : d.approveOnly ? `X approve: ${d.type} (${date})` : `X auto: ${d.type} (${date})`, body, labels });
     recentOpenings.add(opening(chosen.text));
     taken.push(at);
     if (chosen.reply) linkReplyToday = true;
@@ -201,6 +220,41 @@ export function claimedNumbers(text, names) {
   for (const n of [...names].sort((a, b) => b.length - a.length)) t = t.split(n).join(" ");
   t = t.replace(/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/g, " ").replace(/\b\d{1,2}(:\d{2})? ?(am|pm) ET\b/gi, " ").replace(/Lab #\d+/g, " ");
   return (t.match(/\d[\d,]*(\.\d+)?/g) ?? []).map((s) => Number(s.replace(/,/g, "")));
+}
+
+/** Why an approve-only post can't be filed: a URL, banned wording, or a number that isn't a recorded fact. */
+export function approveOnlyProblems(text, draft) {
+  const why = [];
+  if (/https?:\/\//.test(text)) why.push("the main post has a URL");
+  if (BANNED.test(text)) why.push(`banned wording: "${BANNED.exec(text)[0]}"`);
+  const allowed = new Set(draft.facts?.numbers ?? []);
+  const stray = claimedNumbers(text, draft.facts?.names ?? []).filter((n) => !allowed.has(n));
+  if (stray.length) why.push(`numbers not in the recorded facts: ${stray.join(", ")}`);
+  return why;
+}
+
+/**
+ * The Moltbook issue for a draft's `moltbook` post: one undated ```moltbook block (posted when approved), checked with
+ * the Moltbook script's own parser (banned words, no instructions to agents, an evidence link, at most 2 links).
+ */
+export async function moltbookDraftBody(draft, date) {
+  const { parseMoltbookPosts } = await import("./moltbook.mjs");
+  const m = draft.moltbook;
+  if (!/^[a-z0-9-]{2,30}$/.test(m.submolt ?? "")) throw new Error("bad submolt");
+  const block = `\`\`\`moltbook ${m.submolt}\n${m.title.replace(/\s+/g, " ").trim()}\n${m.content.trim()}\n\`\`\``;
+  parseMoltbookPosts(block);
+  const allowed = new Set(draft.facts?.numbers ?? []);
+  const stray = claimedNumbers(`${m.title}\n${m.content.replace(/https?:\/\/\S+/g, " ")}`, draft.facts?.names ?? []).filter((n) => !allowed.has(n));
+  if (stray.length) throw new Error(`numbers not in the recorded facts: ${stray.join(", ")}`);
+  return [
+    `**Auto-drafted ${draft.type}** for ${date}, from live data. **It waits for your \`approve\`; it never posts by itself.**`,
+    "At most one Moltbook post a day: skip this one if another is planned today. Every number is on the linked page.",
+    "",
+    block,
+    "",
+    "---",
+    "_Generated by [Claude Code](https://claude.ai/code)_",
+  ].join("\n");
 }
 
 /**

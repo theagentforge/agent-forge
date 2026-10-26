@@ -187,6 +187,14 @@ export async function watchStatus(db: Db, fingerprints: string[]) {
     unknown: items.filter((i) => !i.known).length,
     rescan_needed: items.filter((i) => i.rescan_needed).length,
     items,
+    // ADR 0056: a fresh scan of each public file whose scan is out of date, as a ready-to-send call (data only).
+    ...(() => {
+      const related = rows
+        .filter((r) => r.public && r.sourceUrl && r.rulesVersion !== SCAN_RULES_VERSION)
+        .slice(0, 5)
+        .map((r) => ({ relation: "rescan" as const, tool: "forge_scan" as const, arguments: { url: r.sourceUrl! } }));
+      return related.length ? { related } : {};
+    })(),
   };
 }
 

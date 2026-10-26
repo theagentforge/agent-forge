@@ -43,6 +43,11 @@ describe("a ranked event held for review", () => {
     expect((await fetchWorker(`/arena/event/${SLUG}`)).status).toBe(404);
     expect(JSON.stringify(await arenaStatus(env))).not.toContain(SLUG);
     expect(await (await fetchWorker("/arena?tier=hard")).text()).not.toContain(runId);
+    // Business agent reliability (K3) and its report count nothing from a held event.
+    const biz = (await (await fetchWorker("/arena/business?tier=hard&format=json")).json()) as { attempts: number; events: { slug: string }[] };
+    expect(biz.attempts).toBe(0);
+    expect(biz.events.map((e) => e.slug)).not.toContain(SLUG);
+    expect(await (await fetchWorker("/arena/business.csv?tier=hard")).text()).not.toContain(runId);
   });
 
   it("is published by setting its status to running, with no other change", async () => {
@@ -52,5 +57,8 @@ describe("a ranked event held for review", () => {
     expect(await runWithLog(db, runId)).not.toBeNull();
     expect((await eventCard(db, SLUG))?.runs.map((r) => r.id)).toContain(runId);
     expect((await fetchWorker(`/arena/run/${runId}`)).status).toBe(200);
+    // A fresh URL: the held-state answer above is edge-cached for a minute.
+    const biz = (await (await fetchWorker("/arena/business?tier=all&format=json")).json()) as { attempts: number; events: { slug: string }[] };
+    expect(biz.events.map((e) => e.slug)).toContain(SLUG);
   });
 });

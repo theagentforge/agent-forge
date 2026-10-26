@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { defaultTab, installLinks } from "../src/web/connect";
+import { defaultTab, installLinks, verifyCommands, verifySection } from "../src/web/connect";
+import { AGENT_DIRECTED } from "./wording";
 import { ADVISORY_LINE_UNTIL, HOME_SUBHEAD, VALUE_CARDS, advisoryLine } from "../src/web/pages";
 import { fetchWorker } from "./helpers";
 import "../src/index";
@@ -66,6 +67,39 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
     expect(body).toContain(`claude mcp add --scope user --transport http forge ${pub}`);
     expect(body).toContain("Then test it below");
     expect(body).toContain("data-test-again");
+  });
+
+  it("has a 'Verify your agent' step near the top: signed-in address, one line per CLI, Claude.ai link, dashboard (K5)", async () => {
+    const body = await page("/connect");
+    const start = body.indexOf('id="verify"');
+    expect(start).toBeGreaterThan(0);
+    // Near the top: after the one no-sign-in address, before the checklist and the app tiles.
+    expect(start).toBeGreaterThan(body.indexOf("Any AI app or agent"));
+    expect(start).toBeLessThan(body.indexOf('class="checklist"'));
+    expect(start).toBeLessThan(body.indexOf('class="app-tiles"'));
+    const sec = body.slice(start, body.indexOf("</section>", start));
+    expect(sec).toContain("Verify your agent (GitHub sign-in, 1 minute)");
+    expect(sec).toContain("count toward");
+    expect(sec).toContain("public agent page");
+    const mcp = `${env.PUBLIC_ORIGIN}/mcp`;
+    expect(sec).toContain(`<code id="url-verify">${mcp}</code>`);
+    for (const v of verifyCommands(env.PUBLIC_ORIGIN)) expect(sec).toContain(`<code id="${v.id}">${v.command}</code>`);
+    expect(verifyCommands(env.PUBLIC_ORIGIN).map((v) => v.command)).toEqual([
+      `claude mcp add --scope user --transport http forge-reports ${mcp}`,
+      `codex mcp add forge-reports --url ${mcp}`,
+      `gemini mcp add --transport http forge-reports ${mcp}`,
+    ]);
+    // The pre-filled Claude.ai link opens "Add custom connector" with the signed-in address, and the click path is there.
+    const links = installLinks(env.PUBLIC_ORIGIN);
+    const u = new URL(links.claudeSignedIn);
+    expect(Object.fromEntries(u.searchParams)).toEqual({ modal: "add-custom-connector", connectorName: "The Agent Forge (reports)", connectorUrl: mcp });
+    expect(sec).toContain(links.claudeSignedIn.replace(/&/g, "&amp;"));
+    expect(sec).toContain("Customize → Connectors → + Add → Add custom connector");
+    expect(sec).toContain('href="/dashboard"');
+    // Counts stay internal (Dinike, 23 Oct): the step is the same text whatever the numbers are, and carries none.
+    expect(String(verifySection(env.PUBLIC_ORIGIN, links))).not.toMatch(/\d+ (verified|human-verified|agents? (connected|verified))/i);
+    // Plain steps for people, no agent-directed steering (AGENTS.md rule 7).
+    expect(AGENT_DIRECTED.exec(sec.replace(/<[^>]+>/g, " "))?.[0] ?? null).toBeNull();
   });
 
   it("opens the right tab from where the visitor came from", () => {
