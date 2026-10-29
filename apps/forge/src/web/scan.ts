@@ -20,7 +20,7 @@ export const webScanKeys = (headers: Pick<Headers, "get">, verdict: string, from
 import { AGENT_LINE } from "./agent-line";
 import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
-import { copyBlock } from "./components";
+import { copyBlock, more } from "./components";
 import { answerId, answerPath, latestFingerprintFor } from "./answers";
 import { notFound, send, site, WEBMCP_SCRIPT } from "./pages";
 
@@ -79,13 +79,19 @@ function findingsTable(findings: ScanFinding[]) {
   )}</tbody></table>`;
 }
 
+/** Site audit 29 Oct (§3.11): a 64-character fingerprint one click down, its first 12 characters shown beside the title. */
+function fingerprintMore(fp: string, title = "Fingerprint") {
+  const hex = fp.replace(/^sha256:/, "");
+  return more(title, html`<p class="small"><code class="mono-break">${fp}</code></p>`, { hint: html`<code>${hex.slice(0, 12)}…</code>` });
+}
+
 function resultBlock(r: { verdict: "flagged" | "caution" | "clear"; counts: Record<ScanSeverity, number>; findings: ScanFinding[]; fingerprint: string; rules_version?: string; rulesVersion?: string }, extra: unknown = "") {
   return html`<section class="panel chamfer panel-body scan-result v-${vClass[r.verdict]}" aria-live="polite">
 <p class="eyebrow">Skill scan · rules ${r.rules_version ?? r.rulesVersion}</p>
 <h2 class="scan-verdict">${verdictWord[r.verdict]}</h2>
 <p class="lead">${scanSummary(r)}</p>
 ${findingsTable(r.findings)}
-<p class="small muted mono">${r.fingerprint}</p>
+${fingerprintMore(r.fingerprint)}
 ${r.verdict === "flagged" ? html`<p class="small muted">${FLAG_NOTE}</p>` : ""}
 ${extra}
 </section>`;
@@ -106,7 +112,8 @@ site.get("/scan", async (c) => {
 <p class="lead">Skills are text your agent obeys. We check it for what virus scanners miss: hidden instructions, downloads piped into a shell, key reads, and data sent to throwaway servers.</p>
 ${scanForm()}
 <section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. It then checks each skill before installing it, and rechecks installed ones weekly: one small request.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
-<p class="small muted">The <a href="/skill.md">skill file</a> is plain text: read it first. Fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner and never tells your agent to fetch and follow anything.</p></section>
+<p class="small muted">The <a href="/skill.md">skill file</a> is plain text: read it first. It passes this scanner and never tells your agent to fetch and follow anything.</p>
+${fingerprintMore(ownFp, "The skill file's fingerprint")}</section>
 ${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request: one short comment, with notes on flagged lines. No file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
 ${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skill files scanned so far, our launch and bulk scans included (<a href="/stats/rules#skills_scanned">how it's counted</a>) · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });

@@ -17,7 +17,7 @@ import type { liveAgentCounts } from "./agent-funnel";
 // ADR 0067 (Boardy item 2): every public counter separates third-party activity from our own. "Ours" is House
 // accounts, founder accounts (ADMIN_GITHUB_IDS), our tagged tests and probes (services/internal.ts), the launch-scan
 // seed and the Arena bouts the Forge runs itself. Headline numbers are third-party only. Below the minimum a number
-// reads "below 10": never hidden, never rounded up, and the small number is never stated (it can still be worked
+// (ADR 0099: a public row below its minimum is left out entirely; the old "below 10" wording is gone. Never rounded up; the small number is never stated (it can still be worked
 // out from our own and blended totals, which are exact: the minimum is about what a headline claims, not secrecy). Every rule is written down once,
 // here, and the same objects render /stats/rules and go into /stats.json, so a number can always be reproduced.
 

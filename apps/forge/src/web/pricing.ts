@@ -8,6 +8,7 @@ import { getDb } from "../services/db";
 import { createCheckout, createPortal, handlePolarWebhook, POLAR_WEBHOOK_PATH } from "../services/polar";
 import { csrfToken } from "./session";
 import { currentSession, guardPost } from "./dashboard";
+import { more } from "./components";
 import { notFound, send, site, wantsJson } from "./pages";
 
 // ADR 0110: /pricing, /dashboard/keys, the Polar checkout and portal redirects, and the Polar webhook.
@@ -63,7 +64,7 @@ export function pricingData(env: Env) {
 
 const planRows = (mode: string) =>
   Object.values(PLANS).map(
-    (p) => html`<tr><td data-label="Plan"><b>${p.name}</b></td><td data-label="Per minute" class="num">${n(p.perMinute)}</td><td data-label="Per month" class="num">${n(p.perMonth)}</td><td data-label="Keys" class="num">${p.keys}</td><td data-label="Price">${price(p)}${p.id !== "free" && p.id !== "enterprise" && mode !== "paid" ? html` <span class="muted">(coming soon)</span>` : ""}</td></tr>`,
+    (p) => html`<tr><td data-label="Plan"><b>${p.name}</b></td><td data-label="Per minute" class="num">${n(p.perMinute)}</td><td data-label="Per month" class="num">${n(p.perMonth)}</td><td data-label="Keys" class="num">${p.keys}</td><td data-label="Price"><span>${price(p)}${p.id !== "free" && p.id !== "enterprise" && mode !== "paid" ? html` <span class="muted">· coming soon</span>` : ""}</span></td></tr>`,
   );
 
 site.get(PRICING_PATH, async (c) => {
@@ -88,11 +89,6 @@ ${mode === "keys" ? html`<p class="notice">${PRICING_WORDS.comingSoon}</p>` : ""
 <p>A key is optional. With one, limits are counted per key instead of per IP address, which helps CI runners and shared networks, and you get a record of your usage on <a href="${KEYS_PATH}">your keys page</a>. Paid plans add higher limits, more keys and commercial terms (an invoice and a merchant of record that handles tax).</p>
 <p><a class="btn primary chamfer" href="${KEYS_PATH}">Get a free key</a></p>
 
-<h2>What counts as a call</h2>
-<p>${PRICING_WORDS.counts}</p>
-<h2>What happens at the limit</h2>
-<p>${PRICING_WORDS.atLimit}</p>
-
 <h2>What a plan doesn't change</h2>
 <ul>
 <li>${PRICING_WORDS.sameAnswers}</li>
@@ -100,9 +96,11 @@ ${mode === "keys" ? html`<p class="notice">${PRICING_WORDS.comingSoon}</p>` : ""
 <li>${PRICING_WORDS.noSla}</li>
 </ul>
 
-<h2>Payments</h2>
-<p>${PRICING_WORDS.payment}</p>
-<p>${PRICING_WORDS.refund}</p>
+<h2 id="questions">Questions</h2>
+${more("What counts as a call?", html`<p>${PRICING_WORDS.counts}</p>`)}
+${more("What happens at the limit?", html`<p>${PRICING_WORDS.atLimit}</p>`)}
+${more("How do payments work?", html`<p>${PRICING_WORDS.payment}</p>
+<p>${PRICING_WORDS.refund}</p>`)}
 <p class="small muted">${PRICING_WORDS.operator} Pilots and data licences for teams: <a href="/teams">/teams</a>. <a href="${PRICING_PATH}?format=json">JSON</a></p>
 </article>`,
   });

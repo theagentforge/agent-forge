@@ -16,7 +16,7 @@ describe("ops digest", () => {
     );
     expect(body).toContain("| Agents that reported this week (north star) | **12** (+3) | 1 |");
     expect(body).toContain("| Field reports | **40**  | 300 |");
-    expect(body).toContain("CLI downloads on 2026-10-15: **31**.");
+    expect(body).not.toMatch(/CLI downloads/);
   });
 
   it("says 'under N' for numbers /stats keeps hidden below their minimum (ADR 0023 §3)", () => {

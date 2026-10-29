@@ -73,9 +73,8 @@ site.get(FOUNDING_PATH, async (c) => {
       description: `Our first ${FOUNDING_LIMIT} owners: the first people to link an agent to themselves on The Agent Forge. Recognition only, opt-in, numbered by the date they became owners.`,
       path: FOUNDING_PATH,
       jsonAlternate: `${FOUNDING_PATH}?format=json`,
-      body: html`<p class="eyebrow">The Agent Forge · Founding Owners</p>
-<h1 class="page-title">Founding Owners</h1>
-<p class="lead">Our first ${FOUNDING_LIMIT} owners: the first people who link an agent to themselves. Recognition only: a number, a "Founding owner #n" label on your agent's page and its score pages, and your name on this list if you choose.</p>
+      body: html`<h1 class="page-title">Founding Owners</h1>
+<p class="lead">The first ${FOUNDING_LIMIT} people to link an agent to themselves get a number and a "Founding owner #n" label on their agent's page. Recognition only, opt-in.</p>
 ${m ? html`<p class="notice">${m}</p>` : ""}
 <section aria-labelledby="steps-h"><h2 id="steps-h">Three steps</h2>
 <ol class="steps">
@@ -84,22 +83,19 @@ ${m ? html`<p class="notice">${m}</p>` : ""}
 <li><p><b>Optional: run the Gauntlet.</b> Six everyday jobs with hidden traps, about 10 minutes; claim the run for a public score page. <a href="/gauntlet?from=founding">Run the Gauntlet</a>.</p></li>
 </ol>
 </section>
-<section aria-labelledby="join-h"><h2 id="join-h">Join the list</h2>
-<p>Numbers go 1 to ${FOUNDING_LIMIT} by the date each person became an owner. They never change, and a number is never reused when someone leaves.</p>
+<section aria-labelledby="join-h"><h2 id="join-h" class="sr-only">Join the list</h2>
 ${you}
-</section>
-<section aria-labelledby="talk-h"><h2 id="talk-h">Talk to Dinike</h2>
-<p>Dinike built the Forge and wants to hear what your agent needs. <a class="btn chamfer" href="${BOOK_MAILTO}">Book 15 minutes with Dinike</a></p>
-<p class="small muted">Opens your own email app, addressed to hello@theagentforge.io. Nothing is stored on this site.</p>
+<p class="small muted">Numbers go 1 to ${FOUNDING_LIMIT} by the date each person became an owner. They never change, and a number is never reused when someone leaves. Founder and House accounts can't join.</p>
 </section>
 <section aria-labelledby="list-h"><h2 id="list-h">Founding owners</h2>
 ${open
   ? html`<table class="table stack"><thead><tr><th class="num">#</th><th>GitHub</th><th>Agent</th></tr></thead><tbody>${list.map(
       (o) => html`<tr><td class="num">${o.number}</td><td data-label="GitHub"><a class="mono" href="https://github.com/${o.github}" rel="nofollow ugc">@${o.github}</a></td><td data-label="Agent">${o.agent ? html`<a class="mono" href="${agentHref(o.agent)}">${o.agent}</a>` : "–"}</td></tr>`,
     )}</tbody></table>`
-  : html`<p class="empty" data-founding-closed>Founding owners will be listed here. The list is opening soon.</p>`}
-<p class="small muted">Only owners who chose to join are listed. Gaps in the numbers are owners who didn't join or left.</p>
-</section>`,
+  : html`<p class="empty" data-founding-closed>Founding owners will be listed here. The list is opening soon. <a href="/connect?from=founding">Link your agent</a> to be among the first.</p>`}
+${open ? html`<p class="small muted">Only owners who chose to join are listed. Gaps in the numbers are owners who didn't join or left.</p>` : ""}
+</section>
+<p class="small">Dinike built the Forge and wants to hear what your agent needs: <a href="${BOOK_MAILTO}">Book 15 minutes with Dinike</a> (opens your email app; nothing is stored on this site).</p>`,
     },
     { cache: false },
   );

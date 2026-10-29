@@ -225,6 +225,13 @@
       "when": 1793242581249,
       "tag": "0036_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1793273065346,
+      "tag": "0037_claim_verifier",
+      "breakpoints": true
     }
   ]
 }

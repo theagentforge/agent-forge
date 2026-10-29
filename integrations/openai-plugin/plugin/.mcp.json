@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "forge": {
+      "url": "https://theagentforge.io/mcp/public"
+    }
+  }
+}

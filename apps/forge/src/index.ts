@@ -96,6 +96,8 @@ import "./web/osv-feed";
 import "./web/admin-costs";
 import "./web/pricing";
 import "./web/admin-usage";
+import "./web/admin-claims";
+import { CLAIMS_NIGHTLY_HOUR, registerClaimsInProcess, runClaimChecks } from "./services/claims";
 import { CARD_PATHS } from "./web/discovery";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
@@ -116,6 +118,9 @@ app.get(`/api/${API_VERSION}/health`, async (c) => {
     ok ? 200 : 503,
   );
 });
+
+// ADR 0120: the claim verifier reads pages on this site in-process (no subrequest, no network).
+registerClaimsInProcess((req, env, ctx) => Promise.resolve(app.fetch(req, env, ctx)));
 
 app.route("/", publicApi);
 app.route("/", auth);
@@ -183,6 +188,14 @@ export default {
       (r) => r.ran && console.log("bulk_scan", JSON.stringify(r)),
       (e) => console.error("bulk_scan_failed", String(e).slice(0, 200)),
     );
+    // ADR 0120: the nightly claim check, in the first hourly run after 01:00 UTC. Awaited at the end, like the bulk scan.
+    const claimsRun =
+      new Date(controller.scheduledTime).getUTCHours() === CLAIMS_NIGHTLY_HOUR
+        ? runClaimChecks(env, ctx, { trigger: "nightly", now: controller.scheduledTime }).then(
+            (r) => console.log("claims_nightly", JSON.stringify({ run_id: r.run_id, claims: r.claims, counts: r.counts })),
+            (e) => console.error("claims_nightly_failed", String(e).slice(0, 200)),
+          )
+        : null;
     ctx.waitUntil(
       refreshCatalog(env).then(
         (n) => console.log("arena_catalog", n),
@@ -340,6 +353,8 @@ export default {
       const r = await app.fetch(new Request(`${env.PUBLIC_ORIGIN}${path}${sep}format=json`), env, ctx);
       return r.ok ? r.text() : null;
     };
+    // ADR 0120: the nightly claim check (its promise never rejects: failures are logged above).
+    await claimsRun;
     // Production only: staging shares no comments with it, and two Workers answering the same thread would double up.
     // The bulk scan's slice is awaited even if the replies throw: a handler that ends early would cut the slice off
     // before it saves its place, and the next hour would redo the same files (ADR 0115).

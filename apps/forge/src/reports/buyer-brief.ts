@@ -7,7 +7,7 @@ import { BENCHMARK_VERSIONS_PATH } from "../arena/benchmark-versions";
 import { benchmarkData } from "../arena/benchmark";
 import { SAMPLE_DIR } from "../arena/sample";
 import { exportIndex, readManifest } from "../services/bulk-export";
-import { BRIEF_CLI_NOTE, BRIEF_CONTACT, BRIEF_FOR_SALE, BRIEF_MOAT, BRIEF_NOT_READY, BRIEF_PRICE, BRIEF_ROADMAP } from "../services/brief-private";
+import { BRIEF_CONTACT, BRIEF_FOR_SALE, BRIEF_MOAT, BRIEF_NOT_READY, BRIEF_PRICE, BRIEF_ROADMAP } from "../services/brief-private";
 import { rowShown } from "../services/counters";
 import { getDb } from "../services/db";
 import { FIELD_REPORTS_LABEL } from "../services/site-pulse";
@@ -88,12 +88,11 @@ export function briefBlocks(d: BriefData, origin: string): Block[] {
   if (d.totals.length) b.push({ kind: "p", text: `${d.totals.map((x) => `${n(x.value)} ${x.label}`).join("; ")}.` });
   else b.push({ kind: "p", text: "Not available at the time this brief was built." });
   b.push({ kind: "small", text: `Includes The Forge's own test agents, founder accounts and tests; traffic also includes crawlers and uptime checks. Counting rules: ${base}/stats/rules.` });
-  if (BRIEF_CLI_NOTE) b.push({ kind: "small", text: BRIEF_CLI_NOTE });
 
   // Page 2
   b.push({ kind: "h2", text: "The dataset in brief", pageBreak: true });
   b.push({ kind: "bullet", text: `Public: the Trap Set as JSON with a JSON Schema, Croissant metadata, CITATION.cff and an OSV feed. Frozen, hashed versions: ${base}${BENCHMARK_VERSIONS_PATH}.`, url: `${base}${BENCHMARK_VERSIONS_PATH}` });
-  b.push({ kind: "bullet", text: `A sample buyers can open: ${base}${SAMPLE_DIR} (records drawn from public bouts, two signed replays, a loader). The spec: ${base}${DATASET_PATH}.`, url: `${base}${SAMPLE_DIR}` });
+  b.push({ kind: "bullet", text: `A sample buyers can open: ${base}${SAMPLE_DIR} (records drawn from public bouts, signed replays, a loader). The spec: ${base}${DATASET_PATH}.`, url: `${base}${SAMPLE_DIR}` });
   if (bm.not_known.length) b.push({ kind: "bullet", text: `Not yet known (stated on /benchmark): ${bm.not_known.map((x) => x.replace(/_/g, " ")).join("; ")}.` });
   b.push({ kind: "bullet", text: "Licence: evaluation only, not for training. Commercial and derivative licences by written agreement." });
   b.push({

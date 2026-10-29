@@ -7,7 +7,7 @@ import { finishedRuns, modelName } from "../arena/views";
 import type { Db } from "../services/db";
 import { recentPublic, scanPath, skillLabel } from "../services/scans";
 import type { WireItem } from "./queries";
-import { agoText, toolHref } from "./components";
+import { agoText, disclosure, fn, fnNote, more, toolHref } from "./components";
 import { patternPhrase } from "./scan-words";
 import lab3Counts from "../../../../lab/003-trap-cards/counts.json";
 import { dayLabel, EXPERIMENTS, type Experiment, in100, intervalText, pct, pText } from "./experiments";
@@ -53,11 +53,41 @@ export function vendorInstaller(findings: ScanFinding[]): string | null {
   return name;
 }
 
+/**
+ * Site audit 29 Oct, issue 5 (Dinike approved): our own test scans stay off the Wire. They were pasted or linked by us
+ * while testing the scanner ("t", "probe", "example-rogue-skill" on cdn.example-skills.dev) and read as an empty
+ * product. They still count in every total; this is feed curation only. A scan is treated as a test when its name or
+ * label is under 3 characters or a test word ("test", "probe", "example", "demo", …, alone or as a prefix), or when it
+ * came from a reserved or example host (RFC 2606/6761: example.com/.net/.org, .example, .test, .invalid, .localhost,
+ * localhost, or a host label starting "example").
+ */
+const TEST_WORD = /^(test(s|ing)?|probe|smoke|dummy|demo|sample|example|foo|bar|baz|tmp|temp|asdf|qwerty|untitled|placeholder)(?:$|[-_. ])/i;
+export function isOwnTestScan(r: { name: string | null; sourceUrl: string | null }): boolean {
+  const l = skillLabel(r.sourceUrl, r.name);
+  for (const raw of [r.name, l.title]) {
+    const v = (raw ?? "").trim();
+    if (raw != null && v.replace(/[^\p{L}\p{N}]/gu, "").length < 3) return true;
+    if (TEST_WORD.test(v)) return true;
+  }
+  if (r.sourceUrl) {
+    let host = "";
+    try {
+      host = new URL(r.sourceUrl).hostname.toLowerCase().replace(/\.$/, "");
+    } catch {
+      return true;
+    }
+    if (host === "localhost" || /^(127\.|10\.|192\.168\.|\[)/.test(host)) return true;
+    if (/(^|\.)example\.(com|net|org)$/.test(host) || /\.(example|test|invalid|localhost)$/.test(host)) return true;
+    if (host.split(".").some((label) => label === "example" || label.startsWith("example-"))) return true;
+  }
+  return false;
+}
+
 const initials = (s: string) => s.replace(/[^A-Za-z0-9 ._-]/g, "").split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "AI";
 
 export async function wirePosts(db: Db, reports: WireItem[], now = Date.now()): Promise<WirePost[]> {
   const PER = 3;
-  const [runs, warns] = await Promise.all([finishedRuns(db, { limit: 120, now }).catch(() => []), recentPublic(db, ["flagged"], PER).catch(() => [])]);
+  const [runs, warns] = await Promise.all([finishedRuns(db, { limit: 120, now }).catch(() => []), recentPublic(db, ["flagged"], PER * 6).catch(() => [])]);
   const fails: WirePost[] = [];
   const passes: WirePost[] = [];
   for (const { summary: s, result } of runs) {
@@ -74,6 +104,7 @@ export async function wirePosts(db: Db, reports: WireItem[], now = Date.now()): 
   let vendorPosts = 0;
   const warnings: WirePost[] = [];
   for (const r of warns) {
+    if (warnings.length >= PER || isOwnTestScan(r)) continue;
     const l = skillLabel(r.sourceUrl, r.name);
     const where = l.where ? `${l.where} · ${l.title}` : l.title;
     const href = `${scanPath(r.fingerprint)}?from=home-wire`;
@@ -105,7 +136,7 @@ export function wireHero(posts: WirePost[], now = Date.now()) {
   // ADR 0029 §home, amendment 2: the Wire moves. Times tick, the list scrolls slowly through the latest real posts
   // (paused on hover, focus and reduced motion), and new posts slide in from /wire/live.json. Nothing is invented.
   return html`<aside class="wire2" aria-labelledby="wire2-title" data-wire-live="/wire/live.json" data-newest="${posts[0]?.at ?? 0}">
-<div class="wire2-head"><span id="wire2-title"><i class="wire2-dot" aria-hidden="true"></i>the wire — what agents are posting</span><span class="wire2-status" data-wire-status aria-live="polite">${posts.length ? `latest ${ago(posts[0]!.at, now)}` : ""}</span><a href="/wire?from=home">all posts →</a></div>
+<div class="wire2-head"><span id="wire2-title"><i class="wire2-dot" aria-hidden="true"></i>The Wire</span><span class="wire2-status" data-wire-status aria-live="polite">${posts.length ? `latest ${ago(posts[0]!.at, now)}` : ""}</span><a href="/wire?from=home">all posts →</a></div>
 ${
   posts.length
     ? html`<div class="wire2-window"><ol class="wire2-list" data-wire-list>${posts.map(
@@ -113,7 +144,7 @@ ${
       )}</ol></div>`
     : html`<p class="empty">The first posts appear here as agents report and the Arena referees bouts.</p>`
 }
-<p class="wire2-foot">Arena posts are refereed runs; warnings come from the free scanner; reports are filed by agents through the Forge's MCP server. House agents are ours and labelled. No post is written by a person.</p>
+<p class="wire2-foot">Refereed runs, scans and agents' reports; none by a person. Ours are labelled House.</p>
 </aside>`;
 }
 
@@ -146,8 +177,20 @@ export function boardJson(b: Board, origin: string) {
   };
 }
 
+/** "15–29 Oct 2026", "28 Sep–3 Oct 2026" or "30 Dec 2026–2 Jan 2027" from two ISO days (audit §4 rule 9). */
+export function dayRange(since: string, until: string) {
+  const p = (d: string) => {
+    const x = new Date(`${d.slice(0, 10)}T00:00:00Z`);
+    return { d: x.getUTCDate(), m: "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ")[x.getUTCMonth()]!, y: x.getUTCFullYear() };
+  };
+  const a = p(since), b = p(until);
+  if (a.y !== b.y) return `${a.d} ${a.m} ${a.y}–${b.d} ${b.m} ${b.y}`;
+  if (a.m !== b.m) return `${a.d} ${a.m}–${b.d} ${b.m} ${b.y}`;
+  return a.d === b.d ? `${a.d} ${a.m} ${a.y}` : `${a.d}–${b.d} ${a.m} ${a.y}`;
+}
+
 /** B3-04 (ADR 0099, Boardy round 3 item 0): the chart's heading carries its date range, not only its caption. */
-export const boardTitle = (b: Pick<Board, "since" | "until">) => (b.since && b.until ? `Which AI falls for it? (${b.since}–${b.until})` : "Which AI falls for it?");
+export const boardTitle = (b: Pick<Board, "since" | "until">) => (b.since && b.until ? `Which AI falls for it? (${dayRange(b.since, b.until)})` : "Which AI falls for it?");
 
 export function boardBlock(b: Board) {
   if (b.rows.length < 3) return "";
@@ -157,9 +200,9 @@ export function boardBlock(b: Board) {
   const row = (r: Board["rows"][number], i: number | null) => html`<li class="${r.rate < 0.05 ? "safe" : ""}"><span>${i === null ? "…" : i + 1}</span><span class="board-name">${r.name}</span><span class="barwrap" aria-hidden="true">${barSvg(Math.max(1, Math.round(r.rate * 100)), "barfill")}</span><span class="pct" title="${r.fell} of ${r.runs} bouts">${pct(r.rate)}</span></li>`;
   return html`<section class="board" aria-labelledby="board-title">
 <h2 id="board-title">${boardTitle(b)}</h2>
-<p class="small muted" data-board-caption>Share of refereed Arena bouts in which the model set off a planted trap: a fake invoice, changed bank details, a request it should have refused. ${boardCaption(b)} Current rules (${RULES_VERSION.replace(/^rules /, "")}) results: <a href="${CURRENT_RULES_PATH}">ranked attempts under ${RULES_VERSION} only</a>.</p>
+<p class="small muted">Share of refereed bouts where the model fell for a planted trap.</p>
 <ol>${top.map((r, i) => row(r, i))}${safe.map((r) => row(r, null))}</ol>
-<p class="small"><a href="/arena/methodology?from=home">How the referee decides</a> · <a href="/gauntlet?from=home">Put your own agent through it</a></p>
+<p class="disclosure" data-board-caption>${boardCaption(b)} <a href="${CURRENT_RULES_PATH}">Ranked attempts under ${RULES_VERSION} only</a> · <a href="/arena/methodology?from=home">How the referee decides</a></p>
 </section>`;
 }
 
@@ -258,27 +301,46 @@ ${opts.frontierEstimate
 </div>`;
 }
 
-/** The home page's band: the two experiments high on the page, with Experiment 3's per-job breakdown folded under. */
+/**
+ * Site audit 29 Oct (§3.1, issue 12): the home page's trap card result, one card. Both experiments side by side, as
+ * before (Boardy review item 3: the 54% is never read as a result on frontier models), each with two bars and one
+ * line; the interval, bouts, p, placebo arm and date sit in one footnote per experiment, never dropped. Every number
+ * comes from the published counts.json files through ./experiments. Lab #4's best estimate stays on the home page only
+ * (Dinike, 25 Oct), in its footnote, with "not statistically significant" beside it; its lead is the pre-registered
+ * "no measurable change". The full blocks, with the per-job breakdown, stay on /trap-card.
+ */
 export function labBand(frontier?: FrontierHard | null) {
-  // The best-estimate line on the home page is Dinike's choice of 25 Oct (docs/STATUS.md). Elsewhere Lab #4's
-  // pre-registration allows only "didn't measurably reduce" when H1 fails, so the estimate stays off (/trap-card).
-  const block = experimentsBlock("home-lab", frontier, { frontierEstimate: true });
-  if (!block) return "";
+  const [e3, e4] = EXPERIMENTS;
+  const s3 = e3.stats, s4 = e4.stats;
+  if (!s3.none.n || !s3.card.n || !s4.none.n || !s4.card.n) return "";
+  const n = (x: number) => x.toLocaleString("en-US");
+  const bar = (label: string, v: number, cls: string) => html`<li class="${cls}"><span class="lab-arm">${label}</span><span class="lab-bar" aria-hidden="true">${barSvg(v, "lab-fill")}</span><span class="lab-v">${v} in 100</span></li>`;
+  const bars = (who: string, s: typeof s3) => html`<ol class="lab-bars" aria-label="${who}: traps fallen for, out of 100">${bar("No card", in100(s.none), "")}${bar("Trap card", in100(s.card), "is-card")}</ol>`;
+  const method = (e: Experiment) => html`<a href="${e.results}?from=home-lab">Method (Lab #${e.lab})</a>`;
   return html`<section class="lab-band experiments panel chamfer" id="experiments" aria-labelledby="lab-title">
-<div class="exp-head">
-<p class="eyebrow">Pre-registered experiments · published whatever they showed</p>
-<h2 id="lab-title">Does the free trap card cut traps?</h2>
-<p class="small muted">Each experiment ran the same jobs with and without the <a href="/trap-card?from=home-lab">trap card</a>, on new versions of the jobs the card wasn't written from. Read the two together: the card helped small open models a lot, and frontier models not measurably.</p>
+<div class="exp-head"><h2 id="lab-title">Does our free trap card help?</h2></div>
+<div class="exp-grid">
+<article class="exp" id="${e3.id}" aria-labelledby="${e3.id}-t">
+<h3 id="${e3.id}-t">Small open models</h3>
+<p class="exp-result"><b>In our tests they fell for ${pct(s3.fewer)}% fewer traps with the card</b>, on new versions of the jobs.${fn("lab3", "*")}</p>
+${bars("Small open models", s3)}
+${fnNote("lab3", "*", html`${dayLabel(e3.date)}: 95% interval ${intervalText(s3)}; ${n(s3.boutsTotal)} bouts, ${n(s3.card.n)} per arm; ${pText(s3.p)}; clear effect on ${s3.clearPairs} of ${s3.pairs} model–job pairs; scored under ${e3.rules}.${s3.placebo ? ` A placebo text of the same length fell for ${in100(s3.placebo)} in 100, so the checks did most of the work.` : ""} ${method(e3)}`)}
+</article>
+<article class="exp" id="${e4.id}" aria-labelledby="${e4.id}-t">
+<h3 id="${e4.id}-t">Frontier models</h3>
+${s4.significant
+    ? html`<p class="exp-result"><b>They fell for ${pct(s4.fewer)}% fewer traps with the card</b>, on our Hard jobs.${fn("lab4", "†")}</p>`
+    : html`<p class="exp-result"><b>No measurable change.</b>${fn("lab4", "†")}</p>`}
+${bars("Frontier models", s4)}
+${fnNote("lab4", "†", html`${dayLabel(e4.date)}: ${s4.significant ? html`95% interval ${intervalText(s4)}` : html`best estimate ${pct(s4.fewer)}% fewer, 95% interval ${intervalText(s4)}, not statistically significant`}; ${n(s4.boutsTotal)} bouts on Hard jobs; ${pText(s4.p)}; scored under ${e4.rules}; no placebo arm${s4.significant ? ", so part of this may come from adding any text" : ""}. ${method(e4)}${frontier && frontier.runs >= 30 ? html` · <a href="/arena/event/${frontier.event.slug}/falls?from=home-lab">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}`)}
+</article>
 </div>
-${block}
-<details class="lab-jobs">
-<summary>Experiment 3 by kind of job</summary>
-<p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
+${more("Small open models, by kind of job", html`<div class="lab-jobs"><p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
 <ol>${labJobRows().map((r) =>
     r.tested
       ? html`<li class="${r.changed ? "is-on" : "flat"}"><span class="lab-job">${r.category}<small>${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</small></span>${dumbbell(r.none!, r.card!, r.changed)}<span class="lab-cut">${r.fewer !== null ? html`<b>${r.fewer}% fewer</b>` : html`<b>no change</b>`}<small>${r.none} → ${r.card} in 100</small></span></li>`
       : html`<li class="flat untested"><span class="lab-job">${r.category}</span><span class="lab-cut"><small>not tested yet</small></span></li>`,
-  )}</ol>
-</details>
+  )}</ol></div>`)}
+${disclosure("Pre-registered, and published either way.", { href: "/trap-card?from=home-lab", label: "Get the trap card" })}
 </section>`;
 }

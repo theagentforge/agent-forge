@@ -102,7 +102,12 @@ describe("/mcp/public (ADR 0017 §3)", () => {
       expect(t.title).toBeTruthy();
       // The Claude directory form checks annotations.title too (flagged "Missing title annotation", 20 Oct 2026).
       expect(t.annotations).toMatchObject({ title: t.title, readOnlyHint: true, destructiveHint: false });
+      // OpenAI's ChatGPT/Codex review (Oct 2026) needs all three hints as explicit booleans on every tool.
+      for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"]) expect(typeof t.annotations[hint]).toBe("boolean");
     }
+    // Open world: tools that reach any public package, repository or URL. Closed: our own Arena data and fingerprints.
+    const openWorld = Object.fromEntries(tools.map((t) => [t.name, t.annotations.openWorldHint]));
+    expect(openWorld).toEqual({ arena_results: false, forge_check: true, forge_exposure: true, forge_scan: true, forge_traps: false, forge_watch: false });
     const traps = await result(await publicRpc("tools/call", { name: "forge_traps", arguments: { task: "impossible" } }));
     expect(traps.result.structuredContent.tasks[0].task).toBe("impossible");
     const results = await result(await publicRpc("tools/call", { name: "arena_results", arguments: { task: "impossible" } }));

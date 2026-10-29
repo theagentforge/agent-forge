@@ -137,8 +137,8 @@ const secondsToDayEnd = (now: number) => Math.max(60, Math.ceil((dayStart(now) +
 
 export const orKey = (now: number) => `freelane:or:${utcDay(now)}`;
 export const orPauseKey = (now: number) => `freelane:or:pause:${utcDay(now)}`;
-/** Neurons counted today per source: arena (every Workers AI bout turn), moltbook, moderation (ADR 0113). */
-export type NeuronSource = "arena" | "moltbook" | "moderation";
+/** Neurons counted today per source: arena (every Workers AI bout turn), moltbook, moderation (ADR 0113), claims (ADR 0120). */
+export type NeuronSource = "arena" | "moltbook" | "moderation" | "claims";
 export const neuronKey = (now: number, source: NeuronSource) => `freelane:wai:${utcDay(now)}:${source}`;
 /** The moderation call counter (services/moderation.ts) and the neurons each call is counted at (about 15 used). */
 export const moderationKey = (now: number) => `mod-count:${utcDay(now)}`;
@@ -190,7 +190,7 @@ async function moderationNeurons(kv: KVNamespace, now: number) {
 
 /** What the Worker's other Workers AI calls used today (Moltbook, moderation), from their KV counters. */
 async function otherNeurons(kv: KVNamespace, now: number) {
-  return (await kvNum(kv, neuronKey(now, "moltbook"))) + (await moderationNeurons(kv, now));
+  return (await kvNum(kv, neuronKey(now, "moltbook"))) + (await moderationNeurons(kv, now)) + (await kvNum(kv, neuronKey(now, "claims")));
 }
 
 /** Neurons counted today by source, and in total: every Workers AI call the Worker makes (ADR 0113). */
@@ -199,7 +199,9 @@ export async function waiUsage(env: Env, now = Date.now()) {
   const arena = Math.max(await kvNum(kv, neuronKey(now, "arena")), await storedNeurons(env, now).catch(() => 0));
   const moltbook = await kvNum(kv, neuronKey(now, "moltbook"));
   const moderation = await moderationNeurons(kv, now);
-  return { arena, moltbook, moderation, total: arena + moltbook + moderation };
+  // ADR 0120: the claim verifier's optional LLM pass (off unless CLAIMS_LLM is "on").
+  const claims = await kvNum(kv, neuronKey(now, "claims"));
+  return { arena, moltbook, moderation, claims, total: arena + moltbook + moderation + claims };
 }
 
 /**

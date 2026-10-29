@@ -1,4 +1,5 @@
-import { and, count, desc, eq, gte, isNotNull, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, isNull, notInArray, or } from "drizzle-orm";
+import { RETIRED_METRICS } from "./proof";
 import { publicDatasetWhere } from "../arena/views";
 import { BYOK_EXPIRES, byokSpendThisMonth, creditGuard, OPENROUTER_CREDIT_PURCHASED_USD } from "../arena/credit";
 import * as t from "../db/schema";
@@ -125,7 +126,7 @@ const DATA_LABELS: Record<string, string> = {
 /** 30 days of the daily snapshots /admin/kpis draws its trends from (proof_snapshots), each row labelled by basis. */
 export async function kpiSeries(env: Env, now = Date.now(), days = 30) {
   const since = new Date(now - days * 86_400_000).toISOString().slice(0, 10);
-  const rows = await getDb(env).select().from(t.proofSnapshots).where(gte(t.proofSnapshots.date, since)).orderBy(t.proofSnapshots.date);
+  const rows = await getDb(env).select().from(t.proofSnapshots).where(and(gte(t.proofSnapshots.date, since), notInArray(t.proofSnapshots.metric, [...RETIRED_METRICS]))).orderBy(t.proofSnapshots.date);
   const dates = [...new Set(rows.map((r) => r.date))].sort();
   const { kpis } = await growthKpis(env, now);
   const kpiName = new Map(kpis.map((k) => [`kpi_${k.id}`, k.name]));

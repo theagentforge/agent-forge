@@ -312,7 +312,7 @@ const schemas = {
       reports: nullable("integer"),
       reports_last_24h: nullable("integer"),
       tool_versions_reported: nullable("integer"),
-      tools: { type: "integer" },
+      tools: nullable("integer"),
       house_excluded: { const: false },
       founders_excluded: { const: false },
       gross: {
@@ -354,6 +354,7 @@ const schemas = {
       rules_url: { type: "string", format: "uri" },
       stats_json: { type: "string", format: "uri" },
       generated_at: { type: "string", format: "date-time" },
+      as_of: { type: "string", format: "date-time", description: "When the running totals were counted (one snapshot per minute, ADR 0116)." },
       below_minimum: { type: "array", items: { type: "string" } },
       minimums: { type: "object", additionalProperties: { type: "integer" } },
     },

@@ -258,13 +258,16 @@ const HONEST_LINE = /Includes The Forge(&#39;|')s own test agents\./;
 describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public totals again)", () => {
   it("the home band shows the live totals, our own test agents included and said so, and never claims they are outside activity", async () => {
     const page = await (await fetchWorker(`/?u=${uid("home")}`, { headers: { Accept: "text/html" } })).text();
-    const band = page.slice(page.indexOf('<div class="live-band"'), page.indexOf("</div>", page.indexOf('<div class="live-band"')));
+    // Site audit 29 Oct: the band is one stat strip; per-number qualifiers are footnotes under it, and one caption.
+    const start = page.indexOf('<div class="stat-strip');
+    const band = page.slice(start, page.indexOf("</div>\n</div>", start) + 13);
     expect(band).toContain("data-work-live");
     expect(band).toContain("data-agent-live");
-    // B3-06 with the coordinator's 29 Oct phone fix: the House caption is in the same stat item, right after the label.
-    expect(band).toMatch(/<li data-k="field_reports"><b>[\d,]+<\/b><span>field reports filed<\/span><a class="stat-note" href="\/methodology#house-install-tests">mostly our House install tests<\/a><\/li>/);
-    expect(band).toContain("Includes The Forge's own test agents.");
-    expect(band).toContain('<a href="/stats/rules">How each is counted →</a>');
+    // B3-06: the House wording stays with the field-report total, as its footnote, linked to the method note.
+    expect(band).toMatch(/<li data-k="field_reports"><b>[\d,]+<\/b><span>field reports filed<sup class="fn"><a href="#fn-reports"/);
+    expect(band).toMatch(/<p class="fn-note" id="fn-reports">.*<a href="\/methodology#house-install-tests">Mostly our House install tests<\/a>/);
+    expect(band).toContain("Includes the Forge's own test agents");
+    expect(band).toContain('<a href="/stats/rules">How each is counted</a>');
     // The honesty rule (the critical bug the ADR 0067 review fixed): no outside claim on a number that includes ours.
     expect(band).not.toMatch(OUTSIDE_CLAIM);
     expect(page).not.toContain("Live, outside agents only");
@@ -304,7 +307,8 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     if (page.includes("<h2>Live numbers</h2>")) {
       const block = page.slice(page.indexOf("<h2>Live numbers</h2>"), page.indexOf('<h2 id="investors">'));
       expect(block).toMatch(HONEST_LINE);
-      expect(block).toContain(TRAFFIC_NOTE);
+      // Site audit 29 Oct (§3.9): /about shows bouts and skills only (no traffic numbers), so no traffic note; /stats has it.
+      expect(block).not.toMatch(/page views|AI agent visits/i);
       expect(block).not.toMatch(OUTSIDE_CLAIM);
     }
     // The same totals as the home band, each linked to a rule that /stats/rules publishes.
@@ -348,10 +352,13 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(page).not.toContain("Daily history");
     expect(page).not.toContain('id="house"');
     expect(page.indexOf('id="blended"')).toBeLessThan(page.indexOf('id="gross"'));
-    expect(page).toContain("Totals, our own test agents included");
+    // Site audit 29 Oct (§3.10): the disclosure is said once, under the H1, above the first table.
+    expect(page).toContain('<h2 class="page-title" id="blended">Totals</h2>');
     expect(page).toMatch(HONEST_LINE);
+    expect(page.match(/class="disclosure"/g)?.length).toBe(1);
+    expect(page.indexOf('class="disclosure"')).toBeLessThan(page.indexOf("<table"));
     expect(page).toContain("Page views (gross, crawlers included)");
-    expect(page).toContain("they include search and AI crawlers");
+    expect(page).toContain("traffic numbers also include crawlers and uptime checks");
     const totals = page.slice(page.indexOf('id="blended"'));
     expect(totals).not.toMatch(/by outside|outside agents|independent|by other agents|third[- ]party/i);
     expect(page).not.toContain("<td>Verified people</td>");

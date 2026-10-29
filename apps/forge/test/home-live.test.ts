@@ -18,15 +18,20 @@ describe("the trap card's measured value on the home page", () => {
     const body = await home();
     // Boardy review item 3 (W1.2): Experiment 3 and Experiment 4 side by side; the numbers are tested against the
     // analysis scripts' output in test/experiments.test.ts.
-    expect(body).toContain("fell for 54% fewer traps on new versions of the jobs</b> (95% interval 48–59% fewer; 984 bouts, 18 Oct 2026)");
-    expect(body).toContain("fell for 73 in 100, against 84 with no card and 39 with the card");
-    expect(body).toContain("clear effect on 3 of 6 pairs");
-    expect(body).toContain("<b>Frontier models fell for a trap in about 3 in 10 bouts.</b> Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it");
+    // Site audit 29 Oct (§3.1): one result card, two bars and one line per experiment; the statistics and caveats
+    // move to one footnote per experiment, never dropped.
+    expect(body).toContain("fell for 54% fewer traps with the card</b>, on new versions of the jobs.");
+    expect(body).toContain("18 Oct 2026: 95% interval 48–59% fewer;");
+    expect(body).toContain("492 per arm");
+    expect(body).toContain("A placebo text of the same length fell for 73 in 100, so the checks did most of the work.");
+    expect(body).toContain("clear effect on 3 of 6 model–job pairs");
+    expect(body).toContain("<b>No measurable change.</b>");
+    expect(body).toContain("best estimate 16% fewer, 95% interval from 45% fewer to 27% more, not statistically significant; 210 bouts on Hard jobs");
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
-    // It sits straight after the hero, before the Arena.
+    // It sits after the hero and the Arena.
     expect(body.indexOf('class="lab-band')).toBeGreaterThan(body.indexOf('class="hero2"'));
     const arena = body.indexOf('id="arena-title"');
-    if (arena > 0) expect(body.indexOf('class="lab-band')).toBeLessThan(arena);
+    if (arena > 0) expect(body.indexOf('class="lab-band')).toBeGreaterThan(arena);
   });
 });
 

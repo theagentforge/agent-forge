@@ -1,4 +1,5 @@
 import { checkQuerySchema } from "@forge/shared";
+import { publicNumbers, secondsLeft } from "./services/public-numbers";
 import { provenance } from "./services/provenance";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -274,7 +275,10 @@ publicApi.get("/api/v1/stats", async (c) => {
   const cacheKey = new Request(new URL("/api/v1/stats", c.req.url).toString(), { method: "GET" });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
-  const res = c.json(await publicStats(c.env), 200, { "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}` });
+  // ADR 0116: the same totals snapshot as /stats and /dataset, cached no longer than the snapshot lasts.
+  const numbers = await publicNumbers(c.env);
+  const stats = await publicStats(c.env, Date.now(), Promise.resolve([numbers.work, numbers.live]));
+  const res = c.json({ ...stats, as_of: numbers.as_of }, 200, { "Cache-Control": `public, max-age=${Math.min(CHECK_CACHE_SECONDS, secondsLeft(numbers))}` });
   c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
   return res;
 });

@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { defaultTab, installLinks, verifyCommands, verifySection } from "../src/web/connect";
 import { AGENT_DIRECTED } from "./wording";
-import { ADVISORY_LINE_UNTIL, HOME_SUBHEAD, VALUE_CARDS, advisoryLine } from "../src/web/pages";
+import { ADVISORY_LINE_UNTIL, HOME_SUBHEAD, advisoryLine } from "../src/web/pages";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -130,7 +130,7 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
 });
 
 describe("home page message (ADR 0018 §1–3)", () => {
-  it("has the H1, the subhead, the referee line, the proof strip and the 4 cards in order", async () => {
+  it("has the H1, the subhead and the numbers; the 4 value cards are gone (site audit 29 Oct, B2)", async () => {
     const body = await page("/");
     const h1 = body.indexOf("<h1>");
     expect(h1).toBeGreaterThan(0);
@@ -143,14 +143,7 @@ describe("home page message (ADR 0018 §1–3)", () => {
     if (bouts) expect(Number(bouts[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(10);
     const tools = /<b>([\d,]+)<\/b> tools? checked/.exec(body);
     if (tools) expect(Number(tools[1]!.replace(/,/g, ""))).toBeGreaterThanOrEqual(25);
-    const order = ["Scan", "Watch", "Test yours", "Check a tool"].map((v) => body.indexOf(`<h3>${v}</h3>`));
-    expect(order.every((i) => i > 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-  });
-
-  it("only the developer card says MCP, and every card has one button", () => {
-    for (const card of VALUE_CARDS.slice(0, 3)) expect(card.line + card.button).not.toMatch(/MCP|LLM/);
-    expect(VALUE_CARDS[3]!.line).toContain("MCP");
-    expect(VALUE_CARDS.map((v) => v.href)).toEqual(["/scan?from=home", "/arena?from=home", "/gauntlet?from=home", "/check?from=home"]);
+    for (const v of ["Scan", "Watch", "Test yours"]) expect(body).not.toContain(`<h3>${v}</h3>`);
+    expect(body).not.toContain("value-cards");
   });
 });

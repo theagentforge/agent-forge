@@ -75,7 +75,7 @@ site.get(BENCHMARK_HELD_OUT_PATH, async (c) => {
     nav: "arena",
     body: html`<div class="prose">
 <h1 class="page-title">Held-out contract</h1>
-<p class="muted">${TRAP_SET_NAME} ${d.trap_set_version} · <a href="${BENCHMARK_PATH}">the Trap Set</a> · <a href="${BENCHMARK_HELD_OUT_JSON_PATH}">JSON</a> · <a href="${BENCHMARK_VERSIONS_PATH}">frozen versions</a> · <a href="${BENCHMARK_LICENCE_PATH}">licence</a></p>
+<p class="muted">${TRAP_SET_NAME} ${d.trap_set_version} · <a href="${BENCHMARK_PATH}">the Trap Set</a> · <a href="${BENCHMARK_HELD_OUT_JSON_PATH}">JSON</a> · <a href="${BENCHMARK_VERSIONS_PATH}">released versions</a> · <a href="${BENCHMARK_LICENCE_PATH}">licence</a></p>
 <p class="lead">Part of the test is never published, so a model can be scored on jobs it can't have seen. This page says what is kept back, what we publish about it, and the rules. It lists kinds of item only: no private trap id, job, seed or seed count.</p>
 
 <h2 id="kept-back">What is kept back</h2>
@@ -110,7 +110,7 @@ site.get(BENCHMARK_HELD_OUT_PATH, async (c) => {
 /** The "Frozen versions" block on /benchmark: each version, its snapshot and sha256. */
 export function frozenVersionsBlock(origin: string) {
   const v = versionsData(origin);
-  return html`<h2 id="versions">Frozen versions</h2>
-<p><a href="${BENCHMARK_JSON_PATH}">v1.json</a> is the latest version, rebuilt on each request with live results. Each released version is also frozen as a file that never changes (the trap records, rules, schema and citation; no live results), listed with its sha256 in <a href="${BENCHMARK_VERSIONS_PATH}">versions.json</a>. Compare two: <a href="${BENCHMARK_DIFF_PATH}?from=${v.versions[0]?.version ?? TRAP_SET.version}&amp;to=${TRAP_SET.version}">diff</a>. What is never published: <a href="${BENCHMARK_HELD_OUT_PATH}">the held-out contract</a>.</p>
-<ul>${v.versions.map((x) => html`<li><b>${x.version}</b> (${x.date})${x.snapshot ? html`: <a href="${snapshotPath(x.version)}">${snapshotPath(x.version)}</a> · ${x.snapshot.kind === "reconstructed" ? html`reconstructed on ${x.snapshot.made_on} from the catalog at commit <code>${x.snapshot.from_commit.slice(0, 7)}</code>, not the original bytes` : html`frozen on ${x.snapshot.made_on}`} · <code class="small">sha256 ${x.snapshot.sha256}</code>` : html`: <span class="muted">no snapshot</span>`}</li>`)}</ul>`;
+  return html`<h3 id="versions">Released versions</h3>
+<p><a href="${BENCHMARK_JSON_PATH}">v1.json</a> is the latest version, rebuilt on each request with live results. Each released version is also kept as a file that never changes (the trap records, rules, schema and citation; no live results): frozen byte for byte at release, or reconstructed later where marked below, listed with its sha256 in <a href="${BENCHMARK_VERSIONS_PATH}">versions.json</a>. Compare two: <a href="${BENCHMARK_DIFF_PATH}?from=${v.versions[0]?.version ?? TRAP_SET.version}&amp;to=${TRAP_SET.version}">diff</a>. What is never published: <a href="${BENCHMARK_HELD_OUT_PATH}">the held-out contract</a>.</p>
+<ul>${v.versions.map((x) => html`<li><b>${x.version}</b> (${x.date})${x.snapshot ? html`: <a href="${snapshotPath(x.version)}">${snapshotPath(x.version)}</a> · ${x.snapshot.kind === "reconstructed" ? html`reconstructed on ${x.snapshot.made_on} from the catalogue at commit <code>${x.snapshot.from_commit.slice(0, 7)}</code>, not the original bytes` : html`frozen on ${x.snapshot.made_on}`} · <code class="small">sha256 ${x.snapshot.sha256}</code>` : html`: <span class="muted">no snapshot</span>`}</li>`)}</ul>`;
 }

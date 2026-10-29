@@ -15,7 +15,16 @@ const outDir = join(here, "..", "..", "apps", "forge", "public", "plugins");
 const distDir = join(here, "release", "forge");
 const check = process.argv.includes("--check");
 const ENVS = { staging: "https://staging.theagentforge.io", production: "https://theagentforge.io" };
-const MTIME = new Date("2026-01-01T00:00:00Z");
+// Local-time midnight on purpose: zip stores times in local DOS fields (fflate reads getFullYear/getHours), so a UTC
+// instant gave different bytes in Colombo and on CI (29 Oct). Local midnight writes the same fields in every time zone.
+const MTIME = new Date(2026, 0, 1, 0, 0, 0);
+
+// What each hook does, printed at the top of its built file for the directory's reviewers (REVIEWERS.md).
+const HOOK_HEADERS = {
+  "pre-install": "PreToolUse (Bash): before an install command runs, look the package up at <origin>/api/v1/check.",
+  strain: "PostToolUse, PostToolUseFailure and Stop: count tool failures on this machine; at Stop, draft field reports.",
+  "session-start": "SessionStart: add the trap card; once a week send skill fingerprints to <origin>/api/v1/watch.",
+};
 
 const hooks = {};
 for (const name of ["pre-install", "strain", "session-start"]) {
@@ -25,8 +34,20 @@ for (const name of ["pre-install", "strain", "session-start"]) {
     platform: "node",
     format: "esm",
     target: "node18",
-    minify: true,
+    // Readable, not minified (29 Oct): the directory's security scan holds code it can't read, and its checklist
+    // asks for "readable source instead of compiled, packed, or minified code". Self-contained: one file per hook,
+    // Node built-ins only, nothing downloaded or installed at run time.
+    minify: false,
     legalComments: "none",
+    banner: {
+      js: [
+        `// The Agent Forge plugin for Claude Code: hooks/${name}.mjs`,
+        `// ${HOOK_HEADERS[name]}`,
+        `// Built (bundled, not minified) from integrations/claude-code-plugin/src/hooks/${name}.ts and packages/shared/src in`,
+        "// https://github.com/theagentforge/agent-forge. Self-contained: Node built-ins only, no packages installed or",
+        "// downloaded. Fails open. What it reads, writes and sends: README.md and REVIEWERS.md in this plugin.",
+      ].join("\n"),
+    },
     write: false,
   });
   hooks[`hooks/${name}.mjs`] = r.outputFiles[0].contents;

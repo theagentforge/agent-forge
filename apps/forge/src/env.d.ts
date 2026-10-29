@@ -34,6 +34,8 @@ interface ForgeSecrets {
   POLAR_PRODUCTS?: string;
   /** ADR 0110: "sandbox" for Polar's sandbox API (staging); production otherwise. */
   POLAR_SERVER?: string;
+  /** ADR 0120: "on" turns on the claim verifier's LLM pass for prose claims (Workers AI, 500 neurons a day). Off by default. Not a secret. */
+  CLAIMS_LLM?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

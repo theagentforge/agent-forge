@@ -76,6 +76,8 @@ describe("/security (W1.3)", () => {
     const body = await (await fetchWorker("/security", html)).text();
     expect(body).toContain(modelName(SONNET));
     expect(body).toMatch(/<b>40%<\/b> <span class="muted">2 of 5<\/span>/);
+    // The per-model table is folded, so the spread stays visible in one line above it (review ADR 0118).
+    expect(body).toMatch(new RegExp(`<p data-models-line>Only one model has enough attempts for a rate: <b>${modelName(SONNET).replace(/\./g, "\\.")}</b>, 40% \\(2 of 5(, early read)?\\)\\.</p>`));
     // Older-rules attempts are counted apart, never pooled (ADR 0068 Amendment 1).
     expect(body).toContain(`<code>${RULES_VERSION}</code>`);
     expect(body).toMatch(/4 more ranked attempts were scored under older rules \(rules 0\.\d: 4\)/);
@@ -137,10 +139,9 @@ describe("/security (W1.3)", () => {
     expect(text).not.toMatch(AGENT_DIRECTED);
   });
 
-  it("is linked from the footer, the home page's who-this-is-for line, /about, the sitemap and llms.txt", async () => {
+  it("is linked from the nav and footer, /about, the sitemap and llms.txt (the home who-this-is-for line went in the site audit)", async () => {
     const home = await (await fetchWorker("/", html)).text();
-    expect(home).toContain("Who this is for:");
-    expect(home).toMatch(/<a href="\/security">For security teams<\/a>/);
+    expect(home).not.toContain("Who this is for:");
     expect(home).toContain('<a href="/security">Security</a>');
     const about = await (await fetchWorker("/about", html)).text();
     expect(about).toContain('href="/security"');

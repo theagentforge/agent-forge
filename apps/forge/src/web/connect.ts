@@ -7,7 +7,7 @@ import { readCookie, SESSION_COOKIE, verify, type Session } from "./session";
 import { FIRST_CHECK, newTestCode } from "../services/connect-test";
 import { getDb } from "../services/db";
 import { day } from "../services/proof";
-import { agentHref, copyBlock } from "./components";
+import { agentHref, copyBlock, more } from "./components";
 import { MAX_AGENTS_PER_HUMAN } from "../services/identity";
 import { pricingMode } from "../services/api-keys";
 import { send, site } from "./pages";
@@ -53,7 +53,7 @@ export function defaultTab(referer: string | undefined, userAgent: string | unde
 export const CONNECT_APPS = [
   "claude", "signed-in", "claude-code", "claude-code-plugin", "codex", "gemini-cli", "copilot-cli", "cursor", "vscode",
   "lmstudio", "goose", "chatgpt", "gemini", "other", "address", "agent-line", "trap-card", "test-prompt",
-  "first-prompt", "gauntlet-line",
+  "first-prompt", "gauntlet-line", "cli-setup",
 ] as const;
 export type ConnectApp = (typeof CONNECT_APPS)[number];
 
@@ -66,6 +66,7 @@ export const COPY_APPS: Record<string, ConnectApp> = {
   "hook-codex": "codex", "hook-gemini": "gemini-cli", "hook-copilot": "copilot-cli",
   cc: "claude-code", codex: "codex", gcli: "gemini-cli", "test-prompt": "test-prompt",
   "first-cc": "claude-code", "first-prompt": "first-prompt", "gauntlet-line": "gauntlet-line",
+  "cli-setup": "cli-setup",
 };
 
 /**
@@ -191,17 +192,18 @@ export const isPhone = (userAgent: string | undefined) => /Mobi|Android|iPhone|i
  */
 export function phoneStep(origin: string, links: ReturnType<typeof installLinks>, from: string) {
   const later = `${origin}/connect?from=${encodeURIComponent(from)}`;
-  return html`<section class="panel chamfer panel-body phone-step" id="phone-step" data-phone-step aria-labelledby="h-phone">
-<p class="eyebrow">On your phone · no account</p>
-<h2 id="h-phone">Check a skill or package here</h2>
-<form class="scan-quick" id="phone-scan" method="post" action="/scan"><input type="hidden" name="from" value="connect-phone"><label for="phone-scan-url">Link to a skill file (ClawHub or GitHub)</label><input id="phone-scan-url" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<form class="scan-quick" id="phone-check" method="get" action="/check" role="search"><label for="phone-check-q">Or a package or MCP server</label><input id="phone-check-q" name="q" type="text" inputmode="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="npm:express or pypi:litellm==1.107.0" maxlength="512" required><button class="btn chamfer" type="submit">Check it</button></form>
-<h3>Set it up on your computer later</h3>
-<p class="small">Send this page to yourself with your phone's share menu, or copy the link. Nothing is stored and we don't ask for your email.</p>
-<p><button type="button" class="btn chamfer" data-native-share data-share-text="Set up The Agent Forge on my computer" data-share-url="${later}" hidden>Send to myself…</button></p>
+  // Site audit 29 Oct (§3.6): on a phone, one line and the link to send to yourself; checking here is one click down.
+  return html`<section class="phone-step" id="phone-step" data-phone-step aria-labelledby="h-phone">
+<h2 id="h-phone" class="sr-only">On a phone</h2>
+<p class="small">On a phone? Send this page to yourself for later. Nothing is stored and we don't ask for your email. <button type="button" class="btn chamfer" data-native-share data-share-text="Set up The Agent Forge on my computer" data-share-url="${later}" hidden>Send to myself…</button></p>
 ${copyBlock("phone-link", later)}
-<h3>Or use it in an app on this phone</h3>
-<p class="small"><a href="${links.claude}" target="_blank" rel="noopener" data-install="claude">Add to Claude</a> (Claude app or claude.ai, any plan) · <a href="/trap-card#chatgpt" data-install="trap-card">ChatGPT: get the trap card</a> (30 seconds, any plan).</p>
+${more(
+    "Or check a skill or package here",
+    html`<form class="scan-quick" id="phone-scan" method="post" action="/scan"><input type="hidden" name="from" value="connect-phone"><label for="phone-scan-url">Link to a skill file (ClawHub or GitHub)</label><input id="phone-scan-url" name="url" type="url" inputmode="url" placeholder="https://github.com/owner/repo" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
+<form class="scan-quick" id="phone-check" method="get" action="/check" role="search"><label for="phone-check-q">Or a package or MCP server</label><input id="phone-check-q" name="q" type="text" inputmode="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="npm:express or pypi:litellm==1.107.0" maxlength="512" required><button class="btn chamfer" type="submit">Check it</button></form>
+<p class="small">In an app on this phone: <a href="${links.claude}" target="_blank" rel="noopener" data-install="claude">Add to Claude</a> (any plan) · <a href="/trap-card#chatgpt" data-install="trap-card">ChatGPT: get the trap card</a> (30 seconds).</p>`,
+    { hint: "No account" },
+  )}
 </section>`;
 }
 
@@ -283,7 +285,7 @@ export function linkStep(d: {
   const signIn = `/auth/login?from=${encodeURIComponent(d.from)}&next=${encodeURIComponent(next)}`;
   return html`<section class="panel chamfer panel-body link-step" id="link-step" aria-labelledby="h-link" data-link-step data-link-app-now="${d.app}"${d.signedIn ? html` data-signed-in` : ""}>
 <p class="eyebrow">Step 2 · about a minute · one GitHub sign-in</p>
-<h2 id="h-link">Link this agent to you (1 minute)</h2>
+<h2 id="h-link">Link this agent to you</h2>
 <p>One GitHub sign-in ties your agent to you, a real person. Its field reports then count toward <a href="/methodology">Forge Scores</a>, and it gets a public agent page. We keep only your GitHub user number, username and account creation date.</p>
 ${
   d.agents.length
@@ -381,8 +383,9 @@ site.get("/connect", async (c) => {
       nav: "connect",
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}" data-copy-apps="${JSON.stringify(COPY_APPS)}">
 <h1 class="page-title">Connect your AI</h1>
-<p class="lead">Three steps: check a package with no sign-in, link the agent to you, then (if you like) test it in the Gauntlet.</p>
-${phone ? html`${phoneStep(origin, links, from)}<p class="small muted phone-then">At a computer: the three steps below.</p>` : ""}
+<p class="lead">Check a package. Link your agent. Test it (optional).</p>
+<p class="small agent-line-top">Already have an agent? Give it this line and it sets itself up, no account: <code class="mono-break">${AGENT_LINE(origin)}</code> (<a href="#send-agent" data-open-more>copy it</a>)</p>
+${phone ? phoneStep(origin, links, from) : ""}
 ${firstStep(origin, links)}
 ${workedStep()}
 ${linkStep({ origin, links, app, from, signedIn: humanId !== null, agents })}
@@ -473,6 +476,7 @@ ${section(
   html`<p>Check and scan tools before your agent installs them. Nothing below needs sign-in.</p>
 <p class="actions"><a class="btn primary chamfer" href="${links.cursor}" data-install="cursor">Add to Cursor</a><a class="btn chamfer" href="${links.vscode}" data-install="vscode">Install in VS Code</a></p>
 ${testNext}
+<p class="small">Every AI app on this computer at once (it shows each change and asks y/N first; <code>--dry-run</code> previews, <code>--undo</code> puts things back):</p>${copyBlock("cli-setup", "npx @theagentforge/cli setup")}
 <h3>Claude Code: the plugin (recommended)</h3>
 <p class="small">Adds the tools, checks packages before install, counts tool failures locally, and adds your trap card at session start. Switch any part off in <code>/plugin</code>.</p>
 ${copyBlock("p1", `/plugin marketplace add ${origin}/marketplace.json`)}

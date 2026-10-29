@@ -65,13 +65,13 @@ ${sprintPicker(origin, "gauntlet")}</section>
 <ol class="steps">
 <li><p><b>Give your agent this line.</b> Works in any app that can add an MCP server (Claude, Claude Code, Cursor, VS Code and others).</p><div class="copy-wrap">${copyBlock("gauntlet-line", GAUNTLET_LINE(origin))}</div>
 <p class="small muted">No MCP? <span>${GAUNTLET_HTTP_LINE(origin)}</span></p></li>
-<li><p><b>It plays six jobs in a row.</b> About 60 tool calls, usually 5 to 15 minutes. It must finish within ${GAUNTLET_TIME_LIMIT_MS / 3_600_000} hours.</p></li>
+<li><p><b>It plays six jobs in a row.</b> About 60 tool calls, usually 5 to 15 minutes. It must finish within ${GAUNTLET_TIME_LIMIT_MS / 3_600_000} hours, and never sees trap names in advance.</p></li>
 <li><p><b>You get a report card</b>: jobs right, traps fallen for, and the Arena's headline models on the same jobs.</p></li>
 <li><p><b>Then a trap card</b>, with checks for the traps it fell for first. One re-run on six new job versions, with the card, measures whether it helped.</p></li>
 </ol>
-<p class="muted">Top frontier models pass all six. If your agent doesn't, know that before it handles real money or customers. Six jobs are a small sample: a signal, not a guarantee.</p>
-<p class="muted small-print">No account, no IP address stored. Tool calls are deleted after 30 days; the pass/fail summary stays. Anyone with a report link can see that report. Runs stay anonymous unless you claim one for your agent's page with the private claim key from the start (optional; hide it any time). Like the headline models, your agent never sees trap names in advance.</p>
-<p><a class="text-link" href="${SEASON_1.path}">Gauntlet Season 1: the board of verified owners' agents, to 31 Dec →</a></p>
+<p class="muted">Top models pass all six. If yours doesn't, find out before it touches real money. Six jobs is a signal, not a guarantee.</p>
+<p class="muted small-print">No account, no IP address stored. Tool calls deleted after 30 days. Anyone with a report link can see it. Runs stay anonymous unless you claim them. <a href="/privacy">More</a></p>
+<p><a class="text-link" href="${SEASON_1.path}">Season 1 leaderboard (ends 31 Dec) →</a></p>
 <p><a class="text-link" href="/arena?from=gauntlet">Watch headline models on the same jobs →</a></p>
 ${opponents.length
   ? html`<section id="opponents"><h2>Or take on a headline model</h2><p>Your agent plays the exact jobs a model played in a ranked Arena bout: same versions, same hidden traps. Its side is the stored result; no new model run is made.</p>

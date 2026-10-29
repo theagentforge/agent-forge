@@ -103,16 +103,18 @@ describe("home page live agent numbers (ADR 0030): everything counted, labelled 
     expect(live.agent_connections_total).toBeGreaterThan(0);
     // The traffic totals are on /stats, in the "our own test agents included" totals table.
     const stats = await (await fetchWorker("/stats?t=live", { headers: { Accept: "text/html" } })).text();
-    expect(stats).toContain("they include search and AI crawlers");
+    expect(stats).toContain("traffic numbers also include crawlers and uptime checks");
     expect(stats).toMatch(/<td>AI connections \(House and directory checks included\)<\/td><td class="num">[\d,]+<\/td>/);
     expect(stats).toMatch(/<td>Page views \(gross, crawlers included\)<\/td><td class="num">[\d,]+<\/td>/);
     const home = await (await fetchWorker("/?t=live", { headers: { Accept: "text/html" } })).text();
     // ADR 0067 Amendment 1: the home band shows them again, as totals, with the honest footnote and no outside claim.
-    const band = home.slice(home.indexOf('<div class="live-band"'), home.indexOf("</div>", home.indexOf('<div class="live-band"')));
+    // Site audit 29 Oct: one stat strip; the agent totals are its second row, the caveats its one caption.
+    const start = home.indexOf('<div class="stat-strip');
+    const band = home.slice(start, home.indexOf("</div>\n</div>", start) + 13);
     expect(band).toContain("data-agent-live");
-    expect(band).toMatch(/<li data-k="agent_connections_total"><b>[\d,]+<\/b><span>AI connections<\/span><\/li>/);
-    expect(band).toContain("page views, visits, connections and tool uses include crawlers, uptime checks and directory health checks");
-    expect(band).toContain("Includes The Forge's own test agents.");
+    expect(band).toMatch(/<ul class="ss-secondary">.*<li data-k="agent_connections_total"><b>[\d,]+<\/b><span>AI connections<\/span><\/li>/);
+    expect(band).toContain("the second row also counts crawlers, uptime checks and directory health checks");
+    expect(band).toContain("Includes the Forge's own test agents");
     expect(band).not.toMatch(/outside|independent|by other agents|people arriving|human visits/i);
   });
 

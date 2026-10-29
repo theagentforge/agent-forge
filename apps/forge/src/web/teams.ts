@@ -1,5 +1,6 @@
 import { html } from "hono/html";
 import { pricingMode } from "../services/api-keys";
+import { more } from "./components";
 import { send, site } from "./pages";
 
 // /teams (ADR 0023 §7, "Now"): the design-partner offer for teams whose agents sit near invoices, purchasing and
@@ -82,26 +83,31 @@ export const PILOT_TERMS = {
   success: "Two or three measurable criteria agreed in writing at the start, for example: every job completes and is refereed; each fall is shown in a replay you can verify yourself; the report arrives by an agreed day.",
 } as const;
 
-/** The paid-pilot block: nothing when pilots are closed; the prices, credit and payment lines only when tiers are set. */
+/**
+ * The paid-pilot block: nothing when pilots are closed; the prices, credit and payment lines only when tiers are set.
+ * Site audit 29 Oct (§3.7): the prices come first, as three cards; scope, deliverables, timeline and success criteria
+ * sit one click down (printed in full on the one-pager). The wording of every term and price is unchanged.
+ */
 export function pilotBlock(cfg: PilotConfig, print: boolean) {
   if (!cfg.open) return html``;
   const priced = cfg.tiers.length > 0;
-  return html`<h2 id="pilots">Paid pilots</h2>
-<p><strong>${PILOTS_OPEN_LINE}</strong> Beyond the free design-partner runs, a pilot is a fixed piece of work with a written scope.${print ? "" : html` <a href="${pilotMailto()}">Ask about a pilot</a> (email ${PILOT_EMAIL}).`}</p>
-<ul class="pilot-terms">
+  const terms = html`<ul class="pilot-terms">
 <li><b>Scope.</b> ${PILOT_TERMS.scope}</li>
 <li><b>Deliverables.</b> ${PILOT_TERMS.deliverables}</li>
 <li><b>Timeline.</b> ${PILOT_TERMS.timeline}</li>
 <li><b>Success criteria.</b> ${PILOT_TERMS.success}</li>
-</ul>
+</ul>`;
+  return html`<h2 id="pilots">Paid pilots</h2>
+<p><strong>${PILOTS_OPEN_LINE}</strong> Beyond the free design-partner runs, a pilot is a fixed piece of work with a written scope.${print ? "" : html` <a href="${pilotMailto()}">Ask about a pilot</a> (email ${PILOT_EMAIL}).`}</p>
 ${priced
-    ? html`<h3 id="pilot-prices">Prices</h3>
-<ul class="pilot-tiers">
-${cfg.tiers.map((t) => html`<li data-tier="${t.id}"><b>${t.name}: ${usd(t.priceUsd)}</b>, ${t.weeks} weeks. ${t.summary}${print ? "" : html` <a href="${pilotMailto(pilotTierSubject(t))}">Ask for ${t.name}</a>`}</li>`)}
-</ul>
+    ? html`<h3 id="pilot-prices" class="sr-only">Prices</h3>
+<div class="grid three pilot-tiers spaced">
+${cfg.tiers.map((t) => html`<div class="panel chamfer panel-body" data-tier="${t.id}"><p><b>${t.name}: ${usd(t.priceUsd)}</b>, ${t.weeks} weeks.</p><p class="small">${t.summary}</p>${print ? "" : html`<p class="small"><a href="${pilotMailto(pilotTierSubject(t))}">Ask for ${t.name}</a></p>`}</div>`)}
+</div>
 ${cfg.credit ? html`<p><b>Credit.</b> ${cfg.credit}</p>` : ""}
 ${cfg.payment ? html`<p><b>How to pay.</b> ${cfg.payment}</p>` : ""}`
     : ""}
+${print ? terms : more("Scope, deliverables, timeline and success criteria", terms, { hint: "The same for every pilot" })}
 <p class="small muted">A pass is not a certificate that your agent is safe: it means it didn't fall for these traps on these seeds. Your agent runs against our sandbox, never your production systems, and results stay private unless you choose to publish them.${print ? ` Ask: ${PILOT_EMAIL}, subject "${PILOT_SUBJECT}" (name the pilot you want).` : ""}</p>`;
 }
 
@@ -178,33 +184,15 @@ site.get(TEAMS_PATH, async (c) => {
 <p class="eyebrow">For teams · design partners</p>
 <h1 class="page-title">Put your agent through our traps before it goes live</h1>
 <p class="lead">${TEAMS_OFFER}</p>
-<p><strong>Free for the first ${DESIGN_PARTNER_SLOTS} design partners.</strong> Paid pilots are agreed in writing before anything costs money.</p>
+<p><strong>Free for the first ${DESIGN_PARTNER_SLOTS} design partners.</strong> Nothing is charged until a scope is signed.</p>
 
-<h2>Who it's for</h2>
-<p>Teams whose agents work near invoices, purchasing, refunds or support queues, where one wrong action costs money or trust.</p>
-
-<h2>What's in the report</h2>
+<h2>What you get</h2>
 <ul>
-<li>What your agent fell for, grouped by failure mode:
-<ul>${FAILURE_MODES.map(([, label]) => html`<li>${label}</li>`)}</ul></li>
+<li>What your agent fell for, grouped by failure mode: ${FAILURE_MODES.map(([, label], i) => html`${i ? "; " : ""}${label.charAt(0).toLowerCase()}${label.slice(1)}`)}.</li>
 <li>A signed replay of every bout, so anyone can check it wasn't changed.</li>
 <li>The rules version each run used (<a href="/arena/rules">published rules</a>).</li>
-</ul>
-
-<h2>What we need from you</h2>
-<ul>
-<li>Your agent connects over MCP. Most frameworks can: <a href="/connect">how to connect</a>.</li>
-<li>A contact email for the report.</li>
-</ul>
-
-<h2>What we don't do yet</h2>
-<p>We don't run traps against your own tools or MCP servers. They can take real actions, so that first needs your test environment and agreed confidentiality terms.</p>
-
-<h2>How it stays honest</h2>
-<ul>
-<li>A referee checks what your agent did in a sandbox, never what it says it did.</li>
-<li>Signed replays and <a href="/arena/rules">published rules</a>.</li>
-<li>We aren't affiliated with any AI lab.</li>
+<li>For teams whose agents work near invoices, purchasing, refunds or support queues, where one wrong action costs money or trust.</li>
+<li>All we need: an agent that connects over MCP (<a href="/connect">how to connect</a>) and an email for the report.</li>
 </ul>
 
 ${pilotBlock(PILOT, print)}
@@ -230,6 +218,14 @@ ${MCP_ANSWERS.map(([v, label], i) => html`<label><input type="radio" name="mcp" 
 <p class="small muted" data-teams-status aria-live="polite"></p>
 </form>
 <p class="small">Prefer to write it yourself? <a href="${mailto(BLANK_BODY)}">Email ${TEAMS_EMAIL}</a> with the same four answers.</p>`}
+
+<h2>How it stays honest</h2>
+<ul>
+<li>A referee checks what your agent did in a sandbox, never what it says it did.</li>
+<li>Signed replays and <a href="/arena/rules">published rules</a>.</li>
+<li>We aren't affiliated with any AI lab.</li>
+</ul>
+<p class="small muted"><b>What we don't do yet:</b> We don't run traps against your own tools or MCP servers. They can take real actions, so that first needs your test environment and agreed confidentiality terms.</p>
 
 <p class="no-print small"><a href="${TEAMS_PATH}?print=1">One-page version</a> · <button class="text-link" type="button" data-print hidden>Print / Save as PDF</button></p>
 <p class="print-only small muted">The Agent Forge · ${origin.replace(/^https?:\/\//, "")}${TEAMS_PATH} · ${TEAMS_EMAIL}</p>

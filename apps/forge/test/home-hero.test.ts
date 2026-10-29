@@ -108,7 +108,7 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     expect(s.html).toContain('data-hero-source="count"');
     expect(s.html).toContain('<a href="/arena/dataset.json">The dataset</a>');
     // The hero copy links no replay (the live Wire beside it may link bouts of its own).
-    const copy = s.html.slice(s.html.indexOf('class="hero2-copy"'), s.html.indexOf('class="live-band"'));
+    const copy = s.html.slice(s.html.indexOf('class="hero2-copy"'), s.html.indexOf("</div>", s.html.indexOf('class="hero2-copy"')));
     expect(copy).toContain("<h1>");
     expect(copy).not.toContain("/arena/run/");
     // The sub-line doesn't depend on the headline, so it stays.
@@ -169,29 +169,32 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
 describe("the home hero (W2.1)", () => {
   it("shows the BRAND.md headline and sub-line word for word (copied from its hero row, 28 Oct), sourced to the replay", async () => {
     expect(HOME_H1).toBe("An AI agent paid a fake invoice and reported the job done.");
-    expect(HOME_SUBHEAD).toBe("The Forge tests AI agents on real business jobs with planted traps, lets every agent be tied to a verified human owner, and checks the tools they install.");
+    // BRAND v1.3 (Dinike, 29 Oct 2026, site audit option A).
+    expect(HOME_SUBHEAD).toBe("We test AI agents on real business jobs with hidden traps, and check the tools they install.");
     const body = await page();
     const h1 = body.indexOf("<h1>An AI agent paid a fake invoice and <em>reported the job done</em>.</h1>");
     expect(h1).toBeGreaterThan(0);
     const source = body.indexOf(`data-hero-source="${ids.pick}"`);
     expect(source).toBeGreaterThan(h1);
     expect(body).toContain(`href="/arena/run/${ids.pick}?from=home-source">Watch the replay</a>`);
-    expect(body).toContain("(<span class=\"mono\">FA-INJ-001</span>), then said the job was done.");
-    // Says honestly whose model it was and that the bout was practice, not a ranked bout.
-    expect(body).toContain("Refereed replay, practice bout, not ranked, 2026-10-18:</span> Granite 4.0 Micro (IBM, open weights) paid a lookalike invoice");
+    // Site audit 29 Oct (issue 2): one short line. Says honestly whose model it was and that the bout was practice, not
+    // a ranked bout; the trap's catalogue entry is in the title.
+    expect(body).toContain('<span class="muted">Refereed replay:</span> <span title="FA-INJ-001: ');
+    expect(body).toContain(">practice bout, not ranked</span> · Granite 4.0 Micro (IBM, open weights) · 18 Oct 2026 · <a");
     expect(body.indexOf(`<p class="lead">${HOME_SUBHEAD}</p>`)).toBeGreaterThan(source);
     expect(body).not.toContain(MODEL_WORDS);
     expect(body.slice(0, body.indexOf("<footer")).toLowerCase()).not.toContain("social network");
   });
 
-  it("has one primary call to action, Run the Gauntlet, to the Gauntlet start page, then the secondary two", async () => {
+  it("has one primary call to action, Run the Gauntlet, to the Gauntlet start page, then one secondary (site audit 29 Oct)", async () => {
     expect(PRIMARY_CTA).toEqual({ label: "Run the Gauntlet", href: "/gauntlet" });
     const body = await page();
     const ctas = body.slice(body.indexOf('class="hero-ctas"'), body.indexOf("</p>", body.indexOf('class="hero-ctas"')));
     expect(ctas).toContain('<a class="btn primary chamfer" href="/gauntlet?from=home-hero">Run the Gauntlet</a>');
     expect(ctas.match(/btn primary/g)).toHaveLength(1);
-    expect(ctas).toContain('href="/connect?from=home-hero">Connect your AI</a>');
-    expect(ctas).toContain('href="/check?from=home-hero">Check a tool</a>');
+    expect(ctas).toMatch(/class="btn chamfer" href="\/check\?from=home-hero">Check a tool<\/a>$/);
+    expect(ctas.match(/class="btn/g)).toHaveLength(2);
+    expect(body).toContain('Short on time? <a href="/gauntlet/sprint?from=home-hero">Try the 90-second Sprint</a>.');
     // The header's call to action on every page is the Gauntlet too.
     for (const path of ["/", "/arena", "/about"]) expect(await page(path)).toContain('class="btn primary chamfer head-cta" href="/gauntlet?from=head"');
     // The target is the Gauntlet's start page: the line to give an agent.
@@ -200,15 +203,18 @@ describe("the home hero (W2.1)", () => {
     expect(g).toContain('class="btn primary chamfer head-cta" href="/gauntlet?from=head" aria-current="page"');
   });
 
-  it("keeps the live totals band (ADR 0067 Amendment 1), the who-this-is-for line, the copy button and the /connect?from=home funnel", async () => {
+  it("keeps the live totals band (ADR 0067 Amendment 1); the duplicates the site audit removed stay removed", async () => {
     const body = await page();
     expect(body).toContain("data-work-live");
     expect(body).not.toContain("Live, outside agents only");
-    expect(body).toContain("Includes The Forge's own test agents.");
-    expect(body).toContain('<b>Who this is for:</b> people who run AI agents, and the teams that build, list or secure them. <a href="/security">For security teams</a>');
-    expect(body).toContain('id="agent-line-home"');
-    expect(body).toMatch(/data-copy/);
-    expect(body).toContain('href="/connect?from=home">Connect an app</a>');
+    expect(body).toContain("Includes the Forge's own test agents");
+    // Site audit 29 Oct (§3.1, B2): one check box, no value cards, no human/agent tabs, no second report list.
+    expect(body.match(/<form [^>]*class="scan-quick/g) ?? []).toHaveLength(1);
+    expect(body).not.toContain("value-cards");
+    expect(body).not.toContain("who-tabs");
+    expect(body).not.toContain("Who this is for");
+    expect(body).not.toContain("field reports — latest");
+    expect(body).not.toContain('class="check-form');
   });
 
   it("never names the embargoed model, even though it has a qualifying run", async () => {
@@ -261,12 +267,14 @@ describe("navigation (W2.1)", () => {
     for (const path of ["/benchmark", "/security", "/stats", "/check"]) expect((await fetchWorker(path, { headers: { Accept: "text/html" } })).status, path).toBe(200);
   });
 
-  it("stays simple on a phone: one row that scrolls sideways, and a short call-to-action label", async () => {
-    expect(HEAD_CTA).toEqual({ href: "/gauntlet", label: "Run the Gauntlet", short: "Gauntlet" });
+  it("stays simple on a phone: logo, a verb call to action and a Menu button in one row (site audit 29 Oct, issue 7)", async () => {
+    expect(HEAD_CTA).toEqual({ href: "/gauntlet", label: "Run the Gauntlet", short: "Run Gauntlet" });
     const body = await page();
-    expect(body).toContain('<span class="long">Run the Gauntlet</span><span class="short">Gauntlet</span>');
-    const phone = rules.slice(rules.indexOf("@media (max-width:640px){"));
-    expect(phone).toMatch(/\.nav\{flex-wrap:nowrap;overflow-x:auto/);
+    expect(body).toContain('<span class="long">Run the Gauntlet</span><span class="short">Run Gauntlet</span>');
+    expect(body).toContain('<a class="btn chamfer menu-btn" href="#foot-nav" data-menu-open aria-controls="site-menu" aria-haspopup="dialog">Menu</a>');
+    expect(body).toContain('<dialog class="menu-sheet" id="site-menu"');
+    const phone = rules.slice(rules.indexOf("@media (max-width:959px){"));
+    expect(phone).toMatch(/^@media \(max-width:959px\)\{[^@]*\.nav\{display:none\}[^@]*\.menu-btn\{display:inline-flex/);
     expect(rules).toMatch(/\.head-cta \.long\{display:none\}\.head-cta \.short\{display:inline\}/);
     expect(body).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">');
   });

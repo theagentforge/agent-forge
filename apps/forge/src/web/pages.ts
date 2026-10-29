@@ -34,7 +34,10 @@ import {
   verdictChip,
   verdictFromScore,
   wireList,
-  liftProof,
+  more,
+  statStrip,
+  fnNote,
+  type Stat,
 } from "./components";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
@@ -47,6 +50,7 @@ import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCount
 import { recordBadgeServe, recordHomeClick, recordTrapCard } from "../services/growth";
 import { internalCaller } from "../services/internal";
 import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
+import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
@@ -54,15 +58,13 @@ import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { badgeCounts, badgeFor, badgeMarkdown } from "./badge-core";
 import { EMPTY_BOARD, frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
-import { scanPath, skillLabel } from "../services/scans";
-import type { ScanFinding } from "@forge/shared";
 import { duelPlayer } from "./duel";
 import { DESCRIPTOR, HEAD_CTA, HOME_OG_TITLE, HOME_TITLE, renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
-import { FIELD_REPORTS_BAND_LABEL, FIELD_REPORTS_BAND_NOTE, HOUSE_METHOD_PATH, TOOLS_TRACKED_BAND_NOTE, TOOLS_TRACKED_RULE_PATH, WORK_LABELS, WORK_RECENCY, workTotals, type WorkTotals } from "../services/site-pulse";
+import { FIELD_REPORTS_BAND_LABEL, FIELD_REPORTS_BAND_NOTE, HOUSE_METHOD_PATH, TOOLS_TRACKED_BAND_NOTE, TOOLS_TRACKED_RULE_PATH, WORK_LABELS, WORK_RECENCY, type WorkTotals } from "../services/site-pulse";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
-import { AGENT_LINE } from "./agent-line";
-import { sprintPicker } from "./sprint-picker";
+import { SPRINT_PATH } from "../arena/sprint";
+import { dayLabel } from "./experiments";
 import { toolAnswerLine, toolAsOf, toolSources } from "./tool-answer";
 import { HOUSE_TOOLS_SOURCE, type HouseToolsPayload } from "../services/house-tools";
 import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts";
@@ -105,8 +107,11 @@ export const DISCOVERY_LINKS = [
   '</openapi.json>; rel="service-desc"; type="application/openapi+json"',
 ].join(", ");
 
-/** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
-export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean } = {}) {
+/**
+ * Sends a page with security headers. Public pages are edge-cached for 60 seconds, or `maxAge` seconds: pages showing
+ * the public totals pass the seconds left in their snapshot (services/public-numbers.ts, ADR 0116).
+ */
+export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean; maxAge?: number } = {}) {
   // AQ-08 (ADR 0097): when a model credit has run out or expired, every Arena page still renders, with an honest note.
   if (o.path === "/arena" || o.path.startsWith("/arena/") || o.path.startsWith("/arena?")) {
     const pause = await arenaPause(c.env);
@@ -114,7 +119,7 @@ export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache
   }
   const body = nofollowActionLinks((await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN })).toString(), c.env.PUBLIC_ORIGIN);
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", ...securityHeaders(o) });
-  headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${PAGE_CACHE_SECONDS}`);
+  headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${opts.maxAge ?? PAGE_CACHE_SECONDS}`);
   headers.set("Vary", "Accept");
   headers.set("Link", DISCOVERY_LINKS);
   return new Response(body.toString(), { status: o.status ?? 200, headers });
@@ -132,9 +137,9 @@ export function structuredOnly(data: unknown): unknown {
   return data;
 }
 
-export function sendJson(c: Ctx, data: unknown) {
+export function sendJson(c: Ctx, data: unknown, maxAge = PAGE_CACHE_SECONDS) {
   return c.json(structuredOnly(data) as object, 200, {
-    "Cache-Control": `public, max-age=${PAGE_CACHE_SECONDS}`,
+    "Cache-Control": `public, max-age=${maxAge}`,
     "X-Content-Type-Options": "nosniff",
     Vary: "Accept",
   });
@@ -243,61 +248,52 @@ export const advisoryLine = (now: number) =>
     ? html`<p class="small advisory-line"><b>October 2026 advisories:</b> checks now include OSV malicious-package and CISA exploited-vulnerability data. <a href="/advisories/2026-10?from=home">See what changed</a></p>`
     : "";
 
-/** BRAND.md hero sub-line (decision D2), word for word; also the home page's meta and share description. */
-export const HOME_SUBHEAD = "The Forge tests AI agents on real business jobs with planted traps, lets every agent be tied to a verified human owner, and checks the tools they install.";
+/**
+ * BRAND.md §1 hero sub-line, word for word (v1.3: Dinike chose site audit option A, 29 Oct 2026); also the home page's
+ * meta and share description and the line in llms.txt.
+ */
+export const HOME_SUBHEAD = "We test AI agents on real business jobs with hidden traps, and check the tools they install.";
 /** W2.1: the one description is now the hero sub-line (meta description, JSON-LD, /about, llms.txt). */
 export const SITE_DESCRIPTION = HOME_SUBHEAD;
 export { REFEREE_LINE as HOME_USP } from "./duel";
 
-/** ADR 0018 §2, ADR 0024 §7 and ADR 0026: four cards, the skill scan first; only the last says "MCP". */
-export const VALUE_CARDS: { verb: string; line: string; button: string; href: string }[] = [
-  { verb: "Scan", line: "Paste a skill. See what it really asks your agent to do.", button: "Scan a skill", href: "/scan?from=home" },
-  { verb: "Watch", line: "See how AI agents get tricked, in refereed jobs.", button: "Watch a bout", href: "/arena?from=home" },
-  { verb: "Test yours", line: "Your agent, six jobs, hidden traps. Then a trap card for the ones it fell for.", button: "Run the Gauntlet", href: "/gauntlet?from=home" },
-  { verb: "Check a tool", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
-];
-
 /**
- * The home page's live numbers in one compact band (ADR 0034, amended; ADR 0067 Amendment 1, Dinike 28 Oct): the
- * running totals of real work; the AI agent running totals (ADR 0030) on a smaller row; one footnote that says what's
- * counted. These are totals, our own House test agents included, so no label may say or imply "outside",
- * "independent" or "by other agents" (the outside-only figures are internal, on /admin/kpis). The HTML carries the
- * real numbers; site.js counts each up from zero once on load (amendment 2) and re-reads /agents/live.json every 30 s.
+ * The home page's live numbers (ADR 0034, amended; ADR 0067 Amendment 1, Dinike 28 Oct; site audit 29 Oct): all nine
+ * gross totals stay (Dinike, 29 Oct: "keep all, tidier"), as one stat strip: the five totals of real work, then the AI
+ * agent totals (ADR 0030) in a compact row. Every qualifier is still there, said once: per-number notes as footnotes
+ * under the strip, and one caption for the whole strip with the counting-rule link and "Counted at". These are totals,
+ * our own House test agents included, so no label may say or imply "outside", "independent" or "by other agents" (the
+ * outside-only figures are internal, on /admin/kpis). The HTML carries the real numbers; site.js counts each up from
+ * zero once on load and re-reads /agents/live.json every 30 s (li[data-k] > b, [data-as-of], time[data-ago]).
  */
-export function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof liveAgentCounts>> | null, now: number) {
+export function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof liveAgentCounts>> | null, now: number, asOf?: string) {
   const work = w ? WORK_LABELS.filter(([k]) => w[k] !== null) : [];
   // Review of B3-04 (ADR 0105): the install-checks total is null below its minimum; its item is left out of the HTML
   // altogether then (no empty, hidden placeholder), like its row on /stats.
   const agentLabels = live ? LIVE_AGENT_LABELS.filter(([k]) => k !== "install_checks_total" || live[k] !== null) : [];
   const agents = live ? agentLabels.filter(([k]) => live[k] !== null) : [];
   if (!work.length && !agents.length) return "";
-  // The two most recent activities, from real timestamps.
-  const recent = w ? WORK_RECENCY.filter(([k]) => w[k] !== null).sort((a, b) => w[b[0]]! - w[a[0]]!).slice(0, 2) : [];
-  return html`<div class="live-band" data-work-live data-agent-live aria-label="Live numbers">
-<p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Live</p>
-${work.length ? html`<ul class="counters work">${work.map(([k, label]) => html`<li data-k="${k}"><b>${w![k]!.toLocaleString("en-US")}</b>${k === "field_reports" ? html`<span>${FIELD_REPORTS_BAND_LABEL}</span><a class="stat-note" href="${HOUSE_METHOD_PATH}">${FIELD_REPORTS_BAND_NOTE}</a>` : k === "tools_tracked" ? html`<span>${label}</span><a class="stat-note" href="${TOOLS_TRACKED_RULE_PATH}">${TOOLS_TRACKED_BAND_NOTE}</a>` : html`<span>${label}</span>`}</li>`)}</ul>` : ""}
-${agents.length ? html`<ul class="counters agents">${agentLabels.map(([k, label]) => {
-    const v = live![k];
-    return html`<li data-k="${k}"${v === null ? " hidden" : ""}><b>${v === null ? "" : v.toLocaleString("en-US")}</b><span>${label}</span></li>`;
-  })}</ul>` : ""}
-<p class="asof">${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}Bouts include practice${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked)` : ""}; page views, visits, connections and tool uses include crawlers, uptime checks and directory health checks.</p>
-<p class="asof live-honest">Includes The Forge's own test agents. <a href="/stats/rules">How each is counted →</a></p>
-</div>`;
-}
-
-/** The launch scan as proof, next to the home hero (ADR 0026): what we found, and the latest flagged skills. */
-function scanProof(_scanned: number, rows: { fingerprint: string; sourceUrl: string | null; name: string | null; findings: unknown }[]) {
-  return html`<aside class="panel chamfer scan-proof" aria-labelledby="scan-proof-title">
-<div class="panel-head"><span id="scan-proof-title">skill-watch — what we found</span><a href="/skill-watch?from=home">all →</a></div>
-<div class="panel-body">
-<ul class="stat-row"><li><b>9,930</b> public skills scanned</li><li><b>30</b> flagged</li><li><b>0.33%</b> of ordinary skills</li></ul>
-<p class="small muted">The launch scan, 19 Oct 2026: every SKILL.md in 277 GitHub repositories. No malware found by this method. Most flags are habits, like piping a vendor's installer into a shell.</p>
-${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
-    const l = skillLabel(r.sourceUrl, r.name);
-    return html`<li><a href="${scanPath(r.fingerprint)}?from=home"><b>${l.title}</b></a>${l.where ? html` <span class="small muted mono">${l.where}</span>` : ""}<br><span class="small">${(r.findings as ScanFinding[]).find((f) => f.severity === "high")?.title ?? ""}</span></li>`;
-  })}</ol>` : ""}
-<p><a class="btn chamfer" href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
-</div></aside>`;
+  // The most recent activity, from a real timestamp.
+  const recent = w ? WORK_RECENCY.filter(([k]) => w[k] !== null).sort((a, b) => w[b[0]]! - w[a[0]]!).slice(0, 1) : [];
+  const notes: unknown[] = [];
+  const main: Stat[] = work.map(([k, label]) => {
+    if (k === "bouts_refereed") {
+      notes.push(fnNote("bouts", "*", `Practice and ranked bouts${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked)` : ""}.`));
+      return { k, value: w![k], label, fn: { id: "bouts", mark: "*" } };
+    }
+    if (k === "field_reports") {
+      notes.push(fnNote("reports", "†", html`<a href="${HOUSE_METHOD_PATH}">${FIELD_REPORTS_BAND_NOTE.charAt(0).toUpperCase()}${FIELD_REPORTS_BAND_NOTE.slice(1)}</a>.`));
+      return { k, value: w![k], label: FIELD_REPORTS_BAND_LABEL, fn: { id: "reports", mark: "†" } };
+    }
+    if (k === "tools_tracked") {
+      notes.push(fnNote("tools", "‡", html`<a href="${TOOLS_TRACKED_RULE_PATH}">${TOOLS_TRACKED_BAND_NOTE.charAt(0).toUpperCase()}${TOOLS_TRACKED_BAND_NOTE.slice(1)}</a>.`));
+      return { k, value: w![k], label, fn: { id: "tools", mark: "‡" } };
+    }
+    return { k, value: w![k], label };
+  });
+  const secondary: Stat[] = agentLabels.map(([k, label]) => ({ k, value: live![k], label }));
+  const caption = html`<p class="disclosure live-honest">${recent.map(([k, label], i) => html`${i ? " · " : ""}${i ? label : label.charAt(0).toUpperCase() + label.slice(1)} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}Includes the Forge's own test agents; the second row also counts crawlers, uptime checks and directory health checks.${asOf ? html` <span data-as-of="${asOf}">${asOfShort(asOf)}</span>` : ""} <a href="/stats/rules">How each is counted</a></p>`;
+  return statStrip({ main, secondary, caption, notes, label: "Live numbers", attrs: { "data-work-live": "", "data-agent-live": "" } });
 }
 
 /**
@@ -316,15 +312,16 @@ export function heroHeadline(h: HomeHero) {
  */
 export function heroSource(h: HomeHero) {
   if (h.case === "count")
-    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the scam-invoice jobs (practice and ranked, Normal and Hard; Lab arms left out), and the runs where the referee marked the planted fake invoice paid. <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
+    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the scam-invoice jobs, practice and ranked, Normal and Hard (Lab arms left out). <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
   if (h.case === "question")
     return html`<p class="small muted hero-source" data-hero-source="question">Every Arena job hides planted traps, a fake invoice among them. <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
   const p = h.proof;
-  const day = new Date(p.finished_at).toISOString().slice(0, 10);
+  const day = dayLabel(new Date(p.finished_at).toISOString().slice(0, 10));
   // Whose model it was, in the lineup's words ("IBM (open weights)" reads "IBM, open weights"), and whether the bout was
   // ranked: a practice run of a small open model must not pass for a frontier model's ranked bout (review 28 Oct).
+  // Site audit 29 Oct (issue 2): one short line; the trap's catalogue entry is one hover away, and the replay one tap.
   const lab = p.lab ? ` (${p.lab.replace(/ \((.+)\)$/, ", $1")})` : "";
-  return html`<p class="small hero-source" data-hero-source="${p.run}"><span class="muted">Refereed replay, ${p.ranked ? "ranked bout" : "practice bout, not ranked"}, ${day}:</span> ${p.name}${lab} ${p.trap.description.charAt(0).toLowerCase()}${p.trap.description.slice(1)} (<span class="mono">${p.trap.id}</span>), then said the job was done. <a href="${p.replay}?from=home-source">Watch the replay</a></p>`;
+  return html`<p class="small hero-source" data-hero-source="${p.run}"><span class="muted">Refereed replay:</span> <span title="${p.trap.id}: ${p.trap.description}">${p.ranked ? "ranked bout" : "practice bout, not ranked"}</span> · ${p.name}${lab} · ${day} · <a href="${p.replay}?from=home-source">Watch the replay</a></p>`;
 }
 
 site.get("/", async (c) => {
@@ -332,7 +329,9 @@ site.get("/", async (c) => {
   const now = Date.now();
   // One wave of independent reads, then the two that depend on it (24 Oct check: three waves, 2.7 s median).
   // The live totals are read once and shared by the band and publicStats (ADR 0067 Amendment 1).
-  const totalsRead = Promise.all([workTotals(c.env).catch(() => null), liveAgentCounts(c.env, now).catch(() => null)]);
+  // ADR 0116: one snapshot of the totals for every page that shows them (services/public-numbers.ts).
+  const numbers = await publicNumbers(c.env, now);
+  const totalsRead = Promise.resolve([numbers.work, numbers.live] as [WorkTotals | null, LiveCounts | null]);
   const [s, wire, watch, scouts, duels, hard, lift, work, live, board, frontier, hh] = await Promise.all([
     publicStats(c.env, now, totalsRead),
     liveWire(db, 6),
@@ -366,7 +365,7 @@ site.get("/", async (c) => {
     ],
     for_security_teams: `${origin}/security`,
   };
-  if (wantsJson(c)) return sendJson(c, { hero, featured_bout: duel, bouts: duels, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), trap_card_experiments: experimentsData(), which_ai_falls_for_it: boardJson(board, origin), third_party: [], stats: s, stats_json: `${c.env.PUBLIC_ORIGIN}/stats.json`, live_wire: wire, watchlist: watch, top_scouts: scouts });
+  if (wantsJson(c)) return sendJson(c, { hero, featured_bout: duel, bouts: duels, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), trap_card_experiments: experimentsData(), which_ai_falls_for_it: boardJson(board, origin), third_party: [], stats: s, stats_json: `${c.env.PUBLIC_ORIGIN}/stats.json`, live_wire: wire, watchlist: watch, top_scouts: scouts }, secondsLeft(numbers));
   return send(c, {
     title: hh.headline,
     ogTitle: hh.share,
@@ -390,70 +389,44 @@ site.get("/", async (c) => {
         organization(origin, SITE_DESCRIPTION),
       ],
     },
+    // Site audit 29 Oct (§3.1): one job per block. The hero (one primary and one secondary action) with "Which AI falls
+    // for it?" beside it on wide screens (the five-number strip doesn't fit half a page), then the numbers, the Arena
+    // replay, the trap card result, one check box, the Wire and a last call.
     body: html`
 <section class="hero2">
 <div class="hero2-copy">
-<p class="live-pill"><i aria-hidden="true"></i> On air: the Arena channel</p>
 ${heroHeadline(hh)}
 ${heroSource(hh)}
 <p class="lead">${HOME_SUBHEAD}</p>
-<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="/check?from=home-hero">Check a tool</a></p>
-<p class="small muted">The Gauntlet: your agent, six everyday jobs, hidden traps, refereed. Free, no account. Connecting your AI starts with a 60-second check.</p>
-<div class="hero-sprint">${sprintPicker(origin, "home")}</div>
+<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/check?from=home-hero">Check a tool</a></p>
+<p class="small muted">Free, no account. Short on time? <a href="${SPRINT_PATH}?from=home-hero">Try the 90-second Sprint</a>.</p>
 ${advisoryLine(Date.now())}
-<p class="small muted who-for"><b>Who this is for:</b> people who run AI agents, and the teams that build, list or secure them. <a href="/security">For security teams</a></p>
-<div class="who-tabs" role="tablist" aria-label="Who are you?" hidden><button type="button" role="tab" aria-selected="true" data-who="human">I'm a human</button><button type="button" role="tab" aria-selected="false" data-who="agent">I'm an agent</button></div>
-<div class="who-panel" data-panel="human">
-<p class="who-label">Humans</p>
-<form class="scan-quick hero-go" method="post" action="/go"><input type="hidden" name="from" value="home-box"><label class="sr-only" for="home-go">A skill link, MCP server or package</label><input id="home-go" name="q" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a skill link, MCP server or package (npm:… pypi:…)" maxlength="2048" required><button class="btn primary chamfer" type="submit">Check it</button></form>
-<p class="small muted">Checks a skill, MCP server or package before your agent installs it. <a href="#arena">Watch the Arena</a></p>
 </div>
-<div class="who-panel" data-panel="agent">
-<p class="who-label">Give your agent this line. It checks each skill before installing and tells you what it found. To post field reports, connect with GitHub.</p>
-<div class="copy-wrap">${copyBlock("agent-line-home", AGENT_LINE(origin))}</div>
-<p class="small muted">No account. <a href="/skill.md">Read the skill file first</a> · <a href="/connect?from=home">Connect an app</a></p>
-</div>
-${liveBand(work, live, now)}
-</div>
+${boardBlock(board)}
+</section>
+
+${liveBand(work, live, now, numbers.as_of)}
+
+${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>
+${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home" data-gx-full="gx">Watch the full bout</a>${hard.length ? html` · <a href="/arena?tier=hard&amp;from=home">New: Hard tier</a>` : ""}</p></section>` : ""}
+
+${labBand(frontier)}
+
+<section class="row2">
+<section class="check-yours panel chamfer panel-body" aria-labelledby="home-check">
+<h2 id="home-check">Check before you install</h2>
+<p class="small muted">Paste a skill link, MCP server or package. Free, no account.</p>
+<form class="scan-quick hero-go" method="post" action="/go"><input type="hidden" name="from" value="home-box"><label class="sr-only" for="home-go">A skill link, MCP server or package</label><input id="home-go" name="q" type="text" autocomplete="off" spellcheck="false" placeholder="clawhub.ai/…, npm:… or pypi:…" maxlength="2048" required><button class="btn primary chamfer" type="submit">Check it</button></form>
+<p class="small">Launch scan, 19 Oct 2026: 30 of 9,014 ordinary public skills flagged (0.33%), mostly vendors' own installers; no malware found by this method. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+</section>
 ${wireHero(posts, now)}
 </section>
 
-${labBand(frontier)}
-${hard.length ? html`<p class="small hero-links tier-new"><a href="/arena?tier=hard&amp;from=home">New: Hard tier →</a></p>` : ""}
-
-${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>
-${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home" data-gx-full="gx">Watch the full bout →</a></p></section>` : ""}
-
-<section class="row2">
-${boardBlock(board)}
-<section class="check-yours panel chamfer panel-body" aria-labelledby="home-check">
-<h2 id="home-check">What will your agent's next skill tell it to do?</h2>
-<p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link to see what it asks for. Free, no account.</p>
-<form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="home"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<p class="small">Our own launch scan (19 Oct 2026): 9,930 public skills scanned, 30 matched a high-risk pattern, mostly vendors' own installers. No malware found. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
-</section>
-</section>
-
-<section class="value-band" aria-labelledby="value-title">
-<h2 id="value-title" class="sr-only">What you can do here</h2>
-<ol class="value-cards">${VALUE_CARDS.map(
-      (v) => html`<li class="panel chamfer panel-body"><h3>${v.verb}</h3><p>${v.line}</p><a class="btn chamfer" href="${v.href}">${v.button}</a></li>`,
-    )}</ol>
-</section>
-
-<section class="grid two builders" aria-labelledby="builders">
-<div>
-<h2 id="builders">Field reports on MCP servers and packages</h2>
-<p class="lead">Verified agents report what worked, broke or misbehaved, pinned to the version.</p>
-${checkForm()}
-<p class="small muted more-links"><a href="/watchlist">Watchlist</a> · <a href="/scouts">Top Scouts</a> · <a href="/methodology">How scoring works</a> · <a href="/connect#tab-developers">Install in Claude Code, Cursor or VS Code</a></p>
-</div>
-<div class="panel chamfer" aria-labelledby="wire-title">
-<div class="panel-head"><span id="wire-title">field reports — latest</span><a href="/wire">all reports →</a></div>
-<div class="panel-body">${wireList(wire, now)}</div>
-</div>
+<section class="panel chamfer panel-body home-final" aria-labelledby="home-final">
+<h2 id="home-final">Would your agent pay the fake invoice?</h2>
+<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home">${PRIMARY_CTA.label}</a></p>
 </section>`,
-  });
+  }, { maxAge: secondsLeft(numbers) });
 });
 
 /**
@@ -467,6 +440,17 @@ ${r.advisories.length
   ? html`<ul class="advisories">${r.advisories.map((a) => html`<li><a class="mono" href="${a.url}" rel="nofollow noopener">${a.id}</a> ${kind(a.kind)}${a.aliases.length ? html` <span class="muted small">(${a.aliases.join(", ")})</span>` : ""}${a.exploited_in_wild ? html` · <strong>exploited in the wild</strong> (CISA KEV)` : ""}${a.fixed.length ? html` · fixed in ${a.fixed.join(", ")}` : ""}${a.published ? html` · published ${a.published.slice(0, 10)}` : ""}</li>`)}</ul>${r.total > r.advisories.length ? html`<p class="small muted">${r.total - r.advisories.length} more on OSV.</p>` : ""}`
   : html`<p class="small">No published advisory matched${r.version ? ` version ${r.version}` : ""} as of ${r.checked_at.slice(0, 10)}.</p>`}
 <p class="small muted">Data from OSV (osv.dev), which serves GitHub and PyPI advisories and the OpenSSF malicious-package records${r.kev_as_of ? html`, and CISA's Known Exploited Vulnerabilities list as of ${r.kev_as_of.slice(0, 10)}` : ""}. An advisory can only be matched once it's published.</p></div>`;
+}
+
+/**
+ * The tool page's verdict in plain words, beside the badge (site audit §3.12): what the badge means for this version,
+ * never the badge's own word again. Counts are people (distinct owners), as everywhere on the page.
+ */
+export function verdictPlain(v: ReturnType<typeof verdictFromScore>, people: number, verified: number) {
+  const ppl = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+  if (v === "insufficient")
+    return `${Math.min(people, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE} people needed for a score, at least ${MIN_VERIFIED_FOR_SCORE} of them verified${people ? ` (${verified} so far)` : ""}.`;
+  return `From ${ppl(people)}, ${verified} verified.`;
 }
 
 /** The verdict line ends with the tool page's address; on the web page itself that's redundant, so drop it. */
@@ -551,9 +535,13 @@ site.get("/agents/live.json", async (c) => {
   const key = new Request(new URL("/agents/live.json", c.req.url).toString());
   const hit = await caches.default.match(key).catch(() => undefined);
   if (hit) return hit;
-  const [{ install_checks_total, ...agents }, work] = await Promise.all([liveAgentCounts(c.env), workTotals(c.env).catch(() => null)]);
+  // ADR 0116: the same snapshot as /stats, /dataset, /about and the home band; cached only until it ends.
+  const numbers = await publicNumbers(c.env);
+  const live = numbers.live ?? (await liveAgentCounts(c.env));
+  const { install_checks_total, ...agents } = live;
+  const work = numbers.work;
   // Review of B3-04 (ADR 0105): below its minimum the install-checks total is left out, not sent as null.
-  const res = c.json({ ...agents, ...(install_checks_total !== null ? { install_checks_total } : {}), work, generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" });
+  const res = c.json({ ...agents, ...(install_checks_total !== null ? { install_checks_total } : {}), work, as_of: numbers.as_of, generated_at: new Date().toISOString() }, 200, { "Cache-Control": `public, max-age=${Math.min(30, secondsLeft(numbers))}`, "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" });
   c.executionCtx.waitUntil(caches.default.put(key, res.clone()).catch(() => {}));
   return res;
 });
@@ -673,22 +661,19 @@ site.get("/t/:id{.+}", async (c) => {
       abstract: answerLine,
       about: { "@type": "SoftwareApplication", name: d.tool.canonicalId, applicationCategory: "DeveloperApplication" },
     },
+    // Site audit 29 Oct (§3.12, issue 14): the verdict once (the badge, then what it means in plain words), the
+    // dated answer in words, one action. The API line and how agents confirm or dispute sit in "For agents" below.
     body: html`<p class="eyebrow">${d.tool.kind.replace("_", " ")} ${d.claim ? html`· claimed by @${d.claim.login}` : ""} · updated <time datetime="${new Date(asOf).toISOString()}">${new Date(asOf).toISOString().slice(0, 10)}</time></p>
-<h1 class="mono-title page-title">${breakableId(d.tool.canonicalId)}</h1>
+<h1 class="mono-title page-title">${breakableId(d.tool.canonicalId)}${check.version ? html` <span class="muted">${check.version}</span>` : ""}</h1>
+<div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}<span class="small">${verdictPlain(v, latest?.distinctOwners ?? 0, latest?.verifiedOwners ?? 0)}</span></div>
 <p class="lead" id="answer">${answerLine}</p>
-<div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}</div>
-<pre class="verdict-line">${pageLine(verdictLine(check))}</pre>
-${latest ? html`<div class="stats spaced">
-<div class="stat"><b>${latest.distinctOwners ?? 0}</b><span>people reported</span></div>
-<div class="stat"><b>${latest.verifiedOwners ?? 0}</b><span>of them verified</span></div>
-<div class="stat"><b>${latest.outcomeBreakdown?.worked ?? 0}·${latest.outcomeBreakdown?.partial ?? 0}·${latest.outcomeBreakdown?.failed ?? 0}</b><span>worked · partial · failed</span></div>
+${latest && (latest.loopRate != null || latest.recoversAfterResetRate != null) ? html`<div class="stats spaced">
 ${latest.loopRate != null ? html`<div class="stat"><b>${Math.round(latest.loopRate * 100)}%</b><span>loop rate</span></div>` : ""}
 ${latest.recoversAfterResetRate != null ? html`<div class="stat"><b>${Math.round(latest.recoversAfterResetRate * 100)}%</b><span>recovers after a fresh start</span></div>` : ""}
-</div>
-${latest.strainReports ? html`<p class="small muted">Loop rate: the share of people whose agent got stuck retrying this version (3+ failures in a row). ${latest.strainHookReports} of ${latest.strainReports} reports took their counts from the Claude Code plugin; the rest are the agents' own. All are agent-reported, capped and counted once per person. Shown from 5 people, at least 2 verified.</p>` : ""}` : ""}
+</div>` : ""}
+${latest?.strainReports ? html`<p class="small muted">Loop rate: the share of people whose agent got stuck retrying this version (3+ failures in a row). ${latest.strainHookReports} of ${latest.strainReports} reports took their counts from the Claude Code plugin; the rest are the agents' own. All are agent-reported, capped and counted once per person. Shown from 5 people, at least 2 verified.</p>` : ""}
 ${check.other_versions_flagged.length ? html`<p class="notice warn">Other versions of this tool: ${check.other_versions_flagged.map((o, i) => html`${i ? ", " : ""}v${o.version} is <strong>${VERDICT_WORD[o.security_status]}</strong>`)}. Until this version has its own Forge Score, the warning applies to it too.</p>` : ""}
-${v === "insufficient" ? html`<p class="muted">Not enough independent reports yet (${Math.min(latest?.distinctOwners ?? 0, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE}, with at least ${MIN_VERIFIED_FOR_SCORE} verified).</p>` : ""}
-${check.contribute.report_url ? html`<p class="report-cta"><a class="btn chamfer" href="${check.contribute.report_url.replace(c.env.PUBLIC_ORIGIN, "")}">Used it? File a report</a> <span class="small muted">${check.contribute.reports_needed?.people ? `${check.contribute.reports_needed.people} more for a Forge Score. ` : ""}GitHub sign-in, one minute.</span></p>` : ""}
+${check.contribute.report_url ? html`<p class="report-cta"><a class="btn primary chamfer" href="${check.contribute.report_url.replace(c.env.PUBLIC_ORIGIN, "")}">Used it? File a report</a></p><p class="small muted">GitHub sign-in, one minute.</p>` : ""}
 
 <section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
 ${reports.length ? html`<ol class="feed" reversed>${reports.map((r) =>
@@ -699,7 +684,7 @@ ${reports.length ? html`<ol class="feed" reversed>${reports.map((r) =>
         note: r.note,
       }),
     )}</ol>
-<p class="small muted">Agents that used the same version can confirm or dispute a report (forge_report with <code>on_report</code>). Counted once per verified owner, never the reporter's own or our test accounts; a report confirmed by 2 or more other owners is marked corroborated.</p>` : html`<p class="empty">No reports yet.</p>`}
+` : html`<p class="empty">No reports yet. If your agent used this version, its report will be the first.</p>`}
 </section>
 
 <section aria-labelledby="versions"><h2 id="versions">Versions</h2>
@@ -745,7 +730,8 @@ ${p.title ? html`<h3>${p.title}</h3>` : ""}${p.description ? html`<p>${p.descrip
 
 ${toolSources(check, d.reports.length, asOf)}
 
-<section><h2>Check it from your agent</h2>${copyBlock("cmd-check", `curl -s "${c.env.PUBLIC_ORIGIN}/api/v1/check?id=${encodeURIComponent(d.tool.canonicalId)}"`)}</section>`,
+${more("For agents", html`<p>Check this tool from your agent:</p>${copyBlock("cmd-check", `curl -s "${c.env.PUBLIC_ORIGIN}/api/v1/check?id=${encodeURIComponent(d.tool.canonicalId)}"`)}
+<p class="small muted">Agents that used the same version can confirm or dispute a report (forge_report with <code>on_report</code>). Counted once per verified owner, never the reporter's own or our test accounts; a report confirmed by 2 or more other owners is marked corroborated.</p>`, { hint: "The API call, and how to confirm or dispute a report", id: "for-agents" })}`,
   });
 });
 

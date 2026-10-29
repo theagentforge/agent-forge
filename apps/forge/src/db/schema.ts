@@ -1010,3 +1010,72 @@ export const pilotRevenue = sqliteTable("pilot_revenue", {
   createdAt: integer("created_at").notNull(),
   createdBy: text("created_by").notNull(),
 });
+
+/**
+ * ADR 0120: the claim registry. One row per factual claim we make in a brief, on a page or in an ops email, with the
+ * anchor that proves it. Claims are never edited (a migration trigger refuses it): a correction is a new row and the
+ * old one gets `retired_at`. Admin-only; nothing here is public.
+ */
+export const claims = sqliteTable(
+  "claims",
+  {
+    id: id(),
+    text: text("text").notNull(),
+    /** A path on this site ("/stats.json") or a full https URL elsewhere. */
+    url: text("url").notNull(),
+    /** json | text | none */
+    anchorKind: text("anchor_kind").notNull(),
+    /** For json: the field path (a.b[0].c, list[*].x, list[key=value].x). For text: unused. */
+    anchorPath: text("anchor_path"),
+    /** The value or phrase the claim states, as text. */
+    expected: text("expected"),
+    /** eq | gte | lte | approx | contains | all_eq */
+    comparator: text("comparator"),
+    /** approx: the allowed relative difference (0.05 = 5%). */
+    tolerance: real("tolerance"),
+    /** A running total that only grows: a higher live value means the claim is stale, not wrong when made. */
+    counter: integer("counter", { mode: "boolean" }).notNull().default(false),
+    /** claude | boardy | don | site */
+    author: text("author").notNull(),
+    authorModel: text("author_model"),
+    /** brief:<id> | page:<path> | email:<date> | doc:<path> */
+    appearsIn: text("appears_in").notNull(),
+    madeAt: integer("made_at").notNull(),
+    retiredAt: integer("retired_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("claims_live").on(t.retiredAt)],
+);
+
+/**
+ * ADR 0120: one row per check, append-only (migration triggers refuse UPDATE and DELETE), hash-chained: row_hash =
+ * sha256(prev_hash + the row's canonical JSON). prev_hash is unique, so two runs at once can't fork the chain.
+ */
+export const claimChecks = sqliteTable(
+  "claim_checks",
+  {
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    claimId: text("claim_id").notNull(),
+    runId: text("run_id").notNull(),
+    /** nightly | admin | api */
+    trigger: text("trigger").notNull(),
+    checkedAt: integer("checked_at").notNull(),
+    fetchedUrl: text("fetched_url").notNull(),
+    /** data_fn | in_process | network */
+    via: text("via").notNull(),
+    httpStatus: integer("http_status"),
+    responseSha256: text("response_sha256"),
+    /** SUPPORTED | CONTRADICTED | NOT_PRESENT | UNREACHABLE */
+    verdict: text("verdict").notNull(),
+    reason: text("reason").notNull(),
+    quote: text("quote"),
+    quoteOffset: integer("quote_offset"),
+    observedValue: text("observed_value"),
+    observedAsOf: text("observed_as_of"),
+    /** det | llm:<model> */
+    checker: text("checker").notNull(),
+    prevHash: text("prev_hash").notNull(),
+    rowHash: text("row_hash").notNull(),
+  },
+  (t) => [uniqueIndex("claim_checks_prev").on(t.prevHash), index("claim_checks_claim").on(t.claimId, t.checkedAt)],
+);

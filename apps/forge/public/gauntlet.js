@@ -328,6 +328,73 @@ export function terminalAt(g, t) {
 
 export const END = PLAY;
 
+// ---------- the replay card: every visible part of one bout, built together ----------
+// Site audit 29 Oct, issue 6: a cycling card once showed one bout's label beside another bout's log, referee lines and
+// costs, because the label and costs moved on while the terminal and headline only redrew when the card was on screen.
+// Now every part comes from one call, cardParts(bout, t), and applyCard writes them all in one step, each stamped with
+// the bout's run id (data-run), so no part can lag behind.
+
+/** The id that names a bout everywhere: its first corner's run. */
+export const runIdOf = (d) => d.gauntlet.lanes[0].id;
+export const FOOT_NOTE = "Same seed, same sandbox: the referee re-checks every call. Nothing the models wrote is shown.";
+/** The parts of the card, by selector: each one carries data-run. */
+export const CARD_PARTS = ["[data-gx-label]", "[data-headline]", "[data-gx-tell]", "[data-gx-job]", "[data-gx-trap]", "[data-gx-stage]", "[data-gx-termhead]", "[data-gx-term]", "[data-gx-foot]", "[data-predict]", "[data-gx-stakes]", "[data-gx-grid]"];
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+export const cardLabel = (d) => `${d.practice ? "Practice replay" : "Replay"} · ${isoDay(d.recordedAt)} · ${d.title}`;
+export const shareText = (d) => `Same job, one hidden trap (${d.title}):\n${d.gauntlet.lanes.map((l) => `${l.grid} ${l.name}`).join("\n")}\ntheagentforge.io/arena/run/${runIdOf(d)}`;
+/** The cost line under the terminal: one row per corner, then the referee note. Escaped HTML. */
+export function footHtml(d) {
+  const run = esc(runIdOf(d));
+  return d.gauntlet.lanes
+    .map((l, k) => `<li data-lane data-run="${run}">[${LANE_TAG[k]}] <a href="/arena/run/${esc(encodeURIComponent(l.id))}">${esc(l.model)}</a>${l.provider ? ` via ${esc(l.provider)}` : ""} · ${l.turns} turns · ${Number(l.tokens).toLocaleString("en-US")} tokens · $${Number(l.cost).toFixed(4)}</li>`)
+    .join("") + `<li data-run="${run}">${FOOT_NOTE}</li>`;
+}
+
+/**
+ * Every part of the card for bout `d` at second `t`, as text or escaped HTML. `o.tease` is the line shown before the
+ * verdict; `o.geo` the canvas. Pure: the Worker draws the still frame from it and the browser plays it.
+ */
+export function cardParts(d, t, o = {}) {
+  const g = d.gauntlet;
+  const tt = Math.min(t, PLAY);
+  return {
+    run: runIdOf(d),
+    "[data-gx-label]": { text: cardLabel(d) },
+    "[data-headline]": { text: tt >= T_VERDICT && d.headline ? d.headline : (o.tease ?? d.headline ?? "") },
+    "[data-gx-tell]": { hidden: !g.tell },
+    "[data-gx-job]": { text: d.captions && d.captions[0] ? d.captions[0].replace(/^The job: /, "") : d.title },
+    "[data-gx-trap]": { text: g.tell || "" },
+    "[data-gx-stage]": { html: svgAt(g, tt, { label: d.headline, geo: o.geo }) },
+    "[data-gx-termhead]": { text: `$ forge replay --task ${g.task} --seed ${g.seed}` },
+    "[data-gx-term]": { html: terminalAt(g, tt) },
+    "[data-gx-foot]": { html: footHtml(d) },
+    "[data-predict]": { picks: [g.lanes[0].name, g.lanes[1].name] },
+    "[data-gx-stakes]": { text: d.stakes || "", hidden: !d.stakes },
+    "[data-gx-grid]": { text: shareText(d) },
+  };
+}
+
+/**
+ * Writes a card into the player in one step. `q(selector)` finds an element in the player. Unchanged parts are left
+ * alone (no flicker); a new bout rewrites every part. Returns true when the bout changed.
+ */
+export function applyCard(q, parts, root) {
+  const fresh = !root || root.getAttribute("data-run") !== parts.run;
+  for (const sel of CARD_PARTS) {
+    const el = q(sel);
+    const p = parts[sel];
+    if (!el || !p) continue;
+    if ("text" in p && (fresh || el.textContent !== p.text)) el.textContent = p.text;
+    if ("html" in p && (fresh || el.__gxHtml !== p.html)) { el.innerHTML = p.html; el.__gxHtml = p.html; }
+    if ("hidden" in p) el.hidden = p.hidden;
+    if (p.picks && fresh && el.querySelectorAll)
+      el.querySelectorAll("[data-pick]").forEach((b) => { b.textContent = p.picks[b.getAttribute("data-pick") === "a" ? 0 : 1]; b.disabled = false; b.setAttribute("aria-pressed", "false"); });
+    el.setAttribute("data-run", parts.run);
+  }
+  if (root) root.setAttribute("data-run", parts.run);
+  return fresh;
+}
+
 // ---------- browser playback ----------
 if (typeof document !== "undefined") {
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -338,52 +405,27 @@ if (typeof document !== "undefined") {
     const clipMode = root.getAttribute("data-mode") === "clip";
     if (!list.length || (reduce && !clipMode)) return;
     const stage = root.querySelector("[data-gx-stage]");
-    const term = root.querySelector("[data-gx-term]");
     const head = root.querySelector("[data-headline]");
     const btn = root.querySelector("[data-gx-pause]");
     const pick = root.querySelector("[data-predict]");
     const pickOut = root.querySelector("[data-pick-result]");
-    const share = root.querySelector("[data-gx-grid]");
     const soundBtn = root.querySelector("[data-gx-sound]");
     const channel = root.getAttribute("data-mode") === "channel";
     const slot = clipMode ? Infinity : PLAY + HOLD;
     let i = 0, t0 = performance.now(), paused = false, pauseAt = 0, choice = null, visible = true;
     const q = (sel) => root.querySelector(sel);
-    const setText = (sel, text) => { const e = q(sel); if (e) e.textContent = text; return e; };
-    const fill = (d) => {
-      // Everything about the bout changes together when the player moves on: label, job, trap, terminal, costs, stakes.
-      const g = d.gauntlet;
-      setText("[data-gx-label]", `${d.practice ? "Practice replay" : "Replay"} · ${new Date(d.recordedAt).toISOString().slice(0, 10)} · ${d.title}`);
-      setText("[data-gx-job]", (d.captions && d.captions[0] ? d.captions[0].replace(/^The job: /, "") : d.title));
-      setText("[data-gx-trap]", g.tell || "");
-      const tell = q("[data-gx-tell]");
-      if (tell) tell.hidden = !g.tell;
-      setText("[data-gx-termhead]", `$ forge replay --task ${g.task} --seed ${g.seed}`);
-      const stakes = setText("[data-gx-stakes]", d.stakes || "");
-      if (stakes) stakes.hidden = !d.stakes;
-      const foot = q("[data-gx-foot]");
-      if (foot) {
-        foot.querySelectorAll("li[data-lane], li:not(:last-child)").forEach((li) => li.remove());
-        g.lanes.slice().reverse().forEach((l, r) => {
-          const li = document.createElement("li");
-          li.setAttribute("data-lane", "");
-          li.append(`[${LANE_TAG[1 - r]}] `);
-          const a = document.createElement("a");
-          a.href = `/arena/run/${encodeURIComponent(l.id)}`;
-          a.textContent = l.model;
-          li.append(a, `${l.provider ? ` via ${l.provider}` : ""} · ${l.turns} turns · ${Number(l.tokens).toLocaleString("en-US")} tokens · $${Number(l.cost).toFixed(4)}`);
-          foot.insertBefore(li, foot.firstChild);
-        });
-      }
+    const geoOf = () => (clipMode ? "clip" : stage.clientWidth < 640 ? "compact" : "wide");
+    const tease = head ? head.getAttribute("data-tease") : null;
+    // One bout, one step: every part (label, headline, job, trap, course, terminal, costs, stakes, share text) is
+    // built from the same bout and written together, whether or not the player is on screen.
+    const show = (d, t) => {
+      const fresh = applyCard(q, cardParts(d, t, { tease, geo: geoOf() }), root);
+      if (!fresh) return;
       const clip = q("[data-clip-link]");
       if (clip) clip.hidden = list.indexOf(d) !== 0; // the download is for the first bout's clip only
       const full = document.querySelector(`[data-gx-full="${root.id || "gx"}"]`);
-      if (full) full.setAttribute("href", (full.getAttribute("href") || "").replace(/\/arena\/run\/[^?#]+/, `/arena/run/${encodeURIComponent(g.lanes[0].id)}`));
-      if (pick) {
-        pick.querySelectorAll("[data-pick]").forEach((b) => { b.textContent = d.gauntlet.lanes[b.getAttribute("data-pick") === "a" ? 0 : 1].name; b.disabled = false; b.setAttribute("aria-pressed", "false"); });
-        if (pickOut) pickOut.textContent = "";
-      }
-      if (share) share.textContent = `Same job, one hidden trap (${d.title}):\n${d.gauntlet.lanes.map((l) => `${l.grid} ${l.name}`).join("\n")}\ntheagentforge.io/arena/run/${d.gauntlet.lanes[0].id}`;
+      if (full) { full.setAttribute("href", (full.getAttribute("href") || "").replace(/\/arena\/run\/[^?#]+/, `/arena/run/${encodeURIComponent(runIdOf(d))}`)); full.setAttribute("data-run", runIdOf(d)); }
+      if (pickOut) pickOut.textContent = "";
       choice = null;
     };
     const now = () => (paused ? pauseAt : (performance.now() - t0) / 1000);
@@ -391,7 +433,7 @@ if (typeof document !== "undefined") {
     // #gx-t=7.5 freezes the player at that second (screenshots and frame-by-frame clip recording).
     const fixed = /gx-t=([\d.]+)/.exec(location.hash);
     if (fixed) [paused, pauseAt] = [true, Number(fixed[1])];
-    fill(list[i]);
+    show(list[i], now());
     root.classList.add("is-playing");
     // Sound: muted until someone taps it (autoplay rules, and good manners). The track is rendered once per duel by
     // the same code the clip recorder uses, and started at the current moment.
@@ -440,22 +482,18 @@ if (typeof document !== "undefined") {
     if ("IntersectionObserver" in window) new IntersectionObserver((es) => { visible = es[0].isIntersecting; }).observe(root);
     const draw = (t) => {
       const d = list[i];
-      {
-        const tt = Math.min(t, PLAY);
-        stage.innerHTML = svgAt(d.gauntlet, tt, { label: d.headline, geo: clipMode ? "clip" : stage.clientWidth < 640 ? "compact" : "wide" });
-        if (term) term.innerHTML = terminalAt(d.gauntlet, tt);
-        if (head) { const want = tt >= T_VERDICT && d.headline ? d.headline : head.getAttribute("data-tease"); if (head.textContent !== want) head.textContent = want; }
-        root.classList.toggle("is-final", tt >= T_VERDICT);
-        if (pick) pick.hidden = !(tt > T_RUN && tt < T_VERDICT) && !choice;
-        if (pickOut && choice && tt >= T_VERDICT && !pickOut.textContent) {
-          const L = d.gauntlet.lanes, badA = L[0].fell || L[0].verdict !== "PASS", badB = L[1].fell || L[1].verdict !== "PASS";
-          pickOut.textContent = (choice === "a" ? badA : badB) ? "✓ You called it" : badA === badB ? (badA ? "Both fell this time" : "Neither fell this time") : "✗ Not this time";
-        }
+      const tt = Math.min(t, PLAY);
+      show(d, tt);
+      root.classList.toggle("is-final", tt >= T_VERDICT);
+      if (pick) pick.hidden = !(tt > T_RUN && tt < T_VERDICT) && !choice;
+      if (pickOut && choice && tt >= T_VERDICT && !pickOut.textContent) {
+        const L = d.gauntlet.lanes, badA = L[0].fell || L[0].verdict !== "PASS", badB = L[1].fell || L[1].verdict !== "PASS";
+        pickOut.textContent = (choice === "a" ? badA : badB) ? "✓ You called it" : badA === badB ? (badA ? "Both fell this time" : "Neither fell this time") : "✗ Not this time";
       }
     };
     const frame = () => {
       let t = now();
-      if (t >= slot) { i = (i + 1) % list.length; t0 = performance.now(); t = 0; fill(list[i]); stopSound(); startSound(0); }
+      if (t >= slot) { i = (i + 1) % list.length; t0 = performance.now(); t = 0; draw(0); stopSound(); startSound(0); }
       if (soundOn && !paused && startedFor !== i) startSound(t);
       if (visible) draw(t);
       requestAnimationFrame(frame);

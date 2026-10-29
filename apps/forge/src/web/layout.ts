@@ -50,8 +50,8 @@ export const HOME_OG_TITLE = "An AI agent paid a fake invoice and reported the j
 export const DESCRIPTOR = "A planted-trap test for AI agents, and safety data on the skills, MCP servers and packages they install.";
 
 /**
- * W2.1 (Boardy items 1, 4, 17): five plain words, the evidence a buyer checks first. The Wire, Skill Watch, How it works,
- * Watchlist and Top Scouts live in the footer. On a phone it stays one row that scrolls sideways (site.css).
+ * W2.1 (Boardy items 1, 4, 17): five plain words, the evidence a buyer checks first. Desktop only: below 960 px the
+ * header is the logo, the call to action and a Menu button that opens the grouped sheet (site audit 29 Oct, issue 7).
  */
 export const NAV: [NonNullable<PageOptions["nav"]>, string, string][] = [
   ["arena", "/arena", "Arena"],
@@ -60,8 +60,21 @@ export const NAV: [NonNullable<PageOptions["nav"]>, string, string][] = [
   ["security", "/security", "Security"],
   ["stats", "/stats", "Stats"],
 ];
-/** Decision D3: the one primary call to action, in the header of every page. */
-export const HEAD_CTA = { href: "/gauntlet", label: "Run the Gauntlet", short: "Gauntlet" } as const;
+/** Decision D3: the one primary call to action, in the header of every page. `short` is the phone label (a verb, audit §3.17). */
+export const HEAD_CTA = { href: "/gauntlet", label: "Run the Gauntlet", short: "Run Gauntlet" } as const;
+
+/**
+ * Site audit 29 Oct (issues 7 and 8): every page link, in four labelled groups. The phone Menu sheet and the footer both
+ * read this list, so the two never drift. Placeholder pages (the agent index, founding list) stay out until they have
+ * data (audit §3.15). /pricing stays out too: it is the API's price list, linked from /teams and /connect, not part of
+ * the acquisition story (ADR 0116). "Your agents" and llms.txt sit in the footer's last line.
+ */
+export const LINK_GROUPS: { id: string; title: string; links: [string, string][] }[] = [
+  { id: "test", title: "Test", links: [["/arena", "Arena"], ["/gauntlet", "Gauntlet"], ["/benchmark", "Benchmark"], ["/trap-card", "Trap card"], ["/connect", "Connect your AI"]] },
+  { id: "check", title: "Check", links: [["/check", "Check a tool"], ["/scan", "Scan a skill"], ["/skill-watch", "Skill Watch"], ["/watchlist", "Watchlist"], ["/wire", "The Wire"]] },
+  { id: "data", title: "Data", links: [["/dataset", "Dataset spec"], ["/stats", "Stats"], ["/methodology", "Methodology"], ["/security", "Security"], ["/reports/mcp-registry-census-2026-10", "Registry census"]] },
+  { id: "company", title: "Company", links: [["/about", "About"], ["/teams", "For teams"], ["/about#investors", "Investors and partners"], ["/results-policy", "Results policy"], ["/disputes", "Disputes"], ["/terms", "Terms"], ["/privacy", "Privacy"]] },
+];
 const current = (o: PageOptions, key: string, href: string) => o.nav === key || o.path === href || o.path.startsWith(`${href}/`) || o.path.startsWith(`${href}?`);
 
 export function securityHeaders(opts: { scriptSrc?: string[]; frameSrc?: string[]; formAction?: string[] } = {}): Record<string, string> {
@@ -87,6 +100,14 @@ export function securityHeaders(opts: { scriptSrc?: string[]; frameSrc?: string[
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     "Cross-Origin-Opener-Policy": "same-origin",
   };
+}
+
+/** One labelled group of links (the Menu sheet and the footer share it); the current page is marked. */
+function linkGroup(o: PageOptions, g: (typeof LINK_GROUPS)[number], where: "menu" | "foot") {
+  const id = `${where}-${g.id}`;
+  return html`<div class="link-group"><p class="link-group-title" id="${id}">${g.title}</p><ul aria-labelledby="${id}">${g.links.map(
+    ([href, label]) => html`<li><a href="${href}"${o.path === href ? raw(' aria-current="page"') : ""}>${label}</a></li>`,
+  )}</ul></div>`;
 }
 
 export function renderPage(o: PageOptions): Html {
@@ -132,14 +153,24 @@ ${o.jsonLd ? html`<script type="application/ld+json">${raw(JSON.stringify(o.json
 <header class="site-head">
 <div class="wrap">
 <a class="lockup" href="/" aria-label="${SITE_NAME} home">
-<img class="logo-dark" src="/brand/forge-lockup-dark.svg" alt="${SITE_NAME}" width="210" height="28">
-<img class="logo-light" src="/brand/forge-lockup-light.svg" alt="${SITE_NAME}" width="210" height="28">
+<img class="lk lk-dark lk-full" src="/brand/forge-lockup-dark.svg" alt="" width="210" height="28">
+<img class="lk lk-light lk-full" src="/brand/forge-lockup-light.svg" alt="" width="210" height="28">
+<img class="lk lk-dark lk-mark" src="/brand/forge-mark.svg" alt="" width="50" height="28">
+<img class="lk lk-light lk-mark" src="/brand/forge-mark-light.svg" alt="" width="50" height="28">
 </a>
 <nav class="nav" aria-label="Main">
 ${NAV.map(([key, href, label]) => html`<a href="${href}"${current(o, key, href) ? raw(' aria-current="page"') : ""}>${label}</a>`)}
 </nav>
 <a class="btn primary chamfer head-cta" href="${HEAD_CTA.href}?from=head"${o.path.startsWith(HEAD_CTA.href) ? raw(' aria-current="page"') : ""}><span class="long">${HEAD_CTA.label}</span><span class="short">${HEAD_CTA.short}</span></a>
+<a class="btn chamfer menu-btn" href="#foot-nav" data-menu-open aria-controls="site-menu" aria-haspopup="dialog">Menu</a>
 </div>
+<dialog class="menu-sheet" id="site-menu" aria-labelledby="site-menu-title">
+<div class="menu-top"><p class="menu-title" id="site-menu-title">Menu</p><button class="btn chamfer menu-close" type="button" data-menu-close>Close</button></div>
+<nav class="menu-groups" aria-label="All pages">
+${LINK_GROUPS.map((g) => linkGroup(o, g, "menu"))}
+</nav>
+<a class="btn primary chamfer menu-cta" href="${HEAD_CTA.href}?from=menu">${HEAD_CTA.label}</a>
+</dialog>
 </header>
 <main id="main" class="wrap">
 ${o.body}
@@ -149,11 +180,11 @@ ${o.body}
 <div class="foot-grid">
 <div class="foot-brand"><strong>Check the Forge first.</strong> <span class="mono">[F✓]</span>
 <p>${TAGLINE} Reports are operators' observations, not certification.</p></div>
-<nav class="foot-links" aria-label="Footer">
-<a href="/about">About</a><a href="/skill-watch">Skill Watch</a><a href="/trap-card">Trap card</a><a href="/scan">Scan a skill</a><a href="/about#investors">Investors and partners</a><a href="/dataset">Dataset spec</a><a href="/teams">For teams</a><a href="/agents">Agent index</a><a href="/wire">The Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/results-policy">Results policy</a><a href="/security">Security</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
+<nav class="foot-nav" id="foot-nav" aria-label="Footer">
+${LINK_GROUPS.map((g) => linkGroup(o, g, "foot"))}
 </nav>
 </div>
-<div class="foot-bottom"><span>© ${new Date().getUTCFullYear()} The Agent Forge</span><button class="theme-toggle" type="button" data-theme-toggle hidden>Theme</button></div>
+<div class="foot-bottom"><span>© ${new Date().getUTCFullYear()} The Agent Forge</span><a href="/dashboard">Your agents</a><a class="mono" href="/llms.txt">llms.txt</a><button class="theme-toggle" type="button" data-theme-toggle hidden>Theme</button></div>
 </div>
 </footer>
 </body>

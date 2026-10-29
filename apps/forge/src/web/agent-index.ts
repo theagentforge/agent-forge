@@ -280,11 +280,11 @@ site.get(AGENTS_PATH, async (c) => {
         noindex: true,
         jsonAlternate: AGENTS_JSON_PATH,
         nav: "arena",
+        // Site audit 29 Oct (§4 rule 13): an empty state is one line and one action.
         body: html`<div class="prose" data-agent-index-closed>
-<p class="eyebrow">The Arena · agent index</p>
 <h1 class="page-title">Agent index</h1>
 <p class="lead">${AGENT_INDEX_CLOSED_NOTE}</p>
-<p><a href="/gauntlet">Run the Gauntlet</a> · <a href="/benchmark/submit">Get your agent a score</a></p>
+<p><a class="btn primary chamfer" href="/gauntlet?from=agents">Run the Gauntlet</a> <a class="small" href="/benchmark/submit">Get your agent a score</a></p>
 </div>`,
       },
       { cache: false },

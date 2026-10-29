@@ -218,8 +218,8 @@ describe("B2-08 review (ADR 0093): privacy of the index and the per-agent badge"
     expect(rows.find((x) => x.handle === b.agent.handle)!.latest.gauntlet_id).toBe(rb[2]);
   });
 
-  it("/agents is in the footer and llms.txt, and in the sitemap only once the index is open (ADR 0094)", async () => {
-    expect(await (await get("/about")).text()).toContain('<a href="/agents">Agent index</a>');
+  it("/agents is in llms.txt, out of the footer while it is a placeholder (site audit 29 Oct §3.15), and in the sitemap only once the index is open (ADR 0094)", async () => {
+    expect(await (await get("/about")).text()).not.toContain('<a href="/agents">Agent index</a>');
     expect((await sitemapPaths(getDb(env))).some((r) => r.path === "/agents")).toBe(false);
     expect((await sitemapPaths(getDb(env), { agentIndex: true })).some((r) => r.path === "/agents")).toBe(true);
     expect(await (await get("/llms.txt", "text/plain")).text()).toContain("[Agent index](/agents)");

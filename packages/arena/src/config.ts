@@ -3,7 +3,7 @@ import type { Twist } from "./types";
 // Arena settings in one place. The public name is a single value (ADR 0013 §1: "Crucible" is internal only).
 
 export const PUBLIC_NAME = "The Forge Arena";
-export const TAGLINE = "Which AI should you use for this job? Watch them try. Every result checked, timed and costed.";
+export const TAGLINE = "Which AI should do this job? Watch them try. Every result refereed, timed and costed.";
 
 /** Season 0 / Crucible 1. Tasks, scorer and weights are locked for the season (ADR 0012 rigour rule). */
 export const SEASON = { id: "s0", name: "Season 0", event: "Crucible 1", locked: "2026-10-23" } as const;

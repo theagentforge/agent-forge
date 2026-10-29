@@ -1,4 +1,4 @@
-import { and, count, countDistinct, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
+import { and, count, countDistinct, eq, gte, inArray, isNotNull, ne, notInArray, sql } from "drizzle-orm";
 import { outsidePeople } from "./agent-funnel";
 import { ourPeople } from "./public-stats";
 import * as t from "../db/schema";
@@ -120,23 +120,14 @@ export async function proofNow(env: Env, now = Date.now(), checksDay = day(now))
   } satisfies Record<string, Metric>;
 }
 
-/** Yesterday's downloads of the CLI from npm's public API (null if npm is unreachable). */
-async function npmDownloads(fetcher: typeof fetch): Promise<number | null> {
-  try {
-    const res = await fetcher("https://api.npmjs.org/downloads/point/last-day/@theagentforge/cli", { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-    return Number(((await res.json()) as { downloads?: number }).downloads ?? 0);
-  } catch {
-    return null;
-  }
-}
+/** Metrics no longer kept (ADR 0116): never written, never read back, and their old rows are deleted. */
+export const RETIRED_METRICS = ["cli_npm_downloads"] as const;
+export const isRetiredMetric = (metric: string) => (RETIRED_METRICS as readonly string[]).includes(metric);
 
 /** Writes the snapshot for the UTC day that just ended. Safe to run more than once a day (it overwrites). */
-export async function writeSnapshot(env: Env, now = Date.now(), fetcher: typeof fetch = fetch) {
+export async function writeSnapshot(env: Env, now = Date.now()) {
   const yesterday = day(now - 86_400_000);
   const metrics: Record<string, Metric> = await proofNow(env, now, yesterday);
-  const npm = await npmDownloads(fetcher);
-  if (npm !== null) metrics.cli_npm_downloads = { external: npm, house: 0 };
   // The growth KPIs (ADR 0039), kept daily so their trend survives: metric "kpi_<id>", external value only.
   try {
     const { kpis } = await growthKpis(env, now);
@@ -146,6 +137,7 @@ export async function writeSnapshot(env: Env, now = Date.now(), fetcher: typeof 
     console.error("kpi_snapshot_failed", String(e));
   }
   const db = getDb(env);
+  await db.delete(t.proofSnapshots).where(inArray(t.proofSnapshots.metric, [...RETIRED_METRICS]));
   for (const [metric, v] of Object.entries(metrics)) {
     await db
       .insert(t.proofSnapshots)
@@ -162,6 +154,6 @@ export async function snapshotHistory(env: Env, days = 30) {
   return getDb(env)
     .select()
     .from(t.proofSnapshots)
-    .where(sql`${t.proofSnapshots.date} >= ${day(Date.now() - days * 86_400_000)}`)
+    .where(and(sql`${t.proofSnapshots.date} >= ${day(Date.now() - days * 86_400_000)}`, notInArray(t.proofSnapshots.metric, [...RETIRED_METRICS])))
     .orderBy(t.proofSnapshots.date);
 }

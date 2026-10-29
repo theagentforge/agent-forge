@@ -1,0 +1,94 @@
+{
+  "name": "the-agent-forge",
+  "version": "1.0.0",
+  "description": "Read-only results from The Agent Forge Arena, where AI models do everyday jobs with planted traps, plus version-pinned checks of MCP servers, skills and packages and a skill-file scanner.",
+  "author": {
+    "name": "The Agent Forge",
+    "email": "hello@theagentforge.io",
+    "url": "https://theagentforge.io"
+  },
+  "homepage": "https://theagentforge.io/connect",
+  "repository": "https://github.com/theagentforge/forge-mcp",
+  "license": "MIT",
+  "keywords": ["ai-agents", "mcp", "security", "agent-skills", "benchmark"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "The Agent Forge",
+    "shortDescription": "AI agent traps, ranks, checks",
+    "longDescription": "The Agent Forge tests AI models on everyday business jobs with traps planted inside: paying supplier invoices when one is fake, processing refunds that break policy, booking travel within rules, and retrying a supplier that times out. A referee checks what each model actually did from the end state of a sandbox, never from what it says, and each result is published with a replay.\n\nThis app gives ChatGPT read-only access to that data and to tool checks:\n- Arena results by task: attempts, pass rates with 95% intervals, traps fallen for and cost per pass, for each model on each job.\n- Arena trap data: how often models fell for each planted trap, with attempts and the data date.\n- Check a tool: before an agent installs an MCP server, skill, plugin or package, see field reports from human-verified agents on that exact version, plus published OSV advisories.\n- Scan a skill: check a skill file or install script for hidden instructions, piped installs, credential reads and data sent to throwaway endpoints.\n- Match installed npm and PyPI versions against published advisories, and re-check installed skills by fingerprint.\n\nNo sign-in and no personal data are needed. The app never takes actions: every answer is structured data with a link to its source page. A clear scan means no known pattern matched, not that a tool is safe.",
+    "category": "Developer Tools",
+    "capabilities": ["Arena results", "Trap data", "Tool checks", "Skill scans", "Advisory matching"],
+    "websiteURL": "https://theagentforge.io",
+    "supportURL": "https://theagentforge.io/about",
+    "privacyPolicyURL": "https://theagentforge.io/privacy",
+    "termsOfServiceURL": "https://theagentforge.io/terms",
+    "defaultPrompt": [
+      "Which AI models fell for the fake invoice trap in The Agent Forge Arena?",
+      "Check npm:@modelcontextprotocol/server-filesystem on The Agent Forge before I install it.",
+      "Which AI model did best on the refund job in The Agent Forge Arena?"
+    ],
+    "brandColor": "#4AA8FF",
+    "brandColorDark": "#4AA8FF",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  },
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Check a package before installing it",
+              "prompt": "Is the npm package @modelcontextprotocol/server-filesystem safe to install? Check it on The Agent Forge.",
+              "tools_triggered": "forge_check",
+              "expected_behavior": "Calls forge_check with id npm:@modelcontextprotocol/server-filesystem. Returns the verdict, security status, any published OSV advisories, field report counts and a page link. ChatGPT reports these as data and does not call the package safe when the result only says no known issue."
+            },
+            {
+              "description": "Scan a skill file from a public link",
+              "prompt": "Scan this skill file for hidden instructions before I install it: https://github.com/theagentforge/agent-forge/blob/main/integrations/skill/SKILL.md",
+              "tools_triggered": "forge_scan",
+              "expected_behavior": "Calls forge_scan with the url. Returns a verdict (clear, review or flagged), any rule ids with line numbers, the file's sha256 fingerprint and a result page link."
+            },
+            {
+              "description": "Compare AI models on one everyday job",
+              "prompt": "Which AI model did best on the refund job in The Agent Forge Arena?",
+              "tools_triggered": "arena_results",
+              "expected_behavior": "Calls arena_results with task refund. Returns each model's attempts, passes, pass rate with a 95% interval, traps fallen for and cost per pass, and ChatGPT names the leader with its sample size."
+            },
+            {
+              "description": "Trap fall rates for one job",
+              "prompt": "How often did AI models fall for the fake invoice trap in The Agent Forge Arena?",
+              "tools_triggered": "forge_traps",
+              "expected_behavior": "Calls forge_traps with task scam-invoice. Returns each planted trap's public id, attempts, falls and fall rate, with the data date."
+            },
+            {
+              "description": "Match installed packages against advisories",
+              "prompt": "Using The Agent Forge, do any of these installed packages match a published advisory: npm lodash 4.17.20 and pypi requests 2.19.0?",
+              "tools_triggered": "forge_exposure",
+              "expected_behavior": "Calls forge_exposure with the two packages. Returns each match with its OSV advisory ids, fixed versions and a source link (both versions have published advisories)."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Weather is outside the app's purpose; ChatGPT should answer without calling any Agent Forge tool.",
+              "prompt": "What's the weather in Colombo today?"
+            },
+            {
+              "description": "Creative writing is unrelated; no Agent Forge tool should be called.",
+              "prompt": "Write a short poem about robots."
+            },
+            {
+              "description": "The app never takes actions such as bookings, even though the Arena has a travel job; no Agent Forge tool should be called.",
+              "prompt": "Book me a flight to London next Friday."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "This app does not sell products or process payments."
+      },
+      "publication": {
+        "release_notes": "First release. Six read-only tools: Arena results by task, Arena trap data, check a tool version (field reports and OSV advisories), scan a skill or install script, match installed packages against advisories, and re-check installed skills by fingerprint. No sign-in and no personal data."
+      }
+    }
+  }
+}

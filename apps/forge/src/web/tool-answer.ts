@@ -1,5 +1,7 @@
 import { html } from "hono/html";
 import type { CheckResult } from "../services/forge";
+import { osvPackageFor } from "../services/advisories";
+import { dayLabel } from "./experiments";
 
 // The tool page's answer line for answer engines (citations issue #234): one dated sentence with what the page already
 // shows (field reports on the version, published advisories that match), a visible date and a short source list. It
@@ -17,17 +19,26 @@ export function toolAsOf(check: Check, times: number[]): number {
   return all.length ? Math.max(...all) : Date.now();
 }
 
-/** "As of 2026-10-25, 3 field reports on npm:x@1.2.0: 2 worked, 0 partly, 1 failed; 1 published advisory matches." */
+/**
+ * "As of 25 Oct 2026, 3 field reports on npm:x@1.2.0: 2 worked, 1 failed. 1 published advisory matches." Counts in
+ * words, outcomes with no reports left out, the date in prose form (site audit 29 Oct, §3.12 and §5 item 5).
+ */
 export function toolAnswerLine(toolId: string, check: Check, asOf: number): string {
   const b = check.outcome_breakdown;
   const count = b.worked + b.partial + b.failed;
   const on = check.version ? `${toolId}@${check.version}` : toolId;
-  const reports = count ? `${n(count)} field ${count === 1 ? "report" : "reports"} on ${on}: ${b.worked} worked, ${b.partial} partly, ${b.failed} failed` : `no field reports on ${on} yet`;
+  const parts = ([["worked", b.worked], ["partial", b.partial], ["failed", b.failed]] as const).filter(([, x]) => x > 0).map(([w, x]) => `${n(x)} ${w}`).join(", ");
+  const reports = count ? `${n(count)} field ${count === 1 ? "report" : "reports"} on ${on}: ${parts}` : `no field reports on ${on} yet`;
   const s = check.public_signals_summary;
   const adv = s
-    ? `${n(s.total)} published ${s.total === 1 ? "advisory matches" : "advisories match"}${s.version ? "" : " (any version)"}`
-    : "no OSV advisory lookup for this kind of tool (npm and PyPI packages only)";
-  return `As of ${day(asOf)}, ${reports}; ${adv}.`;
+    ? s.total
+      ? `${n(s.total)} published ${s.total === 1 ? "advisory matches" : "advisories match"}${s.version ? "" : " (any version)"}`
+      : `No published advisory matches${s.version ? "" : " (any version)"}`
+    : osvPackageFor(toolId)
+      ? // An npm or PyPI package whose OSV lookup didn't answer this time (review ADR 0118): say so, never "no lookup".
+        "The advisory lookup didn't answer this time, so advisories aren't shown"
+      : "No advisory lookup for this kind of tool (npm and PyPI packages only)";
+  return `As of ${dayLabel(day(asOf))}, ${reports}. ${adv}.`;
 }
 
 /** The OSV page listing a package's advisories. */

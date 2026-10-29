@@ -51,14 +51,14 @@ describe("home page Arena hero (ADR 0016)", () => {
     expect(body).toContain("Practice replay · ");
     expect(body).toContain('<script type="module" src="/gauntlet.js"></script>');
     expect(body).toMatch(/href="\/arena\/run\/[A-Za-z0-9_-]+\?from=home" data-gx-full="gx">Watch the full bout/);
-    // ADR 0029 home: the Wire, the human/agent switch, the agent line, the board and the scanner box.
+    // ADR 0029 home, as the site audit (29 Oct) trimmed it: the Wire and one check box, after the player; the
+    // human/agent switch and the agent line moved off the home page (the line is on /connect).
     expect(body).toContain('class="wire2"');
-    expect(body).toContain('data-who="agent"');
-    expect(body).toContain('id="agent-line-home"');
-    expect(body).toContain('<form class="scan-quick" method="post" action="/scan">');
+    expect(body).not.toContain('data-who="agent"');
+    expect(body).not.toContain('id="agent-line-home"');
+    expect(body).toContain('<form class="scan-quick hero-go" method="post" action="/go">');
     expect(body).toContain('href="/arena/rules#featured"');
-    expect(body.indexOf("Field reports on MCP servers and packages")).toBeGreaterThan(player);
-    expect(body).toContain('id="check-input"');
+    expect(body.indexOf('id="home-check"')).toBeGreaterThan(player);
     expect(body).not.toContain("New: Hard tier");
   });
 

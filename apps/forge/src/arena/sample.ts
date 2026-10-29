@@ -69,8 +69,15 @@ export interface SampleRecord {
   cost_of_failure: { low: number | null; high: number | null; unit: string; basis: string };
   replay_id: string;
   replay_url: string;
+  /** 2: sealed with replay format v2 (hash chain + Ed25519 seal); 1: older, not publicly signed. */
+  replay_format: 1 | 2;
+  /** How a reader can check this record's replay (ADR 0116). */
+  replay_verification: (typeof REPLAY_VERIFICATION)[1 | 2];
   canary_guid: string;
 }
+
+/** How each replay format can be checked by anyone (ADR 0116), stated on every record. */
+export const REPLAY_VERIFICATION = { 1: "v1: referee re-run only, no public signature", 2: "v2: signature + referee re-run" } as const;
 
 export interface SampleFile {
   name: string;
@@ -86,8 +93,9 @@ export interface SampleMeta {
   seed: number;
   zip: SampleFile & { url: string };
   files: SampleFile[];
-  counts: { records: number; falls: number; passes: number; models: number; trap_kinds: number; candidates: number };
-  pair: { task: string; seed: number; trap_id: string; pass: string; fail: string };
+  counts: { records: number; falls: number; passes: number; models: number; trap_kinds: number; candidates: number; records_v2: number; records_v1: number; replays_v2: number };
+  pair: { task: string; task_version: string; ruleset_version?: string; seed: number; trap_id: string; pass: string; fail: string };
+  /** The signed v2 replays shipped in the zip (0 to 2; ADR 0116). */
   replays: string[];
   licence_id: string;
   canary_guid: string;
@@ -113,10 +121,13 @@ export interface Candidate {
   trap: string;
   family: TrapFamily;
   task: string;
+  /** The job's version at the bout's finish (the pair must share it). */
+  taskVersion: string;
   seed: number;
   model: string;
   fell: boolean;
   boutPassed: boolean;
+  /** Sealed with replay format v2. Unsealed bouts are format v1. */
   sealed: boolean;
   rules: string;
   frontier: boolean;
@@ -128,15 +139,21 @@ const byKey = (a: Candidate, b: Candidate) => (key(a) < key(b) ? -1 : key(a) > k
 export interface Draw {
   picked: Candidate[];
   pair: { pass: Candidate; fail: Candidate };
+  /** Bouts whose raw replay ships in the zip: replay format v2, accepted by `replayOk`; a passed bout first, then a fall. 0 to 2. */
+  replays: Candidate[];
 }
 
 /**
- * The draw (ADR 0100), deterministic from the candidates and the seed:
- * 1. the same-seed pair: a (job, seed, trap) with a fall and a clean pass (the pass's bout passed), both sealed with
- *    replay format v2 under rules 0.6; groups tried in seeded order until `replayOk` accepts both replays;
- * 2. a frontier fall: a Heavyweight model shown on /benchmark falling for a trap, if the pair didn't give one;
- * 3. at least `minFailsPerKind` falls of every trap kind that has them;
- * 4. filled round-robin over trap kinds, one seeded pick a turn, to `target`, never more than `maxPerFamily` a kind.
+ * The draw (ADR 0100, amended by ADR 0116), deterministic from the candidates and the seed:
+ * 1. the same-seed pair: a (job version, rules version, seed, trap) with a fall and a clean pass (the pass's bout
+ *    passed), from public rules 0.5 or 0.6 bouts of any replay format, both scored by the same rules. A pair whose two bouts are both v2 and accepted by `replayOk` is
+ *    tried first (groups in seeded order, at most `replayTries`); otherwise one eligible group is drawn;
+ * 2. the raw replays: always v2 bouts accepted by `replayOk`. The pair's own bouts when both qualify; otherwise a
+ *    passed bout and a fall, each drawn from the v2 candidates (the pair's bout first, if it qualifies). A side with no
+ *    verifiable v2 bout ships none, and the README states the count;
+ * 3. a frontier fall: a Heavyweight model shown on /benchmark falling for a trap, if the picks so far have none;
+ * 4. at least `minFailsPerKind` falls of every trap kind that has them;
+ * 5. filled round-robin over trap kinds, one seeded pick a turn, to `target`, never more than `maxPerFamily` a kind.
  */
 export async function draw(all: Candidate[], seed: number, replayOk: (c: Candidate) => Promise<boolean>, L = SAMPLE_LIMITS): Promise<Draw | { error: string }> {
   const rng = mulberry32(seed);
@@ -146,34 +163,67 @@ export async function draw(all: Candidate[], seed: number, replayOk: (c: Candida
   const taken = new Set<string>();
   const count = (f: TrapFamily, fell?: boolean) => picked.filter((p) => p.family === f && (fell === undefined || p.fell === fell)).length;
   const take = (c: Candidate) => {
+    if (taken.has(key(c))) return;
     picked.push(c);
     taken.add(key(c));
   };
-
-  // 1. The same-seed pair.
-  const groups = new Map<string, Candidate[]>();
-  for (const c of pool.filter((c) => c.sealed && c.rules === "rules 0.6")) {
-    const g = `${c.task}\u0000${c.seed}\u0000${c.trap}`;
-    groups.set(g, [...(groups.get(g) ?? []), c]);
-  }
-  const eligible = [...groups.entries()].filter(([, cs]) => cs.some((c) => c.fell) && cs.some((c) => !c.fell && c.boutPassed)).sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  let pair: Draw["pair"] | null = null;
   const verdicts = new Map<string, boolean>();
   const ok = async (c: Candidate) => {
+    if (!c.sealed) return false;
     if (!verdicts.has(c.run)) verdicts.set(c.run, await replayOk(c));
     return verdicts.get(c.run)!;
   };
-  for (let tries = 0; eligible.length && tries < L.replayTries && !pair; tries++) {
-    const [, cs] = eligible.splice(Math.floor(rng() * eligible.length), 1)[0]!;
-    const fails = cs.filter((c) => c.fell);
-    const passes = cs.filter((c) => !c.fell && c.boutPassed);
-    const fail = pickFrom(fails);
-    const pass = pickFrom(passes);
-    if ((await ok(fail)) && (await ok(pass))) pair = { pass, fail };
+  const isPass = (c: Candidate) => !c.fell && c.boutPassed;
+
+  // 1. The same-seed pair: same job version, same seed, same trap, scored by the same rules; one clean pass and one fall.
+  // Review of ADR 0116: the rules version is part of the key, so a pass scored by the older referee (rules 0.5, before
+  // the grader-hacking fixes) is never paired with a fall scored by rules 0.6.
+  const groups = new Map<string, Candidate[]>();
+  for (const c of pool) {
+    const g = `${c.task}\u0000${c.taskVersion}\u0000${c.rules}\u0000${c.seed}\u0000${c.trap}`;
+    groups.set(g, [...(groups.get(g) ?? []), c]);
   }
-  if (!pair) return { error: "No job, seed and trap yet has both a fall and a clean pass with verifiable replay format v2 bouts under rules 0.6." };
+  const sorted = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const eligible = sorted.filter(([, cs]) => cs.some((c) => c.fell) && cs.some(isPass));
+  let pair: Draw["pair"] | null = null;
+  let replays: Candidate[] = [];
+  const v2 = eligible.map(([g, cs]) => [g, cs.filter((c) => c.sealed)] as const).filter(([, cs]) => cs.some((c) => c.fell) && cs.some(isPass));
+  for (let tries = 0; v2.length && tries < L.replayTries && !pair; tries++) {
+    const [, cs] = v2.splice(Math.floor(rng() * v2.length), 1)[0]!;
+    const fail = pickFrom(cs.filter((c) => c.fell));
+    const pass = pickFrom(cs.filter(isPass));
+    if ((await ok(fail)) && (await ok(pass))) {
+      pair = { pass, fail };
+      replays = [pass, fail];
+    }
+  }
+  if (!pair) {
+    if (!eligible.length) return { error: "No job version, seed and trap yet has both a fall and a clean pass scored by the same rules (0.5 or 0.6) in public bouts." };
+    const [, cs] = pickFrom(eligible);
+    pair = { fail: pickFrom(cs.filter((c) => c.fell)), pass: pickFrom(cs.filter(isPass)) };
+  }
   take(pair.fail);
   take(pair.pass);
+
+  // 2. The raw replays, if the pair's own bouts didn't give both: always v2 and verifiable.
+  if (!replays.length) {
+    const side = async (mine: Candidate, wanted: (c: Candidate) => boolean) => {
+      if (wanted(mine) && (await ok(mine))) return mine;
+      const runs = new Map<string, Candidate[]>();
+      for (const c of pool) if (c.sealed && wanted(c)) runs.set(c.run, [...(runs.get(c.run) ?? []), c]);
+      const left = [...runs.values()];
+      for (let tries = 0; left.length && tries < L.replayTries; tries++) {
+        const cs = left.splice(Math.floor(rng() * left.length), 1)[0]!;
+        const c = pickFrom(cs);
+        if (await ok(c)) return c;
+      }
+      return null;
+    };
+    const p = await side(pair.pass, (c) => c.boutPassed);
+    const f = await side(pair.fail, (c) => c.fell && !c.boutPassed);
+    replays = [p, f].filter((c): c is Candidate => c !== null);
+    for (const c of replays) take(c);
+  }
 
   // 2. A frontier fall.
   if (!picked.some((p) => p.fell && p.frontier)) {
@@ -204,7 +254,7 @@ export async function draw(all: Candidate[], seed: number, replayOk: (c: Candida
   }
   if (picked.length < L.min) return { error: `Only ${picked.length} records could be drawn (at least ${L.min} needed).` };
   if (new Set(picked.map((p) => p.model)).size < L.minModels) return { error: `Fewer than ${L.minModels} models in the draw.` };
-  return { picked, pair };
+  return { picked, pair, replays };
 }
 
 // --- Reading the public bouts -------------------------------------------------------------------------------------
@@ -233,7 +283,7 @@ export async function candidates(env: Env, now: number): Promise<Candidate[]> {
       if (pid && ids.has(pid)) seen.set(pid, (seen.get(pid) ?? false) || tr.triggered);
     }
     for (const [pid, fell] of seen)
-      out.push({ run: s.id, trap: pid, family: ids.get(pid)!.family as TrapFamily, task: s.task, seed: s.seed, model: s.model, fell, boutPassed: s.passed, sealed: sealed.has(s.id), rules, frontier });
+      out.push({ run: s.id, trap: pid, family: ids.get(pid)!.family as TrapFamily, task: s.task, taskVersion: taskVersion(s.task, s.finishedAt), seed: s.seed, model: s.model, fell, boutPassed: s.passed, sealed: sealed.has(s.id), rules, frontier });
   }
   return out;
 }
@@ -292,6 +342,8 @@ export function sampleRecord(origin: string, c: Candidate, run: { modelId: strin
     cost_of_failure: { low: cof.min, high: cof.max, unit: cof.unit, basis: cof.basis },
     replay_id: c.run,
     replay_url: `${origin}/arena/run/${c.run}.json`,
+    replay_format: c.sealed ? 2 : 1,
+    replay_verification: REPLAY_VERIFICATION[c.sealed ? 2 : 1],
     canary_guid: CANARY_GUID,
   };
 }
@@ -310,7 +362,7 @@ export function sampleSchema(origin: string) {
     additionalProperties: false,
     required: [
       "record_id", "trap_id", "trap_version", "trap_kind", "ruleset_version", "job", "task", "task_version", "tier", "event_kind", "ranked", "model", "model_version", "provider", "maker", "frontier",
-      "run_date", "seed", "attempt", "tool_calls", "verdict", "failure_category", "bout_passed", "expected_safe_behaviour", "cost_of_failure", "replay_id", "replay_url", "canary_guid",
+      "run_date", "seed", "attempt", "tool_calls", "verdict", "failure_category", "bout_passed", "expected_safe_behaviour", "cost_of_failure", "replay_id", "replay_url", "replay_format", "replay_verification", "canary_guid",
     ],
     properties: {
       record_id: str,
@@ -345,6 +397,8 @@ export function sampleSchema(origin: string) {
       },
       replay_id: str,
       replay_url: { type: "string", pattern: "^https?://" },
+      replay_format: { enum: [1, 2] },
+      replay_verification: { enum: [REPLAY_VERIFICATION[1], REPLAY_VERIFICATION[2]] },
       canary_guid: { const: CANARY_GUID },
     },
   };
@@ -377,7 +431,9 @@ const FIELDS: [keyof SampleRecord, string][] = [
   ["expected_safe_behaviour", "The end state the referee accepts for this trap (from /benchmark/v1.json)."],
   ["cost_of_failure", "Sandbox amount at stake: `low` and `high` over the published dev-split seeds, `unit` (usd_cents_sandbox is invented money in cents; records; units; none) and `basis`. Never an estimate of real losses."],
   ["replay_id", "Run id of the bout."],
-  ["replay_url", "The bout's signed replay (JSON)."],
+  ["replay_url", "The bout's replay (JSON)."],
+  ["replay_format", "2: sealed with replay format v2 (hash chain and Ed25519 seal, checkable with `forge verify`); 1: older format, not publicly signed."],
+  ["replay_verification", `How this record's replay can be checked: "${REPLAY_VERIFICATION[2]}" or "${REPLAY_VERIFICATION[1]}".`],
   ["canary_guid", "The benchmark canary GUID, on every record so a copied record still carries it."],
 ];
 
@@ -390,8 +446,15 @@ export const PYTHON_LOADER = [
   'print(len(rows), "records,", len(falls), "falls")',
 ].join("\n");
 
+/** The README's exact count line (ADR 0116): how many records, and how many signed v2 replays, the zip holds. */
+export function countLine(records: number, v2Records: number, replays: number) {
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return `This zip holds exactly ${n(records, "record", "records")} (${v2Records} with replay format v2, ${records - v2Records} with replay format v1) and ${n(replays, "signed v2 replay", "signed v2 replays")}.`;
+}
+
 function readme(origin: string, m: { builtAt: string; records: SampleRecord[]; replays: { id: string; verdict: string }[]; pair: Draw["pair"]; candidates: number }) {
   const falls = m.records.filter((r) => r.verdict === "fail").length;
+  const v2 = m.records.filter((r) => r.replay_format === 2).length;
   const kinds = [...new Set(m.records.map((r) => r.trap_kind.family))].sort();
   const models = [...new Set(m.records.map((r) => r.model))].sort();
   return `# ${TRAP_SET_NAME}: public sample ${SAMPLE_VERSION}
@@ -402,14 +465,16 @@ ${CANARY}
 
 ${m.records.length} records from The Forge Arena, where AI models do everyday business jobs (refunds, supplier payments, bookings, stock, records) in invented sandboxes with planted traps, and a referee scores the sandbox's end state and the call log, never the model's own account. Each record is one public trap present in one bout: the model's tool calls in order, whether it fell for the trap, the safe behaviour the referee accepts and the sandbox amount at stake. ${falls} records are falls and ${m.records.length - falls} are passes, across ${kinds.length} trap kinds and ${models.length} models.
 
+${countLine(m.records.length, v2, m.replays.length)}
+
 Contains no personal data: tools, traps and model runs only.
 
-Drawn from already-public bouts: every record is a bout that ${origin}/arena/dataset.json already publishes, with its signed replay at ${origin}/arena/run/<replay_id>.json. Built ${m.builtAt} from the ${m.candidates} candidate records then public.
+Drawn from already-public bouts: every record is a bout that ${origin}/arena/dataset.json already publishes, with its replay at ${origin}/arena/run/<replay_id>.json. Each record states its replay format and how it can be checked: \`${REPLAY_VERIFICATION[2]}\` (hash chain and Ed25519 signature, with \`forge verify\`) or \`${REPLAY_VERIFICATION[1]}\` (older bouts: the log can be re-scored by the open referee, but no public key signs it). Built ${m.builtAt} from the ${m.candidates} candidate records then public.
 
 ## Files
 
 - \`sample.jsonl\`: one record per line (schema: \`schema.json\`, also at ${origin}${SAMPLE_SCHEMA_PATH}).
-- \`replays/\`: two raw signed replays, byte for byte as ${origin}/arena/run/<id>.json served them at build time: ${m.replays.map((r) => `\`${r.id}.json\` (bout ${r.verdict})`).join(" and ")}.
+- \`replays/\`: ${m.replays.length ? `${m.replays.length === 1 ? "one raw signed replay" : `${m.replays.length} raw signed replays`} (replay format v2, verifiable with \`forge verify\`), byte for byte as ${origin}/arena/run/<id>.json served them at build time: ${m.replays.map((r) => `\`${r.id}.json\` (bout ${r.verdict})`).join(" and ")}.` : "empty: no public v2 bout could be verified at build time, so this zip ships no raw replay."}
 - \`croissant.json\`: Croissant 1.0 metadata for this sample.
 - \`LICENSE.txt\`: the licence.
 - \`SHA256SUMS\`: SHA-256 of every other file (\`sha256sum -c SHA256SUMS\`).
@@ -425,9 +490,10 @@ ${FIELDS.map(([k, v]) => `| \`${k}\` | ${v} |`).join("\n")}
 Not by hand. A seeded random draw within strata (ADR 0100), with seed **${SAMPLE_SEED}** and the mulberry32 generator, over every candidate record sorted by \`record_id\`:
 
 1. Candidates: each public trap present in a public bout that finished normally (no knockout) under ${SAMPLE_RULES.join(" or ")}, on a public seed.
-2. One pass and one fail on the same seed, job and trap, both bouts sealed with replay format v2 and verifiable (this sample: ${m.pair.fail.trap} on \`${m.pair.fail.task}\` seed ${m.pair.fail.seed}).
-3. At least one fall by a frontier model (the lineup's Heavyweight division) already shown on ${origin}/benchmark.
-4. At least ${SAMPLE_LIMITS.minFailsPerKind} falls of every trap kind that has public falls, then filled round-robin across trap kinds to ${SAMPLE_LIMITS.target} records, at most ${SAMPLE_LIMITS.maxPerFamily} from any one trap kind.
+2. One pass and one fail on the same job version, seed and trap, scored by the same rules version, from public bouts of either replay format, a pair of verifiable v2 bouts tried first (this sample: ${m.pair.fail.trap} on \`${m.pair.fail.task}\` ${m.pair.fail.taskVersion}, ${m.pair.fail.rules}, seed ${m.pair.fail.seed}; replay format ${m.pair.pass.sealed ? 2 : 1} for the pass and ${m.pair.fail.sealed ? 2 : 1} for the fall).
+3. The raw replays: only v2 bouts that \`forge verify\` accepts (chain, record, signature, the open referee's same verdict, faithful re-run); the pair's own when both are, otherwise a passed bout and a fall drawn from the v2 bouts.
+4. At least one fall by a frontier model (the lineup's Heavyweight division) already shown on ${origin}/benchmark.
+5. At least ${SAMPLE_LIMITS.minFailsPerKind} falls of every trap kind that has public falls, then filled round-robin across trap kinds to ${SAMPLE_LIMITS.target} records, at most ${SAMPLE_LIMITS.maxPerFamily} from any one trap kind.
 
 ## What is withheld
 
@@ -437,11 +503,13 @@ These stay private so the test stays clean; aggregates about them (the public-ag
 
 ## Verify a replay
 
-Each replay is hash-chained and signed with Ed25519 (public keys at ${origin}${KEYS_PATH}). Check one on your machine:
+Each v2 replay is hash-chained and signed with Ed25519 (public keys at ${origin}${KEYS_PATH}). Check one on your machine:
 
 \`\`\`
-${verifyCommand(`replays/${m.replays[0]!.id}.json`)}
+${verifyCommand(m.replays[0] ? `replays/${m.replays[0].id}.json` : `${origin}/arena/run/<replay_id>.json`)}
 \`\`\`
+
+A v1 record's replay has no public signature; \`forge verify\` reports it as format v1 and re-runs the referee on its log.
 
 ## Load it in Python
 
@@ -544,7 +612,9 @@ function sampleCroissant(origin: string, builtAt: string, jsonl: { bytes: number
           col("verdict", "sc:Text", "pass or fail on this trap."),
           col("failure_category", "sc:Text", "Trap kind name on a fail."),
           col("expected_safe_behaviour", "sc:Text", "End state the referee accepts."),
-          col("replay_url", "sc:URL", "Signed replay of the bout."),
+          col("replay_url", "sc:URL", "Replay of the bout."),
+          col("replay_format", "sc:Integer", "Replay format: 2 (signed) or 1 (not publicly signed)."),
+          col("replay_verification", "sc:Text", "How the replay can be checked."),
         ],
       },
     ],
@@ -582,10 +652,7 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
   records.sort((a, b) => (a.trap_id < b.trap_id ? -1 : a.trap_id > b.trap_id ? 1 : a.record_id < b.record_id ? -1 : a.record_id > b.record_id ? 1 : 0));
   const builtAt = new Date(now).toISOString();
   const jsonl = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  const replays = [
-    { id: d.pair.pass.run, verdict: "passed" },
-    { id: d.pair.fail.run, verdict: "failed" },
-  ];
+  const replays = d.replays.map((c) => ({ id: c.run, verdict: c.boutPassed ? "passed" : "failed" }));
   const files: { name: string; text: string }[] = [
     { name: "README.md", text: readme(origin, { builtAt, records, replays, pair: d.pair, candidates: pool.length }) },
     { name: "LICENSE.txt", text: licenceText(origin) },
@@ -612,8 +679,18 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
       seed: SAMPLE_SEED,
       zip: { name: `${SAMPLE_NAME}.zip`, bytes: zip.length, sha256: zipSha, url: `${origin}${SAMPLE_ZIP_PATH}` },
       files: listed,
-      counts: { records: records.length, falls, passes: records.length - falls, models: new Set(records.map((r) => r.model)).size, trap_kinds: new Set(records.map((r) => r.trap_kind.family)).size, candidates: pool.length },
-      pair: { task: d.pair.fail.task, seed: d.pair.fail.seed, trap_id: d.pair.fail.trap, pass: d.pair.pass.run, fail: d.pair.fail.run },
+      counts: {
+        records: records.length,
+        falls,
+        passes: records.length - falls,
+        models: new Set(records.map((r) => r.model)).size,
+        trap_kinds: new Set(records.map((r) => r.trap_kind.family)).size,
+        candidates: pool.length,
+        records_v2: records.filter((r) => r.replay_format === 2).length,
+        records_v1: records.filter((r) => r.replay_format === 1).length,
+        replays_v2: replays.length,
+      },
+      pair: { task: d.pair.fail.task, task_version: d.pair.fail.taskVersion, ruleset_version: d.pair.fail.rules, seed: d.pair.fail.seed, trap_id: d.pair.fail.trap, pass: d.pair.pass.run, fail: d.pair.fail.run },
       replays: replays.map((r) => r.id),
       licence_id: LICENCE_ID,
       canary_guid: CANARY_GUID,
@@ -634,8 +711,11 @@ export const SAMPLE_CLAIM_ID = `dataset-sample-${SAMPLE_VERSION}`;
 /** A claim still "building" after this long is a build that died part-way; a new press may take it over. */
 export const SAMPLE_CLAIM_STALE_MS = 10 * 60_000;
 
+/** KV's read-cache for the sample meta: 60 s, KV's minimum, so the page's status catches up within about a minute of a publish. */
+export const SAMPLE_META_CACHE_TTL_S = 60;
+
 export async function readSampleMeta(env: Pick<Env, "KV">): Promise<SampleMeta | null> {
-  return env.KV.get<SampleMeta>(SAMPLE_KV.meta, { type: "json", cacheTtl: 300 });
+  return env.KV.get<SampleMeta>(SAMPLE_KV.meta, { type: "json", cacheTtl: SAMPLE_META_CACHE_TTL_S });
 }
 
 /** The published zip, only if its bytes hash to the meta's SHA-256 (never a zip the listing doesn't describe). */

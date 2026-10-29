@@ -333,11 +333,13 @@ describe("OA-08: /welcome", () => {
 });
 
 describe("OA-03: /connect on a phone", () => {
-  it("an iPhone gets the scan box first, then a check box, a share button and the copy-link fallback, before step 1", async () => {
+  it("an iPhone gets one line with a share button and the copy-link fallback, then the scan and check boxes one click down, before step 1", async () => {
     const body = await (await get("/connect", "", { "User-Agent": IPHONE })).text();
-    const at = ['id="phone-step"', 'id="phone-scan"', 'id="phone-check"', "data-native-share", 'id="phone-link"', 'id="first-step"'].map((m) => body.indexOf(m));
+    // Site audit 29 Oct (§3.6): the phone block is one line and the link to send; checking here sits in a <details>.
+    const at = ['id="phone-step"', "data-native-share", 'id="phone-link"', 'id="phone-scan"', 'id="phone-check"', 'id="first-step"'].map((m) => body.indexOf(m));
     expect(at.every((i) => i > 0), JSON.stringify(at)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(body.slice(at[2]!, at[3]!)).toContain('<details class="more">');
     // The scan box is the first form on the page.
     expect(body.indexOf("<form")).toBe(body.indexOf('<form class="scan-quick" id="phone-scan" method="post" action="/scan">'));
     expect(body).toContain('<form class="scan-quick" id="phone-check" method="get" action="/check" role="search">');

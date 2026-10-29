@@ -197,12 +197,15 @@ describe("B3-04: no threshold wording that counts outside owners", () => {
 });
 
 describe("B3-04: the home chart's heading carries its date range", () => {
-  it("puts {since}–{until} in the heading", () => {
-    expect(boardTitle({ since: "2026-10-15", until: "2026-10-29" })).toBe("Which AI falls for it? (2026-10-15–2026-10-29)");
+  it("puts {since}–{until} in the heading, in prose date form (site audit §5 item 10)", () => {
+    expect(boardTitle({ since: "2026-10-15", until: "2026-10-29" })).toBe("Which AI falls for it? (15–29 Oct 2026)");
+    expect(boardTitle({ since: "2026-09-28", until: "2026-10-03" })).toBe("Which AI falls for it? (28 Sep–3 Oct 2026)");
+    expect(boardTitle({ since: "2026-12-30", until: "2027-01-02" })).toBe("Which AI falls for it? (30 Dec 2026–2 Jan 2027)");
+    expect(boardTitle({ since: "2026-10-29", until: "2026-10-29" })).toBe("Which AI falls for it? (29 Oct 2026)");
     expect(boardTitle({ since: null, until: null })).toBe("Which AI falls for it?");
     const row = (name: string) => ({ model: name, name, runs: 40, fell: 4, rate: 0.1 });
     const out = String(boardBlock({ rows: [row("a"), row("b"), row("c")], runs: 120, ranked: 100, practice: 20, rules_versions: [], since: "2026-10-15", until: "2026-10-29" } as never));
-    expect(out).toContain('<h2 id="board-title">Which AI falls for it? (2026-10-15–2026-10-29)</h2>');
+    expect(out).toContain('<h2 id="board-title">Which AI falls for it? (15–29 Oct 2026)</h2>');
   });
 });
 
@@ -216,9 +219,14 @@ describe("B3-06: field reports say what most of them are", () => {
     const linked = `field reports filed (<a href="${HOUSE_METHOD_PATH}">most are our House agent&#39;s nightly install tests</a>)`;
     const unq = (x: string) => x.replace(/&#39;|&#x27;/g, "'");
     const home = unq(await page("/"));
-    // Coordinator review, 29 Oct: the home band uses the short label with the House caption in the same stat item.
-    expect(home).toMatch(/<li data-k="field_reports"><b>[\d,]+<\/b><span>field reports filed<\/span><a class="stat-note" href="\/methodology#house-install-tests">mostly our House install tests<\/a><\/li>/);
-    expect(unq(await page("/about"))).toContain(unq(linked));
+    // Site audit 29 Oct (issue 3): the home strip uses the short label with a footnote marker; the House note sits
+    // directly under the strip, linked to the method.
+    expect(home).toMatch(/<li data-k="field_reports"><b>[\d,]+<\/b><span>field reports filed<sup class="fn"><a href="#fn-reports"/);
+    expect(home).toMatch(/<p class="fn-note" id="fn-reports"><span class="fn-mark" aria-hidden="true">†<\/span> <a href="\/methodology#house-install-tests">Mostly our House install tests<\/a>/);
+    // Site audit 29 Oct (§3.9): /about shows two totals (bouts, skills) and links to /stats; field reports aren't among them,
+    // and if they ever are, they carry the same linked label.
+    const about = unq(await page("/about"));
+    if (/field reports/i.test(about.slice(about.indexOf("<h2>Live numbers</h2>"), about.indexOf('<h2 id="investors">')))) expect(about).toContain(unq(linked));
     expect(unq(await page("/stats"))).toContain(unq(`Field reports filed (<a href="${HOUSE_METHOD_PATH}">most are our House agent's nightly install tests</a>)`));
     const s = await json<Stats>("/stats.json");
     const item = s.totals.items.find((i) => i.key === "field_reports")! as { label: string; value: number | null; method_url?: string };

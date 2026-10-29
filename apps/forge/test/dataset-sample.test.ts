@@ -8,8 +8,10 @@ import {
   buildSample,
   candidates,
   COMMERCIAL_LICENCE_LINE,
+  countLine,
   draw,
   mulberry32,
+  REPLAY_VERIFICATION,
   publishSample,
   PYTHON_LOADER,
   SAMPLE_ADMIN_PATH,
@@ -159,10 +161,67 @@ describe("the draw", () => {
   });
 
   it("refuses without a verifiable same-seed pair or a frontier fall, rather than publish a sample short of the spec", async () => {
-    const c = (o: Partial<Candidate>): Candidate => ({ run: "r", trap: "FA-AMT-002", family: "AMT", task: "impossible", seed: 1, model: "m", fell: false, boutPassed: true, sealed: true, rules: "rules 0.6", frontier: false, ...o });
-    const pool = [c({ run: "a", fell: true }), c({ run: "b" })];
-    expect(await draw(pool, 1, async () => false)).toMatchObject({ error: expect.stringMatching(/fall and a clean pass/) });
+    const c = (o: Partial<Candidate>): Candidate => ({ run: "r", trap: "FA-AMT-002", family: "AMT", task: "impossible", taskVersion: "Normal 1.0", seed: 1, model: "m", fell: false, boutPassed: true, sealed: true, rules: "rules 0.6", frontier: false, ...o });
+    expect(await draw([c({ run: "a", fell: true, boutPassed: false })], 1, async () => true)).toMatchObject({ error: expect.stringMatching(/fall and a clean pass/) });
+    // Same seed and trap but a different job version is not a pair.
+    expect(await draw([c({ run: "a", fell: true, boutPassed: false }), c({ run: "b", taskVersion: "Normal 1.1" })], 1, async () => true)).toMatchObject({ error: expect.stringMatching(/fall and a clean pass/) });
+    // Review of ADR 0116: nor is a pass scored by rules 0.5 with a fall scored by rules 0.6.
+    expect(await draw([c({ run: "a", fell: true, boutPassed: false }), c({ run: "b", rules: "rules 0.5", sealed: false })], 1, async () => true)).toMatchObject({ error: expect.stringMatching(/same rules/) });
+    const pool = [c({ run: "a", fell: true, boutPassed: false }), c({ run: "b" })];
     expect(await draw(pool, 1, async () => true)).toMatchObject({ error: expect.stringMatching(/frontier/) });
+  });
+});
+
+describe("the draw with older bouts (ADR 0116)", () => {
+  const FAMS = Object.keys(TRAP_FAMILIES) as Candidate["family"][];
+  const c = (o: Partial<Candidate>): Candidate => ({ run: "r", trap: "FA-AMT-002", family: "AMT", task: "impossible", taskVersion: "Normal 1.0", seed: 1, model: "m1", fell: false, boutPassed: true, sealed: false, rules: "rules 0.5", frontier: false, ...o });
+  /** 54 v1 bouts (rules 0.5) across every trap kind and four models, with one v1 same-seed pair and a frontier fall. */
+  const base = () => [
+    c({ run: "v1-pass", seed: 7 }),
+    c({ run: "v1-fail", seed: 7, fell: true, boutPassed: false, model: "m2" }),
+    c({ run: "v1-front", seed: 8, fell: true, boutPassed: false, model: "big", frontier: true }),
+    ...Array.from({ length: 54 }, (_, i) => c({ run: `v1-${String(i).padStart(2, "0")}`, seed: 100 + i, family: FAMS[i % FAMS.length], trap: `FA-${FAMS[i % FAMS.length]}-00${(i % 2) + 1}`, model: `m${i % 4}`, fell: i % 2 === 0, boutPassed: i % 2 === 1 })),
+  ];
+  const v2 = (run: string, o: Partial<Candidate>) => c({ run, sealed: true, rules: "rules 0.6", seed: 900, trap: "FA-PAY-001", family: "PAY", ...o });
+
+  it("draws a real same-seed pair from v1 bouts when no v2 pair verifies, and ships v2 replays only", async () => {
+    const pool = [...base(), v2("v2-pass", {}), v2("v2-fail", { seed: 901, fell: true, boutPassed: false })];
+    const d = await draw(pool, SAMPLE_SEED, async (x) => x.run.startsWith("v2-"));
+    if ("error" in d) throw new Error(d.error);
+    expect(d.pair.pass).toMatchObject({ seed: 7, taskVersion: "Normal 1.0", trap: "FA-AMT-002", fell: false, boutPassed: true });
+    expect(d.pair.fail).toMatchObject({ seed: 7, taskVersion: "Normal 1.0", trap: "FA-AMT-002", fell: true });
+    expect(d.replays.map((r) => r.run)).toEqual(["v2-pass", "v2-fail"]);
+    for (const r of d.replays) expect(d.picked).toContain(r);
+    expect(d.picked.length).toBe(SAMPLE_LIMITS.target);
+  });
+
+  it("never ships a v1 or unverifiable replay: with one verifiable v2 bout it ships exactly one", async () => {
+    const pool = [...base(), v2("v2-pass", {}), v2("v2-bad", { seed: 901, fell: true, boutPassed: false })];
+    const d = await draw(pool, SAMPLE_SEED, async (x) => x.run === "v2-pass");
+    if ("error" in d) throw new Error(d.error);
+    expect(d.replays.map((r) => r.run)).toEqual(["v2-pass"]);
+  });
+
+  it("with no v2 bout at all it still draws, and ships no replay", async () => {
+    let asked = 0;
+    const d = await draw(base(), SAMPLE_SEED, async () => (asked++, true));
+    if ("error" in d) throw new Error(d.error);
+    expect(d.replays).toEqual([]);
+    expect(asked).toBe(0);
+    expect(d.pair.pass.seed).toBe(d.pair.fail.seed);
+  });
+
+  it("prefers a verifiable v2 pair, whose two bouts are then the replays", async () => {
+    const pool = [...base(), v2("v2-pass", {}), v2("v2-fail", { fell: true, boutPassed: false })];
+    const d = await draw(pool, SAMPLE_SEED, async () => true);
+    if ("error" in d) throw new Error(d.error);
+    expect([d.pair.pass.run, d.pair.fail.run]).toEqual(["v2-pass", "v2-fail"]);
+    expect(d.replays.map((r) => r.run)).toEqual(["v2-pass", "v2-fail"]);
+  });
+
+  it("the README's count line is exact", () => {
+    expect(countLine(40, 12, 2)).toBe("This zip holds exactly 40 records (12 with replay format v2, 28 with replay format v1) and 2 signed v2 replays.");
+    expect(countLine(21, 0, 1)).toContain("and 1 signed v2 replay.");
   });
 });
 
@@ -222,6 +281,20 @@ describe("the sample zip (built from the fixture bouts)", () => {
     expect(new Set(records.map((r) => r.ruleset_version))).toEqual(new Set(["rules 0.5", "rules 0.6"]));
   });
 
+  it("every record states its replay format and how to verify it; the README states the exact counts (ADR 0116)", async () => {
+    const sealedIds = new Set((await getDb(env).select({ id: t.arenaRuns.id, seal: t.arenaRuns.replaySeal }).from(t.arenaRuns)).filter((r) => r.seal).map((r) => r.id));
+    for (const r of records) {
+      expect(r.replay_format, r.record_id).toBe(sealedIds.has(r.replay_id) ? 2 : 1);
+      expect(r.replay_verification).toBe(REPLAY_VERIFICATION[r.replay_format]);
+    }
+    expect(records.some((r) => r.replay_format === 1)).toBe(true);
+    const v2 = records.filter((r) => r.replay_format === 2).length;
+    const replays = [...files.keys()].filter((k) => k.startsWith("replays/"));
+    expect(files.get("README.md")).toContain(countLine(records.length, v2, replays.length));
+    expect(replays).toHaveLength(2);
+    for (const k of replays) expect(sealedIds.has(k.slice(8, -5))).toBe(true);
+  });
+
   it("has one pass and one fail on the same seed, job and trap, and their two replays", async () => {
     const p = records.find((r) => r.replay_id === pass)!;
     const f = records.find((r) => r.replay_id === fail)!;
@@ -233,6 +306,8 @@ describe("the sample zip (built from the fixture bouts)", () => {
     expect(f.cost_of_failure).toMatchObject({ unit: "usd_cents_sandbox", basis: expect.any(String) });
     expect(f.cost_of_failure.low).toBeGreaterThan(0);
     expect(f.replay_url).toBe(`${ORIGIN}/arena/run/${fail}.json`);
+    expect(p.task_version).toBe(f.task_version);
+    expect(p.ruleset_version).toBe(f.ruleset_version);
     // The replay in the zip is the file /arena/run/<id>.json serves, byte for byte.
     expect(files.get(`replays/${fail}.json`)).toBe(await (await fetchWorker(`/arena/run/${fail}.json`)).text());
   });
@@ -319,7 +394,10 @@ describe("publishing: once, then fixed", () => {
     expect(await env.KV.get(SAMPLE_KV.meta)).toBeNull();
     expect((await fetchWorker(SAMPLE_ZIP_PATH)).status).toBe(404);
     const page = await (await fetchWorker(SAMPLE_DIR, { headers: { Accept: "text/html" } })).text();
-    expect(page).toContain("Not published yet");
+    // Published on 29 Oct (Dinike): the page never says "Not published yet", and shows no loader for a file it can't serve.
+    expect(page).not.toMatch(/not published yet/i);
+    expect(page).toContain("can't be read here right now");
+    expect(page).not.toContain('id="load"');
     expect(((await (await fetchWorker(SAMPLE_INDEX_PATH)).json()) as { status: string }).status).toBe("not_published_yet");
   });
 

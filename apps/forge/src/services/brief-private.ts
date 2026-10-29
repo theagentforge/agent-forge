@@ -6,4 +6,3 @@ export const BRIEF_FOR_SALE: string[] = [];
 export const BRIEF_NOT_READY: string[] = [];
 export const BRIEF_MOAT: string[] = [];
 export const BRIEF_ROADMAP: string[] = [];
-export const BRIEF_CLI_NOTE = "";

@@ -24,7 +24,8 @@ import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
 import { liveAgentCounts, outsidePeople } from "./agent-funnel";
 import { grossJson, grossNumbers, publicTotals, STATS_RULES_VERSION } from "./public-stats";
-import { workTotals, type WorkTotals } from "./site-pulse";
+import { type WorkTotals } from "./site-pulse";
+import { publicNumbers } from "./public-numbers";
 import { countsAsHouse, vouchesRemaining } from "./identity";
 import { bump } from "./usage";
 import { withRegistryFingerprint } from "./registry";
@@ -614,11 +615,13 @@ export async function publicStats(
   now = Date.now(),
   pre?: Promise<[WorkTotals | null, Awaited<ReturnType<typeof liveAgentCounts>> | null]>,
 ) {
-  const [tools, gross, [work, live]] = await Promise.all([
-    getDb(env).select({ n: count() }).from(t.tools).then((r) => Number(r[0]?.n ?? 0)),
+  // ADR 0116: the totals come from the one snapshot every public page reads (tools is its tools_tracked).
+  const [gross, [work, live]] = await Promise.all([
     grossNumbers(env, now).catch(() => null),
-    pre ?? Promise.all([workTotals(env).catch(() => null), liveAgentCounts(env, now).catch(() => null)]),
+    pre ?? publicNumbers(env, now).then((n) => [n.work, n.live] as const),
   ]);
+  // Review of ADR 0116: null (not 0) when the count could not be read, or there are none yet.
+  const tools = work?.tools_tracked ?? null;
   return {
     /**
      * F-02 (Dinike, 28 Oct; ADR 0082): these counted people, agents and reports outside the project only, so they are

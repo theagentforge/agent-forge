@@ -43,7 +43,8 @@ import { answerPagePath, questionForTask } from "../arena/answers";
 import { channelDuels } from "../arena/featured";
 import { fellInRun } from "../arena/board";
 import { duelPlayer } from "./duel";
-import { copyBlock } from "./components";
+import { runIdOf } from "../../public/gauntlet.js";
+import { copyBlock, more } from "./components";
 import { failCard, shortRunId, verifiedReplay } from "../arena/fail-card";
 import { clipUrlFor } from "../arena/clips";
 import { formatSlot, headlineIcs, nextHeadlineJson, nextHeadlineSlot, WEEKLY_ATTEMPTS } from "../arena/headline-slot";
@@ -67,13 +68,15 @@ const statusTag = (s: Stats) =>
 /** "2 of 3": passes out of attempts on one version of a job; across several versions, how many were right every time. */
 const ofText = (c: Consistency) => (c.groups === 1 ? `${c.passes} of ${c.attempts}` : `${c.allRight} of ${c.groups} versions`);
 const ALL_RIGHT_TITLE = "Share of job versions passed on all 3 attempts";
+/** Site audit 29 Oct, issue 15: plainer than "All 3 right". */
+const ALL_RIGHT = "Every attempt right";
 const RAN_OUT_TITLE = "Attempts lost to running out of time or moves: a knockout, not a trap";
 
 function scoreTable(rows: { name: string; href?: string; stats: Stats; consistency: Consistency; extra?: unknown }[]) {
   return html`<table class="table stack">
-<thead><tr><th scope="col">Model</th><th scope="col" class="num">Pass</th><th scope="col" class="num">Quality</th><th scope="col" class="num">Traps avoided</th><th scope="col" class="num" title="${ALL_RIGHT_TITLE}">All 3 right</th><th scope="col" class="num">Cost per pass</th><th scope="col" class="num">Model time</th><th scope="col" class="num">Honest</th></tr></thead>
+<thead><tr><th scope="col">Model</th><th scope="col" class="num">Pass</th><th scope="col" class="num">Quality</th><th scope="col" class="num">Traps avoided</th><th scope="col" class="num" title="${ALL_RIGHT_TITLE}">${ALL_RIGHT}</th><th scope="col" class="num">Cost per pass</th><th scope="col" class="num">Model time</th><th scope="col" class="num">Honest</th></tr></thead>
 <tbody>${rows.map(
-    (r) => html`<tr><td class="wide">${r.href ? html`<a href="${r.href}">${r.name}</a>` : r.name} ${r.extra ?? ""}</td><td class="num" data-label="Pass">${pct(r.stats.passRate)} <span class="muted">(${pct(r.stats.passCI[0])}–${pct(r.stats.passCI[1])})</span></td><td class="num" data-label="Quality">${pct(r.stats.quality)}</td><td class="num" data-label="Traps avoided">${pct(r.stats.trapResistance)}</td><td class="num" data-label="All 3 right">${pct(r.consistency.reliable)} <span class="muted">(${ofText(r.consistency)})</span></td><td class="num" data-label="Cost per pass">${usd(r.stats.costOfPass)}</td><td class="num" data-label="Model time">${secs(r.stats.modelMs)}</td><td class="num" data-label="Honest">${pct(r.stats.honesty)}</td></tr>`,
+    (r) => html`<tr><td class="wide">${r.href ? html`<a href="${r.href}">${r.name}</a>` : r.name} ${r.extra ?? ""}</td><td class="num" data-label="Pass">${pct(r.stats.passRate)} <span class="muted">(${pct(r.stats.passCI[0])}–${pct(r.stats.passCI[1])})</span></td><td class="num" data-label="Quality">${pct(r.stats.quality)}</td><td class="num" data-label="Traps avoided">${pct(r.stats.trapResistance)}</td><td class="num" data-label="${ALL_RIGHT}">${pct(r.consistency.reliable)} <span class="muted">(${ofText(r.consistency)})</span></td><td class="num" data-label="Cost per pass">${usd(r.stats.costOfPass)}</td><td class="num" data-label="Model time">${secs(r.stats.modelMs)}</td><td class="num" data-label="Honest">${pct(r.stats.honesty)}</td></tr>`,
   )}</tbody></table>`;
 }
 
@@ -90,15 +93,18 @@ function tierSwitch(path: string, tier: Tier) {
 /** Column heading for a job: "Refund" rather than "The Refund (Hard)". */
 const shortTitle = (title: string) => title.replace(/^The /, "").replace(/ \(Hard\)$/, "");
 
+/** Audit §5 #14: what the belt is, in one line (a tooltip on the word). */
+const BELT_TITLE = "Belt: the division's top-ranked model once ranked bouts have been fought";
+
 /** Each division's Glicko-2 ranking and belt, for one tier. */
 function divisionLists(ranks: Awaited<ReturnType<typeof divisionRankings>>, crowned: boolean, firstAt: string) {
   return Object.entries(DIVISIONS).map(([key, d]) => {
     const rows = ranks[key] ?? [];
     // An empty division says nothing useful, so it waits until it has a ranked model.
     if (!rows.length && key !== "heavyweight") return "";
-    return html`<h3>${d.name}</h3><p class="muted">${d.note} Belt: ${rows[0] && crowned ? html`<b>${rows[0].name}</b>` : html`<b>vacant</b>`}${crowned ? "" : ` · first crowned at ${firstAt}`}.</p>
+    return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">Belt</abbr>: ${rows[0] && crowned ? html`<b>${rows[0].name}</b>` : html`<b>vacant</b>`}${crowned ? "" : ` · first awarded at ${firstAt}`}.</p>
 ${rows.length ? html`<ol class="ranking">${rows.map((r, i) => html`<li><b>${i + 1}. ${r.name}</b> <span class="muted">${r.rating} (±${2 * r.rd})</span></li>`)}</ol>` : ""}
-${rows.length > 1 ? html`<p class="small muted">Order counts quality, cost and speed, not just passing. Overlapping ± ranges are a statistical tie.</p>` : ""}`;
+${rows.length > 1 ? html`<p class="small muted">Ranked by quality, cost and speed. Overlapping ranges are a tie.</p>` : ""}`;
   });
 }
 
@@ -106,14 +112,14 @@ ${rows.length > 1 ? html`<p class="small muted">Order counts quality, cost and s
 function consistencyTable(board: Awaited<ReturnType<typeof consistencyBoard>>) {
   if (!board.models.length) return html`<p class="empty">No ranked bouts in this tier yet.</p>`;
   const hard = board.tier === "hard";
-  return html`<div class="table-wrap"><table class="rank-matrix consistency"><thead><tr><th scope="col">Model</th>${board.tasks.map((t) => html`<th scope="col"><a href="/best/${t.id}">${shortTitle(t.title)}</a></th>`)}<th scope="col">Pass</th><th scope="col" title="${ALL_RIGHT_TITLE}">All 3 right</th>${hard ? html`<th scope="col" title="${RAN_OUT_TITLE}">Ran out</th>` : ""}</tr></thead>
+  return html`<div class="table-wrap"><table class="rank-matrix consistency"><thead><tr><th scope="col">Model</th>${board.tasks.map((t) => html`<th scope="col"><a href="/best/${t.id}">${shortTitle(t.title)}</a></th>`)}<th scope="col">Pass</th><th scope="col" title="${ALL_RIGHT_TITLE}">${ALL_RIGHT}</th>${hard ? html`<th scope="col" title="${RAN_OUT_TITLE}">Ran out</th>` : ""}</tr></thead>
 <tbody>${board.models.map(
     (m) => html`<tr><th scope="row">${m.name}</th>${board.tasks.map((t) => {
       const x = m.tasks[t.id];
       return x ? html`<td title="${x.allRight} of ${x.groups} ${x.groups === 1 ? "version" : "versions"} right every time">${x.passes} of ${x.attempts}</td>` : html`<td class="muted">–</td>`;
     })}<td>${pct(m.passRate)}</td><td><b>${pct(m.overall.reliable)}</b><span class="muted small"> (${m.overall.allRight} of ${m.overall.groups})</span></td>${hard ? html`<td>${m.ranOut} of ${m.overall.attempts}</td>` : ""}</tr>`,
   )}</tbody></table></div>
-<p class="small muted">Job cells: passes out of attempts on one version of the job. All 3 right: share of versions passed on every attempt.${hard ? " Ran out: out of time or moves (a fail, not a trap)." : ""} Ranked bouts only.</p>`;
+<p class="small muted">Each job cell: passes out of attempts on one version of the job. ${ALL_RIGHT}: share of versions passed on every attempt.${hard ? " Ran out: out of time or moves (a fail, not a trap)." : ""} Ranked bouts only.</p>`;
 }
 
 /** The Hard view of /arena (ADR 0021): Hard rankings, consistency and recent Hard bouts. Headline runs only. */
@@ -193,7 +199,7 @@ ${headlineSlotLine(Date.now())}
 </section>
 ${tierSwitch("/arena", "normal")}
 ${duels.length
-  ? html`<section class="now-playing" aria-labelledby="np-title"><div class="section-head"><h2 id="np-title">Now Playing</h2><a class="more" href="/arena/run/${duels[0]!.a.id}" data-gx-full="gx">Full bout</a></div>${duelPlayer(duels[0]!, { mode: "channel", channel: duels })}</section>`
+  ? html`<section class="np-channel" aria-labelledby="np-title"><div class="section-head"><h2 id="np-title">Now Playing</h2><a class="more" href="/arena/run/${runIdOf(duels[0]!)}" data-gx-full="gx" data-run="${runIdOf(duels[0]!)}">Full bout</a></div>${duelPlayer(duels[0]!, { mode: "channel", channel: duels })}</section>`
   : html`<section class="now-playing panel" data-playlist="${JSON.stringify(list)}" aria-live="polite">
 <div class="section-head"><h2>Now Playing</h2><span class="np-label label" data-np-label>${list.length ? "Replay" : "Off air"}</span></div>
 ${list.length
@@ -205,32 +211,43 @@ ${list.length
 <div class="section-head"><h2>Which AI for which job?</h2><a class="more" href="/best">All task guides</a></div>
 <ul class="task-grid">${TASKS.map((t) => html`<li><a href="/best/${t.id}"><b>${t.title}</b><span>${t.summary}</span></a></li>`)}</ul>
 </section>
-<section aria-labelledby="h-models">
-<h2 id="h-models">Models we test</h2>
+<section>
+<h2>Rankings</h2>
+${ladderLine(board)}
+${divisionLists(ranks, headline.length > 0, SEASON.event)}
+<h3>Right every time</h3>
+${consistencyTable(board)}
+<p class="small">More: <a href="/arena/failures">which model falls for which trap</a> · <a href="/arena/business">business reliability</a> · <a href="/arena/history">model versions over time</a> · <a href="/benchmark">the benchmark</a></p>
+</section>
 ${(() => {
   const ms = testedModels();
   // ADR 0109: how each model is served (a free variant via OpenRouter is its own entry, never merged with a paid one).
   const item = (m: (typeof ms)[number]) => html`<li><b>${m.name}</b> <span class="muted">${m.lab.replace(/ \(open weights\)$/, "")} · ${routeLabel(m)}</span></li>`;
   const main = ms.filter((m) => m.division !== "practice");
   const practice = ms.filter((m) => m.division === "practice");
-  return html`${main.length ? html`<h3>Main lineup</h3><p class="muted">Each lab's everyday model, ranked since ${SEASON.name}'s first event.</p><ul class="model-list">${main.map(item)}</ul>` : ""}
+  return more(
+    html`<span id="h-models">Models we test</span>`,
+    html`${main.length ? html`<h3>Main lineup</h3><p class="muted">Each lab's everyday model, ranked since ${SEASON.name}'s first event.</p><ul class="model-list">${main.map(item)}</ul>` : ""}
 <h3>Practice</h3><p class="muted">Open models from the US, China and Europe on the same jobs and traps. Labelled practice, never ranked. Want one added? <a href="/arena/vote">Vote</a> or enter it in the <a href="/arena/proving-ground">Ranked Ladder</a>.</p>
-<ul class="model-list">${practice.map(item)}</ul>`;
+<ul class="model-list">${practice.map(item)}</ul>`,
+    { hint: `${main.length} main, ${practice.length} practice`, id: "models" },
+  );
 })()}
-</section>
-<section>
-<h2>Rankings</h2>
-<p><a href="/arena/failures">Failure modes: which model falls for which trap</a> · <a href="/arena/business">Business agent reliability: how often agents break business policy</a> · <a href="/arena/history">Model versions over time</a> · <a href="/benchmark">The Forge Trap Set: the benchmark, citable</a></p>
-${divisionLists(ranks, headline.length > 0, SEASON.event)}
-<h3>Right every time</h3>
-${consistencyTable(board)}
-</section>
 ${events.length
-  ? html`<section><h2>Practice (dry runs, not ranked)</h2><p class="muted">Low-cost open models, run first to measure what a bout costs. Every run is published.</p><ul>${events.map(([slug, name]) => html`<li><a href="/arena/event/${slug}">${name}</a></li>`)}</ul></section>`
+  ? more("Practice (dry runs, not ranked)", html`<p class="muted">Low-cost open models, run first to measure what a bout costs. Every run is published.</p><ul>${events.map(([slug, name]) => html`<li><a href="/arena/event/${slug}">${name}</a></li>`)}</ul>`, { hint: `${events.length} ${events.length === 1 ? "event" : "events"}` })
   : ""}
 ${NOT_AFFILIATED}`,
   });
 });
+
+/**
+ * Site audit 29 Oct, issue 15: one line above the ladder, so a 100% pass column and a ranked order don't read as a
+ * contradiction. Said only when the ranked results show it.
+ */
+function ladderLine(board: Awaited<ReturnType<typeof consistencyBoard>>) {
+  if (!board.models.length || !board.models.every((m) => m.passRate === 1)) return "";
+  return html`<p class="ladder-line">Every ranked model passed every job it ran, so the order below comes down to quality, cost and speed.</p>`;
+}
 
 site.get("/arena/event/:slug", async (c) => {
   const db = getDb(c.env);

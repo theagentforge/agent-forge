@@ -2,14 +2,13 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { html } from "hono/html";
 import { publicTrapId, trapEntry } from "@forge/arena";
 import * as t from "../db/schema";
-import { agentFunnel, liveAgentCounts } from "../services/agent-funnel";
+import { agentFunnel } from "../services/agent-funnel";
 import { atMinimum, COUNTER_MINIMUMS, gate, PUBLIC_ROW_MINIMUMS, ROWS_APPEAR_TEXT, rowShown, type CounterKey, type PublicRowKey } from "../services/counters";
 import { getDb } from "../services/db";
 import { proofNow, snapshotHistory } from "../services/proof";
 import { proofStrip } from "../services/proof-strip";
 import {
   BLENDED_RULES,
-  CRAWLER_DISCLOSURE,
   GROSS_RULES,
   grossJson,
   grossNumbers,
@@ -21,13 +20,14 @@ import {
   TOTALS_NOTE,
   type StatsRule,
 } from "../services/public-stats";
-import { HOUSE_METHOD_PATH, workTotals } from "../services/site-pulse";
+import { HOUSE_METHOD_PATH } from "../services/site-pulse";
+import { asOfText, publicNumbers, secondsLeftOf } from "../services/public-numbers";
 import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_RULES, installJson, installTotals } from "../services/install-metrics";
 import { countsAsHouse } from "../services/identity";
 import { skillStats, usageStats } from "../services/usage";
 import { reportPath, type GauntletSummary } from "../arena/gauntlet";
 import { scorePath } from "../arena/score";
-import { agentHref, fieldReportsLabel } from "./components";
+import { agentHref, disclosure, fieldReportsLabel } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 
 // ADR 0067 (Boardy items 2 and 16): /stats, /stats.json, /stats/rules and /scores/recent.json.
@@ -112,16 +112,19 @@ export async function outsideStatsData(env: Env) {
  * B3-04 (ADR 0099): rows below their PUBLIC_ROW_MINIMUMS are left out; `allRows` (the data room only) keeps them.
  */
 export async function statsData(env: Env, o: RowOptions = {}) {
-  const [work, live, ourArena, gross, install] = await Promise.all([
-    workTotals(env).catch(() => null),
-    liveAgentCounts(env).catch(() => null),
+  // ADR 0116: the running totals come from the one snapshot /dataset, the home band and /about read too.
+  const [numbers, ourArena, gross, install] = await Promise.all([
+    publicNumbers(env),
     proofStrip(env).catch(() => null),
     grossNumbers(env).catch(() => null),
     installTotals(env).catch(() => null),
   ]);
+  const { work, live } = numbers;
   return {
     rules_version: STATS_RULES_VERSION,
     rules_url: `${env.PUBLIC_ORIGIN}/stats/rules`,
+    /** ADR 0116: when the running totals were counted; every page and twin showing them reads this same snapshot. */
+    as_of: numbers.as_of,
     /**
      * ADR 0067 Amendment 1: the outside-only headline is internal now (/admin/kpis). Always an empty array, kept so
      * existing readers don't break; the public numbers are `totals`.
@@ -145,9 +148,9 @@ export async function statsData(env: Env, o: RowOptions = {}) {
       includes: ["house_agents", "founder_accounts", "our_tests", "crawlers", "uptime_checks", "directory_health_checks", "launch_scan_seed"],
       work: work ? { bouts_refereed: work.bouts_refereed, ranked_bouts: work.ranked_bouts, traps_sprung: work.traps_sprung, skills_scanned: work.skills_scanned, field_reports: work.field_reports, tools_tracked: work.tools_tracked } : null,
       /** B3-04 (ADR 0099): left out (the key is absent) until it passes PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished. */
-      ...smallRow("gauntlet_runs_finished", await gauntletRunsFinished(env).catch(() => null), o),
+      ...smallRow("gauntlet_runs_finished", numbers.gauntlet.full, o),
       /** ADR 0083: one-job Sprints, a gross total of their own (our house agent and tests included), never in the line above. */
-      ...smallRow("gauntlet_sprints_finished", await gauntletRunsFinished(env, "sprint").catch(() => null), o),
+      ...smallRow("gauntlet_sprints_finished", numbers.gauntlet.sprint, o),
       traffic: live
         ? { page_views_total: live.page_views_total, agent_visits_total: live.agent_visits_total, agent_connections_total: live.agent_connections_total, agent_tool_uses_total: live.agent_tool_uses_total, since: live.since }
         : null,
@@ -205,7 +208,7 @@ const INSTALL_ROW_TEXT = { checked: "Install checks run", blocked: "Installs our
 
 site.get("/stats", async (c) => {
   const d = await statsData(c.env);
-  if (wantsJson(c)) return sendJson(c, d);
+  if (wantsJson(c)) return sendJson(c, d, secondsLeftOf(d.as_of));
   const b = d.blended;
   // B3-04 (ADR 0099): a row whose key is absent from the data (below its minimum) is left out, with no note.
   const small = new Set(["gauntlet_runs_finished", "gauntlet_sprints_finished"]);
@@ -214,7 +217,7 @@ site.get("/stats", async (c) => {
     ["…of them ranked", b.work?.ranked_bouts, "ranked_bouts"],
     ["Traps sprung in Arena bouts", b.work?.traps_sprung, "traps_sprung"],
     ["Gauntlet runs finished (six jobs; anyone, claimed or not, our tests included)", b.gauntlet_runs_finished, "gauntlet_runs_finished"],
-    ["Gauntlet Sprints finished (one job, not Gauntlet runs). Includes The Forge's own test agents", b.gauntlet_sprints_finished, "gauntlet_sprints_finished"],
+    ["Gauntlet Sprints finished (one job; not Gauntlet runs)", b.gauntlet_sprints_finished, "gauntlet_sprints_finished"],
     ["Distinct skill files scanned (launch scan seed included)", b.work?.skills_scanned, "skills_scanned"],
     [fieldReportsLabel(true), b.work?.field_reports, "field_reports_all"],
     ["Tools with a page (mostly registry listings, not reviewed)", b.work?.tools_tracked, "tools_tracked"],
@@ -230,18 +233,17 @@ site.get("/stats", async (c) => {
     nav: "stats",
     jsonAlternate: "/stats.json",
     body: html`<h1 class="page-title">Stats</h1>
-<p class="lead spaced">${TOTALS_NOTE} Every number on this page counts everything, our own House test agents, founder accounts and tests included; page views, visits and connections also include crawlers and uptime checks. Every number is defined in <a href="/stats/rules">the counting rules</a> (version ${d.rules_version}) and is in <a href="/stats.json">/stats.json</a>.</p>
-<h2 class="page-title" id="blended">Totals, our own test agents included</h2>
-<p class="small">${CRAWLER_DISCLOSURE}</p>
+${disclosure(html`${TOTALS_NOTE} Every number counts everything, founder accounts and our tests too; traffic numbers also include crawlers and uptime checks. <span data-as-of="${d.as_of}">${asOfText(d)}</span> <a href="/stats/rules">Counting rules v${d.rules_version}</a> · <a href="/stats.json">stats.json</a>`)}
+<h2 class="page-title" id="blended">Totals</h2>
 <div class="scroll-x spaced"><table class="table">
 <thead><tr><th scope="col">Total</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
 <tbody>${blendedRows.filter(([, , key]) => !small.has(key) || key in b).map(([label, v, key]) => html`<tr data-k="${key}"><td>${label}</td><td class="num">${typeof v === "number" && v > 0 ? n(v) : "none yet"}</td><td><a href="/stats/rules#${key}">rule</a></td></tr>`)}</tbody></table></div>
 ${b.our_arena ? html`<p class="small muted">Our own Arena, ranked bouts only: ${n(b.our_arena.ranked_bouts)} bouts on ${n(b.our_arena.models_ranked)} AI models, ${n(b.our_arena.traps_sprung_ranked)} traps sprung.</p>` : ""}
-<h2 class="page-title" id="gross">People, agents and the last 7 days, our own test agents included</h2>
+<h2 class="page-title" id="gross">People, agents and the last 7 days</h2>
 <div class="scroll-x spaced"><table class="table">
-<thead><tr><th scope="col">Number</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
+<thead><tr><th scope="col">Measure</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
 <tbody>${d.gross.items.map((x) => html`<tr data-k="${x.key}"><td>${x.label}</td><td class="num">${typeof x.value === "number" && x.value > 0 ? n(x.value) : "none yet"}</td><td><a href="/stats/rules#${x.key}">rule</a></td></tr>`)}</tbody></table></div>
-<p class="small muted">${TOTALS_NOTE} ${d.gross.items.some((x) => x.key === "signed_in_people" || x.key === "signed_in_agents") ? "Signed-in people and agents count everyone who signed in, our own House and founder accounts included. " : ""}The 7-day numbers are daily totals of calls and requests, not distinct agents, and include our own tests, monitors and directory checks.</p>
+<p class="small muted">${d.gross.items.some((x) => x.key === "signed_in_people" || x.key === "signed_in_agents") ? "Signed-in people and agents count everyone who signed in, our own House and founder accounts included. " : ""}The 7-day numbers are daily totals of calls and requests, not distinct agents, and include our own tests, monitors and directory checks.</p>
 ${d.install.items.length
   ? html`<h2 class="page-title" id="install">Install checks by AI tools</h2>
 <p class="small">Checks made at the moment of an install by ${INSTALL_CLIENTS.map((k) => INSTALL_CLIENT_NAMES[k]).join(", ")}. Counted apart from AI connections, page views and crawlers. "Would block" means our answer was one these clients stop the install on; a person can still go ahead.</p>
@@ -252,11 +254,14 @@ ${d.install.items.length
     )}</tbody></table></div>
 <p class="small muted">${TOTALS_NOTE} Our own CI and repositories run these clients too and are counted here. Each package or tool checked counts once; the skill-scan Action counts once per run, only where its user turned the run count on (it is off by default).</p>`
   : ""}`,
-  });
+  }, { maxAge: secondsLeftOf(d.as_of) });
 });
 
 /** ADR 0067: the stable machine-readable URL for /stats (the same object as /stats?format=json). */
-site.get("/stats.json", async (c) => sendJson(c, await statsData(c.env)));
+site.get("/stats.json", async (c) => {
+  const d = await statsData(c.env);
+  return sendJson(c, d, secondsLeftOf(d.as_of));
+});
 
 /** What changed in each version of the rules, newest first (so a reader can tell why a number appeared). */
 export const STATS_RULES_CHANGES = [

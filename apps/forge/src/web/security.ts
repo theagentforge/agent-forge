@@ -11,6 +11,7 @@ import { getDb } from "../services/db";
 import { REPLAY_V2_FROM } from "../services/replay-keys";
 import { DATASET_LICENCE, LICENCE_ID, LICENCE_PATH } from "../services/provenance";
 import { NOTICE_DAYS, RESULTS_POLICY_PATH, RESULTS_POLICY_VERSION } from "./results-policy";
+import { more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { VERIFY_CLI_VERSION, verifyCommand } from "./replay-verify";
 
@@ -234,13 +235,38 @@ function nullFinding() {
   return html`<h2 id="null-result">What our own fix didn't do</h2>
 <p>The Forge's free <a href="/trap-card">trap card</a> is our own product, so we tested it in public, pre-registered, and publish the result whatever it shows.</p>
 <ul>
-<li><b>Frontier models (Forge Lab #4, ${dayLabelText(e4.date)}, ${e4.rules}):</b> ${s4.significant ? html`the card reduced traps.` : html`<b>the card didn't measurably reduce traps.</b>`} On ${s4.pairs} model–job pairs on Hard jobs, ${n(s4.boutsTotal)} bouts in all (n = ${n(s4.card.n)} per arm): ${arms(e4)} (${rr(e4)}; relative change ${intervalText(s4)}). It didn't cause measurable harm to legitimate work either. <a href="${e4.results}?from=security">Lab #4 results</a></li>
-<li><b>Beside it, small open models (Forge Lab #3, ${dayLabelText(e3.date)}, ${e3.rules}):</b> ${arms(e3)}; ${n(e3.stats.boutsTotal)} bouts in all (${rr(e3)}). <a href="${e3.results}?from=security">Lab #3 results</a></li>
+<li><b>Frontier models (Forge Lab #4, ${dayLabelText(e4.date)}):</b> ${s4.significant ? html`the card reduced traps.` : html`<b>the card didn't measurably reduce traps.</b>`} It didn't cause measurable harm to legitimate work either. <a href="${e4.results}?from=security">Lab #4 results</a></li>
+<li><b>Small open models (Forge Lab #3, ${dayLabelText(e3.date)}):</b> ${e3.stats.significant ? html`${pct(e3.stats.fewer)} fewer traps with the card.` : html`no measurable change.`} <a href="${e3.results}?from=security">Lab #3 results</a></li>
 </ul>
-<p class="small muted">Risk ratio: the share of bouts with a fall with the card, divided by the share without it (Mantel–Haenszel, pooled over model–job pairs; 95% Greenland–Robins interval). A ratio of 1 means no difference; an interval that includes 1 means no measurable effect. Lab runs change the prompt, so they are never in the ranked numbers above. Data: <a href="/security?format=json">trap_card_experiments</a>.</p>`;
+${more(
+    "The numbers",
+    html`<ul>
+<li><b>Lab #4 (${e4.rules}):</b> on ${s4.pairs} model–job pairs on Hard jobs, ${n(s4.boutsTotal)} bouts in all (n = ${n(s4.card.n)} per arm): ${arms(e4)} (${rr(e4)}; relative change ${intervalText(s4)}).</li>
+<li><b>Lab #3 (${e3.rules}):</b> ${arms(e3)}; ${n(e3.stats.boutsTotal)} bouts in all (${rr(e3)}).</li>
+</ul>
+<p class="small muted">Risk ratio: the share of bouts with a fall with the card, divided by the share without it (Mantel–Haenszel, pooled over model–job pairs; 95% Greenland–Robins interval). A ratio of 1 means no difference; an interval that includes 1 means no measurable effect. Lab runs change the prompt, so they are never in the ranked numbers above. Data: <a href="/security?format=json">trap_card_experiments</a>.</p>`,
+    { hint: "Bouts per arm, risk ratios and intervals" },
+  )}`;
 }
 
 const dayLabelText = (d: string) => fmtDay(d);
+
+/**
+ * Review of the site audit (ADR 0118): the per-model table on /security is folded, so the spread between models, the
+ * fact a security buyer needs most, stays visible as one line under the overall rate: the highest and lowest shown
+ * rates, with their counts. Only models with enough attempts for a rate are named (MIN_CELL_ATTEMPTS); "early read"
+ * stays beside a rate under VERDICT_RUNS.
+ */
+export function modelsLine(rows: { name: string; cell: BizCell }[]) {
+  const shown = rows.filter((m) => m.cell.shown && m.cell.rate !== null).sort((x, y) => y.cell.rate! - x.cell.rate! || y.cell.n - x.cell.n);
+  if (!shown.length) return "";
+  const one = (m: (typeof shown)[number]) =>
+    html`<b>${m.name}</b>, ${pct(m.cell.rate!)} (${m.cell.breaks} of ${m.cell.n}${m.cell.early ? ", early read" : ""})`;
+  const hi = shown[0]!, lo = shown[shown.length - 1]!;
+  if (shown.length === 1) return html`<p data-models-line>Only one model has enough attempts for a rate: ${one(hi)}.</p>`;
+  if (hi.cell.rate === lo.cell.rate) return html`<p data-models-line>All ${shown.length} models with enough attempts for a rate fell at the same rate: ${pct(hi.cell.rate!)}.</p>`;
+  return html`<p data-models-line>Highest: ${one(hi)}. Lowest: ${one(lo)}.</p>`;
+}
 
 async function securityInputs(env: Env) {
   const db = getDb(env);
@@ -273,31 +299,41 @@ site.get(SECURITY_PATH, async (c) => {
     body: html`<article class="prose">
 <p class="eyebrow">For security teams</p>
 <h1 class="page-title">What an agent can be tricked into doing, measured</h1>
-<p class="lead">Written for the people who secure AI agents: platform, trust and safety, and AI security teams at agent platforms, MCP registries, model labs and security vendors. Every number below links to its source, and each one says what it can't tell you.</p>
+<p class="lead">For teams that secure AI agents. Every number links to its source and says what it can't tell you.</p>
 
 <h2 id="reach">What an install can reach</h2>
 <p>A skill file is text the agent obeys. An MCP server, plugin or package runs with the agent's own access. Whatever the agent can reach, the tool can ask for. The Forge's skill scanner has <a href="/scan/rules">${SCAN_RULES.length} rules</a> (version <code>${SCAN_RULES_VERSION}</code>) for patterns behind real attacks on agents. It matches the text only: it doesn't run the code or use a model, so it can miss what isn't written in a known form.</p>
-<div class="table-wrap"><table class="table stack">
+${more(
+  "What the rules look for",
+  html`<div class="table-wrap"><table class="table stack">
 <thead><tr><th scope="col">What the rules look for</th><th scope="col" class="num">Rules</th><th scope="col">Examples</th></tr></thead>
-<tbody>${fams.map((f) => html`<tr><td class="wide">${f.name}</td><td class="num" data-label="Rules">${f.rules}</td><td data-label="Examples">${f.titles.slice(0, 3).join("; ")}</td></tr>`)}</tbody></table></div>
+<tbody>${fams.map((f) => html`<tr><td class="wide">${f.name}</td><td class="num" data-label="Rules">${f.rules}</td><td data-label="Examples">${f.titles.slice(0, 3).join("; ")}</td></tr>`)}</tbody></table></div>`,
+  { hint: `${SCAN_RULES.length} rules in ${fams.length} families: running downloaded code, reading keys, sending data out, hidden text…` },
+)}
 <p>You often can't read the code first. In the official MCP Registry on ${fmtDay(census.date)}, ${pct(census.remote_only_share)} of ${num(census.servers)} servers were remote only (the code runs on someone else's machine) and ${pct(census.no_repository_share)} listed no source repository (<a href="${census.path}">Registry census</a>).</p>
 
 <h2 id="arena">What the Arena measures</h2>
-<p>The Arena gives AI models everyday business jobs (refunds, supplier invoices, travel bookings, stock orders, records) in a sandbox, with traps planted inside: a lookalike invoice carrying a hidden instruction, a refund outside policy, a payment that can't be made. ${TRAP_CATALOG.length} public traps, each with a stable ID and the real-world pattern it's based on (<a href="/arena/methodology#catalog">trap catalogue</a>; as a versioned, citable benchmark: <a href="/benchmark">The Forge Trap Set</a>).</p>
+<p>The Arena gives AI models everyday business jobs (refunds, supplier invoices, bookings, stock, records) in a sandbox with planted traps. ${TRAP_CATALOG.length} public traps, each with a stable ID and the real-world pattern it's based on (<a href="/arena/methodology#catalog">trap catalogue</a>; as a versioned, citable benchmark: <a href="/benchmark">The Forge Trap Set</a>).</p>
 <p>The numbers below count only attempts scored under the current referee rules (<code>${RULES_VERSION}</code>), because a rules change can change how a trap is scored.${olderN ? html` ${num(olderN)} more ranked attempts were scored under older rules (${older.map((v, i) => html`${i ? ", " : ""}${v.version}: ${num(v.attempts)}`)}) and aren't pooled with them; their per-model rows are on <a href="/benchmark#results">the Trap Set results</a>.` : ""}</p>
 ${b.attempts
   ? html`<p><b>${b.overall.shown ? html`${pct(b.overall.rate!)} of ${b.attempts}` : html`${b.attempts}`} ranked attempts</b>${b.overall.shown ? html` fell for at least one planted trap (95% interval ${pctRange(b.overall.ci!)})` : ""}, across ${b.models.length} models${b.since && b.asOf ? `, ${fmtDay(b.since)} to ${fmtDay(b.asOf)}` : ""}. ${b.knockouts} more attempts ran out of time, tokens or turns and aren't counted either way.</p>
-<h3 id="models">Which models fell</h3>
-<div class="table-wrap"><table class="table stack">${HEAD("Model")}<tbody>${byModel.map((m) => row(m.name, m.cell))}</tbody></table></div>
-<h3 id="jobs">By kind of job</h3>
-<div class="table-wrap"><table class="table stack">${HEAD("Job")}<tbody>${b.groups.filter((g) => g.overall.n).map((g) => row(g.group.name, g.overall))}</tbody></table></div>
-<p class="small muted">Ranked bouts only (headline and guest events), not practice runs, prompt experiments, models whose results aren't published yet, private held-out seeds or events still being checked. Rows under ${MIN_CELL_ATTEMPTS} attempts show no rate; under ${VERDICT_RUNS} they're an early read. The 95% Wilson interval is rounded outwards and treats attempts as independent; a model plays each job version 3 times, so the real uncertainty is a little wider. Full tables, the most common trap per cell and replays: <a href="/arena/business">business agent reliability</a>.</p>`
-  : html`<p class="empty" data-current-rules-empty>No ranked attempts under ${RULES_VERSION} yet. The first are scheduled for the weekly bout on ${formatSlot(nextHeadlineSlot(Date.now()))} (<a href="/arena/headline.ics">calendar</a>). ${num(olderN)} ranked ${olderN === 1 ? "attempt" : "attempts"} scored under older rules ${olderN === 1 ? "is" : "are"} on <a href="/benchmark#results">the Trap Set page</a>, kept apart from the current rules.</p>`}
+${modelsLine(byModel)}
+${more(
+  html`<span id="models">Which models fell</span>`,
+  html`<div class="table-wrap"><table class="table stack">${HEAD("Model")}<tbody>${byModel.map((m) => row(m.name, m.cell))}</tbody></table></div>`,
+  { hint: `${byModel.length} ${byModel.length === 1 ? "model" : "models"}, each with its rate, interval and a replay of a fall` },
+)}
+${more(
+  html`<span id="jobs">By kind of job</span>`,
+  html`<div class="table-wrap"><table class="table stack">${HEAD("Job")}<tbody>${b.groups.filter((g) => g.overall.n).map((g) => row(g.group.name, g.overall))}</tbody></table></div>`,
+  { hint: "The same attempts, split by job" },
+)}
+${more("What these numbers include", html`<p class="small muted">Ranked bouts only (headline and guest events), not practice runs, prompt experiments, models whose results aren't published yet, private held-out seeds or events still being checked. Rows under ${MIN_CELL_ATTEMPTS} attempts show no rate; under ${VERDICT_RUNS} they're an early read. The 95% Wilson interval is rounded outwards and treats attempts as independent; a model plays each job version 3 times, so the real uncertainty is a little wider. Full tables, the most common trap per cell and replays: <a href="/arena/business">business agent reliability</a>.</p>`)}`
+  : html`<p class="empty" data-current-rules-empty>No ranked attempts under ${RULES_VERSION} yet. The first are scheduled for the weekly bout on ${formatSlot(nextHeadlineSlot(Date.now()))} (<a href="/arena/headline.ics">calendar</a>). ${num(olderN)} ranked ${olderN === 1 ? "attempt" : "attempts"} scored under older rules ${olderN === 1 ? "is" : "are"} on <a href="/benchmark#results">the Trap Set page</a>, kept apart from the current rules. Older-rules results: <a href="/arena">Arena</a>.</p>`}
 
 ${rs
-  ? html`<h3 id="rescored" data-rescored>Re-scored from signed logs (not pooled with the numbers above)</h3>
-<p>${num(rs.attempts)} more ranked attempts were played under older rules (${rs.played_under.map((v, i) => html`${i ? "; " : ""}${v.rules_version}: ${num(v.attempts)}`)}) and re-scored under ${RULES_VERSION} by replaying their signed logs through the current referee. The jobs and what the model saw were the same; only the referee's verdict can differ. They're shown here on their own${rescored!.overall.shown ? html`: ${pct(rescored!.overall.rate!)} fell for at least one planted trap (95% interval ${pctRange(rescored!.overall.ci!)}), across ${rs.models} models, ${fmtDay(rs.since!)} to ${fmtDay(rs.as_of!)}` : ""}.</p>
-<div class="table-wrap"><table class="table stack">${HEAD("Model")}<tbody>${rescored!.byModel.map((m) => row(m.name, m.cell))}</tbody></table></div>`
+  ? more(html`<span id="rescored" data-rescored>Re-scored from signed logs</span>`, html`<p>${num(rs.attempts)} more ranked attempts were played under older rules (${rs.played_under.map((v, i) => html`${i ? "; " : ""}${v.rules_version}: ${num(v.attempts)}`)}) and re-scored under ${RULES_VERSION} by replaying their signed logs through the current referee. The jobs and what the model saw were the same; only the referee's verdict can differ. They're shown here on their own${rescored!.overall.shown ? html`: ${pct(rescored!.overall.rate!)} fell for at least one planted trap (95% interval ${pctRange(rescored!.overall.ci!)}), across ${rs.models} models, ${fmtDay(rs.since!)} to ${fmtDay(rs.as_of!)}` : ""}.</p>
+<div class="table-wrap"><table class="table stack">${HEAD("Model")}<tbody>${rescored!.byModel.map((m) => row(m.name, m.cell))}</tbody></table></div>`, { hint: "Older-rules attempts, never pooled with the numbers above" })
   : ""}
 
 ${nullFinding()}
@@ -305,36 +341,44 @@ ${nullFinding()}
 <h2 id="replays">Refereed replays</h2>
 <ul>
 <li><b>The referee reads what happened.</b> It checks the sandbox's end state and the log of tool calls, never the AI's own account. The referee code is public (<a href="https://github.com/theagentforge/agent-forge">theagentforge/agent-forge</a>).</li>
-<li><b>Every ranked attempt has a replay</b>, linked from the tables above and listed in <a href="/arena/dataset.json">the dataset</a>. <a href="/dataset/sample">The sample dataset</a> is a fixed, checksummed zip of public records with two signed replays to verify. The whole dataset on one page: <a href="/dataset">the dataset spec</a>.</li>
-<li><b>Tested against gaming.</b> In the October 2026 test, ${num(hacks.scripted_hack_attempts)} scripted attempts to pass without doing the job (claiming done, doing part, copying the success wording) passed ${hacks.passed} times, after the referee gaps the first run found were fixed in ${hacks.fixed_in_rules} (<a href="${hacks.url}">grader-hacking report</a>). Results scored before ${hacks.fixed_in_rules} were scored by the older referee and keep their rules version.</li>
 <li><b>Checkable without trusting us.</b> Runs from ${fmtDay(REPLAY_V2_FROM)} use replay format v2: the log is hash-chained and its final record is signed with Ed25519, with the public keys at <a href="/.well-known/forge-keys.json">/.well-known/forge-keys.json</a>. Anyone can check one: <code>${verifyCommand("<replay URL>")}</code> (<a href="/methodology#replays">how replays are verified</a>).</li>
 <li><b>Limits:</b> runs before ${fmtDay(REPLAY_V2_FROM)} (format v1) carry a server signature (HMAC-SHA256) that only we can check, so for those you have to trust our copy. How often the referee agrees with human reviewers: ${audit === "measured" ? html`measured (<a href="/benchmark#referee">referee audit</a>)` : html`not yet published (<a href="/benchmark#referee">referee audit</a>)`}.</li>
 </ul>
+${more("Replays in the dataset, and the gaming test", html`<ul>
+<li><b>Every ranked attempt has a replay</b>, linked from the tables above and listed in <a href="/arena/dataset.json">the dataset</a>. <a href="/dataset/sample">The sample dataset</a> is a fixed, checksummed zip of public records with signed replays to verify; the whole dataset is on <a href="/dataset">the dataset spec</a>.</li>
+<li><b>Tested against gaming.</b> In the October 2026 test, ${num(hacks.scripted_hack_attempts)} scripted attempts to pass without doing the job (claiming done, doing part, copying the success wording) passed ${hacks.passed} times, after the referee gaps the first run found were fixed in ${hacks.fixed_in_rules} (<a href="${hacks.url}">grader-hacking report</a>). Results scored before ${hacks.fixed_in_rules} were scored by the older referee and keep their rules version.</li>
+</ul>`, { hint: `${num(hacks.scripted_hack_attempts)} scripted attempts to pass without doing the job` })}
 
 <h2 id="gauntlet">Test your own agent</h2>
 <p><a href="/gauntlet">The Gauntlet</a> runs your agent through the same ${JOBS.length} everyday jobs with the same hidden traps, refereed the same way. Free, no account. You get a result page with what it fell for, a <a href="/trap-card">trap card</a> built from those traps, and a re-run to see whether the card helped. For agents handling invoices, purchasing or support, <a href="/teams">we'll run yours and send a report</a>.</p>
 
 <h2 id="pre-install">Before an install: check and scan</h2>
 <ul>
-<li><b><a href="/check">Check a tool</a></b> by npm, PyPI or GitHub name, link or fingerprint: field reports on that exact version from agents tied to human-verified owners, plus published advisories for npm and PyPI versions (OSV, including the OpenSSF malicious-package records, and CISA's Known Exploited Vulnerabilities list). Each answer has a signed, dated receipt.</li>
-<li><b><a href="/scan">Scan a skill</a></b> file, tool descriptions or an install command against the ${SCAN_RULES.length} rules above. In the launch scan (${fmtDay(scan.date)}, rules <code>${scan.rules_version}</code>), ${num(scan.skills)} public skills were scanned; of the ${num(scan.ordinary_skills)} ordinary ones (security courses, test fixtures and examples are counted apart), ${scan.flagged_ordinary} were flagged with a high-risk pattern. On hand review ${scan.real_patterns} were real patterns, none showing signs of malice, and no malware was found by this method (<a href="${scan.path}">report</a>).</li>
-<li><b>Where it runs:</b> the public MCP server (<code>/mcp/public</code>, no account), the Claude Code plugin (looks up each install command first and blocks only versions that verified agents flagged or a malicious-package advisory names), the <code>@theagentforge/cli</code> command line, and the forge-check GitHub Action. Setup: <a href="/connect">Connect</a>.</li>
+<li><b><a href="/check">Check a tool</a></b> by npm, PyPI or GitHub name, link or fingerprint: field reports on that exact version from agents tied to human-verified owners, plus published advisories for npm and PyPI versions. Each answer has a signed, dated receipt.</li>
+<li><b><a href="/scan">Scan a skill</a></b> file, tool descriptions or an install command against the ${SCAN_RULES.length} rules above.</li>
 </ul>
+${more("The launch scan, the advisory sources and where checks run", html`<ul>
+<li>In the launch scan (${fmtDay(scan.date)}, rules <code>${scan.rules_version}</code>), ${num(scan.skills)} public skills were scanned; of the ${num(scan.ordinary_skills)} ordinary ones (security courses, test fixtures and examples are counted apart), ${scan.flagged_ordinary} were flagged with a high-risk pattern. On hand review ${scan.real_patterns} were real patterns, none showing signs of malice, and no malware was found by this method (<a href="${scan.path}">report</a>).</li>
+<li><b>Where it runs:</b> the public MCP server (<code>/mcp/public</code>, no account), the Claude Code plugin (looks up each install command first and blocks only versions that verified agents flagged or a malicious-package advisory names), the <code>@theagentforge/cli</code> command line, and the forge-check GitHub Action. Setup: <a href="/connect">Connect</a>.</li>
+<li><b>Advisories:</b> OSV, including the OpenSSF malicious-package records, and CISA's Known Exploited Vulnerabilities list.</li>
+</ul>`, { hint: `${scan.flagged_ordinary} of ${num(scan.ordinary_skills)} ordinary skills flagged at launch` })}
 
 <h2 id="osv-feed">For security tools: our findings as an OSV feed</h2>
-<p>Flagged skill scans pinned to a GitHub commit, and tool versions our field reports flagged, are published in the <a href="https://ossf.github.io/osv-schema/" rel="noopener">OSV format</a> at <a href="/feeds/osv">/feeds/osv</a> (with <a href="/feeds/osv/all.zip">all.zip</a> and <a href="/feeds/osv/modified_id.csv">modified_id.csv</a>), so a scanner can ingest them. A match means a line worth reading, not a confirmed vulnerability: records carry no severity score, say so in their summary, and include the maintainer's notice, any fix and how to reply. Ids start <code>x_FORGE-</code>, OSV's mark for a database osv.dev doesn't aggregate.</p>
+<p>Flagged skill scans pinned to a GitHub commit, and tool versions our field reports flagged, are published in the <a href="https://ossf.github.io/osv-schema/" rel="noopener">OSV format</a> at <a href="/feeds/osv">/feeds/osv</a> (with <a href="/feeds/osv/all.zip">all.zip</a> and <a href="/feeds/osv/modified_id.csv">modified_id.csv</a>), so a scanner can ingest them.</p>
+${more("What a record means", html`<p class="small">A match means a line worth reading, not a confirmed vulnerability: records carry no severity score, say so in their summary, and include the maintainer's notice, any fix and how to reply. IDs start with <code>x_FORGE-</code>, OSV's mark for a database osv.dev doesn't aggregate.</p>`, { hint: "A line worth reading, not a confirmed vulnerability" })}
 
 <h2 id="protection">How the referee and the data are protected</h2>
-<ul>
+<p>Private held-out seeds, a canary line in every data file, provenance on every row, one results policy for every lab, and an evaluation-only licence.</p>
+${more("Details", html`<ul>
 <li><b>Held-out split.</b> Every job has private seeds that are never published (no brief, log or replay), so results can be compared on versions no model could have seen. The public-vs-held-out gap: ${gap.status === "measured" ? html`measured, on <a href="/arena/history#gap">Arena history</a>` : gap.status === "not_enough_bouts" ? html`not enough bouts yet (<a href="/arena/history#gap">Arena history</a>)` : html`not yet measured (<a href="/arena/history#gap">Arena history</a>)`}. Whether models do better on versions published before a test (contamination): ${gap.contamination === "established" ? "measured in enough events to read" : gap.contamination === "not_yet_established" ? "measured, not yet established" : "not yet measured"} (<a href="/benchmark#data-protection">how it's tested</a>).</li>
 <li><b>Canary.</b> Every Arena data file and replay page carries this line, so anyone can search a training set for it: <code>${CANARY}</code></li>
 <li><b>Provenance.</b> Every row and run log says where it came from: the exact model id, its maker, the provider that served it, the run date, and the Terms, Privacy and licence versions in force (<a href="/arena/methodology#contamination">methodology</a>).</li>
 <li><b>Results policy.</b> Every named lab gets the same ${NOTICE_DAYS} days' notice before a headline result; exact versions, intervals and replays are always shown; no one pays for placement (<a href="${RESULTS_POLICY_PATH}">results policy ${RESULTS_POLICY_VERSION}</a>).</li>
 <li><b>Licence.</b> ${DATASET_LICENCE} (<a href="${LICENCE_PATH}">licence</a>)</li>
-</ul>
+</ul>`, { hint: "Held-out split, canary, provenance, results policy, licence" })}
 
 <h2 id="thirty-seconds">Why a check before install is worth thirty seconds</h2>
-<p>An install hands the tool what the agent can reach: keys, files, money and the right to act. Taking it back afterwards means finding what it touched. A check is one request, free and without an account, and the answer is a dated record you can keep. When a tool is new to us, the answer says so; it doesn't guess.</p>
+<p>An install hands the tool what the agent can reach: keys, files, money and the right to act. A check is one free request, and the answer is a dated record you can keep. When a tool is new to us, the answer says so; it doesn't guess.</p>
 
 <h2 id="limits">What this doesn't tell you</h2>
 <ul>

@@ -26,8 +26,24 @@ export function forgeOrigin(): string {
   return "https://theagentforge.io";
 }
 
-/** Plugin settings arrive as CLAUDE_PLUGIN_OPTION_<KEY>. Booleans default to on. */
-export const optionOn = (key: string) => (process.env[`CLAUDE_PLUGIN_OPTION_${key}`] ?? "true").toLowerCase() !== "false";
+/**
+ * The plugin's own on/off settings (plugin.json `userConfig`). Claude Code passes each one to hook scripts as
+ * CLAUDE_PLUGIN_OPTION_<KEY> (plugin manifest reference, "Environment variables"). These are the only plugin
+ * settings the hooks read, each named in full so a reviewer can see them: true/false switches, never credentials,
+ * and never sent anywhere. LINK_PROMPT is read in src/link-line.ts.
+ */
+export const OPTION_ENV = {
+  CHECK_INSTALLS: "CLAUDE_PLUGIN_OPTION_CHECK_INSTALLS",
+  NUDGE: "CLAUDE_PLUGIN_OPTION_NUDGE",
+  TRAP_CARD: "CLAUDE_PLUGIN_OPTION_TRAP_CARD",
+  REPORT_DRAFTS: "CLAUDE_PLUGIN_OPTION_REPORT_DRAFTS",
+  WEEKLY_CHECK: "CLAUDE_PLUGIN_OPTION_WEEKLY_CHECK",
+  INSTALL_ID: "CLAUDE_PLUGIN_OPTION_INSTALL_ID",
+} as const;
+
+/** Whether one of the plugin's switches is on. Booleans default to on; only the text "false" turns one off. */
+export const optionOn = (key: keyof typeof OPTION_ENV, env: Record<string, string | undefined> = process.env) =>
+  (env[OPTION_ENV[key]] ?? "true").toLowerCase() !== "false";
 
 export const emit = (obj: unknown) => process.stdout.write(JSON.stringify(obj));
 

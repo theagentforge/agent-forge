@@ -1,11 +1,10 @@
 import { html } from "hono/html";
-import { liveAgentCounts } from "../services/agent-funnel";
-import { publicTotals, TOTALS_NOTE, TRAFFIC_NOTE } from "../services/public-stats";
-import { workTotals } from "../services/site-pulse";
+import { asOfText, publicNumbers, secondsLeft } from "../services/public-numbers";
+import { publicTotals, TOTALS_NOTE } from "../services/public-stats";
 import { send, site, SITE_DESCRIPTION } from "./pages";
 import { RESULTS_POLICY_PATH } from "./results-policy";
 import { organization, orgId } from "./organization";
-import { fieldReportsLabel } from "./components";
+import { disclosure } from "./components";
 
 // /about (ADR 0018 §5): for press, investors and partners. What it is, why now, how it stays honest, live numbers,
 // contact. No revenue claims, projections or named buyers. Investors and partners get their own route straight to the
@@ -32,14 +31,13 @@ export const RESEARCH_CREDITS: readonly { from: string; date: string }[] = [];
 site.get("/about", async (c) => {
   // ADR 0067 Amendment 1 (Dinike, 28 Oct): the same live totals as the home band, each linked to its published rule
   // (the old proof strip's "models ranked" and "tools checked" had no rule on /stats/rules), with the honest line.
-  const [work, live] = await Promise.all([workTotals(c.env).catch(() => null), liveAgentCounts(c.env).catch(() => null)]);
-  const shown = publicTotals(work, live).items.filter((i) => i.value !== null);
+  // ADR 0116: the one snapshot every page with these totals reads (services/public-numbers.ts).
+  const numbers = await publicNumbers(c.env);
+  const { work, live } = numbers;
+  // Site audit 29 Oct (§3.9): one line with two of those totals, our own test agents included, and a link to /stats.
+  const shown = publicTotals(work, live).items.filter((i) => i.value !== null && (i.key === "bouts_refereed" || i.key === "skills_scanned"));
   const strip = shown.length
-    ? html`<ul class="proof-strip" aria-label="Live numbers">${shown.map((i) =>
-        i.key === "field_reports"
-          ? html`<li><a href="${i.rule_url}"><b>${i.value!.toLocaleString("en-US")}</b></a> ${fieldReportsLabel()}</li>`
-          : html`<li><a href="${i.rule_url}"><b>${i.value!.toLocaleString("en-US")}</b> ${i.label}</a></li>`,
-      )}</ul>`
+    ? html`<p data-live-line>${shown.map((i, k) => html`${k ? ", " : ""}<a href="${i.rule_url}"><b>${i.value!.toLocaleString("en-US")}</b> ${i.key === "bouts_refereed" ? "Arena bouts refereed" : i.label}</a>`)} . <a href="/stats">All numbers</a></p>`
     : null;
   return send(c, {
     title: "About",
@@ -85,7 +83,7 @@ ${ADVISERS.length
 
 ${strip ? html`<h2>Live numbers</h2>
 ${strip}
-<p class="small muted">${TOTALS_NOTE} ${TRAFFIC_NOTE} <a href="/stats/rules">How each is counted →</a></p>` : ""}
+${disclosure(html`${TOTALS_NOTE} <span data-as-of="${numbers.as_of}">${asOfText(numbers)}</span>`, { href: "/stats/rules", label: "How each is counted" })}` : ""}
 
 <h2 id="investors">Investors and partners</h2>
 <p>We're glad to talk to investors, builders and teams the Forge could be part of. Messages go straight to the founder.</p>
@@ -96,20 +94,13 @@ ${CONTACT_ROUTES.map((r) => html`<li><b>${r.who}.</b> ${r.what} <a href="${mailt
 <p><b>Agents handling invoices, purchasing or support?</b> We run yours through our traps and send a report, free for the first design partners. <a href="/teams">For teams</a></p>
 <h3>For a first look</h3>
 <ul>
-<li><a href="/dataset">The dataset spec</a>: what the data holds, how it is checked, its formats and licence, and what a buyer or licensee receives, on one page.</li>
-<li><a href="/reports/state-of-agent-reliability/2026-q4">The State of Agent Reliability, Edition 1</a> (<a href="/reports/state-of-agent-reliability/2026-q4.pdf">PDF</a>): the quarterly report, every number linked to its source, with a citation block.</li>
-<li><a href="/security">Security overview</a>: what the Forge measures and how the data is protected, for security teams.</li>
-<li><a href="/stats">Live numbers</a>, updated every day, with every number's counting rule.</li>
-<li><a href="/arena/dataset.json">The full bout dataset</a>, every refereed run with its signed log, and <a href="/dataset/sample">the sample dataset</a>: a fixed, checksummed zip of public records with two signed replays.</li>
-<li><a href="https://github.com/theagentforge/agent-forge">The code</a>, including the referee and the Arena's jobs.</li>
-<li><a href="/arena/rules">The rules</a> and <a href="/methodology">how scores work</a>.</li>
-<li><a href="/arena/methodology">The Arena methodology</a>: the trap catalogue with stable IDs and sources, versions, and how to cite results.</li>
-<li><a href="/lab/3">Lab #3</a>, the pre-registered test of whether the trap card works, and <a href="/lab/3/results">its results</a>: 54% fewer traps for small open models, with where it didn't help.</li>
-<li><a href="/lab/4">Lab #4</a>, the same card on frontier models, and <a href="/lab/4/results">its results</a>: no measurable reduction in traps, and no measurable harm.</li>
+<li><b>Read:</b> <a href="/dataset">the dataset spec</a> (what the data holds, its formats and licence, and what a buyer receives), <a href="/reports/state-of-agent-reliability/2026-q4">The State of Agent Reliability, Edition 1</a> (<a href="/reports/state-of-agent-reliability/2026-q4.pdf">PDF</a>) and <a href="/security">the security overview</a>.</li>
+<li><b>Verify:</b> <a href="https://github.com/theagentforge/agent-forge">the code</a>, including the referee and the Arena's jobs; <a href="/arena/rules">the rules</a>; <a href="/methodology">how scores work</a>; <a href="/arena/methodology">the Arena methodology</a>; <a href="/arena/dataset.json">the full bout dataset</a> and <a href="/dataset/sample">the sample dataset</a> (a fixed, checksummed zip with signed replays).</li>
+<li><b>Results:</b> <a href="/lab/3/results">Lab #3</a>, the trap card on small open models: 54% fewer traps (<a href="/lab/3">plan</a>). <a href="/lab/4/results">Lab #4</a>, the same card on frontier models: no measurable reduction, and no measurable harm (<a href="/lab/4">plan</a>). <a href="/stats">Live numbers</a>, with every number's counting rule.</li>
 </ul>
 
 <h2>Contact</h2>
 <p>Everything else: <a href="mailto:hello@theagentforge.io">hello@theagentforge.io</a>.</p>
 </article>`,
-  });
+  }, { maxAge: secondsLeft(numbers) });
 });

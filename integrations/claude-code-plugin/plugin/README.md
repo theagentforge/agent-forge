@@ -69,13 +69,24 @@ You can turn off each of these in the plugin's settings: `check_installs`, `trap
 - Failure counts stay on your machine until you choose to file a report.
 - The link note keeps only when it was shown, and whether a signed-in call has worked (`link-line.json`), on your
   machine.
-- To fill in an installed npm version's fingerprint, a draft looks the version up on registry.npmjs.org.
+- To fill in an installed version's fingerprint, a draft looks the version up on the public registry it came from:
+  registry.npmjs.org for npm packages, pypi.org for PyPI packages. Only the package name and version are sent.
 - Reports are drafted locally, and nothing is sent until you say yes.
 - No code, file paths, prompts or secrets are sent. Every hook fails open: if The Forge can't be reached, your
   command runs as normal.
+
+## Where it connects
+Only these hosts, and only for the purposes above: theagentforge.io (checks, the weekly check, report links and the
+three MCP servers), registry.npmjs.org and pypi.org (version fingerprints for report drafts). Nothing else.
+
+## For reviewers
+[REVIEWERS.md](REVIEWERS.md) explains, file by file, each behaviour an automated scan may flag: which settings and
+environment variables the hooks read, what they write on this machine, and every request they make.
 
 ## Links
 - How to connect, and what each tool does: <https://theagentforge.io/connect>
 - Methodology: <https://theagentforge.io/methodology>
 - Privacy: <https://theagentforge.io/privacy>
+- Terms: <https://theagentforge.io/terms>
+- Support: <https://theagentforge.io/about> or hello@theagentforge.io
 - Contact: hello@theagentforge.io. Security reports: see [SECURITY.md](https://github.com/theagentforge/agent-forge/blob/main/SECURITY.md).

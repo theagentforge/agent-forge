@@ -10,11 +10,12 @@ import { OSV_FEED_PATH, osvRecords } from "../services/osv-feed";
 import { COMMERCIAL_LICENCE, COMMERCIAL_LICENCE_CONTACT, DATASET_LICENCE, LICENCE_ID } from "../services/provenance";
 import { FIELD_REPORTS_LABEL, HOUSE_METHOD_PATH } from "../services/site-pulse";
 import { commercialLicenceLine, NOT_KNOWN } from "./benchmark";
-import { fieldReportsLabel } from "./components";
+import { disclosure, fieldReportsLabel, more } from "./components";
 import { CROISSANT_PATH } from "./croissant";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { verifyCommand } from "./replay-verify";
 import { statsData } from "./stats";
+import { asOfText, secondsLeftOf } from "../services/public-numbers";
 
 // B3-01 (build plan 29 Oct, Boardy point 1; ADR 0104): one public page for a buyer's engineers and corporate
 // development team, written as a spec. Every number is read from the function its own page uses (/benchmark:
@@ -50,6 +51,14 @@ export const HELD_BACK = [
 ] as const;
 
 const day = (iso: string) => iso.slice(0, 10);
+/** "16–28 Oct 2026" from two ISO days (BRAND date style); falls back to "16 Oct to 2 Nov 2026" across months. */
+export function dayRange(a: string, b: string) {
+  const f = (iso: string, o: Intl.DateTimeFormatOptions) => new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { ...o, timeZone: "UTC" });
+  if (a.slice(0, 10) === b.slice(0, 10)) return f(a, { day: "numeric", month: "short", year: "numeric" });
+  if (a.slice(0, 7) === b.slice(0, 7)) return `${f(a, { day: "numeric" })}–${f(b, { day: "numeric", month: "short", year: "numeric" })}`;
+  if (a.slice(0, 4) === b.slice(0, 4)) return `${f(a, { day: "numeric", month: "short" })} to ${f(b, { day: "numeric", month: "short", year: "numeric" })}`;
+  return `${f(a, { day: "numeric", month: "short", year: "numeric" })} to ${f(b, { day: "numeric", month: "short", year: "numeric" })}`;
+}
 
 /** The /dataset object (also /dataset.json). Every number comes from the same function as its own public page. */
 export async function datasetSpecData(env: Env) {
@@ -87,6 +96,8 @@ export async function datasetSpecData(env: Env) {
     canary: CANARY,
     what_it_is: "refereed_ai_agent_bouts_with_planted_traps_plus_install_tests_skill_scans_and_an_osv_feed",
     basis: "gross_our_own_accounts_and_test_agents_included",
+    /** ADR 0116: when the running totals were counted (the same snapshot /stats shows). */
+    as_of: stats.as_of,
     contents: {
       trap_set: {
         name: TRAP_SET_NAME,
@@ -183,13 +194,24 @@ export type DatasetSpec = Awaited<ReturnType<typeof datasetSpecData>>;
 
 const n = (v: number | null | undefined) => (typeof v === "number" ? v.toLocaleString("en-US") : "not available");
 
-site.get(DATASET_SPEC_JSON_PATH, async (c) => sendJson(c, await datasetSpecData(c.env)));
+site.get(DATASET_SPEC_JSON_PATH, async (c) => {
+  const d = await datasetSpecData(c.env);
+  return sendJson(c, d, secondsLeftOf(d.as_of));
+});
 
 site.get(DATASET_SPEC_PATH, async (c) => {
   const d = await datasetSpecData(c.env);
-  if (wantsJson(c)) return sendJson(c, d);
+  if (wantsJson(c)) return sendJson(c, d, secondsLeftOf(d.as_of));
   const k = d.contents;
   const f = d.formats;
+  // Site audit 29 Oct (§3.4): the models in one sentence (the table is one click down).
+  const ms = k.models.list;
+  const att = ms.map((m) => m.ranked_attempts);
+  const firstDay = ms.length ? ms.map((m) => m.run_dates.first).sort()[0]! : null;
+  const lastDay = ms.length ? ms.map((m) => m.run_dates.last).sort().at(-1)! : null;
+  const modelsLine = ms.length
+    ? `${ms.length} ${ms.length === 1 ? "model" : "models"}, ${Math.min(...att) === Math.max(...att) ? `${n(att[0])} ranked attempts each` : `${n(Math.min(...att))} to ${n(Math.max(...att))} ranked attempts each`}, ${dayRange(firstDay!, lastDay!)}.`
+    : null;
   const row = (label: unknown, v: number | null | undefined, key: string, src: string) =>
     html`<tr data-k="${key}"><td>${label}</td><td class="num" data-v="${v ?? ""}">${n(v)}</td><td><a href="${src}">source</a></td></tr>`;
   return send(c, {
@@ -200,9 +222,14 @@ site.get(DATASET_SPEC_PATH, async (c) => {
     nav: "benchmark",
     canary: CANARY,
     body: html`<div class="prose">
-<p class="eyebrow">The Agent Forge · Dataset spec</p>
 <h1 class="page-title">Dataset spec</h1>
-<p class="muted">For engineers and corporate development teams. Numbers are read live from the same functions as <a href="/stats">/stats</a> and <a href="${BENCHMARK_PATH}">/benchmark</a>; they count everything, our own test agents included. <a href="${DATASET_SPEC_JSON_PATH}">JSON</a></p>
+<p class="lead">Refereed AI agent bouts with planted traps, install tests, skill scans and an OSV feed, written up for engineers and corporate development teams.</p>
+<div class="table-wrap"><table class="table" aria-label="What you get"><tbody>
+<tr><th scope="row">Records</th><td>${typeof k.bouts.refereed_practice_included === "number" ? `${n(k.bouts.refereed_practice_included)} refereed Arena bouts, practice included, on ` : "Refereed Arena bouts on "}${k.trap_set.traps} public traps${typeof k.skill_scans.distinct_skill_files_scanned === "number" ? `; ${n(k.skill_scans.distinct_skill_files_scanned)} skill files scanned` : ""}${f.sample.status === "published" ? html`; a fixed <a href="${SAMPLE_DIR}">sample of ${n(f.sample.records)} records</a>` : ""}.</td></tr>
+<tr><th scope="row">Formats</th><td>JSON, JSON Schema, Croissant 1.0, CITATION.cff and OSV (<a href="#formats">all files</a>).</td></tr>
+<tr><th scope="row">Licence</th><td>Evaluation only, not for training (<a href="#licence">terms</a>).</td></tr>
+</tbody></table></div>
+${disclosure(html`Numbers are read live from the same functions as <a href="/stats">/stats</a> and <a href="${BENCHMARK_PATH}">/benchmark</a> and count everything, our own test agents included. <a href="${DATASET_SPEC_JSON_PATH}">JSON</a>`)}
 
 <h2 id="what">1. What it is</h2>
 <p>Refereed bouts in which AI models do everyday business jobs (refunds, payments, bookings, stock, records) in invented sandboxes with planted traps, each scored by a referee from the sandbox's end state and call log. Alongside them: field reports and nightly install tests of MCP servers, skill-file scans, and an OSV feed of what the scans and reports found.</p>
@@ -229,19 +256,17 @@ ${row("Distinct skill files scanned (launch scan seed included)", k.skill_scans.
 ${row("Tools with a page (mostly registry listings, not reviewed)", k.tools_with_a_page, "tools_tracked", "/stats/rules#tools_tracked")}
 ${row("OSV feed records", k.osv_feed.records, "osv_records", OSV_FEED_PATH)}
 </tbody></table></div>
-<h3 id="kinds">Traps per kind</h3>
-<ul>${k.trap_set.traps_per_kind.map((x) => html`<li><code>${x.family}</code> ${x.name}: <span data-kind="${x.family}">${x.traps}</span></li>`)}</ul>
+<p class="small muted" data-as-of="${d.as_of}">${asOfText(d)} The running totals here are the ones <a href="/stats">/stats</a> shows.</p>
+${more(html`<span id="kinds">Traps per kind</span>`, html`<ul>${k.trap_set.traps_per_kind.map((x) => html`<li><code>${x.family}</code> ${x.name}: <span data-kind="${x.family}">${x.traps}</span></li>`)}</ul>`, { hint: `${k.trap_set.traps} traps in ${k.trap_set.trap_kinds} kinds` })}
 <h3 id="models">Models with public results</h3>
-<p class="small">Ranked public attempts only, under <a href="/results-policy">the results policy</a>. Per-model pass rates with intervals are on <a href="${BENCHMARK_PATH}#results">/benchmark</a>.</p>
+<p>${modelsLine ?? "No ranked public results yet."} Ranked public attempts only, under <a href="/results-policy">the results policy</a>; per-model pass rates with intervals are on <a href="${BENCHMARK_PATH}#results">/benchmark</a>.</p>
 ${k.models.list.length
-  ? html`<div class="scroll-x"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Maker</th><th scope="col">Jobs</th><th scope="col" class="num">Ranked attempts</th><th scope="col">Run dates</th></tr></thead><tbody>${k.models.list.map(
+  ? more("Each model", html`<div class="scroll-x"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Maker</th><th scope="col">Jobs</th><th scope="col" class="num">Ranked attempts</th><th scope="col">Run dates</th></tr></thead><tbody>${k.models.list.map(
       (m) => html`<tr><td data-label="Model">${m.name}</td><td data-label="Maker">${m.maker ?? "–"}</td><td data-label="Jobs">${m.tiers.map((t) => (t === "hard" ? "Hard" : "Normal")).join(", ")}</td><td data-label="Attempts" class="num">${n(m.ranked_attempts)}</td><td data-label="Run dates"><time datetime="${m.run_dates.first}">${m.run_dates.first}</time> to <time datetime="${m.run_dates.last}">${m.run_dates.last}</time></td></tr>`,
-    )}</tbody></table></div>`
-  : html`<p class="empty">No ranked public results yet.</p>`}
-<h3 id="seeds">Seeds</h3>
-<p>The ${k.seeds.public_dev_split_seeds} public dev-split seeds are fixed and listed on <a href="${BENCHMARK_PATH}#traps">/benchmark</a>; every public bout's seed is on its row in <a href="/arena/dataset.json">the dataset</a>. Held-out seeds: kept back (panel <code>${k.seeds.held_out_panel_version}</code>; <a href="${BENCHMARK_HELD_OUT_PATH}">the held-out contract</a>).</p>
-<h3 id="install-tests">Field reports and install tests</h3>
-<p>Most field reports are our House agent's nightly install tests (<a href="${HOUSE_METHOD_PATH}">method</a>): each night it installs the most-downloaded no-setup MCP servers from the MCP Registry with <code>npx</code>, at their exact version, in a new empty folder, with no credentials, and records whether each answers <code>initialize</code> and <code>tools/list</code> (worked, partial or failed). Servers that ask for configuration are skipped. As a dataset this is an install-compatibility record by server and version: ${k.install_tests.servers_in_latest_nightly_run !== null ? html`${n(k.install_tests.servers_in_latest_nightly_run)} servers in the latest run (${k.install_tests.latest_run})${k.install_tests.nightly_runs_since ? html`, nightly since ${k.install_tests.nightly_runs_since}` : ""}` : "no run stored yet"}; <a href="/reports/house">the House Report</a> (<a href="/reports/house.json">JSON</a>, <a href="/reports/house.csv">CSV</a>).</p>
+    )}</tbody></table></div>`, { hint: "Maker, jobs, attempts and run dates" })
+  : ""}
+${more(html`<span id="seeds">Seeds</span>`, html`<p>The ${k.seeds.public_dev_split_seeds} public dev-split seeds are fixed and listed on <a href="${BENCHMARK_PATH}#traps">/benchmark</a>; every public bout's seed is on its row in <a href="/arena/dataset.json">the dataset</a>. Held-out seeds: kept back (panel <code>${k.seeds.held_out_panel_version}</code>; <a href="${BENCHMARK_HELD_OUT_PATH}">the held-out contract</a>).</p>`, { hint: "Public dev-split seeds listed; held-out seeds kept back" })}
+${more(html`<span id="install-tests">Field reports and install tests</span>`, html`<p>Most field reports are our House agent's nightly install tests (<a href="${HOUSE_METHOD_PATH}">method</a>): each night it installs the most-downloaded no-setup MCP servers from the MCP Registry with <code>npx</code>, at their exact version, in a new empty folder, with no credentials, and records whether each answers <code>initialize</code> and <code>tools/list</code> (worked, partial or failed). Servers that ask for configuration are skipped. As a dataset this is an install-compatibility record by server and version: ${k.install_tests.servers_in_latest_nightly_run !== null ? html`${n(k.install_tests.servers_in_latest_nightly_run)} servers in the latest run (${k.install_tests.latest_run})${k.install_tests.nightly_runs_since ? html`, nightly since ${k.install_tests.nightly_runs_since}` : ""}` : "no run stored yet"}; <a href="/reports/house">the House Report</a> (<a href="/reports/house.json">JSON</a>, <a href="/reports/house.csv">CSV</a>).</p>`, { hint: "Most field reports are our House agent's nightly install tests" })}
 
 <h2 id="provenance">3. Provenance</h2>
 <ul>
@@ -259,8 +284,8 @@ ${k.models.list.length
 <li>JSON Schema: <a href="${BENCHMARK_SCHEMA_PATH}">per trap</a> and <a href="${BENCHMARK_FILE_SCHEMA_PATH}">whole file</a> (2020-12).</li>
 <li>Croissant 1.0 with RAI: <a href="${CROISSANT_PATH}">${CROISSANT_PATH}</a>. CITATION.cff: <a href="${BENCHMARK_PATH}/v1/CITATION.cff">${BENCHMARK_PATH}/v1/CITATION.cff</a>.</li>
 <li>OSV feed: <a href="${OSV_FEED_PATH}">${OSV_FEED_PATH}</a> (OSV schema; pattern findings, not confirmed vulnerabilities).</li>
-<li>Sample: <a href="${SAMPLE_DIR}">the sample dataset</a>${f.sample.status === "published" ? html`, <a href="${SAMPLE_ZIP_PATH}">zip</a>, SHA-256 <code>${f.sample.sha256}</code>, ${n(f.sample.records)} records` : ": not published yet"} (<a href="${SAMPLE_SCHEMA_PATH}">record schema</a>).</li>
-<li>Frozen versions: <a href="${BENCHMARK_VERSIONS_PATH}">${BENCHMARK_VERSIONS_PATH}</a>, diff at <code>${BENCHMARK_DIFF_PATH}?from=&lt;version&gt;&amp;to=&lt;version&gt;</code>.
+<li>Sample: <a href="${SAMPLE_DIR}">the sample dataset</a>${f.sample.status === "published" ? html`, <a href="${SAMPLE_ZIP_PATH}">zip</a>, ${n(f.sample.records)} records, SHA-256 <code class="mono-break">${f.sample.sha256}</code>` : ""} (<a href="${SAMPLE_SCHEMA_PATH}">record schema</a>).</li>
+<li>Released versions (frozen or reconstructed, as marked): <a href="${BENCHMARK_VERSIONS_PATH}">${BENCHMARK_VERSIONS_PATH}</a>, diff at <code>${BENCHMARK_DIFF_PATH}?from=&lt;version&gt;&amp;to=&lt;version&gt;</code>.
 <ul>${f.frozen_versions.versions.map((v) => html`<li>${v.url ? html`<a href="${v.url.replace(c.env.PUBLIC_ORIGIN, "")}">${v.version}</a>` : v.version} (${v.date}${v.kind ? `, ${v.kind}` : ""})${v.sha256 ? html`: sha256 <code>${v.sha256}</code>` : ""}</li>`)}</ul></li>
 </ul>
 
@@ -279,5 +304,5 @@ ${commercialLicenceLine()}
 <h2 id="contact">8. Contact</h2>
 <p><a href="mailto:${COMMERCIAL_LICENCE_CONTACT}">${COMMERCIAL_LICENCE_CONTACT}</a>: licensing, the data room, or a call. The Agent Forge is not affiliated with any lab; lab and model names identify what was tested.</p>
 </div>`,
-  });
+  }, { maxAge: secondsLeftOf(d.as_of) });
 });

@@ -38,6 +38,7 @@ import {
 import { CLIENTS, hookAnswer, hookConfig, isHookClient } from "./hook";
 import { LOCKFILES, parseLockfile, type Pkg } from "./lockfiles";
 import { verifyLines, verifyTarget } from "./verify";
+import { runSetup, type Exec } from "./setup";
 import { DRAFTS_FILE, MEMORY_FILE, noteTools, parseNoted, type NotedTool } from "./state";
 
 // `forge check <tool>`: one line a human can read, or JSON for scripts. No account. On a repeat check it says what
@@ -48,12 +49,15 @@ import { DRAFTS_FILE, MEMORY_FILE, noteTools, parseNoted, type NotedTool } from 
 // `forge report [<tool>]`: a ready-made field report draft and its one-step link; filing needs the owner's yes.
 // `forge watch [SKILL.md ...]`: the weekly pass (forge_watch's REST twin plus re-checks), with what changed.
 // `forge telemetry status|disable|enable`: the random install ID (B3-09).
+// `forge setup [--dry-run] [--yes] [--undo]`: adds the Forge to the AI clients installed here (setup.ts, ADR 0119).
 
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
 export const EXIT = { ok: 0, error: 1, usage: 2, blocked: 3 } as const;
-export const VERSION = "0.6.0";
+export const VERSION = "0.7.0";
 
-const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--origin <url>]
+const HELP = `Usage: forge setup [--dry-run] [--yes] [--json] [--origin <url>]
+       forge setup --undo [--dry-run] [--yes] [--json]
+       forge check <tool> [--json] [--strict] [--no-memory] [--origin <url>]
        forge report [<tool>] [--version <v>] [--outcome worked|partial|failed] [--issues <a,b>] [--note <text>]
                     [--framework <name>] [--file] [--json] [--origin <url>]
        forge watch [SKILL.md ...] [--json] [--origin <url>]
@@ -63,6 +67,12 @@ const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--ori
        forge verify <replay-url-or-file> [--json] [--keys <file-or-url>] [--origin <url>]
        forge telemetry [status|disable|enable] [--json]
 
+  setup      Finds the AI clients on this machine (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex,
+             Gemini CLI, Copilot CLI, Cline, LM Studio, Goose) and, after a yes for each, adds the read-only Forge MCP
+             server (no account) and, for Codex, Gemini CLI and Copilot CLI, the install-check hook. For Claude Code
+             it runs claude mcp add and shows the plugin commands. Each file is backed up first (<file>.forge-bak);
+             --undo puts them back. --dry-run shows the changes and writes nothing; --yes answers yes for scripts.
+             Existing servers are never removed or changed. Setup itself sends nothing over the network.
   <tool>     npm:<package>, github.com/<owner>/<repo>, mcp-registry:<name>, a bare npm package name, or a URL
   check      On a repeat check from this machine, also says what changed since then: new field reports, newly
              matching advisories, a changed verdict. The memory stays in this machine's cache (--no-memory: skip).
@@ -89,7 +99,8 @@ const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--ori
              package list with it. Cloudflare's request logs keep each request (its address, which names the package
              checked, and its headers, including this ID) with the IP address for up to 7 days; we don't copy the ID
              out of them. Off: forge telemetry disable, FORGE_NO_ANALYTICS=1 or DO_NOT_TRACK=1 (and in CI). FORGE_TELEMETRY_DEBUG=1 prints what would be sent and sends nothing. ${PRIVACY_INSTALL_ID_URL}
-  --origin   Forge address (default ${DEFAULT_ORIGIN}); for verify, an extra site whose published keys to trust
+  --origin   Forge address (default ${DEFAULT_ORIGIN}); for verify, an extra site whose published keys to trust.
+             https only; --dev also allows http://localhost or http://127.0.0.1 (a local Worker)
 
 Exit codes: 0 fine to proceed, 3 flagged or confirmed malicious, 1 the check failed, 2 bad usage.
 verify:     0 verified, 1 verification failed (changed, wrong key or a different verdict), 2 couldn't check
@@ -128,6 +139,12 @@ export interface Io {
   writeConfig?: (name: string, text: string) => Promise<void>;
   /** A random UUID v4 (node:crypto randomUUID). */
   randomUUID?: () => string;
+  /** For `setup`: the home folder and platform whose AI clients it looks for; without it setup can't run. */
+  setup?: { home: string; platform: string };
+  /** A y/N question asked on stderr at a real terminal (for `setup`); null when there is no terminal. */
+  ask?: (question: string) => Promise<boolean | null>;
+  /** Runs a program without a shell (for `setup`: Claude Code's own `claude mcp add`). */
+  exec?: Exec;
 }
 
 const UA = `theagentforge-cli/${VERSION}`;
@@ -570,13 +587,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const strict = flag("--strict");
   const noMemory = flag("--no-memory");
   const file = flag("--file");
+  // --dev allows a local Worker over plain http (http://localhost or http://127.0.0.1); every other origin is https.
+  const dev = flag("--dev");
   let origin = DEFAULT_ORIGIN;
   const oi = args.indexOf("--origin");
   if (oi >= 0) {
     origin = (args[oi + 1] ?? "").replace(/\/+$/, "");
     args.splice(oi, 2);
-    if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(origin) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-      io.err("--origin must be an https:// address");
+    const https = /^https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i.test(origin);
+    const local = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(origin);
+    if (!https && !(dev && local)) {
+      io.err(local ? "--origin http://localhost needs --dev (plain http is only for a local Worker)" : "--origin must be an https:// address");
       return EXIT.usage;
     }
   }
@@ -589,6 +610,19 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (cmd === "hook") return hook(args.slice(1), { json, origin }, io);
   if (cmd === "watch") return watch(args.slice(1), { json, origin }, io);
   if (cmd === "telemetry") return telemetry(args.slice(1), { json }, io);
+  if (cmd === "setup") {
+    const o = { dryRun: flag("--dry-run"), yes: flag("--yes") || flag("-y"), undo: flag("--undo"), json };
+    if (args.length !== 1) {
+      io.err("Usage: forge setup [--dry-run] [--yes] [--json] [--origin <url>] | forge setup --undo [--dry-run] [--yes]");
+      return EXIT.usage;
+    }
+    if (!io.setup) {
+      io.err("This build can't set up clients.");
+      return EXIT.error;
+    }
+    const ctx = { ...io.setup, env: io.env ?? {}, origin, defaultOrigin: origin === DEFAULT_ORIGIN };
+    return runSetup(o, ctx, { out: io.out, err: io.err, ask: io.ask, exec: io.exec, readConfig: io.readConfig, writeConfig: io.writeConfig, now: io.now });
+  }
   if (cmd === "verify") {
     const keys = value("--keys");
     const [, target, ...extra] = args;

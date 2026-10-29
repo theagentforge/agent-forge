@@ -25,7 +25,7 @@ import {
 import { trapSetEntries, trapRecord } from "../arena/benchmark";
 import { COMMERCIAL_LICENCE, COMMERCIAL_LICENCE_CONTACT, COMMERCIAL_LICENCE_LINE, DATASET_LICENCE, LICENCE_ID } from "../services/provenance";
 import { getDb } from "../services/db";
-import { copyBlock } from "./components";
+import { copyBlock, more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { frozenVersionsBlock } from "./benchmark-versions";
 
@@ -94,6 +94,7 @@ site.get(BENCHMARK_PATH, async (c) => {
   const gapRows = [...gap.per_event.map((g) => ({ label: `${g.name}, ${g.event_name}`, g })), ...gap.weekly_pooled.map((g) => ({ label: `${g.name}, weekly bouts pooled (${g.events})`, g }))];
   const audit = d.referee_validation;
   const tiers = (["normal", "hard"] as const).filter((t) => d.results.models.some((m) => m.tier === t));
+  const sourced = d.traps.filter((t) => t.trigger.source).length;
   return send(c, {
     title: `${TRAP_SET_NAME} ${d.version}`,
     description: `${TRAP_SET_NAME}: ${d.counts.traps} public traps in everyday business jobs, each with a schema, trigger, safe behaviour, scoring rule and sandbox cost, plus per-model results with intervals. Versioned and citable.`,
@@ -103,18 +104,74 @@ site.get(BENCHMARK_PATH, async (c) => {
     nav: "arena",
     body: html`<div class="prose">
 <h1 class="page-title">${TRAP_SET_NAME}</h1>
-<p class="muted">Version <b>${d.version}</b> · ${new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })} · ${d.rules_version} · tasks ${d.task_versions.join(", ")}</p>
-<p class="lead">${d.counts.traps} planted traps in ${d.counts.jobs} everyday business jobs (${d.counts.tasks} job versions), in ${d.counts.families} kinds. Each trap is modelled on a real-world fraud or failure pattern (${d.traps.filter((t) => t.trigger.source).length} of them cite a published source) and refereed from the sandbox's end state or call log, never from the model's own account of what it did. ${d.counts.ranked_attempts} ranked attempts by ${d.counts.models} models so far.</p>
+<p class="muted">Version <b>${d.version}</b> · ${longDate(d.date)}</p>
+<p class="lead">${d.counts.traps} planted traps in ${d.counts.jobs} everyday jobs. Each is based on a real fraud or failure (${sourced} cite a source). A referee checks the sandbox, never the model's word. Results for ${d.counts.models} models.</p>
 ${trapTargetLine(d.counts.traps)}
-<p class="benchmark-links"><a href="${BENCHMARK_LICENCE_PATH}">Licence</a> (<code>${LICENCE_ID}</code>) · <a href="${BENCHMARK_CHANGELOG_PATH}">Changelog</a> · <a href="${BENCHMARK_JSON_PATH}">Data (JSON)</a> · <a href="${BENCHMARK_TRAPS_PATH}">Traps only (JSON)</a> · <a href="${BENCHMARK_FILE_SCHEMA_PATH}">JSON Schema, whole file</a> · <a href="${BENCHMARK_SCHEMA_PATH}">JSON Schema per trap</a> · <a href="${BENCHMARK_CFF_PATH}">CITATION.cff</a> · <a href="/benchmark/versions.json">Frozen versions</a> · <a href="/benchmark/held-out">Held-out contract</a> · <a href="/arena/methodology">Methodology</a> · <a href="/results-policy">Results policy</a></p>
-<p>The quarterly write-up of these results, with the skill scan and what isn't known yet: <a href="/reports/state-of-agent-reliability/2026-q4">The State of Agent Reliability, Edition 1</a> (<a href="/reports/state-of-agent-reliability/2026-q4.pdf">PDF</a>).</p>
-<p>Your agent on the Gauntlet's jobs, with a score page and badge: <a href="/benchmark/submit">submit your agent</a>.</p>
-<p class="small muted">Gauntlet Sprints (one job, one featured trap) are a quick first look, not Trap Set results: they never count in the results below, and a Sprint result is labelled "Sprint", never a Gauntlet score. <a href="/gauntlet/sprint">About the Sprint</a>.</p>
 
-${frozenVersionsBlock(c.env.PUBLIC_ORIGIN)}
+<h2 id="results">Results by model</h2>
+<p>Ranked public attempts only, with 95% intervals. Under ${d.limits.early_read_below_attempts} attempts a row is an early read, not a verdict. Rows scored under older rules are marked and never pooled.</p>
+${tiers.length
+      ? tiers.map(
+          (tier) => html`<h3>${tier === "hard" ? "Hard" : "Normal"} jobs</h3><div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Rules</th><th scope="col">Passed</th><th scope="col">95% interval</th><th scope="col">Trap falls (95% interval)</th><th scope="col">Knockouts</th><th scope="col">Runs</th></tr></thead><tbody>${d.results.models
+            .filter((m) => m.tier === tier)
+            .map(
+              (m) => html`<tr><td data-label="Model">${m.name}${m.maker ? html` <span class="muted small">(${m.maker})</span>` : ""}<br><code class="small">${m.model}</code>${m.providers.length ? html`<br><span class="small muted">served by ${m.providers.join(", ")}</span>` : ""}</td><td data-label="Rules">${m.rescored_from_signed_logs ? html`${m.scored_under}, <span data-rescored>re-scored from signed logs</span> <span class="muted small">(played under ${Object.entries(m.played_under).map(([v, n]) => `${v}: ${n}`).join("; ")})</span>` : m.rules_version}${m.scored_under_trap_set_rules ? "" : html` <span class="muted small">older rules</span>`}</td><td data-label="Passed">${m.pass.k} of ${m.pass.n} (${pct(m.pass.rate)})${m.pass.early ? html` <span class="muted small">early read</span>` : ""}</td><td data-label="Interval">${interval(m.pass.ci_95)}</td><td data-label="Trap falls">${m.trap_falls.k} of ${m.trap_falls.n} (${interval(m.trap_falls.ci_95)})</td><td data-label="Knockouts">${m.knockouts}</td><td data-label="Runs">${m.run_dates.first} to ${m.run_dates.last}<br><span class="small muted">${m.task_versions.join(", ")}</span></td></tr>`,
+            )}</tbody></table></div>`,
+        )
+      : html`<p class="muted">No ranked results yet.</p>`}
+<p class="small" id="referee"><b>Is the referee right?</b> ${audit.status === "measured"
+      ? html`In Forge Lab #6, a pre-registered blind audit, a person agreed with the referee's pass or fail on <b>${pct(audit.agreement)}</b> of ${audit.n} attempts (95% interval ${interval(audit.ci_95)}). The pre-registered bar: ${pct(audit.agreement_bar)}, with the lower bound at least ${pct(audit.lower_bound_floor)}.`
+      : html`<b>Not yet published.</b> Forge Lab #6, a pre-registered blind audit of ${audit.planned_sample} refereed attempts, will report how often a person agrees with the referee (bar: ${pct(audit.agreement_bar)}). Until then the referee's accuracy is not known.`}</p>
+${more(
+  "How results are counted",
+  html`<p>Ranked public attempts only (no practice, no held-out runs, nothing under notice), under the <a href="/results-policy">results policy</a>: passes of attempts, 95% Wilson intervals, run dates and versions. Normal and Hard jobs are kept apart, and so are rules versions: rows scored under rules older than ${d.rules_version} are shown on their own and marked, because a rules change can change how a trap is scored. Runs re-scored under ${d.rules_version} by replaying their signed logs (played under older rules, with the same job harness) are their own rows too, marked "re-scored from signed logs", and never pooled with runs played under ${d.rules_version}. Each attempt's replay is in <a href="/arena/dataset.json">the dataset</a>.</p>
+<p>Gauntlet Sprints (one job, one featured trap) are a quick first look, not Trap Set results: they never count here, and a Sprint result is labelled "Sprint", never a Gauntlet score. <a href="/gauntlet/sprint">About the Sprint</a>.</p>
+<p class="small muted">Now scoring: ${d.rules_version} · tasks ${d.task_versions.join(", ")} · ${d.counts.tasks} job versions · ${d.counts.families} kinds of trap · ${d.counts.ranked_attempts} ranked attempts.</p>`,
+  { hint: "Wilson intervals, rules versions, Sprints", id: "counting" },
+)}
+<p>Test your own agent on the same jobs, with a score page and badge: <a href="/benchmark/submit">submit your agent</a>.</p>
 
-<h2 id="data-protection">Keeping the test clean</h2>
-<ul>
+<h2 id="download">Download and cite</h2>
+<ul class="benchmark-links">
+<li><a href="${BENCHMARK_JSON_PATH}">Data (JSON)</a>: traps and live results · <a href="${BENCHMARK_TRAPS_PATH}">Traps only (JSON)</a></li>
+<li><a href="${BENCHMARK_FILE_SCHEMA_PATH}">JSON Schema, whole file</a> · <a href="${BENCHMARK_SCHEMA_PATH}">JSON Schema per trap</a> · <a href="${BENCHMARK_CFF_PATH}">CITATION.cff</a></li>
+<li><a href="${BENCHMARK_LICENCE_PATH}">Licence</a> (<code>${LICENCE_ID}</code>): evaluation only, not for training</li>
+<li><a href="${BENCHMARK_CHANGELOG_PATH}">Changelog</a> · <a href="/benchmark/versions.json">Released versions</a> · <a href="/benchmark/held-out">Held-out contract</a></li>
+<li><a href="/arena/methodology">Methodology</a> · <a href="/results-policy">Results policy</a> · <a href="/dataset">Dataset spec</a> · <a href="/dataset/sample">Sample dataset</a></li>
+<li>The write-up: <a href="/reports/state-of-agent-reliability/2026-q4">The State of Agent Reliability, Edition 1</a> (<a href="/reports/state-of-agent-reliability/2026-q4.pdf">PDF</a>)</li>
+</ul>
+<p id="cite">Cite it:</p>
+${copyBlock("cite-text", cite.text)}
+${more(
+  "BibTeX and CITATION.cff",
+  html`<p>BibTeX:</p>
+<pre class="verdict-line" id="cite-bibtex">${cite.bibtex}</pre>
+<p>CITATION.cff (<a href="${BENCHMARK_CFF_PATH}">file</a>):</p>
+<pre class="verdict-line" id="cite-cff">${cite.cff}</pre>
+<p class="muted small">Cite one trap by its ID and version, for example "${d.traps[0]?.id ?? "FA-PAY-001"}, ${TRAP_SET_NAME} ${TRAP_SET.version}". Data is free for evaluation, research and reporting with attribution, and not for training AI models (<a href="${BENCHMARK_LICENCE_PATH}">licence</a>). The Agent Forge is not affiliated with any lab; lab and model names identify what was tested.</p>`,
+)}
+${more(
+  html`<span id="fetch">Fetch and validate</span>`,
+  html`<p>Download the data and its whole-file schema, then validate it with Ajv's command line (JSON Schema 2020-12, strict mode):</p>
+${copyBlock("fetch-validate", FETCH_AND_VALIDATE(c.env.PUBLIC_ORIGIN))}
+<p class="small muted">Every trap record also validates on its own against <a href="${BENCHMARK_SCHEMA_PATH}">the per-trap schema</a>, for example the items of <a href="${BENCHMARK_TRAPS_PATH}">${BENCHMARK_TRAPS_PATH}</a>.</p>`,
+  { hint: "two commands" },
+)}
+
+<h2 id="method">Method</h2>
+${more(
+  html`<span id="traps">The ${d.counts.traps} traps</span>`,
+  html`<p>One record per trap, in the <a href="${BENCHMARK_SCHEMA_PATH}">schema</a>. Cost of failure is the sandbox amount at stake: invented money (or records or stock units) in the job's own world, computed from the task code on the public ${d.traps[0]?.cost_of_failure.seed_split ?? ""} seeds ${d.traps[0]?.cost_of_failure.seeds.join(", ") ?? ""} (for Hard jobs, the same seed numbers in the Hard job; the seeds sit below the ranked-season minimum and outside the held-out panel). "Whole job" means everything the job handles, where the trap alone can't be priced. It is never an estimate of real-world losses. Every trap's rule: sprung when the referee's check is true; one sprung trap fails the attempt; what the model says it did is never taken as evidence (false claims are traps of their own, FA-CLM).</p>
+<div class="table-wrap"><table class="table stack trap-set">
+<thead><tr><th scope="col">ID</th><th scope="col">Job and area</th><th scope="col">Trigger (referee check)</th><th scope="col">Safe behaviour</th><th scope="col">Sandbox amount at stake</th></tr></thead>
+<tbody>${d.traps.map(
+      (t) => html`<tr id="${t.id}"><td data-label="ID"><a href="/arena/failures/${t.id}"><code>${t.id}</code></a><br><span class="small muted">${t.trap_kind.name}</span></td><td data-label="Job">${t.job.title}<br><span class="small muted">${t.industry?.name ?? ""} · since ${t.since}</span></td><td data-label="Trigger">${t.trigger.referee_check}${t.trigger.evidence === "call_log" ? html` <span class="small muted">(call log)</span>` : ""}</td><td data-label="Safe">${t.expected_safe_behaviour}</td><td data-label="Cost">${cost(t)}</td></tr>`,
+    )}</tbody></table></div>`,
+  { hint: "trigger, expected behaviour, sandbox amount" },
+)}
+${more(
+  html`<span id="data-protection">Keeping the test clean</span>`,
+  html`<ul>
 <li><b>Held-out split.</b> Every job also has private seeds (panel <code>${d.data_protection.held_out_split.panel_version}</code>) that are never published: no brief, log, replay or clip. Only aggregates are shown, as the gap below.</li>
 <li><b>Public against private gap.</b> Pass rate on public job versions minus pass rate on held-out ones, with a 95% interval (Newcombe), shown only with at least ${gap.method.min_attempts_each_side} attempts a side. ${gap.rows_measured} rows measured; ${gap.rows_testing_contamination} of them test contamination (every public version published before the event), from ${gap.contamination.test_events} ${gap.contamination.test_events === 1 ? "event" : "events"}; the rest are controls that should be near zero, or mixed. The effect counts as established only with test rows from at least ${gap.contamination.needs.min_distinct_events} events that between them played at least ${gap.contamination.needs.min_distinct_world_sets_each_side} different public and ${gap.contamination.needs.min_distinct_world_sets_each_side} different held-out sets of job versions; status: ${gap.contamination.status === "established" ? "established" : gap.contamination.status === "not_yet_established" ? `measured in ${gap.contamination.test_events} ${gap.contamination.test_events === 1 ? "event" : "events"}, not yet established` : "no test rows yet"}.</li>
 <li><b>Canary.</b> This page, <a href="${BENCHMARK_JSON_PATH}">its data</a> and every Arena data file carry this line, so a leak into a training set can be searched for: <code>${d.canary}</code> Every trap record, including those in <a href="${BENCHMARK_TRAPS_PATH}">the traps-only file</a>, also carries its GUID as <code>canary_guid</code> (since 1.0.1).</li>
@@ -126,27 +183,12 @@ ${gapRows.length
       ? html`<div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model and event</th><th scope="col">Public</th><th scope="col">Held out</th><th scope="col">Gap (95% interval)</th><th scope="col">Kind</th></tr></thead><tbody>${gapRows.map(
           ({ label, g }) => html`<tr><td data-label="Model">${label}</td><td data-label="Public">${g.public.passes} of ${g.public.attempts}</td><td data-label="Held out">${g.held_out.passes} of ${g.held_out.attempts}</td><td data-label="Gap">${g.status === "measured" ? html`${pct(g.gap)} (${interval(g.gap_ci_95)})` : html`<span class="muted">not enough bouts yet</span>`}</td><td data-label="Kind">${g.public_arm === "previously_published" ? "contamination test" : g.public_arm === "mixed" ? "mixed (not a clean test)" : "control"}</td></tr>`,
         )}</tbody></table></div>`
-      : html`<p class="muted">No event has run held-out seeds alongside public ones yet: gap not yet measured.</p>`}
-
-<h2 id="referee">Is the referee right?</h2>
-${audit.status === "measured"
-      ? html`<p>In Forge Lab #6, a pre-registered blind audit, a person agreed with the referee's pass or fail on <b>${pct(audit.agreement)}</b> of ${audit.n} attempts (95% interval ${interval(audit.ci_95)}). The pre-registered bar: ${pct(audit.agreement_bar)}, with the lower bound at least ${pct(audit.lower_bound_floor)}.</p>`
-      : html`<p><b>Not yet published.</b> Forge Lab #6, a pre-registered blind human audit of ${audit.planned_sample} refereed attempts, will report how often a person agrees with the referee (bar: ${pct(audit.agreement_bar)}, lower 95% bound at least ${pct(audit.lower_bound_floor)}). Until its results are published, the referee's accuracy is not known.</p>`}
-
-<h2 id="results">Results by model</h2>
-<p>Ranked public attempts only (no practice, no held-out runs, nothing under notice), under the <a href="/results-policy">results policy</a>: passes of attempts, 95% Wilson intervals, run dates and versions. Under ${d.limits.early_read_below_attempts} attempts a row is an early read, not a verdict. Normal and Hard jobs are kept apart, and so are rules versions: rows scored under rules older than ${d.rules_version} are shown on their own and marked, because a rules change can change how a trap is scored. Runs re-scored under ${d.rules_version} by replaying their signed logs (played under older rules, with the same job harness) are their own rows too, marked "re-scored from signed logs", and never pooled with runs played under ${d.rules_version}. Each attempt's replay is in <a href="/arena/dataset.json">the dataset</a>.</p>
-${tiers.length
-      ? tiers.map(
-          (tier) => html`<h3>${tier === "hard" ? "Hard" : "Normal"} jobs</h3><div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Rules</th><th scope="col">Passed</th><th scope="col">95% interval</th><th scope="col">Trap falls (95% interval)</th><th scope="col">Knockouts</th><th scope="col">Runs</th></tr></thead><tbody>${d.results.models
-            .filter((m) => m.tier === tier)
-            .map(
-              (m) => html`<tr><td data-label="Model">${m.name}${m.maker ? html` <span class="muted small">(${m.maker})</span>` : ""}<br><code class="small">${m.model}</code>${m.providers.length ? html`<br><span class="small muted">served by ${m.providers.join(", ")}</span>` : ""}</td><td data-label="Rules">${m.rescored_from_signed_logs ? html`${m.scored_under}, <span data-rescored>re-scored from signed logs</span> <span class="muted small">(played under ${Object.entries(m.played_under).map(([v, n]) => `${v}: ${n}`).join("; ")})</span>` : m.rules_version}${m.scored_under_trap_set_rules ? "" : html` <span class="muted small">older rules</span>`}</td><td data-label="Passed">${m.pass.k} of ${m.pass.n} (${pct(m.pass.rate)})${m.pass.early ? html` <span class="muted small">early read</span>` : ""}</td><td data-label="Interval">${interval(m.pass.ci_95)}</td><td data-label="Trap falls">${m.trap_falls.k} of ${m.trap_falls.n} (${interval(m.trap_falls.ci_95)})</td><td data-label="Knockouts">${m.knockouts}</td><td data-label="Runs">${m.run_dates.first} to ${m.run_dates.last}<br><span class="small muted">${m.task_versions.join(", ")}</span></td></tr>`,
-            )}</tbody></table></div>`,
-        )
-      : html`<p class="muted">No ranked results yet.</p>`}
-
-<h2 id="limits">What isn't known</h2>
-<ul>${d.limits.not_known.map((k) => html`<li>${NOT_KNOWN[k] ?? k}</li>`)}</ul>
+      : html`<p class="muted">No event has run held-out seeds alongside public ones yet: gap not yet measured.</p>`}`,
+  { hint: "held-out seeds, canary, provenance" },
+)}
+${more(
+  html`<span id="limits">What isn't known</span>`,
+  html`<ul>${d.limits.not_known.map((k) => html`<li>${NOT_KNOWN[k] ?? k}</li>`)}</ul>
 <h3>Sample-size limits</h3>
 <ul>
 <li>${d.limits.model_tier_rows_below_early_read} of ${d.limits.model_tier_rows} model rows have fewer than ${d.limits.early_read_below_attempts} attempts: early reads.</li>
@@ -154,18 +196,12 @@ ${tiers.length
 <li>The public against held-out gap needs at least ${d.limits.gap_min_attempts_each_side} attempts on each side.</li>
 <li>${d.limits.model_tier_rows_scored_under_older_rules} of ${d.limits.model_tier_rows} model rows were scored under rules older than ${d.rules_version}${d.limits.model_tier_rows_rescored_from_signed_logs ? `, and ${d.limits.model_tier_rows_rescored_from_signed_logs} were re-scored under ${d.rules_version} from signed logs of runs played under older rules` : ""}.</li>
 <li>Intervals cover sampling error only, not referee error (see above). They treat every attempt as independent, but each variant is played more than once, and trap falls count every trap present in an attempt, so the real uncertainty is wider.</li>
-</ul>
-
-<h2 id="traps">The traps</h2>
-<p>One record per trap, in the <a href="${BENCHMARK_SCHEMA_PATH}">schema</a>. Cost of failure is the sandbox amount at stake: invented money (or records or stock units) in the job's own world, computed from the task code on the public ${d.traps[0]?.cost_of_failure.seed_split ?? ""} seeds ${d.traps[0]?.cost_of_failure.seeds.join(", ") ?? ""} (for Hard jobs, the same seed numbers in the Hard job; the seeds sit below the ranked-season minimum and outside the held-out panel). "Whole job" means everything the job handles, where the trap alone can't be priced. It is never an estimate of real-world losses. Every trap's rule: sprung when the referee's check is true; one sprung trap fails the attempt; what the model says it did is never taken as evidence (false claims are traps of their own, FA-CLM).</p>
-<div class="table-wrap"><table class="table stack trap-set">
-<thead><tr><th scope="col">ID</th><th scope="col">Job and area</th><th scope="col">Trigger (referee check)</th><th scope="col">Safe behaviour</th><th scope="col">Sandbox amount at stake</th></tr></thead>
-<tbody>${d.traps.map(
-      (t) => html`<tr id="${t.id}"><td data-label="ID"><a href="/arena/failures/${t.id}"><code>${t.id}</code></a><br><span class="small muted">${t.trap_kind.name}</span></td><td data-label="Job">${t.job.title}<br><span class="small muted">${t.industry?.name ?? ""} · since ${t.since}</span></td><td data-label="Trigger">${t.trigger.referee_check}${t.trigger.evidence === "call_log" ? html` <span class="small muted">(call log)</span>` : ""}</td><td data-label="Safe">${t.expected_safe_behaviour}</td><td data-label="Cost">${cost(t)}</td></tr>`,
-    )}</tbody></table></div>
-
-<h2 id="versioning">Versions</h2>
-<ul>
+</ul>`,
+  { hint: `${d.limits.not_known.length} open questions, sample sizes` },
+)}
+${more(
+  html`<span id="versioning">Versions and changelog</span>`,
+  html`<ul>
 <li><b>Patch (1.0.x):</b> wording, documentation, links or citation details. No trap or result changes.</li>
 <li><b>Minor (1.x):</b> additions only: new public traps, a new public job family or task version, or a referee correction that makes a check match its published trigger (stored runs re-scored and listed as a correction). Trap IDs never change.</li>
 <li><b>Major (2.0):</b> a change to an existing trap's trigger or scoring rule, a removed trap, a rules version that scores existing traps differently, or a change to the held-out or canary protocol.</li>
@@ -174,21 +210,9 @@ ${tiers.length
 <h3 id="changelog">Changelog</h3>
 <p class="small">Every Trap Set, task and rules version with the trap ids each added, changed or retired: <a href="${BENCHMARK_CHANGELOG_PATH}">the full changelog</a> (<a href="${BENCHMARK_CHANGELOG_JSON_PATH}">JSON</a>).</p>
 <ul class="changelog">${[...d.changelog].reverse().map((x) => html`<li><time datetime="${x.date}">${x.date}</time> · <b>${x.version}</b>: ${x.change}</li>`)}</ul>
-
-<h2 id="fetch">Fetch and validate</h2>
-<p>Download the data and its whole-file schema, then validate it with Ajv's command line (JSON Schema 2020-12, strict mode):</p>
-${copyBlock("fetch-validate", FETCH_AND_VALIDATE(c.env.PUBLIC_ORIGIN))}
-<p class="small">For buyers and licensees, everything on one page: <a href="/dataset">the dataset spec</a>. To look at records first: <a href="/dataset/sample">the sample dataset</a>, a fixed, checksummed zip of public bouts with tool calls, verdicts, safe behaviour, cost of failure and two signed replays.</p>
-<p class="small muted">Every trap record also validates on its own against <a href="${BENCHMARK_SCHEMA_PATH}">the per-trap schema</a>, for example the items of <a href="${BENCHMARK_TRAPS_PATH}">${BENCHMARK_TRAPS_PATH}</a>.</p>
-
-<h2 id="cite">How to cite</h2>
-<p>Plain text:</p>
-${copyBlock("cite-text", cite.text)}
-<p>BibTeX:</p>
-<pre class="verdict-line" id="cite-bibtex">${cite.bibtex}</pre>
-<p>CITATION.cff (<a href="${BENCHMARK_CFF_PATH}">file</a>):</p>
-<pre class="verdict-line" id="cite-cff">${cite.cff}</pre>
-<p class="muted small">Cite one trap by its ID and version, for example "${d.traps[0]?.id ?? "FA-PAY-001"}, ${TRAP_SET_NAME} ${TRAP_SET.version}". Data is free for evaluation, research and reporting with attribution, and not for training AI models (<a href="${BENCHMARK_LICENCE_PATH}">licence</a>). The Agent Forge is not affiliated with any lab; lab and model names identify what was tested.</p>
+${frozenVersionsBlock(c.env.PUBLIC_ORIGIN)}`,
+  { hint: "how versions work, version files" },
+)}
 </div>`,
   });
 });

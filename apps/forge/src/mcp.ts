@@ -91,7 +91,7 @@ export function createForgeServer(env: Env, props: AgentProps, internal: Interna
       ...SIGNED_IN_TOOLS.forge_check,
       // The same input as /mcp/public (26 Oct: this one had no `version`, though the shared description offers it).
       inputSchema: lenient(checkInput),
-      annotations: { title: SIGNED_IN_TOOLS.forge_check.title, readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { title: SIGNED_IN_TOOLS.forge_check.title, readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
     async (raw) => {
       const p = parseCheck(raw);

@@ -28,8 +28,9 @@ describe("public site", () => {
     expect(nav).not.toContain("Live Wire");
     expect(body).toContain('<a href="/wire">The Wire</a>');
     expect(body).toContain('<a href="/skill-watch">Skill Watch</a>');
-    expect(body).toContain("Field reports on MCP servers and packages");
-    expect(body).toContain('id="check-input"');
+    // Site audit 29 Oct: one check box on the home page.
+    expect(body).toContain('<h2 id="home-check">Check before you install</h2>');
+    expect(body).toContain('id="home-go"');
     expect(body).toContain('name="twitter:card" content="summary_large_image"');
     expect(body).toContain('rel="alternate" type="application/json"');
     const csp = res.headers.get("Content-Security-Policy")!;
@@ -37,7 +38,10 @@ describe("public site", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).not.toContain("unsafe-inline");
     expect(res.headers.get("Strict-Transport-Security")).toContain("max-age=");
-    expect(res.headers.get("Cache-Control")).toContain("max-age=60");
+    // ADR 0116: cached only until the totals snapshot ends (at most 60 seconds).
+    const maxAge = Number(/max-age=(\d+)/.exec(res.headers.get("Cache-Control") ?? "")?.[1]);
+    expect(maxAge).toBeGreaterThan(0);
+    expect(maxAge).toBeLessThanOrEqual(60);
   });
 
   it("every page has a JSON twin for agents", async () => {
@@ -97,10 +101,12 @@ describe("public site", () => {
     expect(text).not.toMatch(/draft|\[/i);
   });
 
-  it("the home page offers a line to send to your agent and points to the Arena", async () => {
+  it("the line to send to your agent lives on /connect (site audit B2), and the home page points to the Arena", async () => {
     const { body } = await page("/");
-    expect(body).toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with the Forge.");
-    expect(body).toContain('href="/arena"');
+    expect(body).not.toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with the Forge.");
+    expect(body).toContain('href="/arena');
+    const { body: connect } = await page("/connect");
+    expect(connect).toContain("/skill.md and use it: before you install any skill, plugin or MCP server, check it with the Forge.");
   });
 
   it("a tool page with no reports yet is kept out of search; one with reports isn't", async () => {

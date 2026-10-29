@@ -46,6 +46,42 @@
     });
   });
 })();
+// Site audit 29 Oct (issue 7): the phone Menu. The link works without JavaScript (it jumps to the footer's groups);
+// here it opens the grouped sheet as a modal dialog, which keeps focus inside until Escape, Close or the backdrop.
+(function () {
+  var open = document.querySelector("[data-menu-open]");
+  var sheet = document.getElementById("site-menu");
+  if (!open || !sheet || typeof sheet.showModal !== "function") return;
+  open.setAttribute("role", "button");
+  open.setAttribute("aria-expanded", "false");
+  var close = function () { if (sheet.open) sheet.close(); };
+  open.addEventListener("click", function (e) {
+    e.preventDefault();
+    sheet.showModal();
+    open.setAttribute("aria-expanded", "true");
+    var first = sheet.querySelector("[data-menu-close]");
+    if (first) first.focus();
+  });
+  open.addEventListener("keydown", function (e) { if (e.key === " ") { e.preventDefault(); open.click(); } });
+  sheet.addEventListener("close", function () { open.setAttribute("aria-expanded", "false"); open.focus(); });
+  sheet.querySelectorAll("[data-menu-close]").forEach(function (b) { b.addEventListener("click", close); });
+  // A click on the backdrop lands on the dialog element itself.
+  sheet.addEventListener("click", function (e) { if (e.target === sheet) close(); });
+  // Same-page links (an #anchor) close the sheet before they scroll.
+  sheet.querySelectorAll("a[href]").forEach(function (a) { a.addEventListener("click", close); });
+  // Tab and Shift+Tab wrap inside the sheet.
+  sheet.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    var f = sheet.querySelectorAll("a[href],button:not([disabled])");
+    if (!f.length) return;
+    var a = f[0], z = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); }
+    else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); }
+  });
+  // Rotating to a wide screen, where the desktop nav shows, closes it.
+  var wide = window.matchMedia && window.matchMedia("(min-width: 960px)");
+  if (wide && wide.addEventListener) wide.addEventListener("change", function (m) { if (m.matches) close(); });
+})();
 // The Forge Arena. Now Playing: everyone sees the same moment, because the position comes from the clock (no
 // streaming server). Replays: reveal the referee's frames over a condensed running time.
 (function () {
@@ -565,8 +601,10 @@
   tick();
   setInterval(tick, 15000);
   setInterval(poll, 60000);
-  // A slow drift through the posts, like a terminal feed; the window shows about four at a time.
-  if (reduce || !win) return;
+  // A slow drift through the posts, like a terminal feed; the window shows about four at a time. Phones show the three
+  // latest posts, still (site audit 29 Oct, m03), so there is no drift there.
+  const phone = window.matchMedia && window.matchMedia("(max-width: 640px)").matches;
+  if (reduce || phone || !win) return;
   let paused = false;
   ["mouseenter", "focusin", "touchstart"].forEach((e) => win.addEventListener(e, () => (paused = true), { passive: true }));
   ["mouseleave", "focusout"].forEach((e) => win.addEventListener(e, () => (paused = false)));
@@ -651,6 +689,9 @@
     fetch("/agents/live.json").then(function (r) { return r.json(); }).then(function (j) {
       if (update(box, j)) box.hidden = false;
       update(work, j.work);
+      // ADR 0116 review: the band's "Counted at HH:MM UTC" follows the snapshot the refreshed numbers came from.
+      var asof = work && work.querySelector("[data-as-of]");
+      if (asof && j && typeof j.as_of === "string" && j.as_of.length >= 16) { asof.setAttribute("data-as-of", j.as_of); asof.textContent = "Counted at " + j.as_of.slice(11, 16) + " UTC."; }
     }).catch(function () {});
   };
   setInterval(refresh, 30000);
@@ -694,4 +735,23 @@
     if (p < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
+})();
+// Review of the site audit (ADR 0118): a link to something inside a folded section (a <details>, such as a trap row on
+// /benchmark or "Which models fell" on /security) opens that section first. Current browsers do this themselves; this
+// covers older ones, where the target would otherwise stay hidden.
+(function () {
+  function reveal() {
+    var id = "";
+    try { id = decodeURIComponent((location.hash || "").slice(1)); } catch (e) { return; }
+    var el = id && document.getElementById(id);
+    if (!el || !el.closest) return;
+    var d = el.closest("details"), opened = false;
+    while (d) {
+      if (!d.open) { d.open = true; opened = true; }
+      d = d.parentElement ? d.parentElement.closest("details") : null;
+    }
+    if (opened) el.scrollIntoView();
+  }
+  try { reveal(); } catch (e) { /* never block the rest of the page */ }
+  if (typeof window.addEventListener === "function") window.addEventListener("hashchange", reveal);
 })();

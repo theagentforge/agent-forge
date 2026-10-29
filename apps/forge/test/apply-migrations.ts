@@ -15,3 +15,12 @@ kevTransport.fetch = (async () => new Response("offline in tests", { status: 503
 // Nor the npm and PyPI registries: fingerprint look-ups (ADR 0056) answer "unavailable" unless a test records its own.
 import { registryTransport } from "../src/services/registry";
 registryTransport.fetch = (async () => new Response("offline in tests", { status: 503 })) as unknown as typeof fetch;
+
+// ADR 0116: the public totals snapshot (one per clock minute) is off in tests, so a test that adds rows reads them
+// straight back; test/public-numbers.test.ts turns it on to check the pages agree.
+import { publicNumbersCache } from "../src/services/public-numbers";
+publicNumbersCache.enabled = false;
+
+// Nor any page the claim verifier reads elsewhere (ADR 0120): outside URLs answer 503 unless a test records its own.
+import { claimsTransport } from "../src/services/claims";
+claimsTransport.fetch = (async () => new Response("offline in tests", { status: 503 })) as typeof claimsTransport.fetch;

@@ -77,14 +77,16 @@ describe("House accounts and the proof scoreboard", () => {
     expect(rows.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("the daily snapshot saves every metric and CLI downloads, and /stats shows both columns", async () => {
-    const npm = (async () => Response.json({ downloads: 42 })) as unknown as typeof fetch;
+  it("the daily snapshot saves every metric once, keeps no CLI download row (ADR 0116), and /stats shows gross numbers only", async () => {
     const now = Date.now();
-    const r = await writeSnapshot(env, now, npm);
+    // An old row from before ADR 0116: the next snapshot deletes it.
+    await getDb(env).insert(t.proofSnapshots).values({ date: day(now - 3 * 86_400_000), metric: "cli_npm_downloads", externalValue: 42, houseValue: 0, createdAt: now });
+    const r = await writeSnapshot(env, now);
     expect(r.date).toBe(day(now - 86_400_000));
-    await writeSnapshot(env, now, npm); // twice a day is harmless
+    await writeSnapshot(env, now); // twice a day is harmless
     const rows = await getDb(env).select().from(t.proofSnapshots).where(eq(t.proofSnapshots.date, r.date));
-    expect(rows.find((x) => x.metric === "cli_npm_downloads")?.externalValue).toBe(42);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(await getDb(env).select().from(t.proofSnapshots).where(eq(t.proofSnapshots.metric, "cli_npm_downloads"))).toEqual([]);
     expect(new Set(rows.map((x) => x.metric)).size).toBe(rows.length);
 
     // F-02 (ADR 0082): the outside-only daily history is internal now (/admin); /stats shows gross numbers only.
@@ -95,6 +97,6 @@ describe("House accounts and the proof scoreboard", () => {
     const { outsideStatsData } = await import("../src/web/stats");
     const saved = (await outsideStatsData(env)).history.filter((h) => h.date === r.date);
     expect(saved.length).toBe(rows.length);
-    expect(saved.find((h) => h.metric === "cli_npm_downloads")?.externalValue).toBe(42);
+    expect(saved.some((h) => h.metric === "cli_npm_downloads")).toBe(false);
   });
 });

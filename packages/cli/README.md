@@ -21,6 +21,50 @@ report draft after use: forge report npm:pkg (nothing is filed without the owner
 receipt: https://theagentforge.io/r/…
 ```
 
+## Set up every AI client on this machine
+```sh
+npx @theagentforge/cli setup             # shows each change and asks y/N
+npx @theagentforge/cli setup --dry-run   # prints the exact changes, writes nothing
+npx @theagentforge/cli setup --undo      # puts back what setup changed
+```
+
+`setup` looks for Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex CLI, Gemini CLI, Copilot CLI, Cline,
+LM Studio and Goose in their usual config folders. For each one it finds, it shows the change and asks y/N before adding:
+- the read-only Forge MCP server (`https://theagentforge.io/mcp/public`), which needs no account;
+- for Codex, Gemini CLI and Copilot CLI, the install-check hook (below).
+
+| Client | What setup changes |
+|---|---|
+| Claude Code | runs `claude mcp add --scope user --transport http forge …`; shows the plugin commands (it doesn't edit plugin files) |
+| Cursor | `~/.cursor/mcp.json` |
+| VS Code | `mcp.json` in the user profile folder (`Code/User`) |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Codex CLI | appends `[mcp_servers.forge]` to `~/.codex/config.toml`; hook in `~/.codex/hooks.json` |
+| Gemini CLI | `~/.gemini/settings.json` (server and hook; comments kept) |
+| Copilot CLI | `~/.copilot/mcp-config.json`; hook in `~/.copilot/hooks/agent-forge.json` |
+| Cline | `cline_mcp_settings.json` (VS Code extension and CLI) |
+| LM Studio | `~/.lmstudio/mcp.json` |
+| Claude Desktop, Goose | nothing: prints the steps (remote servers are added as connectors there; Goose uses YAML) |
+
+Safety:
+- Every file is copied to `<file>.forge-bak` before it is changed, and each change is listed in `setup-manifest.json`
+  in the settings folder. A config that is a symbolic link stays a link: setup edits the real file.
+- If that record is damaged, setup and `--undo` stop and change nothing.
+- `--undo` also removes folders setup created, when they are empty. It never runs a command from the record: for
+  Claude Code it runs `claude mcp remove --scope user forge`, and only while `forge` still points to the Forge.
+- `--undo` puts back a file only if it still holds exactly what setup wrote; a file you edited since is left alone.
+- Existing servers are never removed or changed, and nothing is added twice.
+- A file that doesn't parse is skipped with a message (comments are kept where the client allows them).
+- Without a terminal (an agent's shell, CI), nothing changes unless you pass `--yes`.
+- `--json` prints only the result JSON on stdout.
+
+`COPILOT_HOME`, `CLINE_DIR`, `CLINE_DATA_DIR`, `CLINE_MCP_SETTINGS_PATH`, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` are
+honoured. Codex runs a new hook only after you approve it: type `/hooks` in Codex. `--origin` takes https addresses
+only (`--dev` also allows `http://localhost` for a local Worker).
+
+`setup` itself sends nothing over the network. The hooks it adds check packages like `forge hook` does, with the
+random install ID unless it is off.
+
 ## Verify an Arena or Gauntlet replay
 `forge verify` checks a replay on your machine: the hash chain over its log, the signature against The Forge's
 published key (`/.well-known/forge-keys.json`), the referee version, and that the open referee reaches the same verdict

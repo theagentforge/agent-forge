@@ -80,7 +80,8 @@ describe("F-01: every chart and rate names its rules", () => {
     for (const v of b.rules_versions) expect(block).toContain(v.version.replace("rules ", ""));
     expect(block).toMatch(/30 practice and 60 ranked bouts/);
     expect(block).toContain('href="/security#arena"');
-    expect(block).toContain(`Current rules (${RULES_VERSION.replace("rules ", "")}) results`);
+    // Site audit 29 Oct: the caption is the chart's one disclosure line, with the current-rules link.
+    expect(block).toContain(`Ranked attempts under ${RULES_VERSION} only`);
   });
 
   it("the chart's JSON twin has rules_versions summing to its bouts, and the practice and ranked counts", async () => {

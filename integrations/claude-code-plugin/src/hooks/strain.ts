@@ -21,8 +21,8 @@ import { commandHash, dataRoot, emit, forgeOrigin, installsPath, linkStatePath, 
 // `show` prints the counts for the most recent session, for the agent to attach to a field report.
 // `stop` (Stop hook, ADR 0011 f) drafts reports for the MCP servers used this session, and for tools the pre-install
 // hook checked that were then installed (src/installs.ts), with the owner's one-line yes/no question as data. Never
-// sends a report anywhere: filing needs the owner's confirmation. The only network call is the npm registry lookup
-// of an installed version's fingerprint.
+// sends a report anywhere: filing needs the owner's confirmation. The only network calls are the registry lookups
+// of an installed version's fingerprint (registry.npmjs.org for npm, pypi.org for PyPI; name and version only).
 
 const WEEK_MS = 7 * 86_400_000;
 

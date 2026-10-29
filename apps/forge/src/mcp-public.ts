@@ -51,6 +51,12 @@ const json = (value: unknown, isError = false) => ({
   isError,
 });
 
+/**
+ * Every tool states all four hints as explicit booleans: OpenAI's ChatGPT/Codex review requires readOnlyHint,
+ * destructiveHint and openWorldHint on each tool (pinned in test/trap-card.test.ts). openWorldHint is false for the
+ * Arena data and fingerprint look-ups (our own bounded catalogue) and true where a tool reaches public, open-ended
+ * entities: forge_check and forge_exposure (any npm, PyPI or GitHub tool, OSV advisories), forge_scan (any public URL).
+ */
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 /** Every Arena task id: the Normal card, Hard v2, Hard v3 and Hard v3.2 (a Hard id implies the Hard tier). */
 const taskEnum = z.enum(ALL_TASKS.map((t) => t.id) as [string, ...string[]]);
@@ -307,7 +313,9 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
     return bucket === "arena" ? { ...RATE_LIMITED } : (anonymousLimited(env) as Record<string, unknown>);
   };
 
-  server.registerTool("forge_check", { ...PUBLIC_TOOLS.forge_check, inputSchema: lenient(checkInput), outputSchema: PUBLIC_OUTPUTS.forge_check, annotations: { title: PUBLIC_TOOLS.forge_check.title, ...READ_ONLY } }, async (raw) => {
+  // openWorldHint true: a check names any public npm, PyPI or GitHub tool and reads published OSV advisories for it
+  // (OpenAI's review criteria, Oct 2026: "true for public or open-ended entities, including read-only web search").
+  server.registerTool("forge_check", { ...PUBLIC_TOOLS.forge_check, inputSchema: lenient(checkInput), outputSchema: PUBLIC_OUTPUTS.forge_check, annotations: { title: PUBLIC_TOOLS.forge_check.title, ...READ_ONLY, openWorldHint: true } }, async (raw) => {
     const p = parseCheck(raw);
     if (!p.ok) return json(checkInputNeeded(raw, p.error), true);
     const q = p.query;

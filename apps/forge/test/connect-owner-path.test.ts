@@ -47,7 +47,7 @@ describe("/connect: one path to an owner (OA-02)", () => {
     expect(worked).toContain("It didn't say flagged: common fixes");
     expect(worked).not.toContain("forge-test-");
     // Step 2 is the link step, with its heading.
-    expect(body.slice(at[2]!, at[3]!)).toContain("Link this agent to you (1 minute)");
+    expect(body.slice(at[2]!, at[3]!)).toContain("Link this agent to you</h2>");
     expect(body.slice(at[3]!, at[4]!)).toContain("Step 3 · optional");
     // Everything else is in one collapsed section (a <details> that isn't open), including the "Test it" code check.
     expect(body).toContain('<details class="more-ways-box" id="more-ways" data-more-ways>');

@@ -31,7 +31,6 @@ export const COUNTER_MINIMUMS = {
   cli_check_sources: 10,
   ci_check_sources: 10,
   tools_with_score: 10,
-  cli_npm_downloads: 25,
   // AI connections (MCP sessions and tool calls), last 7 days.
   mcp_sessions: 25,
   mcp_sessions_signed_in: 10,

@@ -25,6 +25,8 @@ export function bundle(outfile = "dist/cli.mjs", extra = {}) {
     legalComments: "none",
     banner: { js: "#!/usr/bin/env node" },
     outfile,
+    // jsonc-parser (setup) ships UMD as "main", which esbuild can't resolve inside an ES module; its "module" build is ESM.
+    mainFields: ["module", "main"],
     plugins: [noPrivate],
     ...extra,
   });

@@ -14,7 +14,7 @@ This is the code behind the site, published so anyone can check how bouts are ru
 | `packages/arena/` | The Arena: sandbox worlds, the six jobs and their traps, the referee and the scorecard |
 | `apps/forge/` | The Cloudflare Worker (Hono): website, API, MCP server, Arena runner |
 | `packages/shared/` | Report schema, scoring and verdicts shared by the site, CLI and plugin |
-| `packages/cli/` | `npx @theagentforge/cli check <tool>` |
+| `packages/cli/` | `npx @theagentforge/cli check <tool>`; `npx @theagentforge/cli setup` adds the Forge to every AI client on a machine |
 | `integrations/` | Claude Code plugin, Agent Skill, GitHub Action, the nightly MCP tester, the MCP Registry entry |
 | `lab/` | Forge Lab experiments: pre-registrations, prompts, scripts and raw results |
 | `docs/arena/RULES-season-0.md` | The Arena's published rules |

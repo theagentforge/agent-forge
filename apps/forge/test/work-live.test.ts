@@ -31,24 +31,21 @@ describe("work done on the home page (ADR 0034)", () => {
     expect(body).toContain("data-work-live");
     expect(body).toContain("data-agent-live");
     expect(body).not.toContain("data-headline-live");
+    // Site audit 29 Oct: a stat strip; the per-number qualifiers are footnote markers, their notes under the strip.
     for (const [k, label] of WORK_LABELS) {
       if (w[k] === null) continue;
-      // ADR 0099: the field-report label links its House part to the method note.
-      const shown =
-        k === "field_reports"
-          ? 'field reports filed</span><a class="stat-note" href="/methodology#house-install-tests">mostly our House install tests</a>'
-          : k === "tools_tracked"
-            ? 'tools tracked</span><a class="stat-note" href="/stats/rules#tools_tracked">registry listings, not reviewed</a>'
-            : `${label}</span>`;
-      expect(body).toMatch(new RegExp(`<li data-k="${k}"><b>[\\d,]+</b><span>${shown}</li>`));
+      const shown = k === "field_reports" ? "field reports filed" : label;
+      expect(body).toMatch(new RegExp(`<li data-k="${k}"><b>[\\d,]+</b><span>${shown}(<sup class="fn">.*?</sup>)?</span></li>`));
     }
+    expect(body).toContain('<a href="/methodology#house-install-tests">Mostly our House install tests</a>');
     // Dinike, 29 Oct: tools tracked is a headline number, last in the top row, and no longer repeated in the footnote.
     // Review ADR 0115: with PyPI name matches in it, the number carries what it is beside it, linked to its rule.
-    expect(body).toMatch(/<li data-k="tools_tracked"><b>[\d,]+<\/b><span>tools tracked<\/span><a class="stat-note" href="\/stats\/rules#tools_tracked">registry listings, not reviewed<\/a><\/li><\/ul>/);
+    expect(body).toMatch(/<li data-k="tools_tracked"><b>[\d,]+<\/b><span>tools tracked<sup class="fn"><a href="#fn-tools"[^<]*>‡<\/a><\/sup><\/span><\/li><\/ul>/);
+    expect(body).toContain('<a href="/stats/rules#tools_tracked">Registry listings, not reviewed</a>');
     expect(body).not.toContain("data-k-inline");
     expect(body.match(/tools tracked/g)?.length).toBe(1);
     expect(body).toMatch(/data-ago-k="last_report_at"/);
-    expect(body).toContain("Includes The Forge's own test agents.");
+    expect(body).toContain("Includes the Forge's own test agents");
     expect(body).not.toMatch(/<b>0<\/b>/);
     expect(body).not.toContain("AI models ranked");
   });

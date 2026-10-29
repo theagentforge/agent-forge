@@ -159,7 +159,6 @@ export function render(stats, date, arena = null, growth = null, learningText = 
     const ext = v.below_minimum ? `under ${v.minimum}` : `**${n(v.external)}**`;
     return `| ${label} | ${ext} ${change ? `(${change})` : ""} | ${n(v.house)} |`;
   });
-  const downloads = (stats.history ?? []).filter((h) => h.metric === "cli_npm_downloads" && typeof h.externalValue === "number").at(-1);
   return [
     `Numbers for ${date}. **External** is people outside the project, the only numbers that count as proof. **House** is our own test agents.`,
     "",
@@ -170,8 +169,6 @@ export function render(stats, date, arena = null, growth = null, learningText = 
     "| | External | House |",
     "|---|---|---|",
     ...rows,
-    "",
-    downloads ? `CLI downloads on ${downloads.date}: **${n(downloads.externalValue)}**.` : "CLI downloads: not recorded yet.",
     "",
     ...(growthLine(growth) ? [growthLine(growth), ""] : []),
     ...(funnelLine(growth) ? [funnelLine(growth), ""] : []),

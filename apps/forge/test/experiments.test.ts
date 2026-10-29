@@ -91,10 +91,25 @@ describe("the experiments block shows both experiments together", () => {
     for (const m of new Set(names)) expect(block).not.toContain(m);
   };
 
-  it("on the home page, high up, before the Arena", async () => {
+  it("on the home page as one result card, both experiments side by side, after the Arena (site audit §3.1)", async () => {
     const body = await (await fetchWorker("/", { headers: { Accept: "text/html" } })).text();
-    check(body, "home-lab");
-    expect(body.indexOf('id="experiments"')).toBeLessThan(body.indexOf('id="arena-title"') > 0 ? body.indexOf('id="arena-title"') : Infinity);
+    const a = body.indexOf('id="experiment-3"'), b = body.indexOf('id="experiment-4"');
+    expect(a).toBeGreaterThan(-1);
+    expect(b).toBeGreaterThan(a);
+    expect(body.slice(body.lastIndexOf('<div class="exp-grid">', a), b)).not.toContain("</section>");
+    // Numbers as computed, with the interval, n and p one footnote away.
+    expect(body).toContain(`fell for ${pct(e3.stats.fewer)}% fewer traps with the card</b>, on new versions of the jobs.`);
+    expect(body).toContain(`95% interval ${intervalText(e3.stats)}`);
+    expect(body).toContain(`${e3.stats.card.n} per arm`);
+    expect(body).toContain(`95% interval ${intervalText(e4.stats)}`);
+    expect(body).toContain('href="/lab/3/results?from=home-lab">Method (Lab #3)</a>');
+    expect(body).toContain('href="/lab/4/results?from=home-lab">Method (Lab #4)</a>');
+    const arena = body.indexOf('id="arena-title"');
+    if (arena > 0) expect(body.indexOf('id="experiments"')).toBeGreaterThan(arena);
+    // No model names in the card.
+    const block = body.slice(body.lastIndexOf('<div class="exp-grid">', a), body.indexOf("</article>", b));
+    const names = [...[...lab3Counts, ...lab4Counts].map((r) => r.model), ...[...ALL_MODELS, ...EMBARGOED_LINEUP].flatMap((m) => [m.id, m.name])];
+    for (const m of new Set(names)) expect(block).not.toContain(m);
   });
 
   it("on /trap-card, above the paste guides", async () => {

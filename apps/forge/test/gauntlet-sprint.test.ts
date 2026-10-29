@@ -323,7 +323,9 @@ describe("counting (acceptance test 7)", () => {
 
 describe("pages and entry points", () => {
   it("/gauntlet, /connect, the home page and /benchmark/submit offer the Sprint with the app picker; /benchmark labels it apart", async () => {
-    for (const p of ["/gauntlet", "/connect", "/", "/gauntlet/sprint"]) {
+    // Site audit 29 Oct: the home page links to the Sprint page in one line instead of carrying the picker.
+    expect(await (await get("/")).text()).toContain('Short on time? <a href="/gauntlet/sprint?from=home-hero">Try the 90-second Sprint</a>.');
+    for (const p of ["/gauntlet", "/connect", "/gauntlet/sprint"]) {
       const html = await (await get(p)).text();
       expect(html, p).toContain("Run the 90-second Sprint");
       expect(html, p).toContain("claude mcp add --scope user --transport http forge-gauntlet");

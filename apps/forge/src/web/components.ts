@@ -157,3 +157,62 @@ export function fieldReportsLabel(capital = false) {
   const lead = capital ? m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1) : m[1]!;
   return html`${lead} (<a href="${HOUSE_METHOD_PATH}">${m[2]}</a>)`;
 }
+
+// ---- Site audit 29 Oct, batch A: shared blocks for the page batches (styles in public/site.css) ----
+
+/**
+ * `.disclosure`: the one caption line a block's caveat lives in, said once per block (audit §4 rule 5), with its
+ * counting-rule link. Example: disclosure("All counts include our own test agents and checks.", { href: "/methodology#counting", label: "How we count" }).
+ */
+export function disclosure(text: unknown, link?: { href: string; label: string }) {
+  return html`<p class="disclosure">${text}${link ? html` <a href="${link.href}">${link.label}</a>` : ""}</p>`;
+}
+
+/**
+ * `.fn`: a footnote marker after a number or word, linked to its note. Pair it with fnNote(id, mark, text) directly
+ * under the block. `id` must be unique on the page (letters, digits and dashes).
+ */
+export function fn(id: string, mark = "†") {
+  return html`<sup class="fn"><a href="#fn-${id}" id="fnref-${id}" aria-describedby="fn-${id}">${mark}</a></sup>`;
+}
+export function fnNote(id: string, mark: string, text: unknown) {
+  return html`<p class="fn-note" id="fn-${id}"><span class="fn-mark" aria-hidden="true">${mark}</span> ${text}</p>`;
+}
+
+/**
+ * `.more`: a styled <details> for anything one click down (methods, long tables, system words: audit §4 rule 6).
+ * `hint` is an optional one-line summary shown beside the title while closed (for example "35 rules in 12 families").
+ */
+export function more(title: unknown, body: unknown, o: { hint?: unknown; open?: boolean; id?: string } = {}) {
+  return html`<details class="more"${o.id ? html` id="${o.id}"` : ""}${o.open ? raw(" open") : ""}><summary><span class="more-title">${title}</span>${o.hint ? html`<span class="more-hint">${o.hint}</span>` : ""}</summary><div class="more-body">${body}</div></details>`;
+}
+
+/** One number in a stat strip. `k` is the key the live refresh (site.js, li[data-k] > b) updates; null hides it until it has a value. */
+export interface Stat {
+  value: number | string | null;
+  label: unknown;
+  k?: string;
+  /** A footnote marker id, rendered with fn(); put the matching fnNote() in the strip's `notes`. */
+  fn?: { id: string; mark?: string };
+}
+
+/**
+ * `.stat-strip`: the number, then what it counts (audit §4 rule 4). `main` holds up to 5 big numbers; `secondary` up
+ * to 4 smaller ones in a compact row beneath (a 5th, the home page's install checks once past their minimum, wraps to
+ * the next line rather than being dropped) (Dinike, 29 Oct: all 9 home numbers stay). One `caption` (use
+ * disclosure()) and any footnotes sit under the whole strip, once. `attrs` adds data-* hooks to the wrapper, for
+ * example { "data-work-live": "" } for the live refresh.
+ */
+export function statStrip(o: { main: Stat[]; secondary?: Stat[]; caption?: unknown; notes?: unknown[]; label?: string; attrs?: Record<string, string> }) {
+  const item = (s: Stat) =>
+    html`<li${s.k ? html` data-k="${s.k}"` : ""}${s.value === null ? raw(" hidden") : ""}><b>${s.value === null ? "" : typeof s.value === "number" ? s.value.toLocaleString("en-US") : s.value}</b><span>${s.label}${s.fn ? fn(s.fn.id, s.fn.mark) : ""}</span></li>`;
+  const attrs = Object.entries(o.attrs ?? {})
+    .filter(([k]) => /^data-[a-z0-9-]+$/.test(k))
+    .map(([k, v]) => html` ${raw(k)}${v === "" ? "" : html`="${v}"`}`);
+  const sec = o.secondary ?? [];
+  return html`<div class="stat-strip${sec.length ? " has-secondary" : ""}"${o.label ? html` role="group" aria-label="${o.label}"` : ""}${attrs}>
+<ul class="ss-main" data-count="${Math.min(o.main.length, 5)}">${o.main.slice(0, 5).map(item)}</ul>
+${sec.length ? html`<ul class="ss-secondary">${sec.slice(0, 5).map(item)}</ul>` : ""}
+${o.caption ?? ""}${(o.notes ?? []).length ? html`<div class="fn-notes">${o.notes}</div>` : ""}
+</div>`;
+}
