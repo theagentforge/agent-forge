@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { BYOK_FALLBACK_KV, BYOK_HOLD_KV, opsCallAllowed } from "../src/arena/credit";
 import { DECOYS, judge, OURS, PROMPTS, runSelection, score, TOOL_LIST } from "../src/ops/tool-selection";
 import { fetchWorker } from "./helpers";
 import "../src/index";
@@ -33,7 +34,7 @@ describe("running a slice", () => {
       const body = JSON.parse(String(init.body)) as { tools: { function: { name: string } }[]; messages: { content: string }[] };
       seen.push(body.tools.map((t) => t.function.name));
       const pick = body.messages[1]!.content.includes("weather") ? null : "forge_check";
-      return Response.json({ choices: [{ message: { content: pick ? null : "Sunny.", tool_calls: pick ? [{ id: "c1", type: "function", function: { name: pick, arguments: "{}" } }] : [] } }], usage: { prompt_tokens: 900, completion_tokens: 20, cost: 0.003 } });
+      return Response.json({ choices: [{ message: { content: pick ? null : "Sunny.", tool_calls: pick ? [{ id: "c1", type: "function", function: { name: pick, arguments: "{}" } }] : [] } }], usage: { prompt_tokens: 900, completion_tokens: 20, cost: 0, is_byok: true, cost_details: { upstream_inference_cost: 0.003 } } });
     }) as unknown as typeof fetch;
     const r = await runSelection({ ...env, OPENROUTER_API_KEY: "k" }, "claude-sonnet-5.5", 20, 23, fetcher);
     expect(r.rows.map((x) => [x.i, x.chose, x.correct])).toEqual([
@@ -43,6 +44,23 @@ describe("running a slice", () => {
     ]);
     expect(seen[0]).toEqual(TOOL_LIST.map((t) => t.name));
     expect(score(r.rows)).toMatchObject({ false_triggers: 2, n_not: 3, accuracy: null });
+  });
+
+  it("a Claude call billed to OpenRouter credit (usage type Credits, not BYOK) stops the slice and holds Claude for an hour", async () => {
+    await env.KV.delete(BYOK_HOLD_KV);
+    let calls = 0;
+    const fetcher = (async () => {
+      calls++;
+      return Response.json({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "forge_check", arguments: "{}" } }] } }], usage: { prompt_tokens: 900, completion_tokens: 20, cost: 0.004, is_byok: false } });
+    }) as unknown as typeof fetch;
+    const r = await runSelection({ ...env, OPENROUTER_API_KEY: "k" }, "claude-sonnet-5.5", 0, 5, fetcher);
+    expect(calls).toBe(1);
+    expect(r.rows).toHaveLength(1);
+    expect(r).toMatchObject({ held: "byok", cost: 0.004 });
+    expect(await env.KV.get(BYOK_HOLD_KV)).not.toBeNull();
+    expect(await opsCallAllowed({ ...env, OPENROUTER_API_KEY: "k" }, true)).toMatchObject({ ok: false });
+    await env.KV.delete(BYOK_HOLD_KV);
+    await env.KV.delete(BYOK_FALLBACK_KV);
   });
 
   it("only the tool-selection workflow may start a run", async () => {

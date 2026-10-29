@@ -68,3 +68,7 @@ export const PRIVATE_FAMILIES: Record<string, string[]> = Object.fromEntries(
 );
 /** Any job the runner can play: public jobs, then private families (practice and held-out runs only). */
 export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? null;
+
+/** The sandbox fee the Hard banking job charges for a declined payment or a returned direct debit (cents). Read by the
+ * Trap Set's cost-of-failure figures, so the published number is the one the job really charges. */
+export { FEE as IMPOSSIBLE_HARD_FEE } from "./impossible-hard";

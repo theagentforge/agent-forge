@@ -1,5 +1,6 @@
-// Daily Ops Digest (MASTER_PLAN §7.5): reads the public /stats JSON and opens one GitHub issue with the numbers, so
-// they reach Dinike's phone. Closes the previous digest. Usage: node digest.mjs https://theagentforge.io
+// Daily Ops Digest (MASTER_PLAN §7.5): reads the outside-only numbers from the OIDC-gated /api/v1/ops/internal-stats
+// (public /stats is gross only since F-02, ADR 0082/0085) and opens one GitHub issue with the numbers, so they reach
+// Dinike's phone. Closes the previous digest. Usage: node digest.mjs https://theagentforge.io
 import { gatherSocial, learning, learningSection } from "./learning.mjs";
 import { scoutSection } from "./scout.mjs";
 const LABELS = [
@@ -122,7 +123,30 @@ export function kpiLine(k) {
   return [head, "", "| KPI | Now | First target | Second target | Status |", "|---|---|---|---|---|", ...rows].join("\n");
 }
 
-export function render(stats, date, arena = null, growth = null, learningText = null, citations = null, scoutText = null, kpis = null) {
+/**
+ * OA-11 (owner acquisition plan, ADR 0078): the owner funnel, four lines, from the private Scout snapshot
+ * (/api/v1/ops/scout-signals `owner_funnel`). Counts only, never names. A counter never written says "not yet measured".
+ */
+export function ownerLines(o) {
+  if (!o) return ["**Owners:** not available today (no Scout snapshot with owner numbers)."];
+  if (o.error) return [`**Owners:** not available today (${String(o.error).slice(0, 120)}).`];
+  const nm = (x) => (x === null || x === undefined ? "not yet measured" : Number(x).toLocaleString("en-US"));
+  const src = Object.entries(o.new_owners_yesterday?.by_source ?? {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const total = o.new_owners_yesterday?.total;
+  const newLine = total === null || total === undefined ? "not yet measured" : `**${nm(total)}**${src.length ? ` (${src.map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}`;
+  const a = o.active_owners_30d ?? {};
+  const steps = o.connect_7d?.steps ?? [];
+  const stepText = steps.map((s) => `${s.label} ${nm(s.n)}`).join(" → ");
+  const drop = o.connect_7d?.biggest_drop ?? (steps.some((s) => s.n === null) ? "not yet measured" : "none yet");
+  return [
+    `**Owners, new on ${o.day ?? "yesterday"} by source:** ${newLine}.`,
+    `**Active owners, last 30 days:** **${nm(a.active)}** of ${nm(a.owners)} owners (connected an app ${nm(a.connected_active)}, web-only ${nm(a.web_only_active)}).`,
+    `**/connect, last 7 days, biggest drop:** ${drop}. Steps: ${stepText || "not yet measured"}; said no ${nm(o.connect_7d?.said_no)}.`,
+    `**Waiting on you:** ${nm(o.pending_claims?.claims)} pending sandbox claims (${nm(o.pending_claims?.people)} people), ${nm(o.reviews_waiting)} review requests at /admin/owners.`,
+  ];
+}
+
+export function render(stats, date, arena = null, growth = null, learningText = null, citations = null, scoutText = null, kpis = null, owners = undefined, internalError = null) {
   const prev = new Map();
   const days = [...new Set((stats.history ?? []).map((h) => h.date))].sort();
   const before = days.at(-2);
@@ -139,7 +163,10 @@ export function render(stats, date, arena = null, growth = null, learningText = 
   return [
     `Numbers for ${date}. **External** is people outside the project, the only numbers that count as proof. **House** is our own test agents.`,
     "",
+    // F-02 (ADR 0082, 0085): the outside-only numbers come from the OIDC-gated internal endpoint; say so when they didn't.
+    ...(internalError ? [`**Outside-only numbers:** not available today (${String(internalError).slice(0, 160)}). The External column and the outside-only growth lines are blank; /stats and /api/v1/growth show gross numbers only.`, ""] : []),
     ...(kpiLine(kpis) ? [kpiLine(kpis), ""] : []),
+    ...(owners === undefined ? [] : [...ownerLines(owners), ""]),
     "| | External | House |",
     "|---|---|---|",
     ...rows,
@@ -169,7 +196,8 @@ async function gh(method, path, body) {
   return res.json();
 }
 
-async function latestKpis(now) {
+/** The newest Scout snapshot's own signals (kpis, owner_funnel…): today's, else yesterday's or the day before. */
+async function latestSignals(now) {
   for (const back of [0, 1, 2]) {
     const d = new Date(now - back * 86_400_000).toISOString().slice(0, 10);
     // Raw media type: snapshots can pass the contents API's 1 MB inline limit.
@@ -177,20 +205,47 @@ async function latestKpis(now) {
       headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github.raw+json" },
     });
     if (!res.ok) continue;
-    const k = (await res.json())?.sources?.ours?.scout_signals?.kpis;
-    if (k?.kpis?.length) return k;
+    const sig = (await res.json())?.sources?.ours?.scout_signals;
+    if (sig?.kpis?.kpis?.length || sig?.owner_funnel) return sig;
   }
   return null;
 }
 
+/**
+ * The outside-only numbers (F-02, Dinike 28 Oct: "only privately for our internal evaluation"; ADR 0082, 0085): since
+ * /stats and /api/v1/growth went gross, the digest reads them from /api/v1/ops/internal-stats with this workflow's
+ * GitHub OIDC token (ops-digest.yml on main; the Worker accepts nothing else). `{ data }` or `{ error }`, never a throw.
+ */
+export async function internalStats(origin, env = process.env, fetcher = fetch) {
+  const { ACTIONS_ID_TOKEN_REQUEST_URL: url, ACTIONS_ID_TOKEN_REQUEST_TOKEN: requestToken } = env;
+  if (!url || !requestToken) return { error: "no OIDC token: the workflow needs id-token: write" };
+  try {
+    const t = await fetcher(`${url}&audience=${encodeURIComponent(origin)}`, { headers: { Authorization: `Bearer ${requestToken}` } });
+    if (!t.ok) return { error: `OIDC token: HTTP ${t.status}` };
+    const jwt = (await t.json())?.value;
+    if (typeof jwt !== "string") return { error: "OIDC token: no value" };
+    const res = await fetcher(`${origin}/api/v1/ops/internal-stats`, { headers: { Authorization: `Bearer ${jwt}`, Accept: "application/json" } });
+    if (!res.ok) return { error: `internal stats: HTTP ${res.status}` };
+    const data = await res.json();
+    return data?.stats_page && data?.growth ? { data } : { error: "internal stats: unexpected shape" };
+  } catch (e) {
+    return { error: String(e?.message ?? e).slice(0, 160) };
+  }
+}
+
 async function main() {
   const origin = process.argv[2] ?? "https://theagentforge.io";
-  const res = await fetch(`${origin}/stats?format=json`, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`stats ${res.status}`);
-  const stats = await res.json();
+  const internal = await internalStats(origin);
+  let stats = internal.data?.stats_page ?? null;
+  if (!stats) {
+    // Fallback: the public page (gross only since F-02), so the rest of the digest still goes out.
+    const res = await fetch(`${origin}/stats?format=json`, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`stats ${res.status}`);
+    stats = await res.json();
+  }
   const date = new Date().toISOString().slice(0, 10);
   const arena = await fetch(`${origin}/api/v1/arena/status`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const growth = await fetch(`${origin}/api/v1/growth`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const growth = internal.data?.growth ?? (await fetch(`${origin}/api/v1/growth`).then((r) => (r.ok ? r.json() : null)).catch(() => null));
   // Mondays: the weekly learning report on X posts (social strategy §9.9). A failure here never stops the digest.
   const now = Date.now();
   const learningText =
@@ -219,9 +274,10 @@ async function main() {
     .then(([briefs, a, b]) => scoutSection({ briefs, proposals: [...a, ...b.filter((x) => !a.some((y) => y.number === x.number))], now }))
     .catch((e) => `Forge Scout checks: not available today (${e.message}).`);
   // The growth KPIs from the newest Forge Scout snapshot (scout-data branch); yesterday's if today's isn't in yet.
-  const kpis = await latestKpis(now).catch(() => null);
+  const signals = await latestSignals(now).catch(() => null);
+  const kpis = signals?.kpis?.kpis?.length ? signals.kpis : null;
   const old = await gh("GET", "/issues?state=open&labels=ops-digest&per_page=10");
-  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations, scoutText, kpis), labels: ["ops-digest"] });
+  const issue = await gh("POST", "/issues", { title: `Ops Digest ${date}`, body: render(stats, date, arena, growth, learningText, citations, scoutText, kpis, signals?.owner_funnel ?? null, internal.error ?? null), labels: ["ops-digest"] });
   const rel = releaseIssue(arena, date);
   if (rel) await gh("POST", "/issues", rel);
   // Money rule: at 80% of the Arena budget, ask Dinike once a month (ADR 0012 §2).

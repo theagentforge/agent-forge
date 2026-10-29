@@ -1,5 +1,5 @@
 name: Forge skill scan
-description: Scans agent skill files in pull requests for hidden instructions, piped installs and key theft. No file leaves GitHub.
+description: Scans agent skill files in PRs for hidden instructions and key theft. No file leaves GitHub; sends nothing by default.
 author: The Agent Forge
 branding:
   icon: shield
@@ -41,6 +41,10 @@ inputs:
     description: "A file for the last run's results, so the job summary says what changed since then (newer scan rules, changed files, findings that appeared or went away). Keep it between runs with actions/cache, for example ${{ runner.temp }}/forge-skill-scan-state.json; don't commit it. Default empty: no memory."
     required: false
     default: ""
+  count-run:
+    description: "false (default) sends nothing. true (opt-in) sends one anonymous count per run to The Forge (theagentforge.io/api/v1/install-outcome) with the outcome only (blocked, findings or clear): no file, path, finding, repository or account. Like any web request it reaches The Forge from the runner's network address, which Cloudflare's request logs keep for up to 7 days; the count itself stores none. DO_NOT_TRACK=1 in the job's environment always wins: nothing is sent even with true."
+    required: false
+    default: "false"
 outputs:
   files:
     description: How many files were scanned.

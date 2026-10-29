@@ -1,12 +1,22 @@
 import skillMd from "../../public/skill.md";
+import { rightOfReply } from "./right-of-reply";
+import { maintainerResponse } from "./maintainer-response";
 import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSummary, type ScanFinding, type ScanSeverity } from "@forge/shared";
 import { html } from "hono/html";
 import { reached } from "../services/counters";
 import { getDb } from "../services/db";
 import { clawhubPage, fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
 import { recordMiss, scanMissLabel } from "../services/misses";
+import { bulkSummary, pct, type BulkSummary } from "../services/bulk-scan";
 import { recordBadgeReferrer } from "../services/growth";
 import { bump, scanCounters } from "../services/usage";
+import { internalCaller, internalKey } from "../services/internal";
+
+/** ADR 0067: a web scan by one of our tagged callers counts apart (internal:<component>:scans), never as outside use. */
+export const webScanKeys = (headers: Pick<Headers, "get">, verdict: string, from: string[]) => {
+  const ours = internalCaller(headers);
+  return ours ? [internalKey(ours, "scans")] : [...scanCounters("web", verdict), ...from];
+};
 import { AGENT_LINE } from "./agent-line";
 import { patternPhrase } from "./scan-words";
 import { badgeSvg } from "./badge";
@@ -98,7 +108,7 @@ ${scanForm()}
 <section><h2>Let your agent check for itself</h2><p>Paste this into your agent once. It then checks each skill before installing it, and rechecks installed ones weekly: one small request.</p>${copyBlock("agent-line", AGENT_LINE(origin))}
 <p class="small muted">The <a href="/skill.md">skill file</a> is plain text: read it first. Fingerprint: <span class="mono">${ownFp}</span>. It passes this scanner and never tells your agent to fetch and follow anything.</p></section>
 ${SKILL_SCAN_ACTION_LIVE ? html`<section><h2>In every pull request</h2><p>The free <a href="https://github.com/theagentforge/skill-scan">skill-scan GitHub Action</a> runs the same rules on each pull request: one short comment, with notes on flagged lines. No file leaves GitHub.</p>${copyBlock("action-yaml", "- uses: theagentforge/skill-scan@v1")}</section>` : ""}
-${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skills scanned so far · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
+${stats ? html`<p class="small muted">${reached("skills_scanned", stats.unique) ? html`${stats.unique.toLocaleString("en-US")} skill files scanned so far, our launch and bulk scans included (<a href="/stats/rules#skills_scanned">how it's counted</a>) · ` : ""}<a href="/skill-watch">Skill Watch</a> · <a href="/scan/rules">The rules</a></p>` : ""}`,
   });
 });
 
@@ -114,7 +124,7 @@ site.post("/scan", async (c) => {
   if (!success) body = html`<p class="notice warn">Too many scans from your connection. Try again in a minute.</p>`;
   else if (pasted.trim()) {
     const { result, isPublic } = await scanAndRecord(c.env, pasted.slice(0, SCAN_MAX_BYTES));
-    c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
+    c.executionCtx.waitUntil(bump(c.env, webScanKeys(c.req.raw.headers, result.verdict, from)).catch(() => {}));
     body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Share this result</a></p>` : html`<p class="small muted">Pasted text that isn't flagged gets no public page.</p>`);
   } else if (url) {
     const got = await fetchSkillText(url);
@@ -123,7 +133,7 @@ site.post("/scan", async (c) => {
       body = html`<p class="notice warn">${got.error === "unsupported_url" ? "We can't read that link. Use a ClawHub skill page, a GitHub link (file, folder or repository), a GitLab, Gist, Codeberg, unpkg or jsDelivr link to the file, or paste the text." : got.error === "not_found" ? "No SKILL.md at that link. If the repository keeps skills in folders, paste the link to the skill's folder on GitHub. For ClawHub, use the skill's page (clawhub.ai/owner/skills/name)." : got.error === "too_large" ? "That file is over 256 KB." : "We couldn't fetch that file. Check the link is public."}</p>`;
     else {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
-      c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), ...from]).catch(() => {}));
+      c.executionCtx.waitUntil(bump(c.env, webScanKeys(c.req.raw.headers, result.verdict, from)).catch(() => {}));
       body = resultBlock(result, isPublic ? html`<p><a class="btn chamfer" href="${scanPath(result.fingerprint)}">Share this result</a></p>` : "");
     }
   } else body = html`<p class="notice warn">Give a link or paste the text.</p>`;
@@ -210,6 +220,8 @@ ${claw
         ? html`<p class="small mono source-link"><a href="${row.sourceUrl}" rel="nofollow ugc">${row.sourceUrl.replace(/^https:\/\//, "")}</a></p>`
         : ""}
 ${resultBlock({ verdict: row.verdict, counts: row.counts as Record<ScanSeverity, number>, findings, fingerprint: row.fingerprint, rulesVersion: row.rulesVersion })}
+${maintainerResponse(row)}
+${rightOfReply(row)}
 <section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", shareLine(row.verdict, findings, `${page}?from=share`))}</div>
 ${shareButtons(shareLine(row.verdict, findings, `${page}?from=share-x`), `${page}?from=share-li`)}
 ${row.sourceUrl && row.verdict === "clear" ? html`<p>Your skill? Add this badge to its README. It shows the latest scan of this file:</p><div class="copy-wrap">${copyBlock("badge-md", `[![Forge scan](${origin}/scan/badge.svg?url=${encodeURIComponent(row.sourceUrl)})](${page})`)}</div>` : ""}
@@ -222,11 +234,11 @@ ${checkYours(origin, "result")}`,
 
 site.get("/skill-watch", async (c) => {
   const db = getDb(c.env);
-  const [stats, flagged] = await Promise.all([scanStats(db), recentPublic(db, ["flagged", "caution"], 60)]);
+  const [stats, flagged, bulk] = await Promise.all([scanStats(db), recentPublic(db, ["flagged", "caution"], 60), bulkSummary(c.env).catch(() => null)]);
   const freq = ruleFrequency(flagged).slice(0, 8);
   const rule = (id: string) => SCAN_RULES.find((x) => x.id === id);
   if (c.req.query("format") === "json")
-    return c.json({ rules_version: SCAN_RULES_VERSION, stats, rule_frequency: freq.map(([id, n]) => ({ rule: id, skills: n })), recent: flagged.map((r) => ({ fingerprint: r.fingerprint, verdict: r.verdict, source_url: r.sourceUrl, counts: r.counts, first_seen: new Date(r.firstSeen).toISOString(), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(r.fingerprint)}` })) });
+    return c.json({ rules_version: SCAN_RULES_VERSION, stats, rule_frequency: freq.map(([id, n]) => ({ rule: id, skills: n })), bulk_scan: bulk ? { ...bulk, rules_url: `${c.env.PUBLIC_ORIGIN}/scan/rules`, counting_rule_url: `${c.env.PUBLIC_ORIGIN}/skill-watch#bulk-scan` } : null, recent: flagged.map((r) => ({ fingerprint: r.fingerprint, verdict: r.verdict, source_url: r.sourceUrl, counts: r.counts, first_seen: new Date(r.firstSeen).toISOString(), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(r.fingerprint)}` })) });
   return send(c, {
     title: "Skill Watch",
     description: "Agent skills that matched risky patterns in the Forge's free scanner, newest first, with every flagged line.",
@@ -237,9 +249,10 @@ site.get("/skill-watch", async (c) => {
 <h1 class="page-title">What skills tell agents to do</h1>
 <p class="lead">Public skills that matched a risky pattern, newest first. Each links to the exact lines. A match is a reason to read, not a verdict on the author.</p>
 <p><a class="btn primary chamfer" href="#check-yours">Scan your skill</a></p>
-${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skills scanned</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> with a high-risk pattern</li><li><b>${stats.caution.toLocaleString("en-US")}</b> with a medium-risk pattern</li></ul>` : ""}
+${reached("skills_scanned", stats.unique) ? html`<ul class="stat-row"><li><b>${stats.unique.toLocaleString("en-US")}</b> skill files scanned, our launch and bulk scans included</li><li><b>${stats.flagged.toLocaleString("en-US")}</b> with a high-risk pattern</li><li><b>${stats.caution.toLocaleString("en-US")}</b> with a medium-risk pattern</li></ul>` : ""}
 ${reached("skills_scanned", stats.unique) ? html`<p class="small muted">Counts include security courses and scanner tests, which quote attacks on purpose, and results held back while we contact maintainers. The <a href="/reports/skill-scan-2026-10?from=skill-watch">launch report</a> separates them: 30 of 9,014 ordinary skills matched a high-risk pattern.</p>` : ""}
 <p class="small muted">${FLAG_NOTE}</p>
+${bulk ? bulkSection(bulk) : ""}
 ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table"><thead><tr><th>Pattern</th><th class="num">Skills</th></tr></thead><tbody>${freq.map(([id, n]) => html`<tr><td><a href="/scan/rules#${id}">${rule(id)?.title ?? id}</a></td><td class="num">${n}</td></tr>`)}</tbody></table></section>` : ""}
 <section><h2>Newest</h2>${
       flagged.length
@@ -256,6 +269,21 @@ ${freq.length ? html`<section><h2>Most common patterns</h2><table class="table">
 ${checkYours(c.env.PUBLIC_ORIGIN, "skill-watch")}`,
   });
 });
+
+/**
+ * The bulk scan's rates (B3-11, ADR 0107; run by the Worker's cron since ADR 0112): counts only, no names. A match is a
+ * pattern, never called malicious; files that matched one get no page from the bulk scan.
+ */
+export function bulkSection(b: BulkSummary) {
+  const n = (x: number) => x.toLocaleString("en-US");
+  return html`<section id="bulk-scan"><h2>Every public skill we can reach</h2>
+<p>Each week we read every public SKILL.md we can lawfully reach (ClawHub's public catalogue and public GitHub skill repositories) and run the same rules on it. We read the files; we never run them. So far: <b>${n(b.files)}</b> distinct files.</p>
+<ul class="stat-row"><li><b>${pct(b.high_rate)}</b> matched a high-risk pattern (${n(b.high_pattern)} files)</li><li><b>${pct(b.medium_rate)}</b> matched only medium-risk patterns (${n(b.medium_pattern_only)})</li><li><b>${n(b.no_pattern)}</b> matched no known pattern</li></ul>
+${b.sources.length ? html`<table class="table stack"><thead><tr><th>Source</th><th class="num">Files</th><th class="num">High-risk pattern</th><th class="num">Medium only</th></tr></thead><tbody>${b.sources.map((s) => html`<tr><td>${s.label}</td><td class="num" data-label="Files">${n(s.files)}</td><td class="num" data-label="High-risk pattern">${pct(s.high_rate)}</td><td class="num" data-label="Medium only">${pct(s.medium_rate)}</td></tr>`)}</tbody></table>` : ""}
+${b.families.length ? html`<table class="table stack"><thead><tr><th>Kind of pattern</th><th class="num">Files with a high-risk match</th><th class="num">Share of all files</th><th class="num">Medium-risk matches</th></tr></thead><tbody>${b.families.map((f) => html`<tr><td>${f.label}</td><td class="num" data-label="High-risk">${n(f.files_high)}</td><td class="num" data-label="Share">${pct(f.high_rate)}</td><td class="num" data-label="Medium">${n(f.files_medium)}</td></tr>`)}</tbody></table>` : ""}
+<p class="small muted">How it's counted: distinct files by sha256 fingerprint (so each version of a skill is its own file), each counted once, under the bulk source that first read it. A pattern match is a reason to read the line, not proof of malice. Nobody has read these matches by hand yet, and they include security courses and examples that quote attacks on purpose. The bulk scan gives no public page to a file that matched a pattern (one appears only if someone scans that link here, like any link scan); files with no match get a page. ClawHub files are labelled by skill name only, because ClawHub's file API doesn't say which publisher's file it returned. Numbers as of ${b.as_of.slice(0, 10)}.</p>
+</section>`;
+}
 
 const xmlEsc = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[ch]!);
 
@@ -320,7 +348,7 @@ site.post("/go", async (c) => {
     const got = success ? await fetchSkillText(q) : null;
     if (got?.ok) {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
-      c.executionCtx.waitUntil(bump(c.env, [...scanCounters("web", result.verdict), `scan:from:${from}`]).catch(() => {}));
+      c.executionCtx.waitUntil(bump(c.env, webScanKeys(c.req.raw.headers, result.verdict, [`scan:from:${from}`])).catch(() => {}));
       if (isPublic) return c.redirect(`${scanPath(result.fingerprint)}?from=${from}`, 303);
       // A file held during a disclosure window has no page yet: show the asker the result here.
       return scanResultPage(c, resultBlock(result, ""), q);

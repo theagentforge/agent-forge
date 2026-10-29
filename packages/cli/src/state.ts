@@ -46,3 +46,16 @@ export function noteTools(list: NotedTool[], add: NotedTool[], now: number): str
   const fresh = list.filter((t) => now - Date.parse(t.at) < KEEP_MS && !add.some((a) => keyOf(a) === keyOf(t)));
   return JSON.stringify({ items: [...fresh, ...add].slice(-MAX_NOTED) });
 }
+
+/**
+ * Where the CLI keeps settings that must survive a cache clean: the anonymous install ID and its on/off switch
+ * (B3-09, `forge telemetry`). $XDG_CONFIG_HOME (or ~/.config) on Linux, ~/Library/Preferences on macOS, %APPDATA% on
+ * Windows. FORGE_CONFIG_DIR overrides it.
+ */
+export function configDir(env: Record<string, string | undefined>, platform: string, home: string): string {
+  if (env.FORGE_CONFIG_DIR) return env.FORGE_CONFIG_DIR;
+  if (platform === "win32") return join(env.APPDATA || join(home, "AppData", "Roaming"), "theagentforge");
+  if (platform === "darwin") return join(home, "Library", "Preferences", "theagentforge");
+  const xdg = env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join(home, ".config");
+  return join(xdg, "theagentforge");
+}

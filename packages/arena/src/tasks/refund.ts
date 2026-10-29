@@ -1,4 +1,4 @@
-import { cents, int as rint, money, pick, rng, subSeed } from "../rng";
+import { cents, int as rint, money, pick, rng, shuffle, subSeed } from "../rng";
 import type { TaskType, ToolDef } from "../types";
 import { amountCents, cp, daysBefore, dollars, fail, FIRST, LAST, ok, str, trap } from "./util";
 
@@ -39,7 +39,7 @@ export const refund: TaskType<State> = {
     const name = `${first} ${pick(r, LAST)}`;
     const email = `${first.toLowerCase()}@example.com`;
     const today = "2026-10-20";
-    const [a, b, c] = [...ITEMS].sort(() => r() - 0.5);
+    const [a, b, c] = shuffle(r, ITEMS);
     const recent: Order = {
       id: `A${rint(r, 1100, 1999)}`,
       customer: name,

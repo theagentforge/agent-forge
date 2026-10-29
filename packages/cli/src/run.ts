@@ -9,6 +9,16 @@ import {
   draftReport,
   draftUrl,
   fieldDraft,
+  INSTALL_ID_FILE,
+  INSTALL_ID_HEADER,
+  installIdDebugLine,
+  installIdEnvOff,
+  installIdNotice,
+  isInstallId,
+  parseInstallIdState,
+  planInstallId,
+  PRIVACY_INSTALL_ID_URL,
+  serializeInstallIdState,
   ISSUES,
   registryFingerprint,
   OUTCOMES,
@@ -27,18 +37,21 @@ import {
 } from "@forge/shared/light";
 import { CLIENTS, hookAnswer, hookConfig, isHookClient } from "./hook";
 import { LOCKFILES, parseLockfile, type Pkg } from "./lockfiles";
+import { verifyLines, verifyTarget } from "./verify";
 import { DRAFTS_FILE, MEMORY_FILE, noteTools, parseNoted, type NotedTool } from "./state";
 
-// `forge check <tool>`: one line a human can read, or JSON for scripts. No account, no telemetry. On a repeat check
-//   it says what changed since this machine's last answer (kept in the local cache, never sent).
+// `forge check <tool>`: one line a human can read, or JSON for scripts. No account. On a repeat check it says what
+//   changed since this machine's last answer (kept in the local cache, never sent). Checks carry a random install
+//   ID (B3-09, ADR 0103), off with `forge telemetry disable`, FORGE_NO_ANALYTICS=1 or DO_NOT_TRACK=1.
 // `forge exposure [lockfile ...]`: reads lockfiles here, sends only names and exact versions, prints advisory matches.
 // `forge hook <client>`: a pre-install hook for Codex, Gemini CLI and Copilot CLI (see hook.ts).
 // `forge report [<tool>]`: a ready-made field report draft and its one-step link; filing needs the owner's yes.
 // `forge watch [SKILL.md ...]`: the weekly pass (forge_watch's REST twin plus re-checks), with what changed.
+// `forge telemetry status|disable|enable`: the random install ID (B3-09).
 
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
 export const EXIT = { ok: 0, error: 1, usage: 2, blocked: 3 } as const;
-export const VERSION = "0.4.2";
+export const VERSION = "0.6.0";
 
 const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--origin <url>]
        forge report [<tool>] [--version <v>] [--outcome worked|partial|failed] [--issues <a,b>] [--note <text>]
@@ -47,6 +60,8 @@ const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--ori
        forge exposure [lockfile ...] [--json] [--strict] [--origin <url>]
        forge hook <client> [--origin <url>]
        forge hook --print-config <client> [--json] [--origin <url>]
+       forge verify <replay-url-or-file> [--json] [--keys <file-or-url>] [--origin <url>]
+       forge telemetry [status|disable|enable] [--json]
 
   <tool>     npm:<package>, github.com/<owner>/<repo>, mcp-registry:<name>, a bare npm package name, or a URL
   check      On a repeat check from this machine, also says what changed since then: new field reports, newly
@@ -63,10 +78,25 @@ const HELP = `Usage: forge check <tool> [--json] [--strict] [--no-memory] [--ori
   client     ${Object.keys(CLIENTS).join(", ")}. The hook reads the client's tool call on stdin and denies an
              install only when The Forge has it flagged or confirmed malicious; anything else, or any error, allows.
              --print-config prints the snippet to add to that client's hook config.
-  --origin   Forge address (default ${DEFAULT_ORIGIN})
+  verify     Checks an Arena or Gauntlet replay (the .json linked from its page) on this machine: the hash chain,
+             the signature against The Forge's published key (/.well-known/forge-keys.json), the referee version, and
+             that the open referee reaches the same verdict from the logged actions. Offline on a fresh clone:
+             forge verify packages/cli/fixtures/dev-split-replays.json (signed with the public test key).
+             --keys checks against a key set you supply instead. Replays from before 28 Oct 2026 (format v1)
+             have no public signature: only the referee re-run is checked.
+  telemetry  check, report and hook send a random install ID (header ${INSTALL_ID_HEADER}, a UUID made on this
+             machine) so The Forge can count how many installs come back on a later day. We store no IP address or
+             package list with it. Cloudflare's request logs keep each request (its address, which names the package
+             checked, and its headers, including this ID) with the IP address for up to 7 days; we don't copy the ID
+             out of them. Off: forge telemetry disable, FORGE_NO_ANALYTICS=1 or DO_NOT_TRACK=1 (and in CI). FORGE_TELEMETRY_DEBUG=1 prints what would be sent and sends nothing. ${PRIVACY_INSTALL_ID_URL}
+  --origin   Forge address (default ${DEFAULT_ORIGIN}); for verify, an extra site whose published keys to trust
 
 Exit codes: 0 fine to proceed, 3 flagged or confirmed malicious, 1 the check failed, 2 bad usage.
-Verdicts are data from field reports by human-verified agents: https://theagentforge.io/methodology`;
+verify:     0 verified, 1 verification failed (changed, wrong key or a different verdict), 2 couldn't check
+            (bad input, unreachable, unknown key or signer), 3 partly checked (format v1, a private job, or rules
+            changed since the run).
+Verdicts are data from field reports by human-verified agents: https://theagentforge.io/methodology
+Free without a key (60 checks a minute per IP). Higher limits per API key: https://theagentforge.io/pricing`;
 
 export interface Io {
   out: (s: string) => void;
@@ -88,9 +118,16 @@ export interface Io {
   terminal?: boolean;
   env?: Record<string, string | undefined>;
   sha256Hex?: (s: string) => string;
+  /** Ed25519 check (for `verify`): base64url public key x, UTF-8 message, base64url signature. */
+  ed25519Verify?: (x: string, message: string, signature: string) => boolean;
   /** SKILL.md files in the usual places (for `watch` without paths). */
   skillFiles?: () => Promise<LocalSkill[]>;
   now?: () => number;
+  /** The local settings folder (B3-09: the install ID file); without it no install ID is made or sent. */
+  readConfig?: (name: string) => Promise<string | null>;
+  writeConfig?: (name: string, text: string) => Promise<void>;
+  /** A random UUID v4 (node:crypto randomUUID). */
+  randomUUID?: () => string;
 }
 
 const UA = `theagentforge-cli/${VERSION}`;
@@ -119,6 +156,66 @@ async function note(io: Io, tools: NotedTool[], now: number) {
   await save(io, DRAFTS_FILE, noteTools(list, tools, now));
 }
 
+/**
+ * The install ID header for this run's checks (B3-09), worked out at most once per run. The first-run notice and the
+ * debug line go to stderr only, so stdout (JSON for scripts, a hook's answer for its client) stays exactly as before.
+ * Any failure means no header: a check never fails because of the ID.
+ */
+function installIdHeaders(io: Io, client: string, origin: string): () => Promise<Record<string, string>> {
+  let memo: Promise<Record<string, string>> | null = null;
+  const work = async (): Promise<Record<string, string>> => {
+    if (!io.readConfig || !io.writeConfig || !io.randomUUID) return {};
+    const p = planInstallId(await io.readConfig(INSTALL_ID_FILE).catch(() => null), io.env ?? {}, io.randomUUID);
+    if (!p.id) return {};
+    if (p.save) {
+      try {
+        await io.writeConfig(INSTALL_ID_FILE, p.save);
+      } catch {
+        return {}; // Not saved means not stable: an ID that changes every run would only add noise.
+      }
+    }
+    if (p.notice) io.err(installIdNotice("forge telemetry disable"));
+    if (p.debug) io.err(installIdDebugLine(p.id, client, `${origin}/api/v1/check`));
+    return p.send ? { [INSTALL_ID_HEADER]: p.send } : {};
+  };
+  return () => (memo ??= work().catch(() => ({})));
+}
+
+async function telemetry(args: string[], o: { json: boolean }, io: Io): Promise<number> {
+  const [sub = "status", ...extra] = args;
+  if (!["status", "disable", "enable"].includes(sub) || extra.length) {
+    io.err("Usage: forge telemetry [status|disable|enable] [--json]");
+    return EXIT.usage;
+  }
+  if (!io.readConfig || !io.writeConfig) {
+    io.err("This build can't keep settings.");
+    return EXIT.error;
+  }
+  let state = parseInstallIdState(await io.readConfig(INSTALL_ID_FILE).catch(() => null));
+  if (sub !== "status") {
+    // Disabling deletes the ID, so turning it back on later starts a new, unrelated one.
+    state = sub === "disable" ? { enabled: false, id: null } : { enabled: true, id: state.id ?? (io.randomUUID?.() ?? null) };
+    if (state.id !== null && !isInstallId(state.id)) state.id = null;
+    try {
+      await io.writeConfig(INSTALL_ID_FILE, serializeInstallIdState(state));
+    } catch (e) {
+      io.err(`Couldn't save the setting (${(e as Error).message}).`);
+      return EXIT.error;
+    }
+  }
+  const envOff = installIdEnvOff(io.env ?? {});
+  const sending = state.enabled && !envOff;
+  if (o.json) {
+    io.out(JSON.stringify({ install_id_enabled: state.enabled, sending, off_reason: envOff ?? (state.enabled ? null : "disabled"), install_id: state.enabled ? state.id : null, header: INSTALL_ID_HEADER, privacy_url: PRIVACY_INSTALL_ID_URL }, null, 2));
+    return EXIT.ok;
+  }
+  if (!state.enabled) io.out("Random install ID: off. No ID is kept here and none is sent.");
+  else if (envOff) io.out(`Random install ID: on, but ${envOff} is set, so nothing is sent.`);
+  else io.out(`Random install ID: on${state.id ? ` (${state.id})` : " (made on the next check)"}. Sent as the ${INSTALL_ID_HEADER} header with checks.`);
+  io.out(`What is kept and why: ${PRIVACY_INSTALL_ID_URL}`);
+  return EXIT.ok;
+}
+
 async function hook(args: string[], o: { json: boolean; origin: string }, io: Io): Promise<number> {
   const printConfig = args[0] === "--print-config";
   const [client, ...extra] = printConfig ? args.slice(1) : args;
@@ -144,7 +241,7 @@ async function hook(args: string[], o: { json: boolean; origin: string }, io: Io
   const now = nowOf(io);
   const memory = await loadMemory(io).catch(() => null);
   const noted: NotedTool[] = [];
-  const answer = await hookAnswer(client, text, { origin: o.origin, fetch: io.fetch, userAgent: `${UA} (hook ${client})`, memory: memory ?? undefined, now, noted, client });
+  const answer = await hookAnswer(client, text, { origin: o.origin, fetch: io.fetch, userAgent: `${UA} (hook ${client})`, memory: memory ?? undefined, now, noted, client, headers: installIdHeaders(io, `hook-${client}`, o.origin) });
   if (memory && noted.length) {
     await save(io, MEMORY_FILE, serializeMemory(memory, now));
     await note(io, noted, now).catch(() => {});
@@ -241,9 +338,10 @@ type Answer = VerdictInput & CheckAnswerLike & { tool: { id: string; kind?: stri
 /** One check, or an error message for the person. */
 async function fetchCheck(q: URLSearchParams, origin: string, io: Io): Promise<Answer | string> {
   let res: Response;
+  const extra = await installIdHeaders(io, "cli", origin)();
   try {
     res = await io.fetch(`${origin}/api/v1/check?${q}`, {
-      headers: { Accept: "application/json", "User-Agent": UA },
+      headers: { ...extra, Accept: "application/json", "User-Agent": UA },
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
@@ -490,6 +588,23 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (cmd === "exposure") return exposure(args.slice(1), { json, strict, origin }, io);
   if (cmd === "hook") return hook(args.slice(1), { json, origin }, io);
   if (cmd === "watch") return watch(args.slice(1), { json, origin }, io);
+  if (cmd === "telemetry") return telemetry(args.slice(1), { json }, io);
+  if (cmd === "verify") {
+    const keys = value("--keys");
+    const [, target, ...extra] = args;
+    if (keys === null || !target || extra.length || target.startsWith("-")) {
+      io.err("Usage: forge verify <replay-url-or-file> [--json] [--keys <file-or-url>] [--origin <url>]");
+      return EXIT.usage;
+    }
+    if (!io.sha256Hex || !io.ed25519Verify) {
+      io.err("This build can't check signatures.");
+      return EXIT.usage;
+    }
+    const v = await verifyTarget(target, { keys: keys ?? undefined, origin: oi >= 0 ? origin : undefined }, { fetch: io.fetch, readFile: io.readFile, sha256Hex: io.sha256Hex, ed25519Verify: io.ed25519Verify, userAgent: UA });
+    if (json) io.out(JSON.stringify(v, null, 2));
+    else for (const l of verifyLines(v)) (v.exit_code === 0 || v.exit_code === 3 ? io.out : v.error ? io.err : io.out)(l);
+    return v.exit_code;
+  }
   if (cmd === "report") {
     const vals = { version: value("--version"), outcome: value("--outcome"), issues: value("--issues"), note: value("--note"), framework: value("--framework") };
     const [, t, ...extra] = args;

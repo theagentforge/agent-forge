@@ -12,6 +12,7 @@ import { resultsInput } from "./mcp-public";
 import { recordCheck } from "./services/proof";
 import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
 import { bump, scanCounters } from "./services/usage";
+import { internalCaller, internalKey, type InternalComponent } from "./services/internal";
 import { site } from "./web/pages";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 import { CHECK_NEEDED, firstIssue, inputNeeded, SCAN_NEEDED } from "./services/input-help";
@@ -144,7 +145,38 @@ export function readRequest(parts: unknown): A2ARequest | null {
   // "check litellm": a bare name after "check" (a bare name returns candidates). A lone word stays unrecognized.
   const bare = /^\s*check\s+([@a-z0-9][a-z0-9._/@-]{0,213})\s*\??\s*$/i.exec(text)?.[1];
   if (bare) return { skill: "check-tool", query: { id: bare } };
-  return null;
+  return naturalRequest(text);
+}
+
+// Plain questions as ASI:One users type them (Agentverse README test list, 27 Oct). Read only after every exact form
+// above, so they never change what an id, URL or command already meant.
+const PACKAGE_Q = /\b(npm|pypi)\s+(?:(?:package|library|module|install|i|add)\s+)?["'`]?(@?[a-z0-9][a-z0-9._-]{0,213}(?:\/[a-z0-9][a-z0-9._-]{0,213})?)["'`]?(?:(?:\s+(?:version\s+|v)?|@|==)(\d[0-9a-z.+-]{0,63}))?/i;
+// Words that follow "npm"/"pypi" in a question without naming a package ("is the npm package safe?", "which npm
+// packages are malicious?", "npm and pypi"). Taking one as a name would answer about a different, real package, so
+// the question falls through instead (to Arena or unrecognized_request).
+const NOT_A_PACKAGE = new Set(
+  "a an and are as at by can could did do does for from has have how i if in install installed is it its me my of on or our package packages library libraries module modules registry repo safe safety secure security should that the their them these this those to use used using version versions was what when where which who why will with would you your".split(" "),
+);
+const ARENA_TOPICS: [RegExp, string][] = [
+  [/\binvoices?\b|\bscams?\b|\bbank details\b/i, "scam-invoice"],
+  [/\brefunds?\b/i, "refund"],
+  [/\btravel\b|\btrips?\b|\bweekend\b|\bflights?\b|\bhotels?\b/i, "weekend"],
+  [/\brestock\w*\b|\bsuppliers?\b|\border(?:s|ing)? twice\b|\bdouble[- ]order/i, "flaky-supplier"],
+  [/\bspreadsheets?\b|\bduplicate rows?\b|\bcustomer sheet\b/i, "spreadsheet"],
+  [/\bbills?\b|\bimpossible\b/i, "impossible"],
+];
+const ARENA_Q = /\b(arena|traps?|benchmark|leaderboard)\b/i;
+const MODEL_Q = /\b(ai models?|models?|llms?|ai agents?|agents?)\b/i;
+const VERDICT_Q = /\b(fall|falls|fell|fail|fails|failed|pass|passes|best|safest|worst|compare|comparison|reliable|ranking)\b/i;
+
+function naturalRequest(text: string): A2ARequest | null {
+  const pkg = PACKAGE_Q.exec(text);
+  if (pkg && !NOT_A_PACKAGE.has(pkg[2]!.toLowerCase())) return { skill: "check-tool", query: { id: `${pkg[1]!.toLowerCase()}:${pkg[2]}`, ...(pkg[3] ? { version: pkg[3].replace(/[.?!,]+$/, "") } : {}) } };
+  if (!ARENA_Q.test(text) && !(MODEL_Q.test(text) && VERDICT_Q.test(text))) return null;
+  const hard = /\bhard\b/i.test(text);
+  const base = ARENA_TOPICS.find(([re]) => re.test(text))?.[1];
+  const task = base && hard ? `${base}-hard3` : base;
+  return { skill: "arena-results", ...(task && ARENA_TASK_IDS.has(task) ? { task } : hard ? { tier: "hard" } : {}) };
 }
 
 /** Messages that work, one per skill, as A2A message parts (v1.0 and v0.3 both read `text` and `data`). */
@@ -177,9 +209,11 @@ function a2aRelated<T extends { related?: Related[] }>(answer: T) {
 /**
  * Runs one request. Always structured data; errors are data too, so a calling agent can branch on them. `ip` keys the
  * rate limit; `source` (default: `ip`) is what the distinct-callers count records, so a caller that can name itself
- * freely (an unsigned Agentverse "user…" sender, ADR 0061) can't inflate that count.
+ * freely (an unsigned Agentverse "user…" sender, ADR 0061) can't inflate that count. `internal` is set for our own
+ * tagged callers (services/internal.ts, ADR 0067): their requests, checks and scans are counted apart as
+ * `internal:<component>:*`, never as outside use. It changes nothing else.
  */
-export async function runSkill(env: Env, ip: string, req: A2ARequest | null, source: string = ip): Promise<Record<string, unknown>> {
+export async function runSkill(env: Env, ip: string, req: A2ARequest | null, source: string = ip, internal: InternalComponent | null = null): Promise<Record<string, unknown>> {
   if (!req)
     return {
       ...inputNeeded("a2a", {
@@ -191,7 +225,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
     };
   // Arena reads have their own per-IP budget, as on /mcp/public (ADR 0056), so they never use up an agent's checks.
   if (!(await env.CHECK_LIMITER.limit({ key: `${req.skill === "arena-results" ? "arena" : "ip"}:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
-  await bump(env, ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
+  await bump(env, internal ? [internalKey(internal, "calls")] : ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
   if (req.skill === "trap-card") {
     return { skill: "trap-card", version: TRAP_CARD_VERSION, date: TRAP_CARD_DATE, text: trapCardText(), checks: TRAP_CHECKS.map((c) => c.text), url: `${env.PUBLIC_ORIGIN}/trap-card` };
   }
@@ -202,7 +236,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
       const sent = Object.values(req.query).some((v) => v !== undefined);
       return { skill: "check-tool", ...inputNeeded("check-tool", { error: "invalid_query", needed: CHECK_NEEDED, detail: sent ? firstIssue(q.error) : null, examples: A2A_EXAMPLES["check-tool"], extra: { ...CHECK_QUERY_HELP } }) };
     }
-    const [, , r] = await Promise.all([recordCheck(env, "api", source), recordToolCheck(env, q.data, Date.now(), { channel: "a2a" }), checkTool(env, q.data)]);
+    const [, , r] = await Promise.all([recordCheck(env, "api", source, { internal }), recordToolCheck(env, q.data, Date.now(), { internal, channel: "a2a" }), checkTool(env, q.data)]);
     const share = await checkShare(env, r, q.data.id ?? q.data.url ?? q.data.fingerprint ?? "");
     // Compact by default, like /mcp/public (ADR 0056); a data part with "detail":"full" gets every field.
     return { skill: "check-tool", result: a2aRelated(agentCheckAnswer({ ...r, share }, q.data, req.detail ?? "compact")) };
@@ -220,7 +254,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
   }
   if (!body) return { skill: "scan-skill", ...inputNeeded("scan-skill", { needed: SCAN_NEEDED, examples: A2A_EXAMPLES["scan-skill"] }) };
   const { result, isPublic } = await scanAndRecord(env, body, { name: req.name, sourceUrl });
-  await bump(env, scanCounters("a2a", result.verdict)).catch(() => {});
+  await bump(env, internal ? [internalKey(internal, "scans")] : scanCounters("a2a", result.verdict)).catch(() => {});
   return { skill: "scan-skill", result: { ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), share: await scanShare(env, result, { isPublic, sourceUrl }) } };
 }
 
@@ -266,7 +300,7 @@ const UNSUPPORTED = new Set([
 
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
-export async function handleRpc(env: Env, ip: string, body: unknown, version: string | undefined) {
+export async function handleRpc(env: Env, ip: string, body: unknown, version: string | undefined, internal: InternalComponent | null = null) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return rpcError(null, -32600, "Request payload validation error");
   const { id, method, params } = body as { id?: unknown; method?: unknown; params?: { message?: { parts?: unknown; contextId?: unknown } } };
   if ((body as { jsonrpc?: unknown }).jsonrpc !== "2.0" || typeof method !== "string") return rpcError(id, -32600, "Request payload validation error");
@@ -278,15 +312,15 @@ export async function handleRpc(env: Env, ip: string, body: unknown, version: st
   if (!SEND.has(method)) return rpcError(id, -32601, "Method not found");
   const message = params?.message;
   if (!message || typeof message !== "object" || !Array.isArray(message.parts)) return rpcError(id, -32602, "Invalid parameters: params.message.parts is required");
-  const reply = await answer(env, ip, message);
+  const reply = await answer(env, ip, message, internal);
   // v0.3 used a "kind" discriminator and lower-case roles; v1.0 wraps the reply as { message } and uses ROLE_AGENT.
   if (method === "message/send") return { jsonrpc: "2.0", id: id ?? null, result: { kind: "message", messageId: reply.messageId, contextId: reply.contextId, role: "agent", parts: [{ kind: "data", data: reply.data }] } };
   return { jsonrpc: "2.0", id: id ?? null, result: { message: v1Message(reply) } };
 }
 
 /** One direct reply: the skill's structured data, in the caller's context when it gave one. */
-async function answer(env: Env, ip: string, message: { parts?: unknown; contextId?: unknown }) {
-  const data = await runSkill(env, ip, readRequest(message.parts));
+async function answer(env: Env, ip: string, message: { parts?: unknown; contextId?: unknown }, internal: InternalComponent | null = null) {
+  const data = await runSkill(env, ip, readRequest(message.parts), ip, internal);
   const contextId = typeof message.contextId === "string" && message.contextId.length <= 128 ? message.contextId : crypto.randomUUID();
   return { data, contextId, messageId: crypto.randomUUID() };
 }
@@ -321,7 +355,7 @@ const rpc = async (c: Context<{ Bindings: Env }>) => {
   if (got && "tooLarge" in got) return c.json(rpcError(null, -32600, "Request too large"), 413);
   if (!got) return c.json(rpcError(null, -32700, "Invalid JSON payload"), 200);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  return c.json(await handleRpc(c.env, ip, got.body, c.req.header("A2A-Version")), 200, { "Cache-Control": "no-store" });
+  return c.json(await handleRpc(c.env, ip, got.body, c.req.header("A2A-Version"), internalCaller(c.req.raw.headers)), 200, { "Cache-Control": "no-store" });
 };
 site.post(A2A_ROUTE, rpc);
 site.post(`${A2A_ROUTE}/`, rpc);
@@ -333,7 +367,7 @@ site.post(`${A2A_ROUTE}/v1/message:send`, async (c) => {
   const message = got && typeof got.body === "object" && got.body ? (got.body as { message?: { parts?: unknown; contextId?: unknown } }).message : undefined;
   if (!message || typeof message !== "object" || !Array.isArray(message.parts)) return c.json(restError(400, "INVALID_ARGUMENT", "message.parts is required"), 400);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  return c.json({ message: v1Message(await answer(c.env, ip, message)) }, 200, { "Cache-Control": "no-store" });
+  return c.json({ message: v1Message(await answer(c.env, ip, message, internalCaller(c.req.raw.headers))) }, 200, { "Cache-Control": "no-store" });
 });
 // No tasks are kept: every request gets one direct message.
 site.get(`${A2A_ROUTE}/v1/tasks/*`, (c) => c.json(restError(404, "NOT_FOUND", "Task not found: this agent answers with direct messages and keeps no tasks"), 404));

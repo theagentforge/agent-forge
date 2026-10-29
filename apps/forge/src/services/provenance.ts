@@ -12,6 +12,25 @@ export const LICENCE_PATH = "/arena/methodology#licence";
 export const DATASET_LICENCE =
   "Evaluation-only licence: free to use for evaluation, research and reporting, with attribution and a link to theagentforge.io/arena. Not for training or fine-tuning AI models. Model outputs in the run logs remain subject to their providers' terms.";
 
+/**
+ * B3-02 (Dinike, 29 Oct: "Add the line"): the route to a commercial licence, word for word. It sits next to the
+ * evaluation-only terms and never changes them (DATASET_LICENCE above is unchanged). No prices are published. It lives
+ * outside every frozen Trap Set snapshot (ADR 0101): only the licence page and its JSON, Croissant, the sample and
+ * /dataset carry it (ADR 0104).
+ */
+export const COMMERCIAL_LICENCE_CONTACT = "partners@theagentforge.io";
+export const COMMERCIAL_LICENCE_LINE =
+  "Commercial and derivative licences (for example training, redistribution, or internal use at scale) are available by written agreement. Ask partners@theagentforge.io.";
+/** The machine-readable form of the line, for the licence JSON, Croissant and /dataset.json. */
+export const COMMERCIAL_LICENCE = {
+  available: true,
+  by: "written_agreement",
+  examples: ["training", "redistribution", "internal_use_at_scale"],
+  contact: COMMERCIAL_LICENCE_CONTACT,
+  prices_published: false,
+  text: COMMERCIAL_LICENCE_LINE,
+} as const;
+
 /** Terms of Service versions by the moment they came into force (UTC). Nothing was in force before 15 Oct 2026. */
 export const TERMS_HISTORY = [
   { version: "1.0", from: Date.UTC(2026, 9, 15) },

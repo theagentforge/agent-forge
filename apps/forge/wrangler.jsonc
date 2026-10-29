@@ -10,8 +10,9 @@
   // Static files (fonts, logo, stylesheet) are served straight from Cloudflare's edge, before the Worker runs.
   // /skill.md and /llms.txt run through the Worker first so agent fetches can be counted (ADR 0026, agent-channels §4.5).
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/skill.md", "/llms.txt"] },
-  // Published reports and Forge Lab write-ups are bundled as text from docs/ and lab/ (src/web/publications.ts).
-  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv"], "fallthrough": true }],
+  // Published reports and Forge Lab write-ups are bundled as text from docs/ and lab/ (src/web/publications.ts), and
+  // frozen Trap Set snapshots from src/seed/benchmark/ so they are served byte for byte (ADR 0101).
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv", "**/seed/benchmark/v*.json.txt"], "fallthrough": true }],
   // Hourly seeding from the official MCP Registry (one page of 100 servers per run).
   // Hourly: registry seeding. Every 5 minutes: the Arena runner (does nothing when no bouts are queued).
   "triggers": { "crons": ["17 * * * *", "*/5 * * * *"] },
@@ -24,7 +25,10 @@
     "ENVIRONMENT": "production",
     "PUBLIC_ORIGIN": "https://theagentforge.io",
     "ADMIN_GITHUB_IDS": "342224870",
-    "ACCESS_MODE": "open"
+    "ACCESS_MODE": "open",
+    // ADR 0110: "off" | "keys" | "paid". keys = free API keys and /pricing with paid plans "coming soon"; paid = Polar
+    // checkout links (only after Dinike's needs-dinike approval and his Polar account; docs/runbooks/pricing.md).
+    "PRICING_MODE": "keys"
   },
   // Secrets (set in the Cloudflare dashboard, never in git): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REPORT_SIGNING_KEY.
   "d1_databases": [
@@ -46,7 +50,11 @@
     // ADR 0038: checks by agents of recent contributors (5x CHECK_LIMITER).
     { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "2003", "simple": { "limit": 300, "period": 60 } },
     // ADR 0061: /av/chat (Agentverse), per IP before any signature check. The proxy is shared, so the cap is generous.
-    { "name": "AGENTVERSE_LIMITER", "namespace_id": "2004", "simple": { "limit": 120, "period": 60 } }
+    { "name": "AGENTVERSE_LIMITER", "namespace_id": "2004", "simple": { "limit": 120, "period": 60 } },
+    // ADR 0110: per API key, by plan (packages/shared/src/plans.ts). Keyed by key id, never by IP.
+    { "name": "KEY_FREE_LIMITER", "namespace_id": "2010", "simple": { "limit": 120, "period": 60 } },
+    { "name": "KEY_TEAM_LIMITER", "namespace_id": "2011", "simple": { "limit": 600, "period": 60 } },
+    { "name": "KEY_VOLUME_LIMITER", "namespace_id": "2012", "simple": { "limit": 3000, "period": 60 } }
   ],
   "env": {
     // Staging: deployed from `main` to staging.theagentforge.io, with its own database.
@@ -54,7 +62,7 @@
       "name": "forge-staging",
       "workers_dev": false,
       "routes": [{ "pattern": "staging.theagentforge.io", "custom_domain": true }],
-      "vars": { "ENVIRONMENT": "staging", "PUBLIC_ORIGIN": "https://staging.theagentforge.io", "ADMIN_GITHUB_IDS": "342224870", "ACCESS_MODE": "open" },
+      "vars": { "ENVIRONMENT": "staging", "PUBLIC_ORIGIN": "https://staging.theagentforge.io", "ADMIN_GITHUB_IDS": "342224870", "ACCESS_MODE": "open", "PRICING_MODE": "keys" },
       "d1_databases": [
         {
           "binding": "DB",
@@ -72,7 +80,10 @@
         { "name": "CHECK_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
         { "name": "REPORT_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
         { "name": "CONTRIBUTOR_LIMITER", "namespace_id": "1003", "simple": { "limit": 300, "period": 60 } },
-        { "name": "AGENTVERSE_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } }
+        { "name": "AGENTVERSE_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
+        { "name": "KEY_FREE_LIMITER", "namespace_id": "1010", "simple": { "limit": 120, "period": 60 } },
+        { "name": "KEY_TEAM_LIMITER", "namespace_id": "1011", "simple": { "limit": 600, "period": 60 } },
+        { "name": "KEY_VOLUME_LIMITER", "namespace_id": "1012", "simple": { "limit": 3000, "period": 60 } }
       ]
     }
   }

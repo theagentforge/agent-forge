@@ -1,5 +1,19 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+/** ADR 0083: what a Gauntlet Sprint plays, frozen when it starts (the week's pick under the published rule). */
+export interface SprintPick {
+  /** The featured public trap id (FA-xxx-0nn), from The Forge Trap Set. Never a private id. */
+  trap: string;
+  /** The Normal job that plants it, and the referee's own trap id in that job. */
+  task: string;
+  referee_trap: string;
+  /** ISO week the pick was made for (e.g. 2026-W44), and the pick rule's version. */
+  week: string;
+  rule: string;
+  /** Set only for a run by The Forge's own house agent: the model it ran on. */
+  house_model?: string | null;
+}
 
 // MASTER_PLAN §10.4. Timestamps are milliseconds since epoch. No email addresses anywhere.
 
@@ -20,6 +34,49 @@ export const humans = sqliteTable("humans", {
   /** The Forge's own test agents (MASTER_PLAN §7.2): labelled "House" and left out of every proof number (§7.5). */
   isHouse: integer("is_house", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
+  /**
+   * ADR 0073 (OA-01): where this person first came from, a fixed tag (services/owners.ts OWNER_FROM), set once on the
+   * first sign-in that carried one. Never a URL, referrer or anything about the person.
+   */
+  firstFrom: text("first_from"),
+  /** ADR 0073: when this person first became an owner (verified, outside the project, an active agent). Never cleared. */
+  ownerSince: integer("owner_since"),
+  /** ADR 0073 (OA-07): 1, 2, 3… in the order outside owners first became owners. Stable, never reused. */
+  ownerNumber: integer("owner_number").unique(),
+  /** ADR 0073 (OA-07): when the owner opted in to the public Founding Owners list, or null (not on it). */
+  foundingAt: integer("founding_at"),
+});
+
+/**
+ * ADR 0073 (OA-06): a Gauntlet run claimed by someone who isn't verified yet. Private: no public page, badge or number
+ * reads this table. Once the person is verified (activity, a vouch or approval) the claim moves to gauntlet_claims.
+ * `agentId` null means "a new profile for my agent", made only when the claim counts.
+ */
+export const pendingClaims = sqliteTable(
+  "pending_claims",
+  {
+    gauntletId: text("gauntlet_id").primaryKey(),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    agentId: text("agent_id"),
+    season: integer("season", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("pending_claims_human").on(t.humanId)],
+);
+
+/**
+ * ADR 0073 (OA-06): people who pressed "Request a review" (not yet verified). The founder clears the queue weekly on
+ * /admin/owners with Approve or Skip. One row per person; asking again after a Skip reopens it.
+ */
+export const ownerReviewRequests = sqliteTable("owner_review_requests", {
+  humanId: text("human_id")
+    .primaryKey()
+    .references(() => humans.id),
+  requestedAt: integer("requested_at").notNull(),
+  decision: text("decision", { enum: ["approved", "skipped"] }),
+  decidedAt: integer("decided_at"),
 });
 
 /** Approvals and vouches, keyed by GitHub login so they can be granted before the person first signs in. */
@@ -362,6 +419,8 @@ export const arenaRuns = sqliteTable(
     result: text("result", { mode: "json" }),
     log: text("log", { mode: "json" }),
     signature: text("signature"),
+    /** Replay format v2 (ADR 0066): the signed seal over the log's hash chain. Null on runs from before v2 (v1: `signature`). */
+    replaySeal: text("replay_seal", { mode: "json" }),
     /**
      * A bout suspended at a tick's deadline (ADR 0022): the attempt's checkpoint, the chat so far and the spend
      * counters, so a later tick carries on. Null for a fresh or finished run; cleared when a run is voided.
@@ -379,6 +438,12 @@ export const arenaRuns = sqliteTable(
     heldOut: integer("held_out", { mode: "boolean" }).notNull().default(sql`0`),
     /** The model string the provider reported serving (OpenRouter's `model`, or the Workers AI model id). Null before 0020. */
     modelVersion: text("model_version"),
+    /**
+     * ADR 0064: the part of `cost` billed to our own Anthropic key through OpenRouter BYOK (OpenRouter's
+     * `usage.cost_details.upstream_inference_cost`), not to OpenRouter credit. Null when no turn was served on the key.
+     * Internal only: never published. OpenRouter credit spent by the run = cost - coalesce(byok_cost, 0).
+     */
+    byokCost: real("byok_cost"),
   },
   (t) => [index("arena_runs_status").on(t.status, t.createdAt), index("arena_runs_event").on(t.eventId), index("arena_runs_model_task").on(t.modelId, t.task)],
 );
@@ -411,6 +476,28 @@ export const arenaPanel = sqliteTable(
   },
   (t) => [uniqueIndex("arena_panel_version").on(t.modelId, t.pinnedModel, t.provider, t.panelVersion)],
 );
+
+/**
+ * B2-02 (ADR 0089): the results-policy notice record of a held event (status "planned"). The admin marks the full
+ * pack sent (the 7-day notice clock starts then, with a digest of the runs the pack covers), and later publishes the
+ * event; both record who and when. One row per event; additive table, read only by the admin page and the publish step.
+ */
+export const arenaEventNotices = sqliteTable("arena_event_notices", {
+  eventId: text("event_id")
+    .primaryKey()
+    .references(() => arenaEvents.id),
+  /** When the full pack was sent to every named lab (ms). The earliest publication is this plus NOTICE_DAYS. */
+  packSentAt: integer("pack_sent_at"),
+  /** "admin:<human id>". */
+  packSentBy: text("pack_sent_by"),
+  /** SHA-256 of the runs the pack covered (ids, verdicts, results, signatures, seals). Publishing refuses if they changed. */
+  packRunsSha256: text("pack_runs_sha256"),
+  /** Runs in the pack. */
+  packRuns: integer("pack_runs"),
+  publishedAt: integer("published_at"),
+  publishedBy: text("published_by"),
+  updatedAt: integer("updated_at").notNull(),
+});
 
 /** Fan votes on what is tested next (ADR 0014 §5): one vote per signed-in person per poll. Never on scoring. */
 export const arenaVotes = sqliteTable(
@@ -534,8 +621,20 @@ export const arenaGauntlets = sqliteTable(
      * Only first runs and challenges get one (null for measured re-runs and older runs). The key itself is never stored.
      */
     claimKeyHash: text("claim_key_hash").unique(),
+    /**
+     * ADR 0083: "full" for the six-job Gauntlet (every run before 28 Oct 2026), "sprint" for the 90-second Gauntlet
+     * Sprint (one job, one featured trap). Sprints are counted, scored and labelled apart from full runs everywhere.
+     */
+    mode: text("mode", { enum: ["full", "sprint"] }).notNull().default("full"),
+    /** ADR 0083: a Sprint's pick (the week's featured public trap, its job and the pick rule), null for full runs. */
+    sprint: text("sprint", { mode: "json" }).$type<SprintPick | null>(),
   },
-  (t) => [index("arena_gauntlets_card_from").on(t.cardFrom), index("arena_gauntlets_started").on(t.startedAt), index("arena_gauntlets_challenge_of").on(t.challengeOf)],
+  (t) => [
+    index("arena_gauntlets_card_from").on(t.cardFrom),
+    index("arena_gauntlets_started").on(t.startedAt),
+    index("arena_gauntlets_challenge_of").on(t.challengeOf),
+    index("arena_gauntlets_mode_status").on(t.mode, t.status),
+  ],
 );
 
 /**
@@ -620,6 +719,8 @@ export const arenaGauntletBouts = sqliteTable(
     passed: integer("passed", { mode: "boolean" }),
     result: text("result", { mode: "json" }),
     log: text("log", { mode: "json" }),
+    /** Replay format v2 (ADR 0066): the signed seal over the job's log. Null on jobs from before v2 (never signed). */
+    replaySeal: text("replay_seal", { mode: "json" }),
     startedAt: integer("started_at").notNull(),
     finishedAt: integer("finished_at"),
   },
@@ -646,8 +747,13 @@ export const skillScans = sqliteTable(
     scans: integer("scans").notNull().default(1),
     firstSeen: integer("first_seen").notNull(),
     lastSeen: integer("last_seen").notNull(),
+    /**
+     * B3-11 (ADR 0107): which bulk scan source first reached this file ("bulk:clawhub", "bulk:github"), or null for
+     * scans by people, agents and the 19 Oct launch seed. Set once and never changed; the per-source rates read it.
+     */
+    origin: text("origin"),
   },
-  (t) => [index("skill_scans_verdict_seen").on(t.verdict, t.lastSeen), index("skill_scans_source").on(t.sourceUrl)],
+  (t) => [index("skill_scans_verdict_seen").on(t.verdict, t.lastSeen), index("skill_scans_source").on(t.sourceUrl), index("skill_scans_origin").on(t.origin)],
 );
 
 /**
@@ -735,3 +841,172 @@ export const reviewLabels = sqliteTable(
   },
   (t) => [uniqueIndex("review_labels_one_each").on(t.sampleId, t.itemId, t.reviewerId), index("review_labels_reviewer").on(t.sampleId, t.reviewerId)],
 );
+
+// --- Private buyer data room (B2-09, AQ-05; ADR 0095) ----------------------------------------------------------------
+
+/**
+ * A time-limited link to the private buyer data room (/data-room#<token>, ADR 0098), made by a founder admin for one buyer under
+ * NDA. Only a SHA-256 hash of the token is stored, so the link can't be rebuilt from the database (it is shown once).
+ * Revocable; every access is logged in data_room_access. Organisation names only, never a person's name or email.
+ */
+export const dataRoomLinks = sqliteTable(
+  "data_room_links",
+  {
+    id: id(),
+    tokenHash: text("token_hash").notNull().unique(),
+    /** The buyer, as an organisation label ("Acme Security"). */
+    label: text("label").notNull(),
+    /** The NDA version the buyer must confirm (services/data-room.ts NDA_VERSIONS). */
+    ndaVersion: text("nda_version").notNull(),
+    /** Whether the pseudonymised bulk export (AQ-03) can be downloaded through this link. */
+    includeExport: integer("include_export", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    /** "admin:<human id>". */
+    createdBy: text("created_by").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    revokedAt: integer("revoked_at"),
+    revokedBy: text("revoked_by"),
+    /** The buyer's "we signed the NDA" click: when, which NDA version, and the organisation they typed. */
+    confirmedAt: integer("confirmed_at"),
+    confirmedNdaVersion: text("confirmed_nda_version"),
+    confirmedOrg: text("confirmed_org"),
+    /** Dinike's own note (e.g. "NDA signed 30 Oct, their template, PDF in Drive"). */
+    adminNote: text("admin_note"),
+    noteUpdatedAt: integer("note_updated_at"),
+  },
+  (t) => [index("data_room_links_created").on(t.createdAt)],
+);
+
+/** One row per access to a data-room link (views, the NDA confirmation, downloads, refusals after expiry or revocation). */
+export const dataRoomAccess = sqliteTable(
+  "data_room_access",
+  {
+    id: id(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => dataRoomLinks.id),
+    at: integer("at").notNull(),
+    /** view | confirm | download | refused_expired | refused_revoked | refused_unconfirmed */
+    event: text("event").notNull(),
+    /** The file downloaded, for downloads. */
+    detail: text("detail"),
+    /** HMAC of the IP with the link id (never the IP itself): tells one viewer from several, nothing more. */
+    viewer: text("viewer"),
+    /** Cloudflare's two-letter country code, when given. */
+    country: text("country"),
+  },
+  (t) => [index("data_room_access_link").on(t.linkId, t.at)],
+);
+
+/**
+ * B3-09 (ADR 0103): one row per anonymous install ID sent with an install-time check (the CLI, its hooks, the Claude
+ * Code plugin). Only a keyed hash of the ID (HMAC-SHA256 with a key derived from SESSION_SECRET), never the ID itself;
+ * the first and last UTC day it was seen; the client it was first seen from; whether a request carrying it was tagged
+ * as ours (services/internal.ts). No IP address, no package names. Deleted 400 days after it was last seen.
+ */
+export const installIds = sqliteTable(
+  "install_ids",
+  {
+    idHash: text("id_hash").primaryKey(),
+    /** plugin | cli | hook-codex | hook-gemini | hook-copilot (services/install-metrics.ts INSTALL_CLIENTS). */
+    client: text("client").notNull(),
+    /** YYYY-MM-DD (UTC). */
+    firstDay: text("first_day").notNull(),
+    lastDay: text("last_day").notNull(),
+    ours: integer("ours", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [index("install_ids_first_day").on(t.firstDay), index("install_ids_last_day").on(t.lastDay)],
+);
+
+/**
+ * ADR 0110: optional API keys for signed-in verified owners. Only a keyed hash of the key is stored (HMAC-SHA256 with
+ * API_KEY_PEPPER, `hashV` "p"; or, until that secret is set, a key derived from SESSION_SECRET, `hashV` "s"), plus its
+ * first 12 characters to tell keys apart. The full key is shown once, never logged and never stored.
+ */
+export const apiKeys = sqliteTable(
+  "api_keys",
+  {
+    id: id(),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    hash: text("hash").notNull().unique(),
+    hashV: text("hash_v").notNull(),
+    createdAt: integer("created_at").notNull(),
+    lastUsedAt: integer("last_used_at"),
+    revokedAt: integer("revoked_at"),
+  },
+  (t) => [index("api_keys_human").on(t.humanId)],
+);
+
+/**
+ * ADR 0110: calls per key per UTC day, written in batches (a per-isolate buffer, flushed every few seconds), never one
+ * write per call. `humanId` is copied in so an owner's month can be summed across keys. `n429` counts refusals.
+ */
+export const apiUsageDaily = sqliteTable(
+  "api_usage_daily",
+  {
+    keyId: text("key_id")
+      .notNull()
+      .references(() => apiKeys.id),
+    humanId: text("human_id").notNull(),
+    /** YYYY-MM-DD (UTC). */
+    day: text("day").notNull(),
+    n: integer("n").notNull().default(0),
+    n429: integer("n_429").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.keyId, t.day] }), index("api_usage_daily_human_day").on(t.humanId, t.day)],
+);
+
+/**
+ * ADR 0110: an owner's paid plan. No row (or none in effect) means the free plan. Polar rows are written only by the
+ * signed webhook; invoice and manual rows only by an admin. Plan changes are also written to audit_log.
+ */
+export const apiSubscriptions = sqliteTable(
+  "api_subscriptions",
+  {
+    id: id(),
+    humanId: text("human_id")
+      .notNull()
+      .references(() => humans.id),
+    /** free | team | volume | enterprise (packages/shared/src/plans.ts). */
+    plan: text("plan").notNull(),
+    /** polar | invoice | manual */
+    provider: text("provider").notNull(),
+    /** month | year */
+    billingInterval: text("billing_interval").notNull().default("month"),
+    /** Agreed price per interval in US cents, when it differs from the list price (invoiced plans). */
+    priceCents: integer("price_cents"),
+    externalCustomerId: text("external_customer_id"),
+    externalSubscriptionId: text("external_subscription_id").unique(),
+    /** Polar's status (active, trialing, past_due, canceled, revoked…), or active/ended for invoiced plans. */
+    status: text("status").notNull(),
+    currentPeriodStart: integer("current_period_start"),
+    currentPeriodEnd: integer("current_period_end"),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+    overageEnabled: integer("overage_enabled", { mode: "boolean" }).notNull().default(false),
+    /** The provider's own modified time of the last event applied, so an older event never overwrites a newer one. */
+    sourceUpdatedAt: integer("source_updated_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("api_subscriptions_human").on(t.humanId)],
+);
+
+/**
+ * ADR 0110: pilot and other one-off (services) revenue, entered by an admin. Kept apart from subscriptions so it is
+ * never counted as MRR (diligence: "services dressed as SaaS").
+ */
+export const pilotRevenue = sqliteTable("pilot_revenue", {
+  id: id(),
+  /** The customer's organisation name as invoiced. */
+  customer: text("customer").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  /** YYYY-MM-DD the payment was received. */
+  receivedOn: text("received_on").notNull(),
+  note: text("note"),
+  createdAt: integer("created_at").notNull(),
+  createdBy: text("created_by").notNull(),
+});

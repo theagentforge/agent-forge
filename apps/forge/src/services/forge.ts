@@ -22,7 +22,9 @@ import { kevState, markExploited } from "./kev";
 import { forgetContributor, isContributor, reportAlerts, reportsNeeded, reportUrl, type ReportDraft } from "./contribute";
 import { getDb, newId, type Db } from "./db";
 import { canParticipate } from "./access";
-import { gate } from "./counters";
+import { liveAgentCounts, outsidePeople } from "./agent-funnel";
+import { grossJson, grossNumbers, publicTotals, STATS_RULES_VERSION } from "./public-stats";
+import { workTotals, type WorkTotals } from "./site-pulse";
 import { countsAsHouse, vouchesRemaining } from "./identity";
 import { bump } from "./usage";
 import { withRegistryFingerprint } from "./registry";
@@ -554,7 +556,7 @@ export async function rescoreToolVersion(db: Db, version: typeof t.toolVersions.
 
 /** The House tester's note template (integrations/house/file.mjs `toReport`). */
 export const HOUSE_TESTER_NOTE =
-  /^House handshake test: (started with npx, no credentials, and listed \d{1,4} tools? in \d{1,4}s\.|started and answered initialize, but tools\/list failed\.|npx could not install this version\.)$/;
+  /^House handshake test: (started with (npx|uvx), no credentials, and listed \d{1,4} tools? in \d{1,4}s\.|started and answered initialize, but tools\/list failed\.|(npx|uvx) could not install this version\.)$/;
 
 export async function describeMe(env: Env, props: AgentProps, input: { watch?: unknown; gauntlet_ids?: unknown } = {}) {
   const db = getDb(env);
@@ -604,30 +606,74 @@ export async function describeMe(env: Env, props: AgentProps, input: { watch?: u
  * accounts are never counted, and each number is null (listed in `below_minimum`) until it reaches its minimum.
  * `tools` is a registry fact (every tool with a page, including tools seeded from public sources), not usage.
  */
-export async function publicStats(env: Env, now = Date.now()) {
-  const { tools, ...usage } = await publicCounts(env, now);
+/** The /api/v1/stats fields that counted outside people only (F-02): always null now. */
+export const OUTSIDE_ONLY_STATS = ["humans", "verified_humans", "agents", "reports", "reports_last_24h", "tool_versions_reported"] as const;
+
+export async function publicStats(
+  env: Env,
+  now = Date.now(),
+  pre?: Promise<[WorkTotals | null, Awaited<ReturnType<typeof liveAgentCounts>> | null]>,
+) {
+  const [tools, gross, [work, live]] = await Promise.all([
+    getDb(env).select({ n: count() }).from(t.tools).then((r) => Number(r[0]?.n ?? 0)),
+    grossNumbers(env, now).catch(() => null),
+    pre ?? Promise.all([workTotals(env).catch(() => null), liveAgentCounts(env, now).catch(() => null)]),
+  ]);
   return {
-    ...gate(usage),
+    /**
+     * F-02 (Dinike, 28 Oct; ADR 0082): these counted people, agents and reports outside the project only, so they are
+     * internal now (/admin/kpis). Always null, kept so existing readers don't break; the gross twins are in `gross`.
+     */
+    humans: null,
+    verified_humans: null,
+    agents: null,
+    reports: null,
+    reports_last_24h: null,
+    tool_versions_reported: null,
+    below_minimum: [] as never[],
+    minimums: {},
     /** Every tool with a page, including tools seeded from public sources (a registry fact, not usage). */
     tools,
-    house_excluded: true,
+    /** F-02: signed-in people and agents, AI tool calls and skill scans in 7 days, our own included. */
+    gross: grossJson(gross, env.PUBLIC_ORIGIN),
+    /**
+     * ADR 0067 Amendment 1: no longer public. Always null (the outside-only active-owner count is on /admin/kpis).
+     * Kept so existing readers don't break.
+     */
+    active_owners_30d: null,
+    /**
+     * ADR 0067 Amendment 1: the outside-only headline is internal now. Always an empty array (kept, not removed, so
+     * clients that iterate it or check its type keep working).
+     */
+    third_party: [] as never[],
+    /** ADR 0067 Amendment 1: the public live totals, our own test agents included (`includes_own_test_agents`). */
+    totals: publicTotals(work, live, env.PUBLIC_ORIGIN),
+    internal_only: ["third_party", "active_owners_30d", ...OUTSIDE_ONLY_STATS],
+    /** F-02: no public number leaves our own accounts out any more; every one includes them. */
+    house_excluded: false,
+    founders_excluded: false,
+    rules_version: STATS_RULES_VERSION,
+    rules_url: `${env.PUBLIC_ORIGIN}/stats/rules`,
+    stats_json: `${env.PUBLIC_ORIGIN}/stats.json`,
     generated_at: new Date(now).toISOString(),
   };
 }
 
-/** The raw counts behind `publicStats`, House left out. Never sent to pages or agents ungated. */
+/** The raw outside-only counts (House and founders left out). Internal since F-02: never sent to a public page or API. */
 export async function publicCounts(env: Env, now = Date.now()) {
   const db = getDb(env);
   const one = async (q: Promise<{ n: number }[]>) => Number((await q)[0]?.n ?? 0);
   const dayAgo = now - 86_400_000;
-  const outside = eq(t.humans.isHouse, false);
+  // ADR 0067: House and founder accounts are ours; reports count only when people can read them (not held or rejected).
+  const outside = outsidePeople(env);
   const reportsBy = () => db.select({ n: count() }).from(t.reports).innerJoin(t.humans, eq(t.reports.humanId, t.humans.id));
+  const readable = and(eq(t.reports.held, false), ne(t.reports.moderationState, "rejected"));
   const [humans, verified, agents, reports, reports24h, tools, toolsReported] = await Promise.all([
     one(db.select({ n: count() }).from(t.humans).where(outside)),
     one(db.select({ n: count() }).from(t.humans).where(and(outside, eq(t.humans.tier, "verified")))),
     one(db.select({ n: count() }).from(t.agents).innerJoin(t.humans, eq(t.agents.humanId, t.humans.id)).where(and(outside, eq(t.agents.status, "active")))),
-    one(reportsBy().where(outside)),
-    one(reportsBy().where(and(outside, gte(t.reports.createdAt, dayAgo)))),
+    one(reportsBy().where(and(outside, readable))),
+    one(reportsBy().where(and(outside, readable, gte(t.reports.createdAt, dayAgo)))),
     one(db.select({ n: count() }).from(t.tools)),
     one(
       db

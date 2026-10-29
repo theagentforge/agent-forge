@@ -17,7 +17,7 @@ import {
 import { checkParams, installRefs, type InstallRef } from "@forge/shared/install-parse";
 import { addInstalls, parseInstalls, type PendingInstall } from "../installs";
 import { safeSessionId } from "../strain-state";
-import { claimShownPath, commandHash, emit, forgeOrigin, installsPath, memoryPath, optionOn, readStdin, readText, writeText } from "./common";
+import { claimShownPath, commandHash, emit, forgeOrigin, installIdFor, installsPath, memoryPath, optionOn, readStdin, readText, writeText } from "./common";
 
 // PreToolUse (Bash): before an install command runs, check each package or repo on The Forge.
 // Blocks only on "flagged" or "confirmed malicious" (MASTER_PLAN §7.1). Costs no LLM tokens. Fails open.
@@ -38,6 +38,8 @@ export interface DecideContext {
   now?: number;
   /** Filled with the answers, for the caller to note pending installs. */
   checked?: Checked[];
+  /** Extra request headers: the B3-09 random install ID. */
+  headers?: Record<string, string>;
 }
 
 export async function decide(command: string, origin: string, fetcher: typeof fetch = fetch, ctx: DecideContext = {}) {
@@ -49,7 +51,7 @@ export async function decide(command: string, origin: string, fetcher: typeof fe
         // The pinned version (npm name@1.2.3, pip name==1.2.3) lets an advisory for that version flag it.
         const res = await fetcher(`${origin}/api/v1/check?${checkParams(ref)}`, {
           signal: AbortSignal.timeout(TIMEOUT_MS),
-          headers: { "User-Agent": "theagentforge-claude-plugin" },
+          headers: { ...ctx.headers, "User-Agent": "theagentforge-claude-plugin" },
         });
         if (!res.ok) return null;
         return { ref, check: (await res.json()) as Answer };
@@ -134,6 +136,13 @@ export function pendingInstalls(checked: Checked[], session: string, command: st
   }));
 }
 
+/** B3-09: the first-run install ID notice goes to the person only (`systemMessage`), never to the agent's context. */
+export function withNotice<T extends { systemMessage?: string }>(out: T | null, notice: string | null): T | { systemMessage: string } | null {
+  if (!notice) return out;
+  if (!out) return { systemMessage: notice };
+  return { ...out, systemMessage: out.systemMessage ? `${out.systemMessage}\n${notice}` : notice };
+}
+
 async function main() {
   if (!optionOn("CHECK_INSTALLS")) return;
   const input = (await readStdin()) as { session_id?: unknown; tool_name?: string; tool_input?: { command?: unknown } };
@@ -143,7 +152,8 @@ async function main() {
   const now = Date.now();
   const memory = parseMemory(readText(memoryPath()));
   const checked: Checked[] = [];
-  const out = await decide(command, forgeOrigin(), fetch, { memory, now, checked });
+  const id = installIdFor(forgeOrigin());
+  const out = withNotice(await decide(command, forgeOrigin(), fetch, { memory, now, checked, headers: id.headers }), id.notice);
   if (checked.length) {
     writeText(memoryPath(), serializeMemory(memory, now));
     if (optionOn("REPORT_DRAFTS")) {

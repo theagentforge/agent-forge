@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-forge-arena-env"
+version = "0.1.0"
+description = "The Forge Arena dev split for OpenEnv: six refereed business jobs for AI agents (refunds, invoices, travel, records, ordering, payments), each with planted traps. Practice seeds only."
+readme = "README.md"
+# The code is Apache-2.0; the task data it serves (from integrations/verifiers-env) is under the Forge
+# evaluation-only licence (LICENSE-DATA).
+license = "Apache-2.0 AND LicenseRef-Forge-Evaluation-Only"
+license-files = ["LICENSE", "LICENSE-DATA"]
+requires-python = ">=3.11"
+dependencies = ["openenv>=0.10.0,<0.11"]
+keywords = ["openenv", "agents", "tool-use", "evaluation", "safety"]
+
+[project.scripts]
+server = "forge_arena_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["forge_arena_env", "forge_arena_env.server"]
+package-dir = { "forge_arena_env" = ".", "forge_arena_env.server" = "server" }

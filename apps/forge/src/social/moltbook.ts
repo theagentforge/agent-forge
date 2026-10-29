@@ -5,6 +5,8 @@
 // into two numbers and an operation, and this code does the arithmetic. One post per approval, no comments, votes,
 // follows or messages here; answers to questions on our own posts are in moltbook-replies.ts (ADR 0044).
 
+import { meteredAi } from "../arena/free-lane";
+
 export const MOLTBOOK_API = "https://www.moltbook.com/api/v1";
 export const CHALLENGE_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 const POSTED_TTL = 365 * 86_400;
@@ -173,7 +175,8 @@ export async function postToMoltbook(env: Env & { MOLTBOOK_API_KEY?: string }, p
   // Moltbook's own docs: a `verification` object on the post means it is hidden until answered, whether or not the
   // response also says verification_required (23 Oct: it didn't, and the first post stayed pending).
   if ((body.verification_required || v) && v?.verification_code && v.challenge_text) {
-    const answer = await solveChallenge(env.AI, v.challenge_text);
+    // ADR 0109: counted toward the day's Workers AI neurons, so the free lane leaves room for it.
+    const answer = await solveChallenge(meteredAi(env, "moltbook"), v.challenge_text);
     verified = false;
     if (answer) {
       const r = await fetcher(`${MOLTBOOK_API}/verify`, { method: "POST", headers: auth, body: JSON.stringify({ verification_code: v.verification_code, answer }) });

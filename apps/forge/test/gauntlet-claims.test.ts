@@ -126,15 +126,18 @@ describe("claim this run (ADR 0048)", () => {
     expect(both.original.agent).toBe(defender.agent.handle);
   });
 
-  it("needs a verified owner", async () => {
+  it("holds a sandbox owner's claim as pending, privately, until they're verified (ADR 0073, OA-06)", async () => {
     const sandbox = await connectAgent();
-    await getDb(env).update(t.humans).set({ tier: "sandbox" }).where(eq(t.humans.id, sandbox.human.id));
+    await getDb(env).update(t.humans).set({ tier: "sandbox", verifiedVia: null }).where(eq(t.humans.id, sandbox.human.id));
     const ip = nextIp();
     const run = await gauntlet("gauntlet_start", {}, ip);
     await finish(run.gauntlet_id, ip);
     const r = await signedIn(sandbox.token, "gauntlet_claim", { claim_key: run.claim_key });
-    expect(r.isError).toBe(true);
-    expect(r.structuredContent).toMatchObject({ error: "claim_needs_verified_owner", notice: CLAIM_NOTICE });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ ok: true, pending: true, public: false, counted: false, gauntlet_id: run.gauntlet_id });
+    expect(r.structuredContent.notice).toContain("isn't public");
+    expect((await getDb(env).select().from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, run.gauntlet_id))).length).toBe(0);
+    expect(await page(`/a/${sandbox.agent.handle}`)).not.toContain("Gauntlet runs");
   });
 
   it("claims and hides from the dashboard, with the notice shown where you claim", async () => {

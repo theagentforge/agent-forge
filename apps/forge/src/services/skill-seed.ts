@@ -1,5 +1,5 @@
 import { SCAN_RULES, type ScanFinding, type ScanSeverity } from "@forge/shared";
-import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { isLean } from "./ops-mode";
@@ -79,10 +79,11 @@ export async function importSkillSeed(env: Env, limit = 1500) {
 // Anyone can scan a held file themselves, by link or by pasting it. They get the verdict (they have the file anyway),
 // but until NOTICE_ENDS the stored result stays unlisted: no page, sitemap entry, receipt link, "Same repository" line,
 // dataset row or MCP output beyond that answer. A scan matches a held entry by fingerprint, or by its GitHub source
-// (same repository and path at any single-segment ref, or refs/heads|tags/<name>), so an edited copy stays held too.
+// (same repository and path at any ref, raw or jsDelivr link: githubFile), so an edited copy stays held too.
 // After NOTICE_ENDS the hold ends by itself: new scans are public as usual, and releaseHeldScans (hourly cron) lists the
 // rows scans created during the hold. Seed rows (first_seen = SEEDED_AT) are left to the 2 Nov publication task, which
-// checks for maintainer requests first. That task removes this block with the held file and the held import.
+// checks for maintainer requests first. That task removes this block with the held file and the held import: the
+// checklist is docs/runbooks/disclosure-window-end.md.
 
 type HeldIndex = { fps: Set<string>; paths: Map<string, Set<string>> };
 let heldIndex: HeldIndex | null = null;
@@ -107,47 +108,95 @@ export function useHeldFile(file: SeedFile | null) {
   heldIndex = null;
 }
 
+/**
+ * A GitHub file link the scanner fetches, as its repository ("owner/repo", lower case) and path segments, with the
+ * indexes where the in-repository path may start (after the ref). raw.githubusercontent.com/owner/repo/<ref>/path
+ * (github.com blob, raw and tree links arrive in this form), with refs/heads|tags/<name> or a ref that itself has
+ * slashes (feature/x); and cdn.jsdelivr.net/gh/owner/repo[@ref]/path, which serves the same files.
+ */
+function githubFile(sourceUrl: string): { repo: string; parts: string[]; starts: number[]; exact: number[] } | null {
+  let u: URL;
+  let parts: string[];
+  try {
+    u = new URL(sourceUrl);
+    parts = u.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  if (u.hostname === "raw.githubusercontent.com" && parts.length >= 4) {
+    // Every split after the ref is a candidate: a ref can contain slashes, and GitHub serves those links.
+    const starts = Array.from({ length: parts.length - 3 }, (_, k) => 3 + k);
+    const exact = parts[2] === "refs" && (parts[3] === "heads" || parts[3] === "tags") ? [5] : [3];
+    return { repo: `${parts[0]}/${parts[1]}`.toLowerCase(), parts, starts, exact };
+  }
+  if (u.hostname === "cdn.jsdelivr.net" && parts[0] === "gh" && parts.length >= 4) {
+    return { repo: `${parts[1]}/${parts[2]!.split("@")[0]}`.toLowerCase(), parts, starts: [3], exact: [3] };
+  }
+  return null;
+}
+
 /** Whether a scan's fingerprint or source URL matches a held entry (regardless of date). */
 export function matchesHeld(fingerprint: string, sourceUrl: string | null | undefined) {
   heldIndex ??= buildHeldIndex(heldSource);
   if (heldIndex.fps.has(fingerprint)) return true;
-  if (!sourceUrl) return false;
-  let u: URL;
-  try {
-    u = new URL(sourceUrl);
-  } catch {
-    return false;
-  }
-  if (u.hostname !== "raw.githubusercontent.com") return false;
-  let parts: string[];
-  try {
-    parts = u.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-  } catch {
-    return false;
-  }
-  const held = heldIndex.paths.get(`${parts[0] ?? ""}/${parts[1] ?? ""}`.toLowerCase());
-  if (!held) return false;
-  // owner/repo/<ref>/path, or owner/repo/refs/(heads|tags)/<name>/path.
-  const starts = parts[2] === "refs" && (parts[3] === "heads" || parts[3] === "tags") ? [3, 5] : [3];
-  return starts.some((i) => parts.length > i && held.has(parts.slice(i).join("/")));
+  const f = sourceUrl ? githubFile(sourceUrl) : null;
+  const held = f && heldIndex.paths.get(f.repo);
+  if (!f || !held) return false;
+  // The plain split (owner/repo/<ref>/path, or after refs/heads|tags/<name>) always counts. Any other split (a ref with
+  // slashes) counts only for a held path with a folder, so a held root SKILL.md doesn't hold every SKILL.md in the repo.
+  return f.starts.some((i) => {
+    const path = f.parts.slice(i).join("/");
+    return held.has(path) && (f.exact.includes(i) || path.includes("/"));
+  });
 }
 
 /** True while the hold is on and the scan matches a held entry: its stored result must stay unlisted. */
 export const heldScan = (fingerprint: string, sourceUrl: string | null | undefined, now = Date.now()) => now < NOTICE_ENDS && matchesHeld(fingerprint, sourceUrl);
 
 const RELEASED_KEY = "seed:skill-scan-held:released";
+const UNLISTED_KEY = "seed:skill-scan-held:unlisted";
+
+/**
+ * Before NOTICE_ENDS (hourly cron, once after this code is deployed): unlists the rows that scans made public before
+ * the hold existed (19 to 26 Oct, when any link scan was public), so a held file isn't on the site until a new scan of
+ * it happens to come along. Every row matching a held fingerprint, and every public link-scan row (not a seed row)
+ * whose GitHub source matches a held repository path. Later scans are held by scanAndRecord itself.
+ */
+async function unlistHeldScans(env: Env, now: number) {
+  if (await env.KV.get(UNLISTED_KEY)) return { skipped: "held", unlisted_done: true };
+  heldIndex ??= buildHeldIndex(heldSource);
+  const db = getDb(env);
+  const fps = new Set<string>();
+  const held = [...heldIndex.fps];
+  for (let i = 0; i < held.length; i += 90) {
+    const rows = await db.select({ fp: t.skillScans.fingerprint }).from(t.skillScans).where(and(eq(t.skillScans.public, true), inArray(t.skillScans.fingerprint, held.slice(i, i + 90))));
+    for (const r of rows) fps.add(r.fp);
+  }
+  // Public link scans made by people (seed rows are the launch scan's own, and a held one matches by fingerprint above).
+  const linked = await db
+    .select({ fp: t.skillScans.fingerprint, src: t.skillScans.sourceUrl })
+    .from(t.skillScans)
+    .where(and(eq(t.skillScans.public, true), ne(t.skillScans.firstSeen, SEEDED_AT), isNotNull(t.skillScans.sourceUrl)));
+  for (const r of linked) if (matchesHeld(r.fp, r.src)) fps.add(r.fp);
+  const list = [...fps];
+  for (let i = 0; i < list.length; i += 90) await db.update(t.skillScans).set({ public: false }).where(inArray(t.skillScans.fingerprint, list.slice(i, i + 90)));
+  await env.KV.put(UNLISTED_KEY, String(now));
+  return { skipped: "held", unlisted: list.length };
+}
 
 /**
  * After NOTICE_ENDS (hourly cron, once): lists the rows that scans created while the hold was on. They are the rows
  * that match a held entry, aren't seed rows, and are unlisted; URL scans and held files are public after the hold.
+ * Before NOTICE_ENDS it runs unlistHeldScans (once) instead.
  */
 export async function releaseHeldScans(env: Env, now = Date.now()) {
-  if (now < NOTICE_ENDS) return { skipped: "held" };
+  if (now < NOTICE_ENDS) return unlistHeldScans(env, now);
   if (await env.KV.get(RELEASED_KEY)) return { done: true };
   heldIndex ??= buildHeldIndex(heldSource);
   const db = getDb(env);
   const fps = new Set<string>();
-  const notSeed = and(eq(t.skillScans.public, false), ne(t.skillScans.firstSeen, SEEDED_AT));
+  // A bulk-scan row (ADR 0107) that matched a pattern stays unlisted after the hold too: only a person lists those.
+  const notSeed = and(eq(t.skillScans.public, false), ne(t.skillScans.firstSeen, SEEDED_AT), or(isNull(t.skillScans.origin), eq(t.skillScans.verdict, "clear")));
   const held = [...heldIndex.fps];
   for (let i = 0; i < held.length; i += 90) {
     const rows = await db.select({ fp: t.skillScans.fingerprint }).from(t.skillScans).where(and(notSeed, inArray(t.skillScans.fingerprint, held.slice(i, i + 90))));

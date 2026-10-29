@@ -2,8 +2,11 @@ import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSk
 
 // The skill-scan action (ADR 0026): scans the agent instruction files in a repository (SKILL.md, AGENTS.md,
 // CLAUDE.md, Cursor and Copilot rules) with the Forge's rules, on the runner. Nothing about the repository is sent
-// to the Forge: the only network calls are to GitHub's own API, for the files a pull request changed and its one
-// comment. Wording rule: "matches pattern X at line N", never "malicious".
+// to the Forge: the network calls are to GitHub's own API, for the files a pull request changed and its one
+// comment, plus, only if the user opts in with `count-run: true` (off by default: ADR 0090 Amendment 1), one anonymous
+// count to the Forge at the end of the run, carrying only the outcome: blocked, findings or clear (B2-06, ADR 0086).
+// No file, path, finding, repository or account goes with it. DO_NOT_TRACK=1 always wins.
+// Wording rule: "matches pattern X at line N", never "malicious".
 // With `state-file` (kept between runs by actions/cache, committed nowhere) the summary also says what changed since
 // the last run: newer scan rules, files whose text changed, and findings that appeared or went away.
 
@@ -39,7 +42,16 @@ export interface Inputs {
   origin: string;
   /** Where the last run's results are kept (empty: no memory). */
   stateFile?: string;
+  /** Send the one anonymous end-of-run count (outcome only) to the Forge. Default false (opt-in with `count-run: true`); DO_NOT_TRACK=1 always wins. */
+  countRun?: boolean;
+  /** DO_NOT_TRACK=1 (or true/yes) was set: the count is off whatever count-run says. */
+  doNotTrack?: boolean;
+  /** True in our own repositories: the count is tagged and kept apart in the Forge's own numbers. */
+  internal?: boolean;
 }
+
+/** GitHub owners whose runs are ours. The tag only keeps our runs apart in the Forge's counts; it grants nothing. */
+export const OUR_OWNERS = ["theagentforge"];
 
 export interface Event {
   name: string;
@@ -84,6 +96,12 @@ export function readInputs(env: Record<string, string | undefined>): Inputs | st
   const origin = (get("origin") || DEFAULT_ORIGIN).replace(/\/+$/, "");
   if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(origin)) return "origin must be an https:// address";
   const paths = get("paths");
+  // Off by default (Dinike, 28 Oct; ADR 0090 Amendment 1): nothing is sent unless the user sets count-run: true.
+  const countRun = get("count-run") || "false";
+  if (!/^(true|false)$/i.test(countRun)) return "count-run must be true or false";
+  // The DO_NOT_TRACK convention (consoledonottrack.com) also turns the count off, like Next.js, Turborepo and gh do.
+  const doNotTrack = /^(1|true|yes)$/i.test((env.DO_NOT_TRACK ?? "").trim());
+  const owner = (env.GITHUB_REPOSITORY_OWNER || (env.GITHUB_REPOSITORY ?? "").split("/")[0] || "").toLowerCase();
   return {
     paths: paths ? lines(paths) : DEFAULT_PATHS,
     ignore: [...DEFAULT_IGNORE, ...lines(get("ignore"))],
@@ -94,7 +112,38 @@ export function readInputs(env: Record<string, string | undefined>): Inputs | st
     token: get("github-token"),
     origin,
     stateFile: get("state-file"),
+    countRun: /^true$/i.test(countRun) && !doNotTrack,
+    doNotTrack,
+    internal: OUR_OWNERS.includes(owner),
   };
+}
+
+/** The run's outcome as the Forge counts it: blocked (the job fails), findings below the threshold, or clear. */
+export const runOutcome = (failed: boolean, findings: number) => (failed ? "blocked" : findings > 0 ? "findings" : "clear");
+
+/**
+ * The one anonymous count per run (B2-06): the outcome and the client name, nothing else. Never fails the job and
+ * never waits more than 5 seconds.
+ */
+export async function sendCount(inputs: Inputs, outcome: ReturnType<typeof runOutcome>, io: Pick<Io, "fetch" | "log">) {
+  if (!inputs.countRun) {
+    // Says which switch kept it off (review, ADR 0093): with count-run: true and DO_NOT_TRACK=1, it's DO_NOT_TRACK.
+    io.log(inputs.doNotTrack ? "No run count sent to The Forge (DO_NOT_TRACK is set, which always turns it off)." : "No run count sent to The Forge (count-run is not true; it is off by default).");
+    return false;
+  }
+  try {
+    const res = await io.fetch(`${inputs.origin}/api/v1/install-outcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": inputs.internal ? "theagentforge-skill-scan/1 theagentforge-internal/action" : "theagentforge-skill-scan/1", ...(inputs.internal ? { "X-Forge-Internal": "action" } : {}) },
+      body: JSON.stringify({ client: "skill-scan", outcome }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) io.log(`Sent one anonymous run count to The Forge, because count-run is true (outcome "${outcome}" only; no file, path, finding or repository). Remove count-run: true, or set DO_NOT_TRACK=1, to stop it.`);
+    return res.ok;
+  } catch {
+    io.log("Couldn't send the run count to the Forge (the scan result is unaffected).");
+    return false;
+  }
 }
 
 /** What one run remembers per file: its fingerprint and finding counts, under which rules. Nothing else. */
@@ -362,5 +411,6 @@ export async function run(inputs: Inputs, event: Event, io: Io): Promise<number>
   io.output("low", count("low"));
   io.output("verdict", all.some((f) => f.severity === "high") ? "flagged" : all.some((f) => f.severity === "medium") ? "caution" : "clear");
   io.log(`Forge skill scan: ${results.length} files, ${all.length} findings; comment ${posted}.`);
+  await sendCount(inputs, runOutcome(failed, all.length), io);
   return failed ? 1 : 0;
 }

@@ -160,14 +160,14 @@ describe("the KPIs say what they measure (ADR 0050)", () => {
     expect(calls.detail).toMatchObject({ yesterday: 6, mcp_tool_calls_all: 8 });
   });
 
-  it("/stats shows tool calls from outside apps once they reach the minimum", async () => {
-    const json = (await (await fetchWorker("/stats?format=json&t=real-use")).json()) as { agent_funnel: Record<string, unknown> & { below_minimum: string[] } };
-    expect("agent_outside_calls_7d" in json.agent_funnel).toBe(true);
+  it("tool calls from outside apps are counted internally (F-02: /admin), never on /stats", async () => {
+    const { outsideStatsData } = await import("../src/web/stats");
+    expect("agent_outside_calls_7d" in (await outsideStatsData(env)).agent_funnel!).toBe(true);
     await bump(env, n("mcp:public:calls", 30));
-    const after = (await (await fetchWorker("/stats?format=json&t=real-use-2")).json()) as { agent_funnel: { agent_outside_calls_7d: number | null } };
-    expect(after.agent_funnel.agent_outside_calls_7d).toBeGreaterThanOrEqual(25);
+    expect((await outsideStatsData(env)).agent_funnel!.agent_outside_calls_7d).toBeGreaterThanOrEqual(25);
     const page = await (await fetchWorker("/stats?t=real-use-2")).text();
-    expect(page).toMatch(/<b>\d+<\/b> tool calls from outside apps in 7 days/);
-    expect(page).toContain("monitors (apps that connect but never use a tool");
+    expect(page).not.toContain("tool calls from outside apps");
+    // The gross twin counts them, with our own calls.
+    expect(page).toMatch(/<tr data-k="ai_tool_calls_7d"><td>[^<]*ours included[^<]*<\/td><td class="num">[\d,]+<\/td>/);
   });
 });

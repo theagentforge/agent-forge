@@ -14,9 +14,17 @@ export const MIN_GAP_ATTEMPTS = 10;
 
 const Z = 1.96;
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
+/**
+ * Interval bounds rounded outwards to 3 decimals (lower down, upper up), so a published interval is never narrower than
+ * the computed one. The 1e-9 (a millionth of the last digit) only absorbs floating-point noise such as 0.57 * 1000.
+ */
+export const lo3 = (x: number) => Math.floor(x * 1000 + 1e-9) / 1000;
+export const hi3 = (x: number) => Math.ceil(x * 1000 - 1e-9) / 1000;
+/** A 95% interval with its bounds rounded outwards (see lo3, hi3). */
+export const outward = ([l, u]: [number, number]): [number, number] => [lo3(l), hi3(u)];
 
 /** Unrounded 95% Wilson interval. */
-function wilson(k: number, n: number): [number, number] {
+export function wilson(k: number, n: number): [number, number] {
   if (n <= 0) return [0, 1];
   const p = k / n;
   const z2 = Z * Z;
@@ -33,7 +41,7 @@ export function gapInterval(k1: number, n1: number, k2: number, n2: number): [nu
   const [l1, u1] = wilson(k1, n1);
   const [l2, u2] = wilson(k2, n2);
   const d = p1 - p2;
-  return [r3(Math.max(-1, d - Math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2))), r3(Math.min(1, d + Math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)))];
+  return outward([Math.max(-1, d - Math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)), Math.min(1, d + Math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2))]);
 }
 
 interface Side {
@@ -66,7 +74,7 @@ const side = (passes: number, attempts: number): Side => ({
   attempts,
   passes,
   pass_rate: attempts ? r3(passes / attempts) : null,
-  ci_95: attempts ? (wilson(passes, attempts).map(r3) as [number, number]) : null,
+  ci_95: attempts ? outward(wilson(passes, attempts)) : null,
 });
 
 type Pair = { eventId: string; eventAt: number; slug: string; eventName: string; model: string; pub: { n: number; k: number }; held: { n: number; k: number } };

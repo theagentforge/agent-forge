@@ -4,6 +4,7 @@ import { agentFunnel, clientKind, daysBefore, directorySessions, isDirectoryClie
 import { getDb } from "./db";
 import { dataInventory, growthKpis } from "./kpis";
 import { topMisses } from "./misses";
+import { ownerDigest } from "./owner-digest";
 
 // Our own signals for Forge Scout (ADR 0031 step 1, ADR 0032 item 2), read once a day by scout-collect.yml in the
 // private repo (GitHub OIDC). Aggregate daily counts only, the same rows /stats is built from: no IPs, no people.
@@ -49,6 +50,8 @@ export async function scoutSignals(env: Env, now = Date.now()) {
   // The growth KPIs (ADR 0039): Scout reports the north star and flags any KPI that fell for 2 weeks running.
   const kpis = await growthKpis(env, now).catch((e) => ({ as_of: yesterday, kpis: [], error: String(e) }));
   const data_inventory = await dataInventory(env, now).catch((e) => ({ error: String(e) }));
+  // OA-11 (ADR 0078): the owner funnel for the daily Ops Digest. Internal only (this endpoint is OIDC-gated).
+  const owner_funnel = await ownerDigest(env, now).catch((e) => ({ error: String(e) }));
 
   // One entry per client name, whether it said hello with `initialize` or named itself in a call's `_meta`.
   const name = (key: string) => key.replace(/^mcp:client(call)?:/, "");
@@ -78,6 +81,7 @@ export async function scoutSignals(env: Env, now = Date.now()) {
     day: yesterday,
     kpis,
     data_inventory,
+    owner_funnel,
     misses: { yesterday: missesDay, last_7_days: missesWeek },
     mcp_clients: list,
     new_clients: theirs.filter((c) => c.first_seen === yesterday).map((c) => c.name).sort(),
@@ -160,7 +164,7 @@ export async function conversionDaily(env: Env, now = Date.now(), days = 14) {
       connect_humans: get("visit:human:connect"),
       connect_tiles: total("connect:tile:"),
       connect_tiles_by_app: byPrefix("connect:tile:"),
-      connect_copied: total("connect:copied:") - get("connect:copied:test-prompt"),
+      connect_copied: total("connect:copied:") - get("connect:copied:test-prompt") - get("connect:copied:first-prompt") - get("connect:copied:gauntlet-line"),
       connect_test_prompt_copied: get("connect:copied:test-prompt"),
       connect_copied_by_app: byPrefix("connect:copied:"),
       connect_code_shown: get("connect:code-shown"),

@@ -1,5 +1,7 @@
+import { KEYS_PATH } from "@forge/arena";
 import type { Context } from "hono";
 import { MCP_SERVER_VERSION, SERVER_ICON_PATH, SERVERS } from "../server-info";
+import { keySet } from "../services/replay-keys";
 import { site } from "./pages";
 
 // Discovery files (docs/launch/agent-channels.md §4.4): an AI Catalog at /.well-known/ai-catalog.json listing an MCP
@@ -45,6 +47,8 @@ const open = { "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max
 const json = (c: Context<{ Bindings: Env }>, body: unknown, type: string) => c.body(JSON.stringify(body), 200, { ...open, "Content-Type": `${type}; charset=utf-8` });
 
 // Fetches are counted in the site middleware, before the cache (services/usage.ts discoveryCounters).
+// Replay format v2 (ADR 0066): the public Ed25519 keys that sign replay seals, with key ids and rotation rules.
+site.get(KEYS_PATH, async (c) => c.json(await keySet(c.env), 200, { "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" }));
 site.get("/.well-known/ai-catalog.json", (c) => json(c, aiCatalog(c.env.PUBLIC_ORIGIN), "application/ai-catalog+json"));
 // ARD v0.91 (26 Aug 2026) moved the AI Catalog to /.well-known/ard.json; registries such as Ora's directory, HF Discover
 // and the apis.io grader crawl that path. The same document under both paths.

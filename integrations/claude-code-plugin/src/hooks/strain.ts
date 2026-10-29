@@ -14,7 +14,8 @@ import { byServer, draftMessage, drafts, MAX_DRAFTS, mergeCounts, type InstallDr
 import { toStrain } from "../strain-state";
 import { draftableInstalls, installDraft, ledgerKey, markOutcome, parseInstalls } from "../installs";
 import { draftReport } from "@forge/shared/light";
-import { commandHash, dataRoot, emit, forgeOrigin, installsPath, optionOn, readStdin, readText, sha256Hex, writeText } from "./common";
+import { isSignedInForgeTool, markLinked, parseLinkState } from "../link-line";
+import { commandHash, dataRoot, emit, forgeOrigin, installsPath, linkStatePath, optionOn, readStdin, readText, sha256Hex, writeText } from "./common";
 
 // PostToolUseFailure / PostToolUse: count failures per tool in a local session file (MASTER_PLAN §6.10).
 // `show` prints the counts for the most recent session, for the agent to attach to a field report.
@@ -46,9 +47,21 @@ function prune(dir: string, now: number) {
 
 const inputHash = (input: unknown) => createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex").slice(0, 16);
 
+/** Sets the local "linked" flag once, after a successful call to a tool on the signed-in server (OA-04). */
+export function noteLinked(toolName: string, stateText: string | null, now: number, save: (text: string) => void): boolean {
+  if (!isSignedInForgeTool(toolName)) return false;
+  const state = parseLinkState(stateText);
+  if (state.linked_at !== undefined) return false;
+  save(JSON.stringify(markLinked(state, now)));
+  return true;
+}
+
 async function record(mode: "failure" | "success") {
   const ev = (await readStdin()) as { session_id?: unknown; tool_name?: unknown; tool_input?: unknown; is_interrupt?: unknown };
   if (typeof ev.tool_name !== "string" || ev.is_interrupt === true) return;
+  // OA-04: a signed-in Forge call worked, so this agent is linked to its person and the link line stops for good.
+  // The tool name is checked first, so other tools' calls never read the state file.
+  if (mode === "success" && isSignedInForgeTool(ev.tool_name)) noteLinked(ev.tool_name, readText(linkStatePath()), Date.now(), (t) => writeText(linkStatePath(), t));
   // An install the pre-install hook checked: note whether it worked, for its field report draft.
   const command = (ev.tool_input as { command?: unknown } | null)?.command;
   if (ev.tool_name === "Bash" && typeof command === "string") {

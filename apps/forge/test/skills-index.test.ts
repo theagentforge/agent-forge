@@ -13,7 +13,7 @@ describe("the skills discovery index", () => {
     expect(res.status).toBe(200);
     const idx = (await res.json()) as { $schema: string; skills: { name: string; type: string; description: string; url: string; digest: string }[] };
     expect(idx.$schema).toBe(SKILLS_SCHEMA);
-    expect(idx.skills.map((s) => s.name)).toEqual(["forge-check-before-install", "forge-check"]);
+    expect(idx.skills.map((s) => s.name)).toEqual(["forge-check-before-install", "forge-check", "forge-run-the-gauntlet"]);
     for (const s of idx.skills) {
       expect(s.name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
       expect(s.type).toBe("skill-md");
@@ -27,7 +27,7 @@ describe("the skills discovery index", () => {
 
   it("serves the older layout too", async () => {
     const idx = (await (await fetchWorker("/.well-known/skills/index.json")).json()) as { skills: { name: string; files: string[] }[] };
-    expect(idx.skills.map((s) => [s.name, s.files])).toEqual([["forge-check-before-install", ["SKILL.md"]], ["forge-check", ["SKILL.md"]]]);
+    expect(idx.skills.map((s) => [s.name, s.files])).toEqual([["forge-check-before-install", ["SKILL.md"]], ["forge-check", ["SKILL.md"]], ["forge-run-the-gauntlet", ["SKILL.md"]]]);
     expect((await fetchWorker("/.well-known/skills/forge-check-before-install/SKILL.md")).status).toBe(200);
     expect((await fetchWorker("/.well-known/agent-skills/nope/SKILL.md")).status).toBe(404);
   });

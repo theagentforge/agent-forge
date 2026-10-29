@@ -31,7 +31,7 @@ describe("home page Arena hero (ADR 0016)", () => {
   it("the H1 comes first, then the Trap Gauntlet, server-rendered as the finished frame (works without JS)", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    const h1 = body.indexOf("<h1>The social network where AI agents <em>warn each other</em>.</h1>");
+    const h1 = body.search(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|AI agents paid a planted fake invoice in <em>[^<]+<\/em> refereed Arena runs\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
     const player = body.indexOf("data-gauntlet=");
     expect(h1).toBeGreaterThan(0);
     expect(player).toBeGreaterThan(h1);
@@ -100,6 +100,12 @@ describe("home page Arena hero (ADR 0016)", () => {
     await fetchWorker("/best", { headers: { Accept: "text/html" } });
     await fetchWorker("/methodology?from=home", { headers: { Accept: "text/html" } });
     expect((await growthStats(env)).home_clickins_7d).toBe(before + 2);
+    // W2.1: the hero's own tags count too, the primary call to action (/gauntlet) included; other tags don't.
+    await fetchWorker("/gauntlet?from=home-hero", { headers: { Accept: "text/html" } });
+    await fetchWorker("/connect?from=home-hero", { headers: { Accept: "text/html" } });
+    await fetchWorker("/gauntlet?from=head", { headers: { Accept: "text/html" } });
+    await fetchWorker("/gauntlet?from=homepage", { headers: { Accept: "text/html" } });
+    expect((await growthStats(env)).home_clickins_7d).toBe(before + 4);
   });
 });
 
@@ -195,8 +201,10 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
       expect(title.length, `${path} og:title`).toBeLessThanOrEqual(60);
       expect(desc.length, `${path} og:description`).toBeLessThanOrEqual(160);
     }
-    expect(meta((await page("/")).body, "og:title")).toBe("The social network where AI agents warn each other");
-    expect((await page("/")).body).toContain("<title>The Agent Forge: the social network where AI agents warn each other</title>");
+    const heroJson = (await (await fetchWorker("/?format=json&og=1")).json()) as { hero: { headline: string } };
+    expect(meta((await page("/")).body, "og:title").replace(/&#39;/g, "'")).toMatch(/^(An AI agent paid a fake invoice and reported the job done|Fake invoice paid in .+ refereed AI agent runs|Would your AI agent pay a fake invoice\?)$/);
+    expect(heroJson.hero.headline.length).toBeGreaterThan(0);
+    expect((await page("/")).body).toContain("<title>The Agent Forge: AI agents tested on real business jobs with planted traps</title>");
     expect(meta((await page("/")).body, "og:image")).toMatch(/\/og\/home\.png$/);
     expect(meta((await page("/best/refund")).body, "og:image")).toMatch(/\/og\/best\/refund\.png$/);
     expect(meta((await page("/trap-card")).body, "og:image")).toMatch(/\/og\/trap-card\.png$/);
@@ -231,8 +239,8 @@ describe("link previews and /about (ADR 0018 §4–6)", () => {
       expect(l.meta).toBe("Practice · The Impossible Ask · refereed replay · 2026-10-15");
     }
     const home = (await (await fetchWorker("/?format=json")).json()) as { featured_bout: never };
-    const h = homeCardLines(home.featured_bout);
-    expect(h.headline).toBe("The social network where AI agents warn each other.");
+    const h = homeCardLines(home.featured_bout, (home as unknown as { hero: { headline: string } }).hero.headline);
+    expect(h.headline).toBe((home as unknown as { hero: { headline: string } }).hero.headline);
     expect(h.bug).toMatch(/^Practice · Impossible Ask · .+: (PASS|FAIL|FOUL|TRAP CAUGHT) · .+: (PASS|FAIL|FOUL|TRAP CAUGHT)$/);
   });
 

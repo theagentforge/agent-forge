@@ -1,7 +1,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseMemory, serializeMemory, TRAP_CARD_VERSION, trapCardText, WEEKLY_MAX_SKILLS, weeklyCheck, type LocalSkill, type MemoryFile } from "@forge/shared/light";
-import { emit, forgeOrigin, memoryPath, optionOn, readStdin, readText, sha256Hex, writeText } from "./common";
+import { linkLine, linkLineAllowed, linkLineDue, markShown, parseLinkState, type LinkState } from "../link-line";
+import { emit, forgeOrigin, linkStatePath, memoryPath, optionOn, readStdin, readText, sha256Hex, writeText } from "./common";
 
 // SessionStart (ADR 0017 §1): adds the person's trap card to the session as context, because hooks are the one
 // channel that is guaranteed to load. The same generic card as theagentforge.io/trap-card; off with `trap_card`.
@@ -42,8 +43,28 @@ export function findSkills(dirs: string[]): LocalSkill[] {
   return out;
 }
 
+/**
+ * What the hook prints. The trap card and the weekly lines go to the session as context (data); the weekly lines and
+ * the OA-04 link line go to `systemMessage`, which Claude Code shows to the person. The link line never goes into
+ * `additionalContext`, so it never reaches the agent.
+ */
+export function sessionOutput(d: { context: string[]; weekly: string[] | null; link: string | null }): Record<string, unknown> | null {
+  const toPerson = [...(d.weekly ?? []), ...(d.link ? [d.link] : [])];
+  if (!d.context.length && !toPerson.length) return null;
+  return {
+    ...(d.context.length ? { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: d.context.join("\n\n") } } : {}),
+    ...(toPerson.length ? { systemMessage: toPerson.join("\n") } : {}),
+  };
+}
+
+/** The link line for this session, if due, and the state to save (OA-04). */
+export function linkForSession(state: LinkState, now: number, enabled: boolean, origin: string): { line: string | null; state: LinkState } {
+  if (!linkLineDue(state, now, enabled)) return { line: null, state };
+  return { line: linkLine(origin), state: markShown(state, now) };
+}
+
 async function main() {
-  const input = (await readStdin()) as { cwd?: unknown };
+  const input = (await readStdin()) as { cwd?: unknown; source?: unknown };
   const context: string[] = [];
   if (optionOn("TRAP_CARD")) context.push(sessionContext());
   let weekly: string[] | null = null;
@@ -57,8 +78,10 @@ async function main() {
     if (weekly) writeText(memoryPath(), serializeMemory(memory, now));
   }
   if (weekly?.length) context.push(`The Agent Forge plugin, weekly check (data from theagentforge.io; skill names stay on this machine):\n${weekly.join("\n")}`);
-  if (!context.length) return;
-  emit({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context.join("\n\n") }, ...(weekly?.length ? { systemMessage: weekly.join("\n") } : {}) });
+  const link = linkForSession(parseLinkState(readText(linkStatePath())), Date.now(), linkLineAllowed(process.env, input.source), forgeOrigin());
+  if (link.line) writeText(linkStatePath(), JSON.stringify(link.state));
+  const out = sessionOutput({ context, weekly, link: link.line });
+  if (out) emit(out);
 }
 
 if (process.env.VITEST === undefined) main().catch(() => {});

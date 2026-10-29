@@ -1,5 +1,5 @@
 import { citation, PUBLIC_NAME, RULES_VERSION } from "@forge/arena";
-import { DATASET_LICENCE, LICENCE_PATH, PRIVACY_HISTORY, TERMS_HISTORY } from "../services/provenance";
+import { COMMERCIAL_LICENCE, DATASET_LICENCE, LICENCE_PATH, PRIVACY_HISTORY, TERMS_HISTORY } from "../services/provenance";
 import { site } from "./pages";
 
 // Machine-readable dataset card for /arena/dataset.json (ADR 0053, D10): MLCommons Croissant 1.0 with the Responsible
@@ -14,7 +14,7 @@ export const DATASET_FIRST_PUBLISHED = "2026-10-15";
  * The Croissant 1.0 JSON-LD context, as given in the specification (mlcommons.org/croissant/1.0), `rai` included.
  * Every key of the standard context must be here: the reference validator (mlcroissant) warns on any missing one.
  */
-const CONTEXT = {
+export const CROISSANT_CONTEXT = {
   "@language": "en",
   "@vocab": "https://schema.org/",
   citeAs: "cr:citeAs",
@@ -69,7 +69,7 @@ const field = (name: string, dataType: Kind, description: string, path = name, r
 export function croissant(origin: string) {
   const cite = citation(origin);
   return {
-    "@context": CONTEXT,
+    "@context": CROISSANT_CONTEXT,
     "@type": "sc:Dataset",
     conformsTo: ["http://mlcommons.org/croissant/1.0", "http://mlcommons.org/croissant/RAI/1.0"],
     name: `${PUBLIC_NAME} dataset`,
@@ -89,7 +89,7 @@ export function croissant(origin: string) {
     inLanguage: "en",
     // Responsible AI (Croissant RAI 1.0). Facts from the methodology and rules pages; see docs/data/datasheet.md.
     "rai:dataCollection":
-      "Each row is one bout The Forge ran itself: the model is called through its provider's API (OpenRouter with a pinned provider and no fallbacks, or Cloudflare Workers AI for practice models), given the job brief and sandbox tools, and refereed from the sandbox's end state and call log. Logs are signed when a bout finishes.",
+      "Each row is one bout The Forge ran itself: the model is called through its provider's API (OpenRouter, with a pinned provider and no fallbacks for paid models; OpenRouter's free \":free\" variants, practice only, with no provider pinned, no fallback to another provider or a paid model, and providers that may train on prompts, so they only ever play public jobs on public seeds; or Cloudflare Workers AI), given the job brief and sandbox tools, and refereed from the sandbox's end state and call log. Logs are signed when a bout finishes.",
     "rai:dataCollectionType": ["Experiments", "Software Collection"],
     "rai:dataCollectionTimeframe": "Ongoing since the first Arena bouts in October 2026 (live dataset). Each row's finishedAt and provenance.run_date give its date.",
     "rai:dataCollectionMissingData":
@@ -113,6 +113,8 @@ export function croissant(origin: string) {
     termsHistory: TERMS_HISTORY.map((h) => ({ version: h.version, from: new Date(h.from).toISOString().slice(0, 10) })),
     privacyHistory: PRIVACY_HISTORY.map((h) => ({ version: h.version, from: new Date(h.from).toISOString().slice(0, 10) })),
     licenceText: DATASET_LICENCE,
+    // B3-02 (ADR 0104): the licence notes. The evaluation-only text above is unchanged; this is the route to more.
+    commercialLicence: COMMERCIAL_LICENCE,
     distribution: [
       {
         "@type": "cr:FileObject",
@@ -149,7 +151,7 @@ export function croissant(origin: string) {
           field("tokens", "sc:Integer", "Tokens used."),
           field("provider", "sc:Text", "Serving provider recorded for the run."),
           field("finishedAt", "sc:Integer", "Finish time in milliseconds since 1970 (UTC)."),
-          field("rules_version", "sc:Text", "Referee and scoring rules version that scored the run (stamped on the result from rules 0.6; older runs by finish time)."),
+          field("rules_version", "sc:Text", "Referee and scoring rules group of the run: the version that scored it (stamped on the result from rules 0.6; older runs by finish time), or \"<version> re-scored\" for a run played under older rules and re-scored from its signed log, never pooled with runs played under that version (scored_under and played_under give both)."),
           field("task_version", "sc:Text", "Task version of the job at the finish time."),
           // Repeated field: the JSONPath selects the list itself (one value per run). "traps_triggered[*]" would select
           // one value per trap, so the column lengths differ and mlcroissant can't build the records.

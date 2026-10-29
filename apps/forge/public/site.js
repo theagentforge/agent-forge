@@ -289,11 +289,20 @@
     }
   });
 })();
-// /connect "pick your app" (ADR 0017 §4). Without JS every app's section is shown; with it, one tab at a time,
-// starting from the app the server guessed. The "Test it" step ticks when a check for the page's code arrives.
+// /connect (OA-02): step 1, the person's yes/no, step 2 "Link this agent to you" for their app, step 3 the Gauntlet,
+// and one collapsed "More ways to connect" with the app tabs (ADR 0017 §4: one tab at a time, starting from the app
+// the server guessed). "Test it" in there ticks when a check for the page's code arrives, polled only once opened.
 (function () {
   var box = document.querySelector("[data-connect]");
   if (!box) return;
+  var more = box.querySelector("[data-more-ways]");
+  function openMore() { if (more && !more.open) more.open = true; }
+  // A link to anything inside "More ways" (from the steps, or a #hash on arrival) opens it first.
+  function inMore(id) { var el = id && document.getElementById(id); return !!(el && more && more.contains(el)); }
+  if (inMore((location.hash || "").slice(1))) openMore();
+  Array.prototype.slice.call(box.querySelectorAll("[data-open-more], a[href^='#']")).forEach(function (a) {
+    a.addEventListener("click", function () { if (inMore((a.getAttribute("href") || "").slice(1))) openMore(); });
+  });
   var tabs = Array.prototype.slice.call(box.querySelectorAll("[data-tab]"));
   var tiles = Array.prototype.slice.call(box.querySelectorAll("[data-tile]"));
   var steps = box.querySelectorAll(".checklist li"), label = box.querySelector("[data-progress-label]");
@@ -310,13 +319,17 @@
   }
   // Not called "start": that name is the test poller's function below, and a var of the same name would replace it.
   var fromHash = (location.hash || "").replace("#tab-", "");
-  show(tiles.some(function (t) { return t.getAttribute("data-tile") === fromHash; }) ? fromHash : box.getAttribute("data-default-tab"));
+  var hashTab = tiles.some(function (t) { return t.getAttribute("data-tile") === fromHash; });
+  if (hashTab) openMore();
+  show(hashTab ? fromHash : box.getAttribute("data-default-tab"));
   tiles.forEach(function (t) {
     t.addEventListener("click", function (e) {
       e.preventDefault();
       var id = t.getAttribute("data-tile");
       show(id);
       try { history.replaceState(null, "", "#tab-" + id); } catch (err) {}
+      // A link in step 1 ("Not Claude Code?") opens that app's tab and goes to it.
+      if (t.closest && !t.closest(".app-tiles")) { openMore(); var sec = document.getElementById("tab-" + id); if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: "start" }); }
     });
   });
   tabs.forEach(function (t) {
@@ -330,7 +343,73 @@
     if (sentSteps[k] || navigator.webdriver || !navigator.sendBeacon) return;
     sentSteps[k] = true;
     try { navigator.sendBeacon("/connect/step?e=" + e + (app ? "&app=" + encodeURIComponent(app) : "")); } catch (err) {}
+    // The funnel's "chose a client" step: once per page load, at the first app tile, install link or install copy.
+    if ((e === "tile" || (e === "copied" && notClient.indexOf(app) < 0)) && !sentSteps["chose:"]) stepBeacon("chose");
   }
+  var notClient = ["test-prompt", "first-prompt", "gauntlet-line"];
+  // Step 2 and the yes/no (OA-02). Without scripts, step 2 is shown and the fixes are one click away; with them, step 2
+  // waits for "Yes" (unless the person is signed in or came for it), and "No" opens the fixes.
+  var linkStep = box.querySelector("[data-link-step]"), fixes = box.querySelector("[data-worked-fixes]");
+  var variants = Array.prototype.slice.call(box.querySelectorAll("[data-link-variant]"));
+  var picks = Array.prototype.slice.call(box.querySelectorAll("[data-link-pick]"));
+  var linkApp = linkStep ? linkStep.getAttribute("data-link-app-now") : null;
+  try { var keptApp = sessionStorage.getItem("forge-link-app"); if (keptApp && !/[?&]app=/.test(location.search) && variants.some(function (v) { return v.getAttribute("data-link-variant") === keptApp; })) linkApp = keptApp; } catch (err) {}
+  // `remember` keeps the person's own choice for this tab (not the server's guess), so it survives a trip to their app.
+  function pickApp(app, announce, remember) {
+    linkApp = app;
+    variants.forEach(function (v) { v.hidden = v.getAttribute("data-link-variant") !== app; });
+    picks.forEach(function (p) { if (p.getAttribute("data-link-pick") === app) p.setAttribute("aria-current", "true"); else p.removeAttribute("aria-current"); });
+    var si = box.querySelector("[data-link-signin]");
+    if (si) si.setAttribute("href", si.getAttribute("href").replace(/next=[^&]*/, "next=" + encodeURIComponent("/connect?app=" + app + "#link-step")));
+    if (remember) try { sessionStorage.setItem("forge-link-app", app); } catch (err) {}
+    if (announce && linkStep && !linkStep.hidden) stepBeacon("link-shown", app);
+  }
+  function showLink() {
+    if (!linkStep) return;
+    var was = linkStep.hidden;
+    linkStep.hidden = false;
+    if (was) { stepBeacon("link-shown", linkApp); if (linkStep.scrollIntoView) linkStep.scrollIntoView({ block: "start", behavior: "smooth" }); }
+    focusOn(linkStep.querySelector("h2"));
+  }
+  // What a button just opened gets the keyboard and screen-reader focus, so nobody is left on a button whose result
+  // appeared somewhere else on the page.
+  function focusOn(el) {
+    if (!el) return;
+    if (!el.hasAttribute("tabindex") && !/^(A|BUTTON|SUMMARY|INPUT)$/.test(el.tagName)) el.setAttribute("tabindex", "-1");
+    try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+  }
+  if (linkStep) {
+    pickApp(linkApp, false);
+    if (linkStep.hasAttribute("data-signed-in") || location.hash === "#link-step") stepBeacon("link-shown", linkApp);
+    else linkStep.hidden = true;
+  }
+  if (fixes) fixes.hidden = true;
+  Array.prototype.slice.call(box.querySelectorAll("[data-worked]")).forEach(function (b) {
+    b.hidden = false;
+    var target = b.getAttribute("data-worked") === "yes" ? linkStep : fixes;
+    if (target && target.id) b.setAttribute("aria-controls", target.id);
+    b.addEventListener("click", function () {
+      var yes = b.getAttribute("data-worked") === "yes";
+      stepBeacon("worked", yes ? "yes" : "no");
+      if (yes) { if (fixes) fixes.hidden = true; showLink(); }
+      else if (fixes) { fixes.hidden = false; fixes.open = true; focusOn(fixes.querySelector("summary")); }
+    });
+  });
+  picks.forEach(function (p) {
+    p.addEventListener("click", function (e) { e.preventDefault(); pickApp(p.getAttribute("data-link-pick"), true, true); });
+  });
+  // Step 1's other apps choose step 2's app too (the tabs for apps without a one-click link pick "Another app").
+  var installToLink = { claude: "claude", cursor: "cursor", vscode: "vscode" };
+  Array.prototype.slice.call(box.querySelectorAll("#first-step [data-install], #first-step [data-tile]")).forEach(function (a) {
+    a.addEventListener("click", function () { pickApp(installToLink[a.getAttribute("data-install")] || "other", false, true); });
+  });
+  var firstCc = box.querySelector("#first-step [data-copy='first-cc']");
+  if (firstCc) firstCc.addEventListener("click", function () { pickApp("claude-code", false, true); });
+  Array.prototype.slice.call(box.querySelectorAll("[data-link-app]")).forEach(function (a) {
+    a.addEventListener("click", function () { stepBeacon("link-copied", a.getAttribute("data-link-app")); });
+  });
+  var linkCopy = box.querySelector("[data-copy='link-cc']");
+  if (linkCopy) linkCopy.addEventListener("click", function () { stepBeacon("link-copied", "claude-code"); });
   tiles.forEach(function (t) { t.addEventListener("click", function () { stepBeacon("tile", t.getAttribute("data-tile")); }); });
   Array.prototype.slice.call(box.querySelectorAll("[data-install]")).forEach(function (a) {
     a.addEventListener("click", function () { stepBeacon("copied", a.getAttribute("data-install")); });
@@ -374,8 +453,10 @@
   function stop() { if (poll) clearInterval(poll); poll = null; }
   function start() { if (seen || poll) return; tries = 0; status.textContent = "Waiting for your first check…"; poll = setInterval(check, 3000); check(); }
   if (again) again.addEventListener("click", start);
-  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") start(); });
-  start();
+  var opened = function () { return !more || more.open; };
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && opened()) start(); });
+  if (more) more.addEventListener("toggle", function () { if (more.open) start(); });
+  if (opened()) start();
 })();
 
 // /teams (ADR 0023 §7): turn the intake form into a prefilled email. Nothing is sent to or stored by the Forge.
@@ -558,11 +639,6 @@
       if (sr) sr.textContent = text;
       if (b && (b.getAttribute("data-final") || b.textContent) !== text) { b.setAttribute("data-final", text); b.textContent = text; li.classList.remove("bumped"); void li.offsetWidth; li.classList.add("bumped"); }
     });
-    // The inline tools figure in the footnote.
-    root.querySelectorAll("[data-k-inline]").forEach(function (el) {
-      var v = j[el.getAttribute("data-k-inline")];
-      if (typeof v === "number") el.textContent = v.toLocaleString("en-US");
-    });
     root.querySelectorAll("time[data-ago]").forEach(function (t) {
       var k = t.getAttribute("data-ago-k");
       var ms = k && typeof j[k] === "number" ? j[k] : Number(t.getAttribute("data-ago"));
@@ -585,6 +661,7 @@
 // readers get only the final number, reduced-motion users see it at once, and each number's width is held so nothing
 // shifts while it counts.
 (function () {
+  // ADR 0067 Amendment 1: the home band is data-work-live again (the totals, refreshed from /agents/live.json above).
   var band = document.querySelector("[data-work-live]");
   if (!band || !window.requestAnimationFrame) return;
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;

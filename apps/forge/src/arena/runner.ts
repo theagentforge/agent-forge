@@ -1,11 +1,16 @@
-import { anyTaskById, Attempt, attemptScore, heldOutSeeds, isAnyHeldOutSeed, isDevSplitSeed, isPracticeOnly, RULES_VERSION, SEASON, twistById, type AttemptCheckpoint, type AttemptResult, type LogEvent } from "@forge/arena";
+import { anyTaskById, Attempt, attemptScore, heldOutSeeds, isAnyHeldOutSeed, isDevSplitSeed, isPracticeOnly, RULES_VERSION, SEASON, taskVersion, twistById, type AttemptCheckpoint, type Caps, type AttemptResult, type LogEvent } from "@forge/arena";
 import { and, asc, eq, gte, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as t from "../db/schema";
 import { getDb, newId } from "../services/db";
+import { sealRun } from "../services/replay-keys";
 import { signReport } from "../services/signing";
 import { callModel, ProviderError, type CacheOptions, type ChatMessage } from "./adapters";
 import { armText, ARMS, type Arm } from "./arms";
+import { BYOK_EXPIRES, byokHeld, claudeByokIds, creditGuard, creditModelIds, byokFallbackSeen, isClaudeByok, noteByokFallback } from "./credit";
+import { noteOutOfCredit } from "../services/costs";
+import { FREE_LANE_PREFIX } from "./free-lane-slug";
+import { freeLaneRunRefusal, freeVariantIds, LaneMeter, type TurnGate } from "./free-lane";
 import { ALL_MODELS, modelById, type ArenaModel } from "./lineup";
 import { PANEL_KV, queuePanelsFromKv } from "./panel";
 import { lastHeadlineSlot, slotDate, WEEKLY_ATTEMPTS, WEEKLY_QUEUE_WINDOW_MS, weeklyModels, weeklySlug, weeklyTask } from "./headline-slot";
@@ -85,9 +90,28 @@ export interface BoutCheckpoint {
   modelVersion?: string | null;
   /** Ticks the bout has been played in so far. */
   ticks: number;
+  /** ADR 0064: dollars billed to our own key through BYOK so far, and whether a Claude turn was billed to credit instead. */
+  byokCost?: number;
+  byokMissed?: boolean;
+  /** A BYOK turn's upstream cost couldn't be read, so the bout's cost is too low. */
+  byokUnpriced?: boolean;
 }
 
-type Finished = { result: AttemptResult; log: LogEvent[]; costEstimated: boolean; provider: string | null; modelVersion: string | null };
+type Finished = {
+  result: AttemptResult;
+  log: LogEvent[];
+  costEstimated: boolean;
+  provider: string | null;
+  modelVersion: string | null;
+  /** ADR 0064: the part of the cost billed to our own key through BYOK (null if none was). */
+  byokCost: number | null;
+  /** A Claude (BYOK) route had a turn billed to OpenRouter credit: the account's shared-capacity fallback was used. */
+  byokMissed: boolean;
+  /** A BYOK turn's upstream cost couldn't be read (see ModelReply.byokUnpriced): the stored cost is too low. */
+  byokUnpriced: boolean;
+  /** This tick's play had a Claude turn billed to credit (byokMissed also counts earlier ticks): hold Claude bouts. */
+  byokMissedNow?: boolean;
+};
 
 /** Plays one attempt to the end. Throws ProviderError if the provider fails (the run is then void and re-queued). */
 export async function playAttempt(
@@ -95,7 +119,7 @@ export async function playAttempt(
   model: ArenaModel,
   run: Pick<RunRow, "task" | "seed">,
   twistId: string | null,
-  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null } = {},
+  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; caps?: Caps } = {},
 ): Promise<Finished> {
   const r = await playBout(env, model, run, twistId, opts);
   if ("suspended" in r) throw new Error("unreachable: a bout without a deadline never suspends");
@@ -112,12 +136,13 @@ export async function playBout(
   model: ArenaModel,
   run: Pick<RunRow, "task" | "seed">,
   twistId: string | null,
-  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number; cache?: CacheOptions | null } = {},
-): Promise<Finished | { suspended: BoutCheckpoint; rateLimited?: boolean }> {
+  opts: { fetcher?: typeof fetch; now?: () => number; arm?: Arm | null; checkpoint?: BoutCheckpoint | null; suspendAt?: number; cache?: CacheOptions | null; caps?: Caps; gate?: TurnGate | null } = {},
+): Promise<Finished | { suspended: BoutCheckpoint; rateLimited?: boolean; byokMissedNow?: boolean; freeLaneStop?: string; gated?: boolean }> {
   // Private families (ADR 0057) play here too; they can only be queued in practice events (planSchema).
   const task = anyTaskById(run.task);
   if (!task) throw new Error(`Unknown task ${run.task}`);
-  const attemptOpts = { twist: twistById(twistId), now: opts.now };
+  // ADR 0083: the house Sprint plays with the Sprint's caps; every other bout keeps the task's own.
+  const attemptOpts = { twist: twistById(twistId), now: opts.now, ...(opts.caps ? { caps: opts.caps } : {}) };
   const now = opts.now ?? Date.now;
   let cp = opts.checkpoint ?? null;
   let a: Attempt | null = null;
@@ -140,31 +165,57 @@ export async function playBout(
   let estimated = cp?.costEstimated ?? false;
   let provider: string | null = cp?.provider ?? null;
   let modelVersion: string | null = cp?.modelVersion ?? null;
+  let byokCost = cp?.byokCost ?? 0;
+  let byokMissed = cp?.byokMissed ?? false;
+  let byokUnpriced = cp?.byokUnpriced ?? false;
+  const claude = isClaudeByok(model);
+  /** This tick's last Claude turn was billed to OpenRouter credit: pause before the next one (BYOK_HOLD_KV). */
+  let onCredit = false;
   let turnsThisTick = 0;
   while (!a.done) {
     if (a.outOfTurns()) {
       a.end("knockout_turns");
       break;
     }
+    if (onCredit) {
+      console.warn("arena_paused", model.id, "BYOK fallback: the last turn was billed to OpenRouter credit, not our Anthropic key");
+      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1, byokCost, byokMissed, byokUnpriced }, rateLimited: true, byokMissedNow: true };
+    }
     // Only here, between a finished turn and the next model call, is a bout ever suspended.
     if (opts.suspendAt !== undefined && turnsThisTick > 0 && now() >= opts.suspendAt) {
-      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1 } };
+      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1, byokCost, byokMissed, byokUnpriced } };
+    }
+    // ADR 0109: the free lane's caps (requests a day and a minute, neurons a day) are checked before every turn.
+    if (opts.gate && !(await opts.gate.before(messages, a.toolSpecs()))) {
+      return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1, byokCost, byokMissed, byokUnpriced }, rateLimited: true, gated: true };
     }
     turnsThisTick++;
     let reply: Awaited<ReturnType<typeof callModel>>;
     try {
       reply = await callModel(env, model.route, messages, a.toolSpecs(), opts.fetcher, opts.cache ?? null);
+      await opts.gate?.after(reply);
     } catch (e) {
+      if (opts.gate && !(e instanceof ProviderError && e.freeLaneStop)) await opts.gate.after(null).catch(() => {});
       // Rate limited (429): nothing happened in the world, so pause here and carry on later, as at a deadline.
       if (e instanceof ProviderError && e.rateLimited) {
         // The provider's reason (429 rate limit, 402 out of credit, 403 key limit) goes to the Worker log, so a long
         // pause can be told apart from a slow provider without guessing.
         console.warn("arena_paused", model.id, e.message.slice(0, 200));
-        return { suspended: { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1 }, rateLimited: true };
+        const suspended: BoutCheckpoint = { v: 1, attempt: a.checkpoint(), messages, costEstimated: estimated, provider, modelVersion, ticks: (cp?.ticks ?? 0) + 1, byokCost, byokMissed, byokUnpriced };
+        // A free variant refused (ADR 0109): only the free lane stops; the paid-credit note is never touched.
+        if (e.freeLaneStop || (model.route.kind === "openrouter" && model.route.free)) return { suspended, rateLimited: true, freeLaneStop: e.message.slice(0, 200) };
+        // Out of credit or over the key limit: public Arena pages say so (AQ-08, services/costs.ts).
+        const credit = /^OpenRouter (402|403)\b/.exec(e.message);
+        if (credit && "KV" in env) await noteOutOfCredit(env as Pick<Env, "KV">, Number(credit[1])).catch(() => {});
+        return { suspended, rateLimited: true };
       }
       throw e;
     }
     estimated ||= reply.costEstimated;
+    byokCost += reply.byokCost ?? 0;
+    byokUnpriced ||= !!reply.byokUnpriced;
+    // A Claude turn billed to credit: OpenRouter said so (is_byok false), or charged credit without reporting a BYOK cost.
+    if (claude && !reply.costEstimated && (reply.byok === false || (reply.byok === undefined && !reply.byokCost && reply.cost > 0))) byokMissed = onCredit = true;
     provider = reply.provider;
     modelVersion = reply.servedModel ?? modelVersion;
     const ko = a.recordTurn({
@@ -192,7 +243,7 @@ export async function playBout(
       if (a.done) break;
     }
   }
-  return { result: a.result!, log: a.log, costEstimated: estimated, provider, modelVersion };
+  return { result: a.result!, log: a.log, costEstimated: estimated, provider, modelVersion, byokCost: byokCost > 0 ? Math.round(byokCost * 1e8) / 1e8 : byokUnpriced ? 0 : null, byokMissed, byokUnpriced, byokMissedNow: onCredit };
 }
 
 const asCheckpoint = (v: unknown) => (v && typeof v === "object" && (v as BoutCheckpoint).v === 1 ? (v as BoutCheckpoint) : null);
@@ -222,8 +273,9 @@ export const promptCacheOn = (event: { kind: string; createdAt: number }) => eve
  * (status "planned", e.g. the contamination test, docs/data/contamination-test-1.md) is a pre-registered study too:
  * it keeps every attempt while held.
  */
-export const isPlainPractice = (e: { kind: string; arm?: string | null; twist?: string | null; status?: string; hold?: boolean }) =>
-  e.kind === "practice" && !e.arm && !e.twist && !e.hold && e.status !== "planned";
+export const isPlainPractice = (e: { kind: string; slug?: string; arm?: string | null; twist?: string | null; status?: string; hold?: boolean }) =>
+  // The free lane (ADR 0109) costs nothing, so its fresh variants are played even on a solved job.
+  e.kind === "practice" && !e.arm && !e.twist && !e.hold && e.status !== "planned" && !e.slug?.startsWith(FREE_LANE_PREFIX);
 
 /**
  * "Solved" (S1): the model got one version of the job (task and seed; the task id carries the tier) right on 3 or more
@@ -277,13 +329,16 @@ async function dropSolved(env: Env, modelId: string, task: string, alsoId: strin
 const monthStart = (now: number) => Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
 const dayStart = (now: number) => Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
 
-/** Spend so far: OpenRouter this month (real), Workers AI practice today (estimated). */
+/**
+ * Spend so far: OpenRouter credit this month (real), Workers AI practice today (estimated). The OpenRouter figure leaves
+ * out what BYOK bouts billed to our own Anthropic key (ADR 0064): that isn't OpenRouter credit.
+ */
 export async function spend(env: Env, now = Date.now()) {
   const db = getDb(env);
   const sum = async (estimated: boolean, since: number) =>
     (
       await db
-        .select({ c: sql<number>`coalesce(sum(${t.arenaRuns.cost}), 0)` })
+        .select({ c: sql<number>`coalesce(sum(${t.arenaRuns.cost} - coalesce(${t.arenaRuns.byokCost}, 0)), 0)` })
         .from(t.arenaRuns)
         .where(and(eq(t.arenaRuns.costEstimated, estimated), gte(t.arenaRuns.finishedAt, since)))
     )[0]?.c ?? 0;
@@ -306,10 +361,16 @@ export async function spend(env: Env, now = Date.now()) {
 }
 
 /** Runs queued attempts until the deadline or a budget stops it. Returns a short log for the cron output. */
-export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, deadline: number, now = () => Date.now()) {
+export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, deadline: number, now = () => Date.now(), fetcher: typeof fetch = fetch, sleep?: (ms: number) => Promise<void>) {
   const db = getDb(env);
-  /** `solved`: plain practice runs dropped because the model already got that job right 3 times out of 3 (S1). */
-  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, solved: 0, skipped: [] as string[] };
+  // ADR 0109: the free lane's caps, read once a tick and checked before every free-variant or Workers AI turn.
+  const meter = await LaneMeter.load(env, { now, deadline, ...(sleep ? { sleep } : {}) });
+  const freeIds = freeVariantIds();
+  /**
+   * `solved`: plain practice runs dropped because the model already got that job right 3 times out of 3 (S1).
+   * `pausedCredit`: queued practice and panel runs on credit-spending models left waiting by the credit guard (ADR 0064).
+   */
+  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, solved: 0, pausedCredit: 0, freeLane: null as string | null, skipped: [] as string[] };
   /** Models that were rate limited this tick: skipped until the next one. */
   const cooling = new Set<string>();
   // A run left "running" by a Worker that died is re-queued (it never stored a result). Its checkpoint, if any, is
@@ -318,12 +379,45 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
     .update(t.arenaRuns)
     .set({ status: "queued", startedAt: null })
     .where(and(eq(t.arenaRuns.status, "running"), lt(t.arenaRuns.startedAt, now() - 20 * 60_000)));
+  // ADR 0064: Claude routes run on our own Anthropic key (BYOK), so OpenRouter's credit limits don't hold them up, unless
+  // a Claude turn was recently billed to credit (the account's fallback), when they count as credit spenders again.
+  const byokFallback = !!(await byokFallbackSeen(env));
+  const creditIds = creditModelIds(byokFallback);
+  // The credit guard: below the reserve, new practice and panel bouts on credit-spending models wait. Read once a tick.
+  // If the guard can't be worked out, it fails closed: only practice and panel bouts wait, never a ranked, weekly or
+  // held bout, so pausing them is the safe side.
+  const guard = await creditGuard(env, now(), fetcher).catch((e) => {
+    console.error("arena: credit guard unavailable", String(e));
+    return null;
+  });
+  const pausedIds = env.OPENROUTER_API_KEY && (guard === null || guard.state === "paused") ? creditIds : [];
+  const pausable = (ids: string[]) =>
+    sql`(${inArray(t.arenaRuns.modelId, ids)} and ${t.arenaRuns.checkpoint} is null and ((${t.arenaEvents.kind} = 'practice' and ${t.arenaEvents.status} != 'planned') or ${t.arenaEvents.id} in (select event_id from arena_panel)))`;
+  if (pausedIds.length) {
+    const [n] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(t.arenaRuns)
+      .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+      .where(and(eq(t.arenaRuns.status, "queued"), pausable(pausedIds)));
+    out.pausedCredit = Number(n?.n ?? 0);
+    if (out.pausedCredit) {
+      out.skipped.push("paused: credit");
+      console.log("arena_paused_credit", JSON.stringify({ runs: out.pausedCredit, remaining: guard?.remaining ?? null, reserve: guard?.reserve.total ?? null, guard_unavailable: guard === null }));
+    }
+  }
   // Each budget only stops its own route: practice running out never holds up a headline bout, and the reverse.
-  const routeIds = (kind: "openrouter" | "workers-ai") => ALL_MODELS.filter((m) => m.route.kind === kind).map((m) => m.id);
+  // The monthly OpenRouter budget stops only the routes that spend OpenRouter credit.
+  const routeIds = (kind: "openrouter" | "workers-ai") => (kind === "openrouter" ? creditIds : ALL_MODELS.filter((m) => m.route.kind === kind).map((m) => m.id));
+  const claudeIds = byokFallback ? [] : claudeByokIds();
+  // Held after a Claude turn was billed to credit: no Claude bout (of any kind) starts or resumes this tick.
+  if (await byokHeld(env)) for (const id of claudeByokIds()) cooling.add(id);
+  // AQ-08: after the Anthropic credit's expiry date no Claude bout starts or resumes (the Arena pages say "paused").
+  // Move BYOK_EXPIRES when the credit is renewed.
+  if (now() >= BYOK_EXPIRES) for (const id of claudeByokIds()) cooling.add(id);
   const blocked = new Set<"openrouter" | "workers-ai">();
   /** Practice's allowance is used up: Workers AI still plays headline events, up to their own allowance. */
   let practiceBlocked = false;
-  const openrouterIds = routeIds("openrouter");
+  const openrouterIds = ALL_MODELS.filter((m) => m.route.kind === "openrouter").map((m) => m.id);
   const workersAiIds = routeIds("workers-ai");
   let stop = false;
   const lane = async () => {
@@ -341,20 +435,38 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         blocked.add("workers-ai");
         out.skipped.push("headline Workers AI allowance for today used");
       }
-      const excluded = [...[...blocked].flatMap(routeIds), ...cooling];
+      if (!meter.orOpen() && !out.freeLane) {
+        out.freeLane = meter.orPause ? `free variants paused: ${meter.orPause.reason}` : "free-variant requests for today used";
+        out.skipped.push(out.freeLane);
+      }
+      if (!meter.waiOpen() && !practiceBlocked) {
+        practiceBlocked = true;
+        out.skipped.push("Workers AI free neurons for today used");
+      }
+      // ADR 0113: past the total line no Workers AI bout starts or resumes, ranked included; they wait in the queue.
+      if (!meter.waiRankedOpen() && !blocked.has("workers-ai")) {
+        blocked.add("workers-ai");
+        out.skipped.push("Workers AI daily budget reached (ranked bouts wait)");
+      }
+      const excluded = [...[...blocked].flatMap(routeIds), ...cooling, ...(meter.orOpen() ? [] : freeIds)];
+      const creditPaused = pausedIds.length ? [sql`not ${pausable(pausedIds)}`] : [];
       const practiceOff = practiceBlocked && workersAiIds.length ? [sql`not (${inArray(t.arenaRuns.modelId, workersAiIds)} and ${t.arenaEvents.kind} = 'practice')`] : [];
       // OpenRouter runs first (the headline lineup, bounded by the monthly budget), then headline events before
-      // practice, then suspended bouts before new ones, then oldest first: a long practice ladder never delays a
-      // headline bout or a lineup check, and a bout that was started finishes before more are started.
+      // practice, then suspended bouts before new ones, then Claude on our own key (ADR 0064), then oldest first: a long
+      // practice ladder (Claude filler included) never delays a headline bout or a lineup check, and a bout that was
+      // started finishes before more are started.
       const candidates = await db
         .select({ run: t.arenaRuns })
         .from(t.arenaRuns)
         .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
-        .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : []), ...practiceOff))
+        .where(and(eq(t.arenaRuns.status, "queued"), ...(excluded.length ? [notInArray(t.arenaRuns.modelId, excluded)] : []), ...practiceOff, ...creditPaused))
+        // A bare `0` term would be read as a column number, which D1 rejects: an empty list leaves its term out.
         .orderBy(
-          openrouterIds.length ? sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end` : sql`0`,
+          ...(openrouterIds.length ? [sql`case when ${inArray(t.arenaRuns.modelId, openrouterIds)} then 0 else 1 end`] : []),
           sql`case when ${t.arenaEvents.kind} = 'practice' then 1 else 0 end`,
           sql`case when ${t.arenaRuns.checkpoint} is not null then 0 else 1 end`,
+          // Within the same kind of event, Claude on our own key first while its credits last (ADR 0064).
+          ...(claudeIds.length ? [sql`case when ${inArray(t.arenaRuns.modelId, claudeIds)} then 0 else 1 end`] : []),
           asc(t.arenaRuns.createdAt),
           asc(t.arenaRuns.id),
         )
@@ -392,9 +504,28 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
         out.solved += await dropSolved(env, run.modelId, run.task, run.id);
         continue;
       }
+      // ADR 0109 Amendment 1: a free variant's provider may train on prompts, so it only ever plays public Gauntlet jobs
+      // on public seeds in plain practice. Anything else is voided before a single request is sent.
+      if (model.route.kind === "openrouter" && model.route.free) {
+        const [panel] = await db.select({ id: t.arenaPanel.eventId }).from(t.arenaPanel).where(eq(t.arenaPanel.eventId, run.eventId)).limit(1);
+        const refusal = freeLaneRunRefusal(run, event ? { ...event, panel: !!panel } : null);
+        if (refusal) {
+          console.error("arena_free_lane_refused", run.id, refusal);
+          await db.update(t.arenaRuns).set({ status: "void", voidReason: `free lane: ${refusal}`, checkpoint: null, startedAt: null }).where(eq(t.arenaRuns.id, run.id));
+          out.voided++;
+          continue;
+        }
+      }
       const cache = event && promptCacheOn(event) ? { key: run.id } : null;
       try {
-        const r = await playBout(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null, checkpoint: asCheckpoint(run.checkpoint), suspendAt: deadline, cache });
+        const gate = meter.gateFor(model, (event?.kind ?? "practice") === "practice");
+        const r = await playBout(env, model, run, event?.twist ?? null, { now, arm: event?.arm ?? null, checkpoint: asCheckpoint(run.checkpoint), suspendAt: deadline, cache, fetcher, gate });
+        if ("suspended" in r && r.freeLaneStop) await meter.pauseOr(r.freeLaneStop);
+        if (r.byokMissedNow) {
+          await noteByokFallback(env, run.modelId, now()).catch(() => {});
+          for (const id of claudeByokIds()) cooling.add(id);
+        }
+        if (!("suspended" in r) && r.byokUnpriced) console.warn("arena_byok_unpriced", run.id, run.modelId, "a BYOK turn's upstream cost wasn't reported; the stored cost is too low");
         if ("suspended" in r) {
           // Back in the queue with its checkpoint; nothing is signed or scored until the bout ends.
           await db.update(t.arenaRuns).set({ status: "queued", checkpoint: r.suspended, startedAt: null }).where(eq(t.arenaRuns.id, run.id));
@@ -407,6 +538,14 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
           continue;
         }
         const signature = await signReport(env.REPORT_SIGNING_KEY, { id: run.id, log: JSON.stringify(r.log) });
+        const finishedAt = now();
+        const result = { ...r.result, rules: RULES_VERSION };
+        // Replay format v2 (ADR 0066): the hash chain's seal, signed with the published Ed25519 key. A failure here
+        // never loses the bout: it is stored with its v1 signature only.
+        const replaySeal = await sealRun(env, { kind: "arena", runId: run.id, model: run.modelId, rules: RULES_VERSION, taskVersion: taskVersion(run.task, finishedAt), log: r.log, result, signedAt: finishedAt }).catch((e) => {
+          console.warn("arena_replay_seal_failed", run.id, String(e));
+          return null;
+        });
         await db
           .update(t.arenaRuns)
           .set({
@@ -415,15 +554,17 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
             score: attemptScore(r.result),
             cost: r.result.cost,
             costEstimated: r.costEstimated,
+            byokCost: r.byokCost,
             tokens: r.result.tokensIn + r.result.tokensOut,
             provider: r.provider,
             modelVersion: r.modelVersion,
             // The rules that scored it (rules 0.6 on): its version comes from this stamp, not the clock.
-            result: { ...r.result, rules: RULES_VERSION },
+            result,
             log: r.log,
             signature,
+            replaySeal,
             checkpoint: null,
-            finishedAt: now(),
+            finishedAt,
           })
           .where(eq(t.arenaRuns.id, run.id));
         out.played++;

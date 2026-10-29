@@ -99,9 +99,16 @@ const stampedFrom = () => RULES_HISTORY.findIndex((r) => r.version === FIRST_STA
 /**
  * The rules that scored a result: its stamp (`result.rules`, written when it was scored, rules 0.6 on), or for an older,
  * unstamped result the version in force when it finished, among the versions before stamping began. Pass the stored
- * result (or null when there is none): a finish time alone can't tell which code scored a run.
+ * result (or null when there is none): a finish time alone can't tell which code scored a run. A run re-scored by an
+ * applied re-score (B2-01, ADR 0088) reads as its own group, "<rules> re-scored", never as the native version.
  */
-export function rulesVersionAt(finishedAt: number, result: { rules?: unknown } | null | undefined) {
+export function rulesVersionAt(finishedAt: number, result: { rules?: unknown; rescored?: unknown } | null | undefined) {
+  const r = rulesReading(finishedAt, result);
+  return r.rescored ? rescoredGroup(r.scored_under) : r.played_under;
+}
+
+/** The rules a run was played (and first scored) under: its original stamp, or its finish time. Never a re-score's. */
+export function playedUnderAt(finishedAt: number, result: { rules?: unknown } | null | undefined) {
   const stamp = result && typeof result === "object" ? result.rules : undefined;
   if (typeof stamp === "string" && RULES_HISTORY.some((r) => r.version === stamp)) return stamp;
   const cut = stampedFrom();
@@ -109,9 +116,52 @@ export function rulesVersionAt(finishedAt: number, result: { rules?: unknown } |
   return [...unstamped].reverse().find((r) => startOf(r) <= finishedAt)?.version ?? RULES_HISTORY[0]!.version;
 }
 
-/** "Rules 0.3 · Hard v3": the line every result shows. */
-export const versionLine = (task: string, finishedAt: number, result: { rules?: unknown } | null | undefined) => {
-  const rules = rulesVersionAt(finishedAt, result);
+/**
+ * B2-01 (ADR 0088): a re-scored run is labelled with two rules versions. `scored_under` is the rules of the referee whose
+ * verdict it now carries (an applied re-score's `rescored.rules`); `played_under` is the original stamp (or finish
+ * time), which is never overwritten. A re-scored run is never pooled with runs played under those rules: its group
+ * (`rulesVersionAt`) is "<rules> re-scored", so every table that groups by rules version shows it apart.
+ */
+export interface RulesReading {
+  scored_under: string;
+  played_under: string;
+  rescored: boolean;
+}
+
+export function rulesReading(finishedAt: number, result: { rules?: unknown; rescored?: unknown } | null | undefined): RulesReading {
+  const played = playedUnderAt(finishedAt, result);
+  const rs = result && typeof result === "object" ? (result.rescored as { rules?: unknown } | null | undefined) : undefined;
+  const by = rs && typeof rs === "object" && typeof rs.rules === "string" && RULES_HISTORY.some((h) => h.version === rs.rules) ? rs.rules : null;
+  return by ? { scored_under: by, played_under: played, rescored: true } : { scored_under: played, played_under: played, rescored: false };
+}
+
+/** The suffix of a re-scored group: "rules 0.6 re-scored". */
+export const RESCORED_SUFFIX = " re-scored";
+export const rescoredGroup = (rules: string) => `${rules}${RESCORED_SUFFIX}`;
+export const isRescoredGroup = (group: string) => group.endsWith(RESCORED_SUFFIX);
+/** The rules version a group was scored under ("rules 0.6 re-scored" → "rules 0.6"). */
+export const scoredUnderOf = (group: string) => (isRescoredGroup(group) ? group.slice(0, -RESCORED_SUFFIX.length) : group);
+
+/**
+ * The rules from which each job's harness is the one in force now (build plan 28 Oct §4.6). Rules 0.3 gave every Hard v3
+ * job its calculator and 20% more turns and calls, so a Hard v3 run played before rules 0.3 saw a different harness and
+ * is never re-scored: a re-score changes the referee's verdict, not what the model saw. Normal and Hard v2 runs have the
+ * current harness under every rules version.
+ */
+export const HARNESS_FROM: Record<string, string> = Object.fromEntries([...HARD3_TASKS, ...HARD3_2_TASKS].map((t) => [t.id, "rules 0.3"]));
+
+/** Why a stored run can't be re-scored into a newer rules version, or null when it can. */
+export function rescoreRefusal(task: string, finishedAt: number, result: { rules?: unknown } | null | undefined): "harness_changed" | null {
+  const from = HARNESS_FROM[task];
+  if (!from) return null;
+  const order = (v: string) => RULES_HISTORY.findIndex((r) => r.version === v);
+  return order(playedUnderAt(finishedAt, result)) < order(from) ? "harness_changed" : null;
+}
+
+/** "Rules 0.3 · Hard v3": the line every result shows. A re-scored run names both its rules versions. */
+export const versionLine = (task: string, finishedAt: number, result: { rules?: unknown; rescored?: unknown } | null | undefined) => {
+  const r = rulesReading(finishedAt, result);
+  const rules = r.rescored ? `${r.scored_under}, re-scored from the signed log (played under ${r.played_under})` : r.played_under;
   return `${rules[0]!.toUpperCase()}${rules.slice(1)} · ${taskVersion(task, finishedAt)}`;
 };
 

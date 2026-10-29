@@ -18,7 +18,9 @@ export const CITATION_QUESTIONS = [
 ];
 
 export const CITATION_MODELS = [
-  { key: "claude", model: "anthropic/claude-sonnet-5.5:online" },
+  // Pinned to provider "anthropic" with no fallbacks, so the model runs on our own Anthropic key (BYOK, ADR 0064); the
+  // web-search plugin is still billed to OpenRouter credit.
+  { key: "claude", model: "anthropic/claude-sonnet-5.5:online", provider: "anthropic" },
   { key: "gpt", model: "openai/gpt-6.1-sol:online" },
   { key: "perplexity", model: "perplexity/sonar" },
 ] as const;
@@ -82,7 +84,7 @@ export async function runCitations(env: { OPENROUTER_API_KEY?: string }, key: st
       const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, "Content-Type": "application/json", "HTTP-Referer": "https://theagentforge.io", "X-Title": "The Agent Forge citation check" },
-        body: JSON.stringify({ model: m.model, messages: [{ role: "user", content: CITATION_QUESTIONS[i] }], temperature: 0, max_tokens: 700, provider: { data_collection: "deny" }, usage: { include: true } }),
+        body: JSON.stringify({ model: m.model, messages: [{ role: "user", content: CITATION_QUESTIONS[i] }], temperature: 0, max_tokens: 700, provider: { ...("provider" in m && m.provider ? { order: [m.provider], allow_fallbacks: false } : {}), data_collection: "deny" }, usage: { include: true } }),
       });
       const body = (await res.json().catch(() => null)) as { usage?: { cost?: number } } | null;
       cost += Number(body?.usage?.cost ?? 0);

@@ -24,6 +24,7 @@ import lab5Prereg from "../../../../lab/005-trap-card-v11-frontier/PREREGISTRATI
 import lab5CardV10 from "../../../../lab/005-trap-card-v11-frontier/prompts/C-card.txt";
 import lab5CardV11 from "../../../../lab/005-trap-card-v11-frontier/prompts/E-card-v1.1.txt";
 import lab5Selection from "../../../../lab/005-trap-card-v11-frontier/selection.json";
+import { experimentForPath } from "./experiments";
 import { send, site } from "./pages";
 
 // Published reports and Forge Lab write-ups, rendered from the Markdown in docs/ and lab/ (bundled as text, so the
@@ -179,14 +180,17 @@ for (const p of PUBLICATIONS) {
     if (!p.live) return c.notFound();
     const rendered = renderMarkdown(p.markdown);
     const { title } = rendered;
+    // Lab #3 and Lab #4 also carry their plain names (Boardy review item 3); the /lab/N URLs stay.
+    const exp = experimentForPath(p.path);
     let body = rendered.body;
     for (const b of p.scanBoxes ?? []) body = body.replace(`<h2>${b.before}</h2>`, `${reportScanBox(b.from)}\n<h2>${b.before}</h2>`);
     return send(c, {
-      title,
+      title: exp ? `${exp.short} (${exp.who}): ${title}` : title,
       description: p.description,
       ...(p.image ? { image: p.image } : {}),
       path: p.path,
       body: html`<article class="prose">
+${exp ? html`<p class="eyebrow experiment-name">${exp.name}${p.path === exp.plan ? " (the plan)" : ""} · <a href="/#experiments">see it next to ${exp.lab === 3 ? "Experiment 4" : "Experiment 3"}</a></p>` : ""}
 <h1 class="page-title">${title}</h1>
 ${raw(body)}
 ${p.files?.length ? html`<h2>Materials</h2><ul>${p.files.map((f) => html`<li><a href="${p.path}/${f.name}">${f.label}</a></li>`)}</ul>` : ""}

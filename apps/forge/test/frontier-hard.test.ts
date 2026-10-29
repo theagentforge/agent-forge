@@ -73,7 +73,8 @@ describe("the frontier Hard line comes from the latest headline Hard event", () 
   it("names the event and links to its falls on the home page; the Lab #3 and Lab #4 lines stay", async () => {
     const body = await (await fetchWorker("/", { headers: { Accept: "text/html" } })).text();
     expect(body).toContain('<a href="/arena/event/crucible-2-hard/falls?from=home-lab">See the 7 falls in Crucible 2: Hard</a>');
-    expect(body).toContain("Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it (<a href=\"/lab/4/results?from=home-lab\">Lab #4</a>)");
+    expect(body).toContain("Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it (95% interval from 45% fewer to 27% more");
+    expect(body).toContain('<a class="exp-lab" href="/lab/4/results?from=home-lab">(Lab #4)</a>');
     expect(body).not.toContain("Hard traps.");
   });
 

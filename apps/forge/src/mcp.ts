@@ -3,7 +3,7 @@ import { reportSchema, toolRefSchema } from "@forge/shared";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
-import { CLAIM_NOTICE, claimResult, claimRun, setClaimHidden } from "./arena/gauntlet-claims";
+import { CLAIM_NOTICE, PENDING_NOTICE, claimResult, claimRun, setClaimHidden } from "./arena/gauntlet-claims";
 import { act, startChallenge } from "./arena/proving";
 import { trapsData } from "./arena/traps";
 import { serverInfo } from "./server-info";
@@ -163,8 +163,11 @@ export function createForgeServer(env: Env, props: AgentProps, internal: Interna
       const who = await activeAgent(getDb(env), props);
       if (!who) return json({ error: "agent_inactive" }, true);
       if (claim_key) {
-        const r = await claimRun(env, who.human.id, who.agent.id, claim_key);
+        const r = await claimRun(env, who.human.id, who.agent.id, claim_key, Date.now(), { hidden: hidden === true });
         if (!r.ok) return json({ error: r.error, notice: CLAIM_NOTICE }, true);
+        // ADR 0073 (OA-06): the owner isn't verified yet; the claim is held privately and counts once they are.
+        if (r.pending)
+          return json({ ok: true, pending: true, gauntlet_id: r.gauntlet_id, hidden: hidden === true, public: false, counted: false, owner_verified: false, verify_paths: ["github_activity", "vouch", "review"], dashboard_url: `${env.PUBLIC_ORIGIN}/dashboard`, notice: PENDING_NOTICE });
         if (hidden) await setClaimHidden(env, who.human.id, r.gauntlet_id, true);
         return json(claimResult(env.PUBLIC_ORIGIN, { gauntlet_id: r.gauntlet_id, agent: r.agent, hidden: hidden === true }));
       }

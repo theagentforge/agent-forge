@@ -16,11 +16,11 @@ describe("the trap card's measured value on the home page", () => {
     expect(t.in100).toEqual({ none: 84, placebo: 73, card: 39 });
     expect(t.fewer).toBe(54);
     const body = await home();
-    expect(body).toContain("54% fewer traps</b> with the free trap card.");
-    expect(body).toContain("<b>39 in 100</b> traps with the card, 84 without");
-    expect(body).toContain("A placebo text: 73.");
-    expect(body).toContain("Clear effect on 3 of 6 model–job pairs");
-    expect(body).toContain("95% interval 48–59% fewer");
+    // Boardy review item 3 (W1.2): Experiment 3 and Experiment 4 side by side; the numbers are tested against the
+    // analysis scripts' output in test/experiments.test.ts.
+    expect(body).toContain("fell for 54% fewer traps on new versions of the jobs</b> (95% interval 48–59% fewer; 984 bouts, 18 Oct 2026)");
+    expect(body).toContain("fell for 73 in 100, against 84 with no card and 39 with the card");
+    expect(body).toContain("clear effect on 3 of 6 pairs");
     expect(body).toContain("<b>Frontier models fell for a trap in about 3 in 10 bouts.</b> Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it");
     expect(body).toContain('href="/lab/3/results?from=home-lab"');
     // It sits straight after the hero, before the Arena.

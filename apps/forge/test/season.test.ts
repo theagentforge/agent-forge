@@ -14,6 +14,9 @@ import { connectAgent, fetchWorker, profile } from "./helpers";
 import { AGENT_DIRECTED } from "./wording";
 import "../src/index";
 
+/** OA-08 (ADR 0078): a claim that first makes someone an owner goes by /welcome?next=<claim page>; read through it. */
+const unwelcome = (loc: string | null) => (loc?.startsWith("/welcome?next=") ? decodeURIComponent(loc.slice("/welcome?next=".length)) : loc);
+
 // ADR 0055 (D11, owners first): Gauntlet Season 1, claim links at the end of every run, the one-sign-in claim page,
 // and the owner funnel KPIs.
 
@@ -102,7 +105,9 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
     expect(page).toContain("A new profile for this agent");
     const res = await owner.post("/gauntlet/claim", { run: id, agent: "new", claim_key: key, season: "1" }, `/gauntlet/claim?run=${id}`);
     expect(res.status).toBe(303);
-    expect(res.headers.get("Location")).toBe(`/gauntlet/claim?run=${id}&m=claimed_new_season`);
+    expect(unwelcome(res.headers.get("Location"))).toBe(`/gauntlet/claim?run=${id}&m=claimed_new_season`);
+    // OA-08 (ADR 0078): the claim that first makes someone an owner goes by /welcome, which links back here.
+    expect(res.headers.get("Location")).toMatch(/^\/welcome\?next=/);
     const [agent] = await getDb(env).select().from(t.agents).where(eq(t.agents.humanId, owner.human.id));
     expect(agent!.oauthClientId.startsWith(WEB_AGENT_PREFIX)).toBe(true);
     // On the board and the agent's page, with badges.
@@ -129,7 +134,7 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
     const csrf = /name="csrf" value="([^"]+)"/.exec(page)![1]!;
     const post = (fields: Record<string, string>) => fetchWorker("/gauntlet/claim", { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ csrf, ...fields }), redirect: "manual" });
     const only = await finishedRun();
-    expect((await post({ run: only.id, agent: owner.agent.id, claim_key: only.key, season: "0" })).headers.get("Location")).toBe(`/gauntlet/claim?run=${only.id}&m=claimed`);
+    expect(unwelcome((await post({ run: only.id, agent: owner.agent.id, claim_key: only.key, season: "0" })).headers.get("Location"))).toBe(`/gauntlet/claim?run=${only.id}&m=claimed`);
     expect((await getDb(env).select().from(t.gauntletSeasonEntries).where(eq(t.gauntletSeasonEntries.gauntletId, only.id))).length).toBe(0);
     // The share link can't claim.
     const other = await finishedRun();
@@ -143,16 +148,18 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
     expect(forged.status).toBe(403);
   });
 
-  it("refuses a sandbox owner with plain steps, and counts the refusal", async () => {
+  it("lets a sandbox owner claim now: held privately as pending, no profile made, nothing public (ADR 0073, OA-06)", async () => {
     const owner = await webOwner({ public_repos: 0, followers: 0 });
     expect(owner.human.tier).toBe("sandbox");
     const { id, key } = await finishedRun();
     const html = await (await owner.get(`/gauntlet/claim?run=${id}`)).text();
-    expect(html).toContain("Only verified people can claim a run");
+    expect(html).toContain("isn&#39;t verified yet");
     const res = await owner.post("/gauntlet/claim", { run: id, agent: "new", claim_key: key, season: "1" });
     expect(res.status, await res.clone().text()).toBe(303);
-    expect(res.headers.get("Location")).toBe(`/gauntlet/claim?run=${id}&m=claim_needs_verified_owner`);
+    expect(res.headers.get("Location")).toBe(`/gauntlet/claim?run=${id}&m=pending`);
     expect((await getDb(env).select().from(t.agents).where(eq(t.agents.humanId, owner.human.id))).length).toBe(0);
+    expect((await getDb(env).select().from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, id))).length).toBe(0);
+    expect(await (await owner.get(`/gauntlet/claim?run=${id}`)).text()).toContain("Claimed, not counted yet");
   });
 
   it("from a check (CLI, plugin, Action): a profile page with one sign-in link and the two ways to fill it", async () => {
@@ -175,7 +182,7 @@ describe("Gauntlet Season 1 (ADR 0055)", () => {
     const claimEnter = async (o: Awaited<ReturnType<typeof webOwner>>, agent: string) => {
       const r = await finishedRun();
       const res = await o.post("/gauntlet/claim", { run: r.id, agent, claim_key: r.key, season: "1" }, `/gauntlet/claim?run=${r.id}`);
-      expect(res.headers.get("Location")).toMatch(/m=claimed(_new)?_season$/);
+      expect(unwelcome(res.headers.get("Location"))).toMatch(/m=claimed(_new)?_season$/);
       return r.id;
     };
     const a1 = await claimEnter(a, "new");
@@ -273,7 +280,7 @@ describe("review fixes (ADR 0055)", () => {
     await finish(start.gauntlet_id, ip);
     const o = await webOwner();
     const res = await o.post("/gauntlet/claim", { run: start.gauntlet_id, agent: "new", claim_key: key, season: "0" }, `/gauntlet/claim?run=${start.gauntlet_id}`);
-    expect(res.headers.get("Location")).toMatch(/m=claimed_new$/);
+    expect(unwelcome(res.headers.get("Location"))).toMatch(/m=claimed_new$/);
   });
 
   it("counts a claim-page visit once: not again on the return from GitHub sign-in", async () => {

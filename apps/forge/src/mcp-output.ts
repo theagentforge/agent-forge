@@ -20,7 +20,31 @@ export const inputNeededOutput = z.looseObject({
   examples: z.array(z.record(str, z.unknown())),
 });
 
-export const rateLimitedOutput = z.looseObject({ error: z.literal("rate_limited"), retry_after_s: num });
+/** ADR 0110: `reason`, `limit` and `upgrade` are additive (absent with PRICING_MODE off). Data, never instructions. */
+export const rateLimitedOutput = z.looseObject({
+  error: z.literal("rate_limited"),
+  retry_after_s: num,
+  reason: z.enum(["per_ip_minute", "per_key_minute", "monthly_quota"]).optional(),
+  limit: z
+    .looseObject({
+      plan: z.enum(["anonymous", "free", "team", "volume", "enterprise"]),
+      per_minute: num.nullable(),
+      per_month: num.nullable().optional(),
+      used_this_month: num.optional(),
+      resets_at: str.optional(),
+    })
+    .optional(),
+  upgrade: z
+    .looseObject({
+      url: str,
+      keys_url: str,
+      plans: z.array(z.enum(["team", "volume"])),
+      paid_plans: z.enum(["coming_soon", "available"]),
+      free_key: z.looseObject({ per_minute: num.nullable(), per_month: num.nullable() }).optional(),
+      contact: str.optional(),
+    })
+    .optional(),
+});
 
 const errors = [inputNeededOutput, rateLimitedOutput] as const;
 

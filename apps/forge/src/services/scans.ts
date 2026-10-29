@@ -70,6 +70,21 @@ export function clawhubPage(sourceUrl: string | null): { page: string; audit: st
   return { page, audit: `${page}/security-audit`, owner, slug };
 }
 
+/**
+ * A bulk-scan ClawHub link by slug only (ADR 0112): the slug, else null. ClawHub's file API doesn't say which
+ * publisher's file it returned and slugs are shared, so such a file is labelled by its slug and names no publisher.
+ */
+export function clawhubSlugOnly(sourceUrl: string | null): string | null {
+  if (!sourceUrl?.startsWith("https://clawhub.ai/api/v1/skills/")) return null;
+  try {
+    const u = new URL(sourceUrl);
+    if (u.searchParams.has("ownerHandle")) return null;
+    return decodeURIComponent(/^\/api\/v1\/skills\/([^/]+)\/file$/.exec(u.pathname)?.[1] ?? "") || null;
+  } catch {
+    return null;
+  }
+}
+
 export type FetchedText = { ok: true; text: string; url: string } | { ok: false; error: "unsupported_url" | "not_found" | "fetch_failed" | "too_large" | "not_text" };
 
 export async function fetchSkillText(input: string, fetcher: typeof fetch = fetch): Promise<FetchedText> {
@@ -219,9 +234,15 @@ export async function scanStats(db: Db, now = Date.now()) {
   };
 }
 
+/**
+ * The newest scan of this link, of any visibility, if it is public. When the newest scan is unlisted (a held file, or a
+ * bulk-scan file that matched a pattern, ADR 0107), the answer is null, exactly as for a link never scanned: an older
+ * public result of the same link (a ClawHub link has no version in it) is never shown as current, and an unlisted
+ * result is never hinted at (review ADR 0111).
+ */
 export async function latestBySource(db: Db, url: string) {
-  const [row] = await db.select().from(t.skillScans).where(and(eq(t.skillScans.sourceUrl, url), eq(t.skillScans.public, true))).orderBy(desc(t.skillScans.lastSeen)).limit(1);
-  return row ?? null;
+  const [row] = await db.select().from(t.skillScans).where(eq(t.skillScans.sourceUrl, url)).orderBy(desc(t.skillScans.lastSeen)).limit(1);
+  return row?.public ? row : null;
 }
 
 export async function recentPublic(db: Db, verdicts: ("flagged" | "caution")[], limit = 50) {
@@ -244,6 +265,8 @@ export function ruleFrequency(rows: { findings: unknown }[]) {
 export function skillLabel(sourceUrl: string | null, name?: string | null): { title: string; where: string | null } {
   const claw = clawhubPage(sourceUrl);
   if (claw) return { title: claw.slug, where: `ClawHub · ${claw.owner}` };
+  const slug = clawhubSlugOnly(sourceUrl);
+  if (slug) return { title: slug, where: "ClawHub · publisher not named" };
   if (sourceUrl) {
     try {
       const u = new URL(sourceUrl);

@@ -7,6 +7,7 @@ import { registryId } from "../services/registry";
 import { getDb } from "../services/db";
 import { submitReport, type ReportRejection } from "../services/forge";
 import { agentForClient, MAX_AGENTS_PER_HUMAN } from "../services/identity";
+import { becameOwner, syncOwners, WELCOME_PATH } from "../services/owners";
 import { toolPageUrl } from "../services/tools";
 import { bump } from "../services/usage";
 import { currentSession, guardPost } from "./dashboard";
@@ -129,6 +130,11 @@ site.post("/report", async (c) => {
     return page(c, d, `We couldn't find version ${d.version} of ${d.tool} on the registry. Check the version number and try again.`);
   if (!result.ok) return page(c, d, `${REJECTED[result.reason] ?? REJECTED.invalid_report}${result.detail ? ` (${result.detail})` : ""}`);
   c.executionCtx.waitUntil(bump(c.env, ["contribute:web-filed"]).catch(() => {}));
+  // ADR 0073 (OA-01): a first website report can make someone an owner (a web-only one).
+  await syncOwners(c.env).catch(() => {});
+  // OA-08 (ADR 0078): if this report made them an owner for the first time, point them at /welcome.
+  const after = await db.query.humans.findFirst({ where: eq(t.humans.id, human.id) });
+  const newOwner = becameOwner(human, after);
   return send(c, {
     title: "Report filed",
     description: "Your field report is filed.",
@@ -136,6 +142,7 @@ site.post("/report", async (c) => {
     noindex: true,
     body: html`<section class="narrow"><h1>Filed. Thank you.</h1>
 <p class="lead">${result.counted ? "It counts now" : "It's held for a quick review first"}${result.reason === "sandbox_reduced_weight" ? ", at a lower weight until your account is verified" : ""}.</p>
+${newOwner ? html`<p class="notice">You're an owner now. <a href="${WELCOME_PATH}">What you got, and three next steps</a>.</p>` : ""}
 <p><a class="btn primary chamfer" href="${toolPageUrl(c.env.PUBLIC_ORIGIN, d.tool)}">See the tool page</a> <a class="btn chamfer" href="/dashboard">Your reports</a></p>
 <p class="small muted">Your dashboard shows how many checks your reports appear in, and alerts if a tool you reported on is flagged.</p></section>`,
   }, { cache: false });

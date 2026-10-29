@@ -124,3 +124,27 @@ export async function connectApprovedAgent(p: GithubProfile = profile()) {
   await approveLogin(getDb(env), p.login, Date.now());
   return connectAgent({ profile: p });
 }
+
+let shownSeq = 0;
+/**
+ * ADR 0094: insert `n` owners, each with one active agent and one claimed, shown, finished Gauntlet run, straight into
+ * D1 (no MCP round trips). Outside owners by default; `house`, `hidden`, `revoked` or `githubId` vary one condition.
+ */
+export async function seedShownOwners(n: number, o: { house?: boolean; hidden?: boolean; revoked?: boolean; githubId?: number } = {}) {
+  const t = await import("../src/db/schema");
+  const db = getDb(env);
+  const now = Date.now();
+  const handles: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const k = `${now.toString(36)}-${++shownSeq}`;
+    const humanId = `seedh-${k}`;
+    const agentId = `seeda-${k}`;
+    const gid = `seedg-${k}`;
+    await db.insert(t.humans).values({ id: humanId, githubId: o.githubId ?? 700_000_000 + shownSeq, githubLogin: `seed-${k}`, githubCreatedAt: 0, tier: "verified", isHouse: !!o.house });
+    await db.insert(t.agents).values({ id: agentId, humanId, handle: `seed-${k}`, framework: "claude-code", oauthClientId: `seedc-${k}`, status: o.revoked ? "revoked" : "active" });
+    await db.insert(t.arenaGauntlets).values({ id: gid, status: "done", startedAt: now - 1000, finishedAt: now - 500, mode: "full" });
+    await db.insert(t.gauntletClaims).values({ gauntletId: gid, agentId, humanId, hidden: !!o.hidden, claimedAt: now });
+    handles.push(`seed-${k}`);
+  }
+  return handles;
+}

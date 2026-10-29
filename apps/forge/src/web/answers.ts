@@ -1,15 +1,17 @@
 import { SCAN_RULES, SCAN_RULES_VERSION, type ScanFinding } from "@forge/shared";
-import { and, count, desc, eq, gte, lt, max } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, max, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { html } from "hono/html";
 import * as t from "../db/schema";
 import { answerPagePath, ANSWERS_PATH, ARENA_QUESTIONS } from "../arena/answers";
+import { agentIndexOpen } from "../services/agent-index-gate";
 import { getDb, type Db } from "../services/db";
 import { scanPath, skillLabel } from "../services/scans";
 import { breakableId, toolHref } from "./components";
 import { notFound, send, sendJson, site, wantsJson } from "./pages";
 import { toolDetail } from "./queries";
 import { PUBLICATIONS } from "./publications";
+import { rightOfReply } from "./right-of-reply";
 import { patternPhrase } from "./scan-words";
 
 // Answer pages (docs/launch/agent-channels.md §3.7 and §4.2): one indexable page per tool or skill that answers
@@ -51,20 +53,48 @@ export function sourceLine(sourceUrl: string, line: number): string | null {
 
 const REPO_ROWS_MAX = 5_000;
 
+type ScanRow = typeof t.skillScans.$inferSelect;
+
 /**
- * Every public scan in the answer id's repository (a prefix range on the source_url index), newest first and capped, so
- * if the cap is ever hit it drops the oldest rows: whenever a skill has any row here, its newest one is here too.
+ * Only skills whose newest scan (any visibility) is public, and only their public rows, newest first. A newer scan that
+ * is unlisted (a bulk-scan file that matched a pattern, ADR 0107, or a held file) must not leave an older clear result
+ * standing as the skill's answer (review ADR 0111): such a skill has no public answer until its newest scan is public.
+ */
+export function currentPublic<R extends Pick<ScanRow, "sourceUrl" | "lastSeen" | "public">>(rows: R[]): R[] {
+  const sorted = [...rows].sort((a, b) => b.lastSeen - a.lastSeen);
+  const newestPublic = new Map<string, boolean>();
+  for (const r of sorted) {
+    const id = answerId(r.sourceUrl);
+    if (id && !newestPublic.has(id)) newestPublic.set(id, r.public);
+  }
+  return sorted.filter((r) => r.public && newestPublic.get(answerId(r.sourceUrl) ?? "") === true);
+}
+
+/**
+ * The scans in the answer id's repository (a prefix range on the source_url index), newest first and capped, any
+ * visibility, then reduced by currentPublic. The cap is per repository (one archive repository holds tens of thousands
+ * of SKILL.md files since the bulk scan, ADR 0107), so when it is hit this skill's own rows are read separately (its path
+ * at the end of the link, within the same range), and its newest row is always considered.
  */
 async function repoScans(db: Db, id: string) {
   const m = /^github\.com\/([^/]+)\/([^/]+)/.exec(id);
   if (!m) return [];
-  return db
-    .select()
-    .from(t.skillScans)
-    // A prefix range, not LIKE: D1 caps LIKE patterns at 50 bytes, and the range can use the source_url index.
-    .where(and(eq(t.skillScans.public, true), gte(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}/`), lt(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}0`)))
-    .orderBy(desc(t.skillScans.lastSeen))
-    .limit(REPO_ROWS_MAX);
+  // A prefix range, not LIKE: D1 caps LIKE patterns at 50 bytes, and the range can use the source_url index.
+  const range = and(gte(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}/`), lt(t.skillScans.sourceUrl, `https://raw.githubusercontent.com/${m[1]}/${m[2]}0`));
+  const rows = await db.select().from(t.skillScans).where(range).orderBy(desc(t.skillScans.lastSeen)).limit(REPO_ROWS_MAX);
+  if (rows.length >= REPO_ROWS_MAX) {
+    const dir = id.split("/").slice(3);
+    const suffix = `/${[...dir, "skill.md"].map(encodeURIComponent).join("/")}`.toLowerCase();
+    const own = await db
+      .select()
+      .from(t.skillScans)
+      .where(and(range, sql`lower(substr(${t.skillScans.sourceUrl}, -${suffix.length})) = ${suffix}`))
+      .orderBy(desc(t.skillScans.lastSeen))
+      .limit(500);
+    const have = new Set(rows.map((r) => r.fingerprint));
+    for (const r of own) if (answerId(r.sourceUrl) === id && !have.has(r.fingerprint)) rows.push(r);
+  }
+  return Object.assign(currentPublic(rows), { capped: rows.length >= REPO_ROWS_MAX });
 }
 
 /** Public scans whose file sits at this answer id, newest first. */
@@ -115,7 +145,7 @@ export function repoSiblings(rows: RepoRow[], id: string, show = 6) {
   const start = at < 0 ? ids.length : at;
   const half = Math.floor(show / 2);
   const picked = ids.length <= show ? ids : Array.from({ length: show }, (_, i) => ids[(start - half + i + ids.length) % ids.length]!);
-  return { ...counts, capped: rows.length >= REPO_ROWS_MAX, neighbours: picked.map((sid) => ({ id: sid, verdict: latest.get(sid)!.verdict })) };
+  return { ...counts, capped: (rows as { capped?: boolean }).capped ?? rows.length >= REPO_ROWS_MAX, neighbours: picked.map((sid) => ({ id: sid, verdict: latest.get(sid)!.verdict })) };
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -162,7 +192,7 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
   const [repoRows, detail] = await Promise.all([repoScans(db, id), toolDetail(db, id)]);
   const scans = repoRows.filter((r) => answerId(r.sourceUrl) === id).sort((a, b) => b.lastSeen - a.lastSeen);
   const hasReports = !!detail?.reports.length;
-  if (!scans.length && !hasReports) return notFound(c, "No Forge data on this tool yet", `Nothing has been scanned or reported for ${id} yet.`);
+  if (!scans.length && !hasReports) return notFound(c, "No Forge data on this tool yet", `Nothing public has been scanned or reported for ${id} yet. Scan the file yourself to see today's result.`);
   const scan = scans[0] ?? null;
   const label = scan ? skillLabel(scan.sourceUrl, scan.name) : { title: id.split("/").at(-1) ?? id, where: null };
   const name = label.where ? `${label.title} (${label.where})` : label.title;
@@ -271,6 +301,7 @@ ${findings.length
               return html`<tr><td><a href="/scan/rules#${f.rule}">${f.title}</a> <span class="mono small muted">${f.rule}</span></td><td data-label="Severity">${f.severity}</td><td class="num" data-label="Line">${f.line}</td><td data-label="Source">${src ? html`<a href="${src}" rel="nofollow ugc">line ${f.line} on GitHub</a>` : "—"}</td></tr>`;
             })}</tbody></table>`
           : ""}
+${rightOfReply({ ...scan, public: true })}
 <p class="small">Scanned file: ${scan.sourceUrl ? html`<a class="mono" href="${scan.sourceUrl}" rel="nofollow ugc">${scan.sourceUrl.replace(/^https:\/\//, "")}</a>` : "pasted text"} · rules ${scan.rulesVersion} · <a href="${scanPath(scan.fingerprint)}">full scan record</a> with every matched line.</p>
 ${scans.length > 1 ? html`<p class="small muted">Earlier versions: ${scans.slice(1, 6).map((s, i) => html`${i ? ", " : ""}<a href="${scanPath(s.fingerprint)}">${commit(s.sourceUrl) ?? s.fingerprint.slice(7, 14)}</a> (${day(s.lastSeen)}, ${s.verdict === "clear" ? "no matches" : s.verdict === "flagged" ? "high-risk pattern" : "medium-risk pattern"})`)}.</p>` : ""}
 </section>`
@@ -296,9 +327,9 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
 // (26 Oct check: the Lab results and the Registry census were in no sitemap).
 export const SITEMAP_STATIC = [
   ...new Set([
-    "/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/gauntlet/season-1", "/connect", "/methodology", "/results-policy", "/about", "/stats", "/wire", "/watchlist",
-    "/reports/skill-scan-2026-10", "/arena/business", "/reports/business-agents-2026-10", "/guides/check-before-install", "/advisories/2026-10",
-    "/arena/rules", "/arena/methodology", "/arena/proving-ground", "/arena/failures", "/scouts", "/teams", "/privacy", "/terms",
+    "/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/gauntlet/sprint", "/gauntlet/sprint/rules", "/gauntlet/season-1", "/founding", "/connect", "/methodology", "/results-policy", "/security", "/about", "/stats", "/stats/rules", "/wire", "/watchlist",
+    "/reports/skill-scan-2026-10", "/reports/state-of-agent-reliability/2026-q4", "/arena/business", "/reports/business-agents-2026-10", "/guides/check-before-install", "/advisories/2026-10",
+    "/arena/rules", "/arena/methodology", "/benchmark", "/benchmark/changelog", "/benchmark/licence", "/benchmark/held-out", "/dataset", "/dataset/sample", "/arena/proving-ground", "/arena/failures", "/scouts", "/teams", "/privacy", "/terms",
     ...PUBLICATIONS.filter((p) => p.live).map((p) => p.path),
     ANSWERS_PATH,
     ...ARENA_QUESTIONS.map(answerPagePath),
@@ -317,8 +348,15 @@ export interface SitemapRow {
   lastmod?: number;
 }
 
-export async function sitemapPaths(db: Db): Promise<SitemapRow[]> {
-  const scans = await db.select({ sourceUrl: t.skillScans.sourceUrl, lastSeen: t.skillScans.lastSeen }).from(t.skillScans).where(eq(t.skillScans.public, true));
+/** `agentIndex`: list /agents only once the index is open (ADR 0094); closed, it is noindex and lists no rows. */
+export async function sitemapPaths(db: Db, opts: { agentIndex?: boolean } = {}): Promise<SitemapRow[]> {
+  // Every GitHub-sourced row, any visibility: an answer page is listed only when its skill's newest scan is public
+  // (currentPublic; review ADR 0111), the same rule the page itself uses.
+  const all = await db
+    .select({ sourceUrl: t.skillScans.sourceUrl, lastSeen: t.skillScans.lastSeen, public: t.skillScans.public })
+    .from(t.skillScans)
+    .where(and(gte(t.skillScans.sourceUrl, "https://raw.githubusercontent.com/"), lt(t.skillScans.sourceUrl, "https://raw.githubusercontent.com0")));
+  const scans = currentPublic(all);
   const byId = new Map<string, number>();
   for (const s of scans) {
     const id = answerId(s.sourceUrl);
@@ -337,7 +375,7 @@ export async function sitemapPaths(db: Db): Promise<SitemapRow[]> {
     if (byId.has(r.id)) byId.set(r.id, Math.max(byId.get(r.id)!, latest));
     else toolPages.push({ path: toolHref(r.id), lastmod: latest || undefined });
   }
-  return [...SITEMAP_STATIC.map((path) => ({ path })), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined })), ...toolPages];
+  return [...SITEMAP_STATIC.map((path) => ({ path })), ...(opts.agentIndex ? [{ path: "/agents" }] : []), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined })), ...toolPages];
 }
 
 const urlset = (origin: string, rows: SitemapRow[]) =>
@@ -372,7 +410,7 @@ async function serveSitemap(c: Context<{ Bindings: Env }>, part: number) {
   const key = new Request(new URL(part ? `/sitemap-${part}.xml` : "/sitemap.xml", c.req.url).toString());
   const hit = await cache.match(key);
   if (hit) return hit;
-  const docs = sitemapDocs(c.env.PUBLIC_ORIGIN, await sitemapPaths(getDb(c.env)));
+  const docs = sitemapDocs(c.env.PUBLIC_ORIGIN, await sitemapPaths(getDb(c.env), { agentIndex: await agentIndexOpen(c.env) }));
   const body = part ? docs.parts[part - 1] : docs.main;
   if (body === undefined) return c.notFound();
   const res = sitemapResponse(body);

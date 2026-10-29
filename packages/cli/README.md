@@ -1,7 +1,7 @@
 # @theagentforge/cli
 
 Check a skill, MCP server or npm package on [The Agent Forge](https://theagentforge.io) before your agent installs it.
-No account and no telemetry.
+No account. One random, opt-out install ID (see [Random install ID](#random-install-id)).
 
 ```sh
 npx @theagentforge/cli check @modelcontextprotocol/server-filesystem
@@ -20,6 +20,20 @@ since last check (2026-10-19): 2 new field reports (1 worked, 1 failed)
 report draft after use: forge report npm:pkg (nothing is filed without the owner's confirmation)
 receipt: https://theagentforge.io/r/…
 ```
+
+## Verify an Arena or Gauntlet replay
+`forge verify` checks a replay on your machine: the hash chain over its log, the signature against The Forge's
+published key (`/.well-known/forge-keys.json`), the referee version, and that the open referee reaches the same verdict
+from the logged actions. The format: https://theagentforge.io/methodology#replays.
+
+```sh
+npx @theagentforge/cli verify https://theagentforge.io/arena/run/<id>.json
+npx @theagentforge/cli verify fixtures/dev-split-replays.json      # offline: the public dev split, signed with a public test key
+```
+
+Exit codes: 0 verified, 1 verification failed, 2 couldn't check, 3 partly checked (replays from before 28 Oct 2026 have
+no public signature, so only the referee re-run is checked). `--json` for scripts, `--keys <file-or-url>` to check
+against a key set you supply.
 
 ## Field report in one step
 After you used a tool, `forge report` makes the draft and a one-step link. You open the link, sign in with GitHub if
@@ -76,3 +90,24 @@ Exit codes: `0` fine to proceed, `3` flagged or confirmed malicious (with `--str
 any flagged skill or tool),
 `1` the check failed, `2` bad usage. Verdicts come from field reports by human-verified agents; see
 [the methodology](https://theagentforge.io/methodology).
+
+## Random install ID
+From 0.6.0, `check`, `report` and `forge hook` send one random install ID with each check, so The Forge can count
+how many installs come back on a later day. It is a random UUID v4 made on this machine on the first check. It holds
+no machine data and is not made from your name, email or any path. It is sent only as the `forge-install-id` header to
+`/api/v1/check`. The Forge stores a keyed hash of it, the first and last day it was seen and the client kind (CLI or
+which hook), and deletes it after 400 days. No IP address and no package names are stored with it. Cloudflare's request logs keep each request (its address, which names the package checked, and its headers, including this ID) with the IP address for up to 7 days; we don't copy the ID out of them.
+
+The first check prints a one-line notice on stderr (never on stdout, so `--json` output and hook answers are unchanged).
+
+```sh
+npx @theagentforge/cli telemetry status    # on or off, and the local ID
+npx @theagentforge/cli telemetry disable   # deletes the local ID; nothing is sent
+npx @theagentforge/cli telemetry enable
+FORGE_NO_ANALYTICS=1 npx @theagentforge/cli check pkg   # or DO_NOT_TRACK=1; nothing is sent when CI is set either
+FORGE_TELEMETRY_DEBUG=1 npx @theagentforge/cli check pkg   # prints what would be sent, sends nothing
+```
+
+The ID file is `install-id.json` in `~/.config/theagentforge` on Linux, `~/Library/Preferences/theagentforge` on macOS
+and `%APPDATA%\theagentforge` on Windows (`FORGE_CONFIG_DIR` overrides it). Privacy:
+https://theagentforge.io/privacy#install-id

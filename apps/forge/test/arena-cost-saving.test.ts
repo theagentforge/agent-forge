@@ -53,14 +53,36 @@ beforeEach(async () => {
 });
 
 describe("prompt caching (S1)", () => {
-  it("Anthropic routes get one top-level cache hint and the messages are sent exactly as they are", () => {
+  it("Anthropic routes get a top-level cache hint plus a breakpoint on the system prompt, with every text unchanged (ADR 0113)", () => {
     const r = modelById("claude-sonnet-5.5")!.route;
     if (r.kind !== "openrouter") throw new Error("expected an OpenRouter route");
     const { hint, body } = openRouterBody(r, CHAT, TOOLS, {});
     expect(hint).toBe("top-level");
     expect((body as Record<string, unknown>).cache_control).toEqual({ type: "ephemeral" });
-    expect(JSON.stringify(body.messages)).toBe(JSON.stringify(CHAT));
-    expect(JSON.stringify(body.messages)).not.toContain("cache_control");
+    // The system prompt is one text block with the same text and its own breakpoint; every other message is untouched.
+    expect(body.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }] });
+    for (const i of [1, 2, 3, 4]) expect(body.messages[i]).toBe(CHAT[i]);
+    expect(texts(body.messages)).toEqual(texts(CHAT));
+    expect(JSON.stringify(body.messages).match(/cache_control/g)).toHaveLength(1);
+    // Without the system breakpoint (a provider refused it), the messages are sent exactly as they are.
+    expect(JSON.stringify(openRouterBody(r, CHAT, TOOLS, {}, false).body.messages)).toBe(JSON.stringify(CHAT));
+  });
+
+  it("if a provider refuses the system-prompt breakpoint, the same request goes with the top-level hint only, then always (ADR 0113)", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetcher = (async (_u: string, init: RequestInit) => {
+      const b = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(b);
+      if (JSON.stringify(b.messages).includes("cache_control")) return Response.json({ error: { message: "too many breakpoints" } }, { status: 400 });
+      return Response.json({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 10, completion_tokens: 1, cost: 0.001 } });
+    }) as typeof fetch;
+    const r = { kind: "openrouter" as const, model: "anthropic/test-refuses-system-break", provider: "anthropic" };
+    await callModel({ AI: env.AI, OPENROUTER_API_KEY: "k" }, r, CHAT, TOOLS, fetcher, {});
+    await callModel({ AI: env.AI, OPENROUTER_API_KEY: "k" }, r, CHAT, TOOLS, fetcher, {});
+    expect(bodies.map((b) => JSON.stringify(b.messages).includes("cache_control"))).toEqual([true, false, false]);
+    // The top-level hint stays on: caching still works for the rest of the bout.
+    expect(bodies.map((b) => !!b.cache_control)).toEqual([true, true, true]);
+    expect(texts(bodies[1]!.messages as ChatMessage[])).toEqual(texts(CHAT));
   });
 
   it("Alibaba (Qwen) gets an explicit breakpoint on the brief, with the brief's text unchanged", () => {

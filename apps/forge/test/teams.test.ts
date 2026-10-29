@@ -13,7 +13,7 @@ const page = async (path: string) => {
 const unescape = (s: string) => s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
 
 describe("/teams", () => {
-  it("states the offer, the free design-partner slots, what we need and what we don't do yet, with no prices", async () => {
+  it("states the offer, the free design-partner slots, what we need and what we don't do yet, and prices only the paid pilots", async () => {
     const { res, body } = await page("/teams");
     expect(res.status).toBe(200);
     const text = unescape(body);
@@ -25,7 +25,12 @@ describe("/teams", () => {
     expect(text).toContain("We don't run traps against your own tools or MCP servers.");
     expect(text).toContain("signed");
     expect(text).toContain("We aren't affiliated with any AI lab.");
-    expect(body).not.toMatch(/[$€£]\s?\d|per month|\/mo\b/i);
+    // The only prices are the paid-pilot tiers (ADR 0096); the design-partner offer stays free, nothing is per month.
+    const beforePilots = text.slice(0, text.indexOf('<h2 id="pilots">'));
+    expect(beforePilots.length).toBeGreaterThan(0);
+    expect(beforePilots).not.toMatch(/[$€£]\s?\d|US\$|per month|\/mo\b/i);
+    expect(text).toMatch(/US\$1,000/);
+    expect(body).not.toMatch(/per month|\/mo\b/i);
   });
 
   it("has the intake fields and turns them into an email to partners@, never a post to our server", async () => {
@@ -84,7 +89,7 @@ describe("/teams", () => {
     const res = await fetchWorker("/teams?format=json");
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as Record<string, any>;
-    expect(j.offer).toMatchObject({ service: "trap_set_run", deliverable: "report", design_partner_slots: 3, price_for_design_partners: 0, pricing_after_design_partners: null });
+    expect(j.offer).toMatchObject({ service: "trap_set_run", deliverable: "report", design_partner_slots: 3, price_for_design_partners: 0, pricing_after_design_partners: "paid_pilots" });
     expect(j.offer.report_contents).toEqual(["falls_by_failure_mode", "signed_replays", "rules_version"]);
     expect(j.requirements.agent_connects_over_mcp).toBe(true);
     expect(j.not_offered_yet).toEqual(["traps_against_your_own_tools"]);

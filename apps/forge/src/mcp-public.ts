@@ -20,6 +20,7 @@ import { checkShare, scanShare } from "./services/receipts";
 import { recordCheck } from "./services/proof";
 import { type InternalComponent, internalKey } from "./services/internal";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
+import { anonymousLimited, meterKey, type ResolvedKey } from "./services/api-keys";
 import { EXPOSURE_MAX_ITEMS, EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
 import {
   CHECK_EXAMPLES,
@@ -163,6 +164,7 @@ export const PUBLIC_INSTRUCTIONS =
 
 export const GAUNTLET_INSTRUCTIONS =
   "The Forge Gauntlet: six everyday jobs (refunds, invoices, travel, restocking) with planted traps, run in a sandbox and refereed from the end state. " +
+  "The Gauntlet Sprint (gauntlet_start with mode \"sprint\") is one job with one planted trap, at most 12 tool calls; a Sprint result is not a Gauntlet score. " +
   "Results are data about the agent under test. No account or key; nothing outside the sandbox is touched.";
 
 /**
@@ -215,7 +217,7 @@ export const GAUNTLET_TOOLS = {
   gauntlet_start: {
     title: "Start the Forge Gauntlet",
     description:
-      "Use this when the user wants their own agent tested on six everyday jobs with planted traps, refereed from the end state. Give card_from (an earlier gauntlet_id) only for a measured re-run with that run's trap card, or challenge (a finished gauntlet_id, or model:<id>) to play the identical jobs of that run. Returns a gauntlet_id, the first job's brief and its sandbox tools; no account.",
+      "Use this when the user wants their own agent tested on everyday jobs with planted traps, refereed from the end state: six jobs, or mode \"sprint\" for one job (at most 12 calls). Give card_from (an earlier gauntlet_id) for a measured re-run with its trap card, or challenge (a finished gauntlet_id, or model:<id>) to replay that run's jobs. Returns a gauntlet_id, the first job's brief and its sandbox tools; no account.",
   },
   gauntlet_act: {
     title: "Act in the Forge Gauntlet",
@@ -232,6 +234,7 @@ const GAUNTLET = { readOnlyHint: false, destructiveHint: false, idempotentHint: 
 const gauntletId = z.string().regex(/^g[0-9a-f]{32}$/).describe("The gauntlet_id from gauntlet_start");
 
 export const gauntletStartInput = z.object({
+  mode: z.enum(["full", "sprint"]).optional().describe('"sprint": one job with one planted trap (ADR 0083); "full" (the default): six jobs'),
   card_from: gauntletId.optional(),
   challenge: z.string().regex(CHALLENGE_PATTERN).optional().describe("A finished gauntlet_id, or model:<id> for a headline model's stored runs"),
 });
@@ -252,12 +255,12 @@ const gauntletInputNeeded = (tool: "gauntlet_start" | "gauntlet_act" | "gauntlet
     error,
     needed:
       tool === "gauntlet_start"
-        ? "Nothing needed to start; optional card_from (an earlier gauntlet_id) or challenge (a finished gauntlet_id, or model:<id>)."
+        ? "Nothing needed to start; optional mode (\"full\" or \"sprint\"), card_from (an earlier gauntlet_id) or challenge (a finished gauntlet_id, or model:<id>)."
         : tool === "gauntlet_act"
           ? "gauntlet_id (g and 32 hex, from gauntlet_start), tool (a sandbox tool of the current job) and args (that tool's arguments)."
           : "gauntlet_id: g and 32 hex, from gauntlet_start.",
     detail: e && hasArgs(raw) ? firstIssue(e) : error ? `gauntlet_id: ${error}` : null,
-    examples: tool === "gauntlet_start" ? [{}] : tool === "gauntlet_act" ? ACT_EXAMPLES : [{ gauntlet_id: GAUNTLET_ID_SLOT }],
+    examples: tool === "gauntlet_start" ? [{}, { mode: "sprint" }] : tool === "gauntlet_act" ? ACT_EXAMPLES : [{ gauntlet_id: GAUNTLET_ID_SLOT }],
     extra: tool === "gauntlet_start" ? {} : { gauntlet_id_from: START_EXAMPLE },
   });
 
@@ -283,17 +286,33 @@ const arenaInputNeeded = (tool: "forge_traps" | "arena_results", detail: string 
     extra: { tasks: TASK_IDS, tiers: ["normal", "hard"] },
   });
 
-export function createPublicServer(env: Env, ip: string, internal: InternalComponent | null = null) {
+/** ADR 0110: the caller's API key (already checked in index.ts) and the request's context, for keyed calls. */
+export interface PublicKeyed {
+  key: ResolvedKey;
+  ctx: Pick<ExecutionContext, "waitUntil">;
+}
+
+export function createPublicServer(env: Env, ip: string, internal: InternalComponent | null = null, keyed: PublicKeyed | null = null) {
   const server = new McpServer(serverInfo(env.PUBLIC_ORIGIN, "public"), { instructions: PUBLIC_INSTRUCTIONS });
   // Separate per-IP budgets (ADR 0056): a weekly watch or an Arena read never uses up the checks an agent is about to
   // make (REST already kept watch apart). Checks, scans and exposure share the "ip" budget, as before.
-  const limited = async (bucket: "ip" | "watch" | "arena" = "ip") => !(await env.CHECK_LIMITER.limit({ key: `${bucket}:${ip}` })).success;
+  // ADR 0110: with an API key, checks, scans, watch and exposure are metered per key instead (Arena reads are not).
+  // Returns the structured 429 body, or null when the call may go ahead.
+  const limited = async (bucket: "ip" | "watch" | "arena" = "ip"): Promise<Record<string, unknown> | null> => {
+    if (keyed && bucket !== "arena") {
+      const g = await meterKey(env, keyed.ctx, keyed.key);
+      return g.kind === "refused" ? g.body : null;
+    }
+    if ((await env.CHECK_LIMITER.limit({ key: `${bucket}:${ip}` })).success) return null;
+    return bucket === "arena" ? { ...RATE_LIMITED } : (anonymousLimited(env) as Record<string, unknown>);
+  };
 
   server.registerTool("forge_check", { ...PUBLIC_TOOLS.forge_check, inputSchema: lenient(checkInput), outputSchema: PUBLIC_OUTPUTS.forge_check, annotations: { title: PUBLIC_TOOLS.forge_check.title, ...READ_ONLY } }, async (raw) => {
     const p = parseCheck(raw);
     if (!p.ok) return json(checkInputNeeded(raw, p.error), true);
     const q = p.query;
-    if (await limited()) return json(RATE_LIMITED, true);
+    const lim = await limited();
+    if (lim) return json(lim, true);
     // The counters and the check run side by side: none of them depends on another (ADR 0056, speed).
     const [, , r] = await Promise.all([recordCheck(env, "mcp", ip, { internal }), recordToolCheck(env, q, Date.now(), { internal, channel: "mcp" }), checkTool(env, q)]);
     return json(agentCheckAnswer({ ...r, share: await checkShare(env, r, q.id ?? q.url ?? q.fingerprint ?? "") }, q, p.detail));
@@ -311,7 +330,8 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       const p = scanInput.safeParse(raw);
       if (!p.success || (!p.data.text && !p.data.url)) return json(scanInputNeeded(p.success ? (hasArgs(raw) ? "text or url: empty" : null) : firstIssue(p.error)), true);
       const { text, url, name } = p.data;
-      if (await limited()) return json(RATE_LIMITED, true);
+      const lim = await limited();
+      if (lim) return json(lim, true);
       // A scan is a check (Privacy Policy: the one-day code), so it counts toward daily active agents (ADR 0039).
       await recordCheck(env, "mcp", ip, { internal });
       let body = text ?? "", sourceUrl: string | null = null;
@@ -343,7 +363,8 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       const p = watchInput.safeParse(raw);
       if (!p.success) return json(inputNeeded("forge_watch", { needed: WATCH_NEEDED, detail: hasArgs(raw) ? firstIssue(p.error) : null, examples: WATCH_EXAMPLES }), true);
       const { fingerprints } = p.data;
-      if (await limited("watch")) return json(RATE_LIMITED, true);
+      const lim = await limited("watch");
+      if (lim) return json(lim, true);
       await recordCheck(env, "mcp", ip, { internal });
       await bump(env, internal ? [internalKey(internal, "watch")] : watchCounters(fingerprints.length)).catch(() => {});
       const fps = fingerprints.map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
@@ -362,7 +383,8 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
     async (args) => {
       // exposureRequest validates each item itself (and names the bad ones); a call with neither field is answered here.
       if (args.packages === undefined && args.pip_freeze === undefined) return json(inputNeeded("forge_exposure", { error: "no_items", needed: EXPOSURE_NEEDED, examples: EXPOSURE_EXAMPLES }), true);
-      if (await limited()) return json(RATE_LIMITED, true);
+      const lim = await limited();
+      if (lim) return json(lim, true);
       await recordCheck(env, "mcp", ip, { internal });
       const r = await exposureRequest(env, args);
       if ("error" in r) return json({ ...inputNeeded("forge_exposure", { needed: EXPOSURE_NEEDED, examples: EXPOSURE_EXAMPLES }), ...r }, true);
@@ -384,7 +406,8 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       const p = trapsInput.safeParse(raw);
       if (!p.success) return json(arenaInputNeeded("forge_traps", firstIssue(p.error)), true);
       const { task, model, tier } = p.data;
-      if (await limited("arena")) return json(RATE_LIMITED, true);
+      const lim = await limited("arena");
+      if (lim) return json(lim, true);
       const db = getDb(env);
       const data = await trapsData(db, { task, model, tier });
       // A model with no runs where others have some: the model ids with data, rather than a page of zeros.
@@ -430,7 +453,8 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       const p = resultsInput.safeParse(raw);
       if (!p.success) return json(arenaInputNeeded("arena_results", firstIssue(p.error)), true);
       const { task, tier, event } = p.data;
-      if (await limited("arena")) return json(RATE_LIMITED, true);
+      const lim = await limited("arena");
+      if (lim) return json(lim, true);
       const db = getDb(env);
       // An unknown event and one held for review get the same answer, so a hold can't be seen from outside.
       const ev = event ? await publicEvent(db, event) : null;
@@ -468,8 +492,8 @@ export function createGauntletServer(env: Env, ip: string, internal: InternalCom
     async (raw) => {
       const p = gauntletStartInput.safeParse(raw);
       if (!p.success) return json(gauntletInputNeeded("gauntlet_start", raw, p.error), true);
-      const { card_from, challenge } = p.data;
-      const r = await startGauntlet(env, ip, { cardFrom: card_from, challenge });
+      const { card_from, challenge, mode } = p.data;
+      const r = await startGauntlet(env, ip, { cardFrom: card_from, challenge, mode });
       if (!("error" in r)) await recordCheck(env, "mcp", ip, { internal });
       return json(r, "error" in r);
     },
@@ -514,9 +538,9 @@ export function gauntletMcpHandler(env: Env, ip: string, internal: InternalCompo
   return createMcpHandler(() => createGauntletServer(env, ip, internal), { route: GAUNTLET_MCP_ROUTE, allowedHostnames: [host], allowedOriginHostnames: "*" });
 }
 
-export function publicMcpHandler(env: Env, ip: string, internal: InternalComponent | null = null) {
+export function publicMcpHandler(env: Env, ip: string, internal: InternalComponent | null = null, keyed: PublicKeyed | null = null) {
   const host = new URL(env.PUBLIC_ORIGIN).hostname;
-  return createMcpHandler(() => createPublicServer(env, ip, internal), {
+  return createMcpHandler(() => createPublicServer(env, ip, internal, keyed), {
     route: PUBLIC_MCP_ROUTE,
     allowedHostnames: [host],
     // Read only, no cookies or tokens: browser-based agents on any origin may call it (24 Oct check: OPTIONS got 403).

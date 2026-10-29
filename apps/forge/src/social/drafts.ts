@@ -1,7 +1,8 @@
 import { familyOf, JOB_LINE, reach, taskById, type Duel } from "@forge/arena";
 import { TRAP_CHECKS, type ScanFinding } from "@forge/shared";
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, isNull } from "drizzle-orm";
 import { gullibilityBoard } from "../arena/board";
+import { rulesSpan } from "../arena/rules-label";
 import { clipIndex } from "../arena/clips";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { failCard } from "../arena/fail-card";
@@ -202,19 +203,24 @@ async function boardChange(env: Env, db: Db, now: number, at: string): Promise<D
   const moves = (prev ?? []).map((p) => ({ p, r: b.rows.find((r) => r.model === p.model) })).filter((x) => x.r && Math.abs(pct(x.r.rate) - pct(x.p.rate)) >= 3);
   const move = moves.sort((x, y) => Math.abs(y.r!.rate - y.p.rate) - Math.abs(x.r!.rate - x.p.rate))[0];
   const moved = move ? `\n\nBiggest move this week: ${move.r!.name}, ${pct(move.p.rate)}% to ${pct(move.r!.rate)}%.` : "";
-  const numbers = [...top.map((r) => pct(r.rate)), pct(safe.rate), b.runs, ...(move ? [pct(move.p.rate), pct(move.r!.rate)] : [])];
+  const numbers = [...top.map((r) => pct(r.rate)), pct(safe.rate), b.runs, b.practice, b.ranked, ...b.rules_versions.map((v) => Number(v.version.replace(/^rules /, ""))), ...(move ? [pct(move.p.rate), pct(move.r!.rate)] : [])];
+  // F-01 (ADR 0082, review ADR 0085): the board pools practice and ranked bouts and several rules versions, so every
+  // wording says so, as the home chart's caption does (no extra link reply: replies are limited and cost money).
+  const mix = `${b.practice.toLocaleString("en-US")} practice and ${b.ranked.toLocaleString("en-US")} ranked bouts, rules ${(rulesSpan(b.rules_versions) ?? "").replace(/^rules /, "")}.`;
   const texts = [
-    `Which AI falls for it?\n\nShare of refereed bouts where the model set off a planted trap:\n${lines}\n…\n${safe.name}: ${pct(safe.rate)}%${moved}\n\n${b.runs.toLocaleString("en-US")} bouts.`,
-    `The AIs most likely to fall for a planted trap, from ${b.runs.toLocaleString("en-US")} refereed bouts:\n${lines}\n\nLeast likely: ${safe.name}, ${pct(safe.rate)}%.${moved}`,
-    `Fake invoices, changed bank details, requests to refuse. How often each AI falls for them:\n${lines}\n…\n${safe.name}: ${pct(safe.rate)}%\n\n${b.runs.toLocaleString("en-US")} bouts.`,
-    `Weekly board: which AI falls for it?\n${lines}\n${safe.name} sits at ${pct(safe.rate)}%.${moved}\n\nEvery bout is refereed; ${b.runs.toLocaleString("en-US")} so far.`,
+    `Which AI falls for it?\n\nShare of refereed bouts where the model set off a planted trap:\n${lines}\n…\n${safe.name}: ${pct(safe.rate)}%${moved}\n\n${mix}`,
+    `The AIs most likely to fall for a planted trap, from refereed bouts:\n${lines}\n\nLeast likely: ${safe.name}, ${pct(safe.rate)}%.${moved}\n\n${mix}`,
+    `Fake invoices, changed bank details, requests to refuse. How often each AI falls for them:\n${lines}\n…\n${safe.name}: ${pct(safe.rate)}%\n\n${mix}`,
+    `Weekly board: which AI falls for it?\n${lines}\n${safe.name} sits at ${pct(safe.rate)}%.${moved}\n\nEvery bout is refereed: ${mix}`,
   ];
   return { type: "board-change", at, texts, facts: { numbers, names: b.rows.map((r) => r.name), sources: ["/?format=json"] } };
 }
 
 async function skillWatch(env: Env, db: Db, now: number, at: string): Promise<Draft | null> {
   const since = now - 7 * 86_400_000;
-  const rows = await db.select().from(t.skillScans).where(and(eq(t.skillScans.public, true), gte(t.skillScans.firstSeen, since)));
+  // The weekly bulk scan (ADR 0107) is left out: its clear files are public but its pattern matches stay unlisted, so
+  // counting its public rows would inflate "scanned" and shrink the matched share (review ADR 0111).
+  const rows = await db.select().from(t.skillScans).where(and(eq(t.skillScans.public, true), gte(t.skillScans.firstSeen, since), isNull(t.skillScans.origin)));
   if (!rows.length) return null;
   const risky = rows.filter((r) => r.verdict === "flagged");
   const phrase = risky.length ? patternPhrase(risky.flatMap((r) => r.findings as ScanFinding[]), 1).replace(/^(has|have) /, "") : null;
@@ -342,6 +348,14 @@ export const MILESTONE_SLOTS: Record<number, { hour: number; replaces: PostType 
   4: { hour: 9, replaces: null },
 };
 
+/**
+ * Milestone posts quote outside-only numbers ("10 AI agents from outside our team"), and Dinike's rule of 28 Oct says
+ * those stay private ("do not show external only numbers anywhere on the site, only privately for our internal
+ * evaluation"). The drafts are served by the public /api/v1/social/drafts, and /stats no longer shows the number a post
+ * would link to, so milestones are off until Dinike decides otherwise (review of ADR 0082, ADR 0085).
+ */
+export const MILESTONE_POSTS = false;
+
 /** The biggest outside-only milestone crossed in the last 7 days, as a draft for `at`; null when there's none. */
 async function milestone(env: Env, db: Db, now: number, at: string): Promise<Draft | null> {
   const m = crossed(await metricValues(env, db, now, now - MILESTONE_WINDOW_MS))[0];
@@ -351,7 +365,7 @@ async function milestone(env: Env, db: Db, now: number, at: string): Promise<Dra
     at,
     milestone: m.id,
     texts: milestoneTexts(m),
-    reply: "Live numbers, outside agents only: https://theagentforge.io/stats?from=x-milestone",
+    reply: "Live numbers: https://theagentforge.io/stats?from=x-milestone",
     facts: { numbers: [m.threshold], names: [], sources: ["/stats?format=json"] },
   };
 }
@@ -427,7 +441,7 @@ const BUILDERS: Record<PostType, (env: Env, db: Db, now: number, at: string) => 
   "bout-teaser": boutTeaser,
   "bout-result": boutResult,
   recap,
-  milestone,
+  milestone: async (env, db, now, at) => (MILESTONE_POSTS ? milestone(env, db, now, at) : null),
   "fail-of-the-week": failOfTheWeekDraft,
 };
 
@@ -446,9 +460,9 @@ export function parseSwap(v: string | undefined | null): Swap | null {
 }
 
 /** Drafts for every slot on a US Eastern date. A type with no fitting data that day is left out, never padded. */
-export async function draftsFor(env: Env, db: Db, date: string, now = Date.now(), swap: Swap | null = null): Promise<Draft[]> {
+export async function draftsFor(env: Env, db: Db, date: string, now = Date.now(), swap: Swap | null = null, opts: { milestones?: boolean } = {}): Promise<Draft[]> {
   const out: Draft[] = [];
-  const mslot = MILESTONE_SLOTS[new Date(`${date}T12:00:00Z`).getUTCDay()];
+  const mslot = (opts.milestones ?? MILESTONE_POSTS) ? MILESTONE_SLOTS[new Date(`${date}T12:00:00Z`).getUTCDay()] : undefined;
   const m = mslot ? await milestone(env, db, now, new Date(easternToUtc(date, mslot.hour)).toISOString()).catch(() => null) : null;
   if (m) out.push({ ...m, texts: m.texts.map((x) => x.replace(/\n{3,}/g, "\n\n").trim()).filter((x) => x.length <= 275) });
   for (const s of slotsOn(date)) {

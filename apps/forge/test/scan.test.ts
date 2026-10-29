@@ -271,11 +271,18 @@ describe("skill-check tracking (ADR 0026 launch metrics)", () => {
     expect(after.skill_file_agent_fetches).toBeGreaterThanOrEqual(before.skill_file_agent_fetches + 2);
     expect(after.skill_file_browser_views).toBeGreaterThanOrEqual(before.skill_file_browser_views + 1);
     expect(skillFileCounters({ method: "GET", headers: new Headers({ "User-Agent": "Googlebot/2.1" }) })).toEqual([]);
+    // F-02: the outside-only skill-check numbers are internal (gated as before, on /admin); public JSON has them null.
+    const { outsideStatsData } = await import("../src/web/stats");
+    const inside = await outsideStatsData(env);
+    expect(inside.skill_checks!.below_minimum).toContain("watch_checkins_7d");
+    expect(inside.skill_checks!.watch_checkins_7d).toBeNull();
     const stats = (await (await fetchWorker("/stats?format=json")).json()) as any;
-    expect(stats.skill_checks.below_minimum).toContain("watch_checkins_7d");
-    expect(stats.skill_checks.watch_checkins_7d).toBeNull();
+    expect(stats.skill_checks).toBeNull();
+    const { growthStats } = await import("../src/services/growth");
+    expect((await growthStats(env)).watch_checkins_7d).toBeGreaterThanOrEqual(1);
     const growth = (await (await fetchWorker("/api/v1/growth")).json()) as any;
-    expect(growth.watch_checkins_7d).toBeGreaterThanOrEqual(1);
+    expect(growth.watch_checkins_7d).toBeNull();
+    expect(growth.internal_only).toContain("watch_checkins_7d");
   });
 });
 

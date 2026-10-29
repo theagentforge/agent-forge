@@ -10,7 +10,7 @@
 
 export const INTERNAL_HEADER = "X-Forge-Internal";
 /** Components we run. Any other tag counts as "other", so a stranger can't fill the counters with made-up names. */
-export const INTERNAL_COMPONENTS = ["scout", "house", "screens", "ci-cline", "ci", "action"] as const;
+export const INTERNAL_COMPONENTS = ["scout", "house", "screens", "ci-cline", "ci", "action", "bulk"] as const;
 export type InternalComponent = (typeof INTERNAL_COMPONENTS)[number] | "other";
 
 const UA_TAG = /\btheagentforge-internal\/([a-z0-9-]{1,32})/i;

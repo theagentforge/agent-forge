@@ -1,3 +1,4 @@
+import { rulesFields } from "../arena/rules-label";
 import {
   CANARY,
   condensedSeconds,
@@ -14,7 +15,6 @@ import {
   PUBLIC_NAME,
   publicTrapId,
   rankModels,
-  rulesVersionAt,
   SEASON,
   summaryLines,
   TAGLINE,
@@ -28,12 +28,16 @@ import {
   type LogEvent,
   type Stats,
 } from "@forge/arena";
-import { testedModels } from "../arena/lineup";
+import { modelById, testedModels } from "../arena/lineup";
+import { FREE_TRAINING_LABEL, isFreeVariant, routeLabel } from "../arena/free-lane";
 import type { Context } from "hono";
 import { html } from "hono/html";
 import { getDb } from "../services/db";
 import { datasetWithProvenance, licenceInfo, runProvenance } from "../services/provenance";
-import { consistencyBoard, DATASET_LICENCE, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
+import { replayDocBlock } from "../services/replay-keys";
+import { runDocument } from "../arena/run-doc";
+import { verifyHowTo } from "./replay-verify";
+import { consistencyBoard, DATASET_LICENCE, datasetRow, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
 import { eventCsv, eventData, eventDatasetLd } from "../arena/results";
 import { answerPagePath, questionForTask } from "../arena/answers";
 import { channelDuels } from "../arena/featured";
@@ -205,7 +209,8 @@ ${list.length
 <h2 id="h-models">Models we test</h2>
 ${(() => {
   const ms = testedModels();
-  const item = (m: (typeof ms)[number]) => html`<li><b>${m.name}</b> <span class="muted">${m.lab.replace(/ \(open weights\)$/, "")}</span></li>`;
+  // ADR 0109: how each model is served (a free variant via OpenRouter is its own entry, never merged with a paid one).
+  const item = (m: (typeof ms)[number]) => html`<li><b>${m.name}</b> <span class="muted">${m.lab.replace(/ \(open weights\)$/, "")} · ${routeLabel(m)}</span></li>`;
   const main = ms.filter((m) => m.division !== "practice");
   const practice = ms.filter((m) => m.division === "practice");
   return html`${main.length ? html`<h3>Main lineup</h3><p class="muted">Each lab's everyday model, ranked since ${SEASON.name}'s first event.</p><ul class="model-list">${main.map(item)}</ul>` : ""}
@@ -215,7 +220,7 @@ ${(() => {
 </section>
 <section>
 <h2>Rankings</h2>
-<p><a href="/arena/failures">Failure modes: which model falls for which trap</a> · <a href="/arena/business">Business agent reliability: how often agents break business policy</a> · <a href="/arena/history">Model versions over time</a></p>
+<p><a href="/arena/failures">Failure modes: which model falls for which trap</a> · <a href="/arena/business">Business agent reliability: how often agents break business policy</a> · <a href="/arena/history">Model versions over time</a> · <a href="/benchmark">The Forge Trap Set: the benchmark, citable</a></p>
 ${divisionLists(ranks, headline.length > 0, SEASON.event)}
 <h3>Right every time</h3>
 ${consistencyTable(board)}
@@ -360,7 +365,8 @@ site.get("/arena/run/:id{[A-Za-z0-9_-]+\\.json}", async (c) => {
   const id = c.req.param("id").replace(/\.json$/, "");
   const r = await runWithLog(getDb(c.env), id);
   if (!r) return c.notFound();
-  return c.json({ canary: CANARY, id, event: r.event.slug, kind: r.event.kind, task: r.run.task, tier: tierOf(r.run.task), model: r.run.modelId, provider: r.run.provider, cost_estimated: r.run.costEstimated, result: r.result, log: r.log, signature: r.run.signature, frames: frames(r.log), moments: moments(r.log), ...licenceInfo(c.env.PUBLIC_ORIGIN), provenance: runProvenance({ model: r.run.modelId, provider: r.run.provider, finishedAt: r.run.finishedAt! }) }, 200, {
+  // One builder for this file and the sample dataset's replays (B3-07): arena/run-doc.ts.
+  return c.json(await runDocument(c.env.PUBLIC_ORIGIN, r), 200, {
     "Cache-Control": "public, max-age=3600",
   });
 });
@@ -391,11 +397,12 @@ site.get("/arena/run/:id", async (c) => {
     canary: CANARY,
     body: html`<p class="eyebrow">${r.event.kind === "practice" ? "Practice · not ranked" : r.event.name} · ${task?.tier === "hard" ? html`<span class="label">Hard</span> ` : ""}${task?.title} · variant ${r.run.seed} · attempt ${r.run.attemptNo}</p>
 <h1 class="page-title">${name}</h1>
-<p class="verdict-row">${r.result.passed ? html`<span class="verdict v-clear chamfer">PASS</span>` : html`<span class="verdict v-flagged chamfer">${r.result.reason.startsWith("knockout") ? "KO" : "FAIL"}</span>`} ${ok ? html`<span class="label" title="The stored signature matches this log">Verified replay</span>` : html`<span class="label">Unverified</span>`} <span class="muted">${versionLine(r.run.task, r.run.finishedAt!, r.result)} · Recorded ${new Date(r.run.finishedAt!).toISOString().slice(0, 10)}${r.run.provider ? ` · provider ${r.run.provider}` : ""}${r.run.costEstimated ? " · cost estimated at list price" : ""}</span></p>
+<p class="verdict-row">${r.result.passed ? html`<span class="verdict v-clear chamfer">PASS</span>` : html`<span class="verdict v-flagged chamfer">${r.result.reason.startsWith("knockout") ? "KO" : "FAIL"}</span>`} ${ok ? html`<span class="label" title="The stored signature matches this log">Verified replay</span>` : html`<span class="label">Unverified</span>`} <span class="muted">${versionLine(r.run.task, r.run.finishedAt!, r.result)} · Recorded ${new Date(r.run.finishedAt!).toISOString().slice(0, 10)}${modelById(r.run.modelId) ? ` · ${routeLabel(modelById(r.run.modelId)!)}${isFreeVariant(modelById(r.run.modelId)!) ? ` · ${FREE_TRAINING_LABEL}` : ""}` : ""}${r.run.provider ? ` · provider ${r.run.provider}` : ""}${r.run.costEstimated ? " · cost estimated at list price" : ""}</span></p>
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
 ${shareBlock(c.env.PUBLIC_ORIGIN, id, card, clip)}
 ${replaySections(fs, ms, r.result, r.run.score ?? 0)}
-<section><h2>The task card</h2><pre class="verdict-line">${briefOf(r.log) ?? (task ? task.make(r.run.seed).brief : "")}</pre><p><a href="/arena/run/${id}.json">Download log, result and signature (JSON)</a></p></section>
+<section><h2>The task card</h2><pre class="verdict-line">${briefOf(r.log) ?? (task ? task.make(r.run.seed).brief : "")}</pre><p><a href="/arena/run/${id}.json">Download log, result and signature (JSON)</a></p>
+<p class="small muted">${r.run.replaySeal ? html`Replay format v2: hash-chained and signed with our <a href="/.well-known/forge-keys.json">published key</a>. ${verifyHowTo(`${c.env.PUBLIC_ORIGIN}/arena/run/${id}.json`)}.` : html`Replay format v1 (not sealed with format v2): it verifies by its stored signature only, which only The Forge can check.`} <a href="/methodology#replays">How replays are verified</a></p></section>
 ${NOT_AFFILIATED}${CANARY_LINE}`,
   });
 });
@@ -571,7 +578,7 @@ site.get("/arena/dataset.json", async (c) => {
       licence: DATASET_LICENCE,
       // Ranked events, each as its own file of attempts (no logs): /arena/events/<slug>.json and .csv.
       events: (await rankedEvents(getDb(c.env))).map((e) => ({ slug: e.slug, name: e.name, kind: e.kind, runs: e.runs, page: `/arena/event/${e.slug}`, json: `/arena/events/${e.slug}.json`, csv: `/arena/events/${e.slug}.csv` })),
-      runs: runs.map((r) => ({ ...r.summary, tier: tierOf(r.summary.task), rules_version: rulesVersionAt(r.summary.finishedAt, r.result), task_version: taskVersion(r.summary.task, r.summary.finishedAt), traps_triggered: (r.result.traps ?? []).filter((x) => x.triggered).map((x) => publicTrapId(r.summary.task, x.id) ?? x.id), log: `/arena/run/${r.summary.id}.json` })),
+      runs: runs.map(datasetRow),
     }, c.env.PUBLIC_ORIGIN),
     200,
     { "Cache-Control": "public, max-age=300" },
@@ -621,7 +628,7 @@ site.get("/arena/rules", (c) =>
 <p>Chosen once a day by this rule, never by hand. Take the newest event (headline events before practice) that has at least one pair of models whose attempts at the <b>same task, same variant and same attempt number</b> ended differently: one passed and one didn't, or one fell for a trap the other avoided. Tasks take turns day by day, pairs take turns within a task, and a model isn't featured two days running when another pair is available. It shows contrast, not a ranking: full results are in the <a href="/best">task guides</a> and event cards. Runs in an upcoming "Call it" fixture are never featured before their premiere. Practice runs are labelled Practice.</p>
 <h2 id="weekly">The weekly headline bout</h2>
 <p>Every Thursday at 8 pm US Eastern, each lab's everyday model (one per lab from the main lineup; Grok is not entered) plays one Normal job, ${WEEKLY_ATTEMPTS} attempts each, on one fresh variant drawn at random when the bout is queued. The job is picked by rule, never by hand: take that Thursday's ISO week number, divide by ${TASKS.length}, and the remainder picks the job: ${TASKS.map((t, i) => `${i} ${t.title.replace(/^The /, "")}`).join(", ")}. The same models also play ${WEEKLY_ATTEMPTS} attempts each on one private held-out version of the same job, which is never published: no brief, log or replay. Those bouts don't count in the event's results or rankings; only each model's pass rate on the public version against the held-out one is published, pooled across weekly bouts, on <a href="/arena/history#gap">Arena history</a>. The bout is queued at the first runner tick after 8 pm and plays within the monthly budget. <a href="/arena/headline.ics">Calendar (.ics)</a></p>
-<p>Refereeing, every trap's public ID and real-world source, versions and citing: <a href="/arena/methodology">the methodology</a>.</p></div>${NOT_AFFILIATED}`,
+<p>Refereeing, every trap's public ID and real-world source, versions and citing: <a href="/arena/methodology">the methodology</a>. The traps as a versioned, citable benchmark: <a href="/benchmark">The Forge Trap Set</a> (<a href="/benchmark/v1.json">JSON</a>).</p></div>${NOT_AFFILIATED}`,
   }),
 );
 

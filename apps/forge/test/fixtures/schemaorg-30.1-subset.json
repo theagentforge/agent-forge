@@ -1,0 +1,2776 @@
+{
+"source": "https://raw.githubusercontent.com/schemaorg/schemaorg/main/data/releases/30.1/schemaorg-current-https.jsonld",
+"schema_org_version": "30.1",
+"release_date": "2026-09-16",
+"note": "Subset: these classes with every property allowed on them (own and inherited, by schema:domainIncludes) and each property's schema:rangeIncludes. Generated from the official vocabulary file; regenerate rather than hand-edit.",
+"classes": {
+"Organization": {
+"subClassOf": [
+"Thing"
+],
+"ancestors": [
+"Thing"
+],
+"properties": [
+"acceptedPaymentMethod",
+"actionableFeedbackPolicy",
+"additionalType",
+"address",
+"agentInteractionStatistic",
+"aggregateRating",
+"alternateName",
+"alumni",
+"areaServed",
+"authorizedRepresentative",
+"award",
+"awards",
+"brand",
+"companyRegistration",
+"contactPoint",
+"contactPoints",
+"correctionsPolicy",
+"department",
+"description",
+"disambiguatingDescription",
+"dissolutionDate",
+"diversityPolicy",
+"diversityStaffingReport",
+"duns",
+"email",
+"employee",
+"employees",
+"ethicsPolicy",
+"event",
+"events",
+"faxNumber",
+"founder",
+"founders",
+"foundingDate",
+"foundingLocation",
+"funder",
+"funding",
+"globalLocationNumber",
+"hasCertification",
+"hasCredential",
+"hasGS1DigitalLink",
+"hasMemberProgram",
+"hasMerchantReturnPolicy",
+"hasOfferCatalog",
+"hasPOS",
+"hasProductReturnPolicy",
+"hasShippingService",
+"identifier",
+"image",
+"interactionStatistic",
+"isicV4",
+"iso6523Code",
+"keywords",
+"knowsAbout",
+"knowsLanguage",
+"legalAddress",
+"legalName",
+"legalRepresentative",
+"leiCode",
+"location",
+"logo",
+"mainEntityOfPage",
+"makesOffer",
+"member",
+"memberOf",
+"members",
+"naics",
+"name",
+"nonprofitStatus",
+"numberOfEmployees",
+"owner",
+"ownershipFundingInfo",
+"owns",
+"parentOrganization",
+"potentialAction",
+"publishingPrinciples",
+"review",
+"reviews",
+"sameAs",
+"seeks",
+"serviceArea",
+"skills",
+"slogan",
+"sponsor",
+"subOrganization",
+"subjectOf",
+"taxID",
+"telephone",
+"unnamedSourcesPolicy",
+"url",
+"vatID"
+]
+},
+"ContactPoint": {
+"subClassOf": [
+"StructuredValue"
+],
+"ancestors": [
+"StructuredValue",
+"Intangible",
+"Thing"
+],
+"properties": [
+"additionalType",
+"alternateName",
+"areaServed",
+"availableLanguage",
+"contactOption",
+"contactType",
+"description",
+"disambiguatingDescription",
+"email",
+"faxNumber",
+"hoursAvailable",
+"identifier",
+"image",
+"mainEntityOfPage",
+"name",
+"owner",
+"potentialAction",
+"productSupported",
+"sameAs",
+"serviceArea",
+"subjectOf",
+"telephone",
+"url"
+]
+},
+"ImageObject": {
+"subClassOf": [
+"MediaObject"
+],
+"ancestors": [
+"MediaObject",
+"CreativeWork",
+"Thing"
+],
+"properties": [
+"about",
+"abstract",
+"accessMode",
+"accessModeSufficient",
+"accessibilityAPI",
+"accessibilityControl",
+"accessibilityFeature",
+"accessibilityHazard",
+"accessibilitySummary",
+"accountablePerson",
+"acquireLicensePage",
+"additionalType",
+"aggregateRating",
+"alternateName",
+"alternativeHeadline",
+"archivedAt",
+"assesses",
+"associatedArticle",
+"associatedMedia",
+"audience",
+"audio",
+"author",
+"award",
+"awards",
+"bitrate",
+"caption",
+"character",
+"citation",
+"comment",
+"commentCount",
+"conditionsOfAccess",
+"contentLocation",
+"contentRating",
+"contentReferenceTime",
+"contentSize",
+"contentUrl",
+"contributor",
+"copyrightHolder",
+"copyrightNotice",
+"copyrightYear",
+"correction",
+"countryOfOrigin",
+"creativeWorkStatus",
+"creator",
+"creditText",
+"dateCreated",
+"dateModified",
+"datePublished",
+"description",
+"digitalSourceType",
+"disambiguatingDescription",
+"discussionUrl",
+"displayLocation",
+"duration",
+"editEIDR",
+"editor",
+"educationalAlignment",
+"educationalLevel",
+"educationalUse",
+"embedUrl",
+"embeddedTextCaption",
+"encodesCreativeWork",
+"encoding",
+"encodingFormat",
+"encodings",
+"endTime",
+"exampleOfWork",
+"exifData",
+"expires",
+"fileFormat",
+"funder",
+"funding",
+"genre",
+"hasPart",
+"headline",
+"height",
+"identifier",
+"image",
+"inLanguage",
+"ineligibleRegion",
+"interactionStatistic",
+"interactivityType",
+"interpretedAsClaim",
+"isAccessibleForFree",
+"isBasedOn",
+"isBasedOnUrl",
+"isFamilyFriendly",
+"isPartOf",
+"keywords",
+"learningResourceType",
+"license",
+"locationCreated",
+"mainEntity",
+"mainEntityOfPage",
+"maintainer",
+"material",
+"materialExtent",
+"mentions",
+"name",
+"offers",
+"owner",
+"pattern",
+"playerType",
+"position",
+"potentialAction",
+"producer",
+"productionCompany",
+"provider",
+"publication",
+"publisher",
+"publisherImprint",
+"publishingPrinciples",
+"recordedAt",
+"regionsAllowed",
+"releasedEvent",
+"representativeOfPage",
+"requiresSubscription",
+"review",
+"reviews",
+"sameAs",
+"schemaVersion",
+"sdDatePublished",
+"sdLicense",
+"sdPublisher",
+"sha256",
+"size",
+"sourceOrganization",
+"spatial",
+"spatialCoverage",
+"sponsor",
+"startTime",
+"subjectOf",
+"teaches",
+"temporal",
+"temporalCoverage",
+"text",
+"thumbnail",
+"thumbnailUrl",
+"timeRequired",
+"translationOfWork",
+"translator",
+"typicalAgeRange",
+"uploadDate",
+"url",
+"usageInfo",
+"version",
+"video",
+"width",
+"wordCount",
+"workExample",
+"workTranslation"
+]
+},
+"WebSite": {
+"subClassOf": [
+"CreativeWork"
+],
+"ancestors": [
+"CreativeWork",
+"Thing"
+],
+"properties": [
+"about",
+"abstract",
+"accessMode",
+"accessModeSufficient",
+"accessibilityAPI",
+"accessibilityControl",
+"accessibilityFeature",
+"accessibilityHazard",
+"accessibilitySummary",
+"accountablePerson",
+"acquireLicensePage",
+"additionalType",
+"aggregateRating",
+"alternateName",
+"alternativeHeadline",
+"archivedAt",
+"assesses",
+"associatedMedia",
+"audience",
+"audio",
+"author",
+"award",
+"awards",
+"character",
+"citation",
+"comment",
+"commentCount",
+"conditionsOfAccess",
+"contentLocation",
+"contentRating",
+"contentReferenceTime",
+"contributor",
+"copyrightHolder",
+"copyrightNotice",
+"copyrightYear",
+"correction",
+"countryOfOrigin",
+"creativeWorkStatus",
+"creator",
+"creditText",
+"dateCreated",
+"dateModified",
+"datePublished",
+"description",
+"digitalSourceType",
+"disambiguatingDescription",
+"discussionUrl",
+"displayLocation",
+"editEIDR",
+"editor",
+"educationalAlignment",
+"educationalLevel",
+"educationalUse",
+"encoding",
+"encodingFormat",
+"encodings",
+"exampleOfWork",
+"expires",
+"fileFormat",
+"funder",
+"funding",
+"genre",
+"hasPart",
+"headline",
+"identifier",
+"image",
+"inLanguage",
+"interactionStatistic",
+"interactivityType",
+"interpretedAsClaim",
+"isAccessibleForFree",
+"isBasedOn",
+"isBasedOnUrl",
+"isFamilyFriendly",
+"isPartOf",
+"issn",
+"keywords",
+"learningResourceType",
+"license",
+"locationCreated",
+"mainEntity",
+"mainEntityOfPage",
+"maintainer",
+"material",
+"materialExtent",
+"mentions",
+"name",
+"offers",
+"owner",
+"pattern",
+"position",
+"potentialAction",
+"producer",
+"provider",
+"publication",
+"publisher",
+"publisherImprint",
+"publishingPrinciples",
+"recordedAt",
+"releasedEvent",
+"review",
+"reviews",
+"sameAs",
+"schemaVersion",
+"sdDatePublished",
+"sdLicense",
+"sdPublisher",
+"size",
+"sourceOrganization",
+"spatial",
+"spatialCoverage",
+"sponsor",
+"subjectOf",
+"teaches",
+"temporal",
+"temporalCoverage",
+"text",
+"thumbnail",
+"thumbnailUrl",
+"timeRequired",
+"translationOfWork",
+"translator",
+"typicalAgeRange",
+"url",
+"usageInfo",
+"version",
+"video",
+"wordCount",
+"workExample",
+"workTranslation"
+]
+},
+"AboutPage": {
+"subClassOf": [
+"WebPage"
+],
+"ancestors": [
+"WebPage",
+"CreativeWork",
+"Thing"
+],
+"properties": [
+"about",
+"abstract",
+"accessMode",
+"accessModeSufficient",
+"accessibilityAPI",
+"accessibilityControl",
+"accessibilityFeature",
+"accessibilityHazard",
+"accessibilitySummary",
+"accountablePerson",
+"acquireLicensePage",
+"additionalType",
+"aggregateRating",
+"alternateName",
+"alternativeHeadline",
+"archivedAt",
+"assesses",
+"associatedMedia",
+"audience",
+"audio",
+"author",
+"award",
+"awards",
+"breadcrumb",
+"character",
+"citation",
+"comment",
+"commentCount",
+"conditionsOfAccess",
+"contentLocation",
+"contentRating",
+"contentReferenceTime",
+"contributor",
+"copyrightHolder",
+"copyrightNotice",
+"copyrightYear",
+"correction",
+"countryOfOrigin",
+"creativeWorkStatus",
+"creator",
+"creditText",
+"dateCreated",
+"dateModified",
+"datePublished",
+"description",
+"digitalSourceType",
+"disambiguatingDescription",
+"discussionUrl",
+"displayLocation",
+"editEIDR",
+"editor",
+"educationalAlignment",
+"educationalLevel",
+"educationalUse",
+"encoding",
+"encodingFormat",
+"encodings",
+"exampleOfWork",
+"expires",
+"fileFormat",
+"funder",
+"funding",
+"genre",
+"hasPart",
+"headline",
+"identifier",
+"image",
+"inLanguage",
+"interactionStatistic",
+"interactivityType",
+"interpretedAsClaim",
+"isAccessibleForFree",
+"isBasedOn",
+"isBasedOnUrl",
+"isFamilyFriendly",
+"isPartOf",
+"keywords",
+"lastReviewed",
+"learningResourceType",
+"license",
+"locationCreated",
+"mainContentOfPage",
+"mainEntity",
+"mainEntityOfPage",
+"maintainer",
+"material",
+"materialExtent",
+"mentions",
+"name",
+"offers",
+"owner",
+"pattern",
+"position",
+"potentialAction",
+"primaryImageOfPage",
+"producer",
+"provider",
+"publication",
+"publisher",
+"publisherImprint",
+"publishingPrinciples",
+"recordedAt",
+"relatedLink",
+"releasedEvent",
+"review",
+"reviewedBy",
+"reviews",
+"sameAs",
+"schemaVersion",
+"sdDatePublished",
+"sdLicense",
+"sdPublisher",
+"significantLink",
+"significantLinks",
+"size",
+"sourceOrganization",
+"spatial",
+"spatialCoverage",
+"speakable",
+"specialty",
+"sponsor",
+"subjectOf",
+"teaches",
+"temporal",
+"temporalCoverage",
+"text",
+"thumbnail",
+"thumbnailUrl",
+"timeRequired",
+"translationOfWork",
+"translator",
+"typicalAgeRange",
+"url",
+"usageInfo",
+"version",
+"video",
+"wordCount",
+"workExample",
+"workTranslation"
+]
+},
+"WebPage": {
+"subClassOf": [
+"CreativeWork"
+],
+"ancestors": [
+"CreativeWork",
+"Thing"
+],
+"properties": [
+"about",
+"abstract",
+"accessMode",
+"accessModeSufficient",
+"accessibilityAPI",
+"accessibilityControl",
+"accessibilityFeature",
+"accessibilityHazard",
+"accessibilitySummary",
+"accountablePerson",
+"acquireLicensePage",
+"additionalType",
+"aggregateRating",
+"alternateName",
+"alternativeHeadline",
+"archivedAt",
+"assesses",
+"associatedMedia",
+"audience",
+"audio",
+"author",
+"award",
+"awards",
+"breadcrumb",
+"character",
+"citation",
+"comment",
+"commentCount",
+"conditionsOfAccess",
+"contentLocation",
+"contentRating",
+"contentReferenceTime",
+"contributor",
+"copyrightHolder",
+"copyrightNotice",
+"copyrightYear",
+"correction",
+"countryOfOrigin",
+"creativeWorkStatus",
+"creator",
+"creditText",
+"dateCreated",
+"dateModified",
+"datePublished",
+"description",
+"digitalSourceType",
+"disambiguatingDescription",
+"discussionUrl",
+"displayLocation",
+"editEIDR",
+"editor",
+"educationalAlignment",
+"educationalLevel",
+"educationalUse",
+"encoding",
+"encodingFormat",
+"encodings",
+"exampleOfWork",
+"expires",
+"fileFormat",
+"funder",
+"funding",
+"genre",
+"hasPart",
+"headline",
+"identifier",
+"image",
+"inLanguage",
+"interactionStatistic",
+"interactivityType",
+"interpretedAsClaim",
+"isAccessibleForFree",
+"isBasedOn",
+"isBasedOnUrl",
+"isFamilyFriendly",
+"isPartOf",
+"keywords",
+"lastReviewed",
+"learningResourceType",
+"license",
+"locationCreated",
+"mainContentOfPage",
+"mainEntity",
+"mainEntityOfPage",
+"maintainer",
+"material",
+"materialExtent",
+"mentions",
+"name",
+"offers",
+"owner",
+"pattern",
+"position",
+"potentialAction",
+"primaryImageOfPage",
+"producer",
+"provider",
+"publication",
+"publisher",
+"publisherImprint",
+"publishingPrinciples",
+"recordedAt",
+"relatedLink",
+"releasedEvent",
+"review",
+"reviewedBy",
+"reviews",
+"sameAs",
+"schemaVersion",
+"sdDatePublished",
+"sdLicense",
+"sdPublisher",
+"significantLink",
+"significantLinks",
+"size",
+"sourceOrganization",
+"spatial",
+"spatialCoverage",
+"speakable",
+"specialty",
+"sponsor",
+"subjectOf",
+"teaches",
+"temporal",
+"temporalCoverage",
+"text",
+"thumbnail",
+"thumbnailUrl",
+"timeRequired",
+"translationOfWork",
+"translator",
+"typicalAgeRange",
+"url",
+"usageInfo",
+"version",
+"video",
+"wordCount",
+"workExample",
+"workTranslation"
+]
+},
+"SearchAction": {
+"subClassOf": [
+"Action"
+],
+"ancestors": [
+"Action",
+"Thing"
+],
+"properties": [
+"actionProcess",
+"actionStatus",
+"additionalType",
+"agent",
+"alternateName",
+"description",
+"disambiguatingDescription",
+"endTime",
+"error",
+"identifier",
+"image",
+"instrument",
+"location",
+"mainEntityOfPage",
+"name",
+"object",
+"owner",
+"participant",
+"potentialAction",
+"provider",
+"query",
+"result",
+"sameAs",
+"startTime",
+"subjectOf",
+"target",
+"url"
+]
+},
+"EntryPoint": {
+"subClassOf": [
+"Intangible"
+],
+"ancestors": [
+"Intangible",
+"Thing"
+],
+"properties": [
+"actionApplication",
+"actionPlatform",
+"additionalType",
+"alternateName",
+"application",
+"contentType",
+"description",
+"disambiguatingDescription",
+"encodingType",
+"httpMethod",
+"identifier",
+"image",
+"mainEntityOfPage",
+"name",
+"owner",
+"potentialAction",
+"sameAs",
+"subjectOf",
+"url",
+"urlTemplate"
+]
+},
+"PropertyValueSpecification": {
+"subClassOf": [
+"Intangible"
+],
+"ancestors": [
+"Intangible",
+"Thing"
+],
+"properties": [
+"additionalType",
+"alternateName",
+"defaultValue",
+"description",
+"disambiguatingDescription",
+"identifier",
+"image",
+"mainEntityOfPage",
+"maxValue",
+"minValue",
+"multipleValues",
+"name",
+"owner",
+"potentialAction",
+"readonlyValue",
+"sameAs",
+"stepValue",
+"subjectOf",
+"url",
+"valueMaxLength",
+"valueMinLength",
+"valueName",
+"valuePattern",
+"valueRequired"
+]
+}
+},
+"ranges": {
+"about": [
+"Thing"
+],
+"abstract": [
+"Text"
+],
+"acceptedPaymentMethod": [
+"LoanOrCredit",
+"PaymentMethod",
+"Text"
+],
+"accessMode": [
+"Text"
+],
+"accessModeSufficient": [
+"ItemList"
+],
+"accessibilityAPI": [
+"Text"
+],
+"accessibilityControl": [
+"Text"
+],
+"accessibilityFeature": [
+"Text"
+],
+"accessibilityHazard": [
+"Text"
+],
+"accessibilitySummary": [
+"Text"
+],
+"accountablePerson": [
+"Person"
+],
+"acquireLicensePage": [
+"CreativeWork",
+"URL"
+],
+"actionApplication": [
+"SoftwareApplication"
+],
+"actionPlatform": [
+"DigitalPlatformEnumeration",
+"Text",
+"URL"
+],
+"actionProcess": [
+"HowTo"
+],
+"actionStatus": [
+"ActionStatusType"
+],
+"actionableFeedbackPolicy": [
+"CreativeWork",
+"URL"
+],
+"additionalType": [
+"Text",
+"URL"
+],
+"address": [
+"PostalAddress",
+"Text"
+],
+"agent": [
+"Organization",
+"Person"
+],
+"agentInteractionStatistic": [
+"InteractionCounter"
+],
+"aggregateRating": [
+"AggregateRating"
+],
+"alternateName": [
+"Text"
+],
+"alternativeHeadline": [
+"Text"
+],
+"alumni": [
+"Person"
+],
+"application": [
+"SoftwareApplication"
+],
+"archivedAt": [
+"URL",
+"WebPage"
+],
+"areaServed": [
+"AdministrativeArea",
+"GeoShape",
+"Place",
+"Text"
+],
+"assesses": [
+"DefinedTerm",
+"Text"
+],
+"associatedArticle": [
+"NewsArticle"
+],
+"associatedMedia": [
+"MediaObject"
+],
+"audience": [
+"Audience"
+],
+"audio": [
+"AudioObject",
+"Clip",
+"MusicRecording"
+],
+"author": [
+"Organization",
+"Person"
+],
+"authorizedRepresentative": [
+"Organization",
+"Person"
+],
+"availableLanguage": [
+"Language",
+"Text"
+],
+"award": [
+"Text"
+],
+"awards": [
+"Text"
+],
+"bitrate": [
+"Text"
+],
+"brand": [
+"Brand",
+"Organization"
+],
+"breadcrumb": [
+"BreadcrumbList",
+"Text"
+],
+"caption": [
+"MediaObject",
+"Text"
+],
+"character": [
+"Person"
+],
+"citation": [
+"CreativeWork",
+"Text"
+],
+"comment": [
+"Comment"
+],
+"commentCount": [
+"Integer"
+],
+"companyRegistration": [
+"Certification"
+],
+"conditionsOfAccess": [
+"Text"
+],
+"contactOption": [
+"ContactPointOption"
+],
+"contactPoint": [
+"ContactPoint"
+],
+"contactPoints": [
+"ContactPoint"
+],
+"contactType": [
+"Text"
+],
+"contentLocation": [
+"Place"
+],
+"contentRating": [
+"Rating",
+"Text"
+],
+"contentReferenceTime": [
+"DateTime"
+],
+"contentSize": [
+"Text"
+],
+"contentType": [
+"Text"
+],
+"contentUrl": [
+"URL"
+],
+"contributor": [
+"Organization",
+"Person"
+],
+"copyrightHolder": [
+"Organization",
+"Person"
+],
+"copyrightNotice": [
+"Text"
+],
+"copyrightYear": [
+"Number"
+],
+"correction": [
+"CorrectionComment",
+"Text",
+"URL"
+],
+"correctionsPolicy": [
+"CreativeWork",
+"URL"
+],
+"countryOfOrigin": [
+"Country"
+],
+"creativeWorkStatus": [
+"DefinedTerm",
+"Text"
+],
+"creator": [
+"Organization",
+"Person"
+],
+"creditText": [
+"Text"
+],
+"dateCreated": [
+"Date",
+"DateTime"
+],
+"dateModified": [
+"Date",
+"DateTime"
+],
+"datePublished": [
+"Date",
+"DateTime"
+],
+"defaultValue": [
+"Text",
+"Thing"
+],
+"department": [
+"Organization"
+],
+"description": [
+"Text",
+"TextObject"
+],
+"digitalSourceType": [
+"IPTCDigitalSourceEnumeration"
+],
+"disambiguatingDescription": [
+"Text"
+],
+"discussionUrl": [
+"URL"
+],
+"displayLocation": [
+"Place"
+],
+"dissolutionDate": [
+"Date"
+],
+"diversityPolicy": [
+"CreativeWork",
+"URL"
+],
+"diversityStaffingReport": [
+"Article",
+"URL"
+],
+"duns": [
+"Text"
+],
+"duration": [
+"Duration",
+"QuantitativeValue"
+],
+"editEIDR": [
+"Text",
+"URL"
+],
+"editor": [
+"Person"
+],
+"educationalAlignment": [
+"AlignmentObject"
+],
+"educationalLevel": [
+"DefinedTerm",
+"Text",
+"URL"
+],
+"educationalUse": [
+"DefinedTerm",
+"Text"
+],
+"email": [
+"Text"
+],
+"embedUrl": [
+"URL"
+],
+"embeddedTextCaption": [
+"Text"
+],
+"employee": [
+"Person"
+],
+"employees": [
+"Person"
+],
+"encodesCreativeWork": [
+"CreativeWork"
+],
+"encoding": [
+"MediaObject"
+],
+"encodingFormat": [
+"Text",
+"URL"
+],
+"encodingType": [
+"Text"
+],
+"encodings": [
+"MediaObject"
+],
+"endTime": [
+"DateTime",
+"Time"
+],
+"error": [
+"Thing"
+],
+"ethicsPolicy": [
+"CreativeWork",
+"URL"
+],
+"event": [
+"Event"
+],
+"events": [
+"Event"
+],
+"exampleOfWork": [
+"CreativeWork"
+],
+"exifData": [
+"PropertyValue",
+"Text"
+],
+"expires": [
+"Date",
+"DateTime"
+],
+"faxNumber": [
+"Text"
+],
+"fileFormat": [
+"Text",
+"URL"
+],
+"founder": [
+"Organization",
+"Person"
+],
+"founders": [
+"Person"
+],
+"foundingDate": [
+"Date"
+],
+"foundingLocation": [
+"Place"
+],
+"funder": [
+"Organization",
+"Person"
+],
+"funding": [
+"Grant"
+],
+"genre": [
+"DefinedTerm",
+"Text",
+"URL"
+],
+"globalLocationNumber": [
+"Text"
+],
+"hasCertification": [
+"Certification"
+],
+"hasCredential": [
+"Credential"
+],
+"hasGS1DigitalLink": [
+"URL"
+],
+"hasMemberProgram": [
+"MemberProgram"
+],
+"hasMerchantReturnPolicy": [
+"MerchantReturnPolicy"
+],
+"hasOfferCatalog": [
+"OfferCatalog"
+],
+"hasPOS": [
+"Place"
+],
+"hasPart": [
+"CreativeWork"
+],
+"hasProductReturnPolicy": [
+"ProductReturnPolicy"
+],
+"hasShippingService": [
+"ShippingService"
+],
+"headline": [
+"Text"
+],
+"height": [
+"Distance",
+"QuantitativeValue"
+],
+"hoursAvailable": [
+"OpeningHoursSpecification"
+],
+"httpMethod": [
+"Text"
+],
+"identifier": [
+"PropertyValue",
+"Text",
+"URL"
+],
+"image": [
+"ImageObject",
+"URL"
+],
+"inLanguage": [
+"Language",
+"Text"
+],
+"ineligibleRegion": [
+"GeoShape",
+"Place",
+"Text"
+],
+"instrument": [
+"Thing"
+],
+"interactionStatistic": [
+"InteractionCounter"
+],
+"interactivityType": [
+"Text"
+],
+"interpretedAsClaim": [
+"Claim"
+],
+"isAccessibleForFree": [
+"Boolean"
+],
+"isBasedOn": [
+"CreativeWork",
+"Product",
+"URL"
+],
+"isBasedOnUrl": [
+"CreativeWork",
+"Product",
+"URL"
+],
+"isFamilyFriendly": [
+"Boolean"
+],
+"isPartOf": [
+"CreativeWork",
+"URL"
+],
+"isicV4": [
+"Text"
+],
+"iso6523Code": [
+"Text"
+],
+"issn": [
+"Text"
+],
+"keywords": [
+"DefinedTerm",
+"Text",
+"URL"
+],
+"knowsAbout": [
+"Text",
+"Thing",
+"URL"
+],
+"knowsLanguage": [
+"Language",
+"Text"
+],
+"lastReviewed": [
+"Date"
+],
+"learningResourceType": [
+"DefinedTerm",
+"Text"
+],
+"legalAddress": [
+"PostalAddress"
+],
+"legalName": [
+"Text"
+],
+"legalRepresentative": [
+"Person"
+],
+"leiCode": [
+"Text"
+],
+"license": [
+"CreativeWork",
+"URL"
+],
+"location": [
+"Place",
+"PostalAddress",
+"Text",
+"VirtualLocation"
+],
+"locationCreated": [
+"Place"
+],
+"logo": [
+"ImageObject",
+"URL"
+],
+"mainContentOfPage": [
+"WebPageElement"
+],
+"mainEntity": [
+"Thing"
+],
+"mainEntityOfPage": [
+"CreativeWork",
+"URL"
+],
+"maintainer": [
+"Organization",
+"Person"
+],
+"makesOffer": [
+"Offer"
+],
+"material": [
+"Product",
+"Text",
+"URL"
+],
+"materialExtent": [
+"QuantitativeValue",
+"Text"
+],
+"maxValue": [
+"Number"
+],
+"member": [
+"Organization",
+"Person"
+],
+"memberOf": [
+"MemberProgramTier",
+"Organization",
+"ProgramMembership"
+],
+"members": [
+"Organization",
+"Person"
+],
+"mentions": [
+"Thing"
+],
+"minValue": [
+"Number"
+],
+"multipleValues": [
+"Boolean"
+],
+"naics": [
+"Text"
+],
+"name": [
+"Text"
+],
+"nonprofitStatus": [
+"NonprofitType"
+],
+"numberOfEmployees": [
+"QuantitativeValue"
+],
+"object": [
+"Thing"
+],
+"offers": [
+"Demand",
+"Offer"
+],
+"owner": [
+"Organization",
+"Person"
+],
+"ownershipFundingInfo": [
+"AboutPage",
+"CreativeWork",
+"Text",
+"URL"
+],
+"owns": [
+"Thing"
+],
+"parentOrganization": [
+"Organization"
+],
+"participant": [
+"Organization",
+"Person"
+],
+"pattern": [
+"DefinedTerm",
+"Text"
+],
+"playerType": [
+"Text"
+],
+"position": [
+"Integer",
+"Text"
+],
+"potentialAction": [
+"Action"
+],
+"primaryImageOfPage": [
+"ImageObject"
+],
+"producer": [
+"Organization",
+"Person"
+],
+"productSupported": [
+"Product",
+"Text"
+],
+"productionCompany": [
+"Organization"
+],
+"provider": [
+"Organization",
+"Person"
+],
+"publication": [
+"PublicationEvent"
+],
+"publisher": [
+"Organization",
+"Person"
+],
+"publisherImprint": [
+"Organization"
+],
+"publishingPrinciples": [
+"CreativeWork",
+"URL"
+],
+"query": [
+"Text"
+],
+"readonlyValue": [
+"Boolean"
+],
+"recordedAt": [
+"Event"
+],
+"regionsAllowed": [
+"Place"
+],
+"relatedLink": [
+"URL"
+],
+"releasedEvent": [
+"PublicationEvent"
+],
+"representativeOfPage": [
+"Boolean"
+],
+"requiresSubscription": [
+"Boolean",
+"MediaSubscription"
+],
+"result": [
+"Thing"
+],
+"review": [
+"Review"
+],
+"reviewedBy": [
+"Organization",
+"Person"
+],
+"reviews": [
+"Review"
+],
+"sameAs": [
+"URL"
+],
+"schemaVersion": [
+"Text",
+"URL"
+],
+"sdDatePublished": [
+"Date"
+],
+"sdLicense": [
+"CreativeWork",
+"URL"
+],
+"sdPublisher": [
+"Organization",
+"Person"
+],
+"seeks": [
+"Demand"
+],
+"serviceArea": [
+"AdministrativeArea",
+"GeoShape",
+"Place"
+],
+"sha256": [
+"Text"
+],
+"significantLink": [
+"URL"
+],
+"significantLinks": [
+"URL"
+],
+"size": [
+"DefinedTerm",
+"QuantitativeValue",
+"SizeSpecification",
+"Text"
+],
+"skills": [
+"DefinedTerm",
+"Text"
+],
+"slogan": [
+"Text"
+],
+"sourceOrganization": [
+"Organization"
+],
+"spatial": [
+"Place"
+],
+"spatialCoverage": [
+"Place"
+],
+"speakable": [
+"SpeakableSpecification",
+"URL"
+],
+"specialty": [
+"Specialty"
+],
+"sponsor": [
+"Organization",
+"Person"
+],
+"startTime": [
+"DateTime",
+"Time"
+],
+"stepValue": [
+"Number"
+],
+"subOrganization": [
+"Organization"
+],
+"subjectOf": [
+"CreativeWork",
+"Event"
+],
+"target": [
+"EntryPoint",
+"URL"
+],
+"taxID": [
+"Text"
+],
+"teaches": [
+"DefinedTerm",
+"Text"
+],
+"telephone": [
+"Text"
+],
+"temporal": [
+"DateTime",
+"Text"
+],
+"temporalCoverage": [
+"DateTime",
+"Text",
+"URL"
+],
+"text": [
+"Text"
+],
+"thumbnail": [
+"ImageObject"
+],
+"thumbnailUrl": [
+"URL"
+],
+"timeRequired": [
+"Duration"
+],
+"translationOfWork": [
+"CreativeWork"
+],
+"translator": [
+"Organization",
+"Person"
+],
+"typicalAgeRange": [
+"Text"
+],
+"unnamedSourcesPolicy": [
+"CreativeWork",
+"URL"
+],
+"uploadDate": [
+"Date",
+"DateTime"
+],
+"url": [
+"URL"
+],
+"urlTemplate": [
+"Text"
+],
+"usageInfo": [
+"CreativeWork",
+"URL"
+],
+"valueMaxLength": [
+"Number"
+],
+"valueMinLength": [
+"Number"
+],
+"valueName": [
+"Text"
+],
+"valuePattern": [
+"Text"
+],
+"valueRequired": [
+"Boolean"
+],
+"vatID": [
+"Text"
+],
+"version": [
+"Number",
+"Text"
+],
+"video": [
+"Clip",
+"VideoObject"
+],
+"width": [
+"Distance",
+"QuantitativeValue"
+],
+"wordCount": [
+"Integer"
+],
+"workExample": [
+"CreativeWork"
+],
+"workTranslation": [
+"CreativeWork"
+]
+},
+"subclasses": {
+"AboutPage": [
+"WebPage"
+],
+"Accommodation": [
+"Place"
+],
+"Action": [
+"Thing"
+],
+"ActionAccessSpecification": [
+"Intangible"
+],
+"ActionStatusType": [
+"StatusEnumeration"
+],
+"AdministrativeArea": [
+"Place"
+],
+"AdultOrientedEnumeration": [
+"Enumeration"
+],
+"AggregateOffer": [
+"Offer"
+],
+"AggregateRating": [
+"Rating"
+],
+"Airport": [
+"CivicStructure"
+],
+"AlignmentObject": [
+"Intangible"
+],
+"AnatomicalStructure": [
+"MedicalEntity"
+],
+"AnatomicalSystem": [
+"MedicalEntity"
+],
+"Answer": [
+"Comment"
+],
+"ArchiveComponent": [
+"CreativeWork"
+],
+"ArchiveOrganization": [
+"LocalBusiness"
+],
+"Article": [
+"CreativeWork"
+],
+"Audience": [
+"Intangible"
+],
+"AudioObject": [
+"MediaObject"
+],
+"BankOrCreditUnion": [
+"FinancialService"
+],
+"BedDetails": [
+"Intangible"
+],
+"BedType": [
+"QualitativeValue"
+],
+"BioChemEntity": [
+"Thing"
+],
+"BlogPosting": [
+"SocialMediaPosting"
+],
+"BoardingPolicyType": [
+"Enumeration"
+],
+"BoatTerminal": [
+"CivicStructure"
+],
+"BookFormatType": [
+"Enumeration"
+],
+"BrainStructure": [
+"AnatomicalStructure"
+],
+"Brand": [
+"cmns-cls:Classifier",
+"Intangible"
+],
+"BreadcrumbList": [
+"ItemList"
+],
+"BroadcastChannel": [
+"Intangible"
+],
+"BroadcastFrequencySpecification": [
+"Intangible"
+],
+"BroadcastService": [
+"Service"
+],
+"BusStation": [
+"CivicStructure"
+],
+"BusStop": [
+"CivicStructure"
+],
+"BusinessEntityType": [
+"Enumeration"
+],
+"BusinessFunction": [
+"Enumeration"
+],
+"CDCPMDRecord": [
+"StructuredValue"
+],
+"CableOrSatelliteService": [
+"Service"
+],
+"CarUsageType": [
+"Enumeration"
+],
+"CategoryCode": [
+"DefinedTerm"
+],
+"CategoryCodeSet": [
+"DefinedTermSet"
+],
+"Certification": [
+"fibo-fnd-arr-doc:Certificate",
+"CreativeWork"
+],
+"CertificationStatusEnumeration": [
+"Enumeration"
+],
+"ChemicalSubstance": [
+"BioChemEntity"
+],
+"CivicStructure": [
+"Place"
+],
+"Claim": [
+"CreativeWork"
+],
+"Class": [
+"Intangible"
+],
+"Clip": [
+"CreativeWork"
+],
+"Comment": [
+"CreativeWork"
+],
+"ComputerLanguage": [
+"Intangible"
+],
+"ContactPoint": [
+"StructuredValue"
+],
+"ContactPointOption": [
+"Enumeration"
+],
+"CorrectionComment": [
+"Comment"
+],
+"Country": [
+"cmns-ge:GeopoliticalEntity",
+"AdministrativeArea"
+],
+"Course": [
+"CreativeWork",
+"LearningResource"
+],
+"CourseInstance": [
+"Event"
+],
+"CreativeWork": [
+"Thing"
+],
+"CreativeWorkSeason": [
+"CreativeWork"
+],
+"CreativeWorkSeries": [
+"CreativeWork",
+"Series"
+],
+"Credential": [
+"CreativeWork"
+],
+"CreditCard": [
+"LoanOrCredit",
+"PaymentCard"
+],
+"CssSelectorType": [
+"Text"
+],
+"DDxElement": [
+"MedicalIntangible"
+],
+"DataCatalog": [
+"CreativeWork"
+],
+"DataDownload": [
+"MediaObject"
+],
+"DataFeed": [
+"Dataset"
+],
+"DataFeedItem": [
+"Intangible"
+],
+"Dataset": [
+"CreativeWork"
+],
+"DayOfWeek": [
+"Enumeration"
+],
+"DefinedRegion": [
+"Place",
+"StructuredValue"
+],
+"DefinedTerm": [
+"Intangible"
+],
+"DefinedTermSet": [
+"CreativeWork"
+],
+"DeliveryChargeSpecification": [
+"PriceSpecification"
+],
+"DeliveryEvent": [
+"Event"
+],
+"DeliveryMethod": [
+"Enumeration"
+],
+"Demand": [
+"Intangible"
+],
+"Diet": [
+"CreativeWork",
+"LifestyleModification"
+],
+"DigitalDocumentPermission": [
+"Intangible"
+],
+"DigitalDocumentPermissionType": [
+"Enumeration"
+],
+"DigitalPlatformEnumeration": [
+"Enumeration"
+],
+"DigitalProductPassport": [
+"Certification"
+],
+"Distance": [
+"Quantity"
+],
+"DoseSchedule": [
+"MedicalIntangible"
+],
+"DriveWheelConfigurationValue": [
+"QualitativeValue"
+],
+"Drug": [
+"Product",
+"Substance"
+],
+"DrugClass": [
+"MedicalEntity"
+],
+"DrugCostCategory": [
+"MedicalEnumeration"
+],
+"DrugLegalStatus": [
+"MedicalIntangible"
+],
+"DrugPregnancyCategory": [
+"MedicalEnumeration"
+],
+"DrugPrescriptionStatus": [
+"MedicalEnumeration"
+],
+"DrugStrength": [
+"MedicalIntangible"
+],
+"Duration": [
+"Quantity"
+],
+"EUEnergyEfficiencyEnumeration": [
+"EnergyEfficiencyEnumeration"
+],
+"EducationalOccupationalCredential": [
+"Credential"
+],
+"EducationalOrganization": [
+"CivicStructure",
+"Organization"
+],
+"Energy": [
+"Quantity"
+],
+"EnergyConsumptionDetails": [
+"Intangible"
+],
+"EnergyEfficiencyEnumeration": [
+"Enumeration"
+],
+"EngineSpecification": [
+"StructuredValue"
+],
+"EntertainmentBusiness": [
+"LocalBusiness"
+],
+"EntryPoint": [
+"Intangible"
+],
+"Enumeration": [
+"Intangible"
+],
+"Episode": [
+"CreativeWork"
+],
+"Event": [
+"Thing"
+],
+"EventAttendanceModeEnumeration": [
+"Enumeration"
+],
+"EventStatusType": [
+"StatusEnumeration"
+],
+"ExercisePlan": [
+"CreativeWork",
+"PhysicalActivity"
+],
+"FloorPlan": [
+"Intangible"
+],
+"FoodEstablishment": [
+"LocalBusiness"
+],
+"FoodEvent": [
+"Event"
+],
+"FulfillmentTypeEnumeration": [
+"Enumeration"
+],
+"GameAvailabilityEnumeration": [
+"Enumeration"
+],
+"GamePlayMode": [
+"Enumeration"
+],
+"GameServer": [
+"Intangible"
+],
+"GameServerStatus": [
+"StatusEnumeration"
+],
+"GenderType": [
+"Enumeration"
+],
+"Gene": [
+"BioChemEntity"
+],
+"GeoCoordinates": [
+"StructuredValue"
+],
+"GeoShape": [
+"StructuredValue"
+],
+"GeospatialGeometry": [
+"Intangible"
+],
+"GovernmentBenefitsType": [
+"Enumeration"
+],
+"GovernmentService": [
+"Service"
+],
+"Grant": [
+"Intangible"
+],
+"HealthAspectEnumeration": [
+"Enumeration"
+],
+"HealthInsurancePlan": [
+"Intangible"
+],
+"HealthPlanCostSharingSpecification": [
+"Intangible"
+],
+"HealthPlanFormulary": [
+"Intangible"
+],
+"HealthPlanNetwork": [
+"Intangible"
+],
+"Hospital": [
+"CivicStructure",
+"EmergencyService",
+"MedicalOrganization"
+],
+"HowTo": [
+"CreativeWork"
+],
+"HowToSection": [
+"CreativeWork",
+"ItemList",
+"ListItem"
+],
+"HowToStep": [
+"CreativeWork",
+"ItemList",
+"ListItem"
+],
+"HowToSupply": [
+"HowToItem"
+],
+"HowToTool": [
+"HowToItem"
+],
+"HyperTocEntry": [
+"CreativeWork"
+],
+"IPTCDigitalSourceEnumeration": [
+"MediaEnumeration"
+],
+"ImageObject": [
+"MediaObject"
+],
+"IncentiveQualifiedExpenseType": [
+"Enumeration"
+],
+"IncentiveStatus": [
+"Enumeration"
+],
+"IncentiveType": [
+"Enumeration"
+],
+"InfectiousAgentClass": [
+"MedicalEnumeration"
+],
+"Intangible": [
+"Thing"
+],
+"Integer": [
+"Number"
+],
+"InteractionCounter": [
+"StructuredValue"
+],
+"Invoice": [
+"fibo-fnd-arr-doc:LegalDocument",
+"Intangible"
+],
+"ItemAvailability": [
+"Enumeration"
+],
+"ItemList": [
+"Intangible"
+],
+"ItemListOrderType": [
+"Enumeration"
+],
+"Language": [
+"Intangible"
+],
+"LegalForceStatus": [
+"StatusEnumeration"
+],
+"LegalValueLevel": [
+"Enumeration"
+],
+"Legislation": [
+"CreativeWork"
+],
+"LifestyleModification": [
+"MedicalEntity"
+],
+"ListItem": [
+"Intangible"
+],
+"LoanOrCredit": [
+"FinancialProduct"
+],
+"LocalBusiness": [
+"Organization",
+"Place"
+],
+"LocationFeatureSpecification": [
+"PropertyValue"
+],
+"Map": [
+"CreativeWork"
+],
+"MapCategoryType": [
+"Enumeration"
+],
+"Mass": [
+"Quantity"
+],
+"MaximumDoseSchedule": [
+"DoseSchedule"
+],
+"MeasurementMethodEnum": [
+"Enumeration"
+],
+"MeasurementTypeEnumeration": [
+"Enumeration"
+],
+"MediaManipulationRatingEnumeration": [
+"Enumeration"
+],
+"MediaObject": [
+"CreativeWork"
+],
+"MediaSubscription": [
+"Intangible"
+],
+"MedicalAudience": [
+"Audience",
+"PeopleAudience"
+],
+"MedicalAudienceType": [
+"MedicalEnumeration"
+],
+"MedicalCause": [
+"MedicalEntity"
+],
+"MedicalCode": [
+"CategoryCode",
+"MedicalIntangible"
+],
+"MedicalCondition": [
+"MedicalEntity"
+],
+"MedicalConditionStage": [
+"MedicalIntangible"
+],
+"MedicalContraindication": [
+"MedicalEntity"
+],
+"MedicalDevice": [
+"MedicalEntity"
+],
+"MedicalEntity": [
+"Thing"
+],
+"MedicalEnumeration": [
+"Enumeration"
+],
+"MedicalEvidenceLevel": [
+"MedicalEnumeration"
+],
+"MedicalGuideline": [
+"MedicalEntity"
+],
+"MedicalImagingTechnique": [
+"MedicalEnumeration"
+],
+"MedicalObservationalStudyDesign": [
+"MedicalEnumeration"
+],
+"MedicalOrganization": [
+"Organization"
+],
+"MedicalProcedure": [
+"MedicalEntity"
+],
+"MedicalProcedureType": [
+"MedicalEnumeration"
+],
+"MedicalRiskFactor": [
+"MedicalEntity"
+],
+"MedicalSign": [
+"MedicalSignOrSymptom"
+],
+"MedicalSignOrSymptom": [
+"MedicalCondition"
+],
+"MedicalSpecialty": [
+"MedicalEnumeration",
+"Specialty"
+],
+"MedicalStudy": [
+"MedicalEntity"
+],
+"MedicalStudyStatus": [
+"MedicalEnumeration"
+],
+"MedicalTest": [
+"MedicalEntity"
+],
+"MedicalTherapy": [
+"TherapeuticProcedure"
+],
+"MedicalTrialDesign": [
+"MedicalEnumeration"
+],
+"MedicineSystem": [
+"MedicalEnumeration"
+],
+"MemberProgram": [
+"Intangible"
+],
+"MemberProgramTier": [
+"Intangible"
+],
+"Menu": [
+"CreativeWork"
+],
+"MenuItem": [
+"Intangible"
+],
+"MenuSection": [
+"CreativeWork"
+],
+"MerchantReturnEnumeration": [
+"Enumeration"
+],
+"MerchantReturnPolicy": [
+"Intangible"
+],
+"MerchantReturnPolicySeasonalOverride": [
+"Intangible"
+],
+"MonetaryAmount": [
+"StructuredValue"
+],
+"MonetaryAmountDistribution": [
+"QuantitativeValueDistribution"
+],
+"Movie": [
+"CreativeWork"
+],
+"Muscle": [
+"AnatomicalStructure"
+],
+"MusicAlbum": [
+"MusicPlaylist"
+],
+"MusicAlbumProductionType": [
+"Enumeration"
+],
+"MusicAlbumReleaseType": [
+"Enumeration"
+],
+"MusicComposition": [
+"CreativeWork"
+],
+"MusicGroup": [
+"PerformingGroup"
+],
+"MusicPlaylist": [
+"CreativeWork"
+],
+"MusicRecording": [
+"CreativeWork"
+],
+"MusicRelease": [
+"MusicPlaylist"
+],
+"MusicReleaseFormatType": [
+"Enumeration"
+],
+"Nerve": [
+"AnatomicalStructure"
+],
+"NewsArticle": [
+"Article"
+],
+"NonprofitType": [
+"Enumeration"
+],
+"NutritionInformation": [
+"StructuredValue"
+],
+"Observation": [
+"Intangible",
+"QuantitativeValue"
+],
+"Occupation": [
+"Intangible"
+],
+"OccupationalExperienceRequirements": [
+"Intangible"
+],
+"Offer": [
+"Intangible"
+],
+"OfferCatalog": [
+"ItemList"
+],
+"OfferItemCondition": [
+"Enumeration"
+],
+"OfferShippingDetails": [
+"StructuredValue"
+],
+"OnlineMarketplace": [
+"OnlineStore"
+],
+"OnlineStore": [
+"OnlineBusiness"
+],
+"OpeningHoursSpecification": [
+"StructuredValue"
+],
+"OperatingSystem": [
+"SoftwareApplication"
+],
+"Order": [
+"fibo-fnd-arr-doc:LegalDocument",
+"Intangible"
+],
+"OrderItem": [
+"StructuredValue"
+],
+"OrderStatus": [
+"StatusEnumeration"
+],
+"Organization": [
+"Thing"
+],
+"ParcelDelivery": [
+"Intangible"
+],
+"PaymentMethod": [
+"Intangible"
+],
+"PaymentMethodType": [
+"Enumeration"
+],
+"PaymentStatusType": [
+"StatusEnumeration"
+],
+"PerformingGroup": [
+"Organization"
+],
+"Person": [
+"Thing"
+],
+"Photograph": [
+"CreativeWork"
+],
+"PhysicalActivityCategory": [
+"Enumeration"
+],
+"PhysicalExam": [
+"MedicalEnumeration",
+"MedicalProcedure"
+],
+"Place": [
+"Thing"
+],
+"PostalAddress": [
+"ContactPoint"
+],
+"PostalCodeRangeSpecification": [
+"StructuredValue"
+],
+"PriceComponentTypeEnumeration": [
+"Enumeration"
+],
+"PriceSpecification": [
+"StructuredValue"
+],
+"PriceTypeEnumeration": [
+"Enumeration"
+],
+"Product": [
+"Thing"
+],
+"ProductGroup": [
+"cmns-cls:Classifier",
+"cmns-col:Collection",
+"Product"
+],
+"ProductModel": [
+"Product"
+],
+"ProductReturnPolicy": [
+"Intangible"
+],
+"ProgramMembership": [
+"Intangible"
+],
+"Property": [
+"Intangible"
+],
+"PropertyValue": [
+"StructuredValue"
+],
+"PropertyValueSpecification": [
+"Intangible"
+],
+"PublicationEvent": [
+"Event"
+],
+"PurchaseType": [
+"Enumeration"
+],
+"QualitativeValue": [
+"Enumeration"
+],
+"QuantitativeValue": [
+"StructuredValue"
+],
+"Question": [
+"Comment"
+],
+"Rating": [
+"Intangible"
+],
+"RealEstateAgent": [
+"LocalBusiness"
+],
+"Recipe": [
+"HowTo"
+],
+"RecommendedDoseSchedule": [
+"DoseSchedule"
+],
+"RefundTypeEnumeration": [
+"Enumeration"
+],
+"RepaymentSpecification": [
+"StructuredValue"
+],
+"Reservation": [
+"Intangible"
+],
+"ReservationStatusType": [
+"StatusEnumeration"
+],
+"RestrictedDiet": [
+"Enumeration"
+],
+"ReturnFeesEnumeration": [
+"Enumeration"
+],
+"ReturnLabelSourceEnumeration": [
+"Enumeration"
+],
+"ReturnMethodEnumeration": [
+"Enumeration"
+],
+"Review": [
+"CreativeWork"
+],
+"RsvpResponseType": [
+"Enumeration"
+],
+"RuntimePlatform": [
+"SoftwareApplication"
+],
+"Schedule": [
+"Intangible"
+],
+"SearchAction": [
+"Action"
+],
+"Seat": [
+"Intangible"
+],
+"Service": [
+"Intangible"
+],
+"ServiceChannel": [
+"Intangible"
+],
+"ServicePeriod": [
+"StructuredValue"
+],
+"ShippingConditions": [
+"StructuredValue"
+],
+"ShippingDeliveryTime": [
+"StructuredValue"
+],
+"ShippingRateSettings": [
+"StructuredValue"
+],
+"ShippingService": [
+"StructuredValue"
+],
+"SizeGroupEnumeration": [
+"Enumeration"
+],
+"SizeSpecification": [
+"QualitativeValue"
+],
+"SizeSystemEnumeration": [
+"Enumeration"
+],
+"SoftwareApplication": [
+"CreativeWork"
+],
+"SolveMathAction": [
+"Action"
+],
+"SpeakableSpecification": [
+"Intangible"
+],
+"Specialty": [
+"Enumeration"
+],
+"SportsActivityLocation": [
+"LocalBusiness"
+],
+"SportsEvent": [
+"Event"
+],
+"SportsTeam": [
+"SportsOrganization"
+],
+"StatisticalVariable": [
+"ConstraintNode"
+],
+"StatusEnumeration": [
+"Enumeration"
+],
+"SteeringPositionValue": [
+"QualitativeValue"
+],
+"StructuredValue": [
+"Intangible"
+],
+"SuperficialAnatomy": [
+"MedicalEntity"
+],
+"Syllabus": [
+"LearningResource"
+],
+"TVSeries": [
+"CreativeWork",
+"CreativeWorkSeries"
+],
+"Taxon": [
+"Thing"
+],
+"TextObject": [
+"MediaObject"
+],
+"Ticket": [
+"Intangible"
+],
+"TierBenefitEnumeration": [
+"Enumeration"
+],
+"TouristAttraction": [
+"Place"
+],
+"TrainStation": [
+"CivicStructure"
+],
+"Trip": [
+"Intangible"
+],
+"TypeAndQuantityNode": [
+"StructuredValue"
+],
+"URL": [
+"Text"
+],
+"UnitPriceSpecification": [
+"PriceSpecification"
+],
+"Vehicle": [
+"Product"
+],
+"Vessel": [
+"AnatomicalStructure"
+],
+"VideoGame": [
+"Game",
+"SoftwareApplication"
+],
+"VideoObject": [
+"MediaObject"
+],
+"VirtualLocation": [
+"Intangible"
+],
+"WarrantyPromise": [
+"fibo-fnd-agr-ctr:MutualContractualAgreement",
+"StructuredValue"
+],
+"WarrantyScope": [
+"Enumeration"
+],
+"WebContent": [
+"CreativeWork"
+],
+"WebPage": [
+"CreativeWork"
+],
+"WebPageElement": [
+"CreativeWork"
+],
+"WebSite": [
+"CreativeWork"
+],
+"XPathType": [
+"Text"
+]
+}
+}

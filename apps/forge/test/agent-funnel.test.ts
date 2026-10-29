@@ -68,22 +68,22 @@ describe("agent funnel (found us → connected → used a tool → came back →
     expect(await count()).toBe(before + 2);
   });
 
-  it("/stats shows each step only once it reaches its minimum", async () => {
-    const below = (await (await fetchWorker("/stats?format=json&f=below")).json()) as { agent_funnel: { agent_returned_7d: number | null; below_minimum: string[] } };
-    expect(below.agent_funnel.agent_returned_7d).toBeNull();
-    expect(below.agent_funnel.below_minimum).toContain("agent_returned_7d");
-    const page = await (await fetchWorker("/stats?f=below")).text();
-    expect(page).toContain('id="agents"');
-    expect(page).not.toMatch(/<b>\d+<\/b><span>came back<\/span>/);
+  it("the funnel is internal (F-02): gated as before for /admin, never on /stats", async () => {
+    const { outsideStatsData } = await import("../src/web/stats");
+    const below = (await outsideStatsData(env)).agent_funnel!;
+    expect(below.agent_returned_7d).toBeNull();
+    expect(below.below_minimum).toContain("agent_returned_7d");
     await bump(env, Array.from({ length: 10 }, () => "watch:calls"));
-    const at = (await (await fetchWorker("/stats?format=json&f=at")).json()) as { agent_funnel: { agent_returned_7d: number | null } };
-    expect(at.agent_funnel.agent_returned_7d).toBeGreaterThanOrEqual(10);
-    expect(await (await fetchWorker("/stats?f=at")).text()).toMatch(/<b>\d+<\/b><span>came back<\/span>/);
+    expect((await outsideStatsData(env)).agent_funnel!.agent_returned_7d).toBeGreaterThanOrEqual(10);
+    const page = await (await fetchWorker("/stats?f=at")).text();
+    expect(page).not.toContain('id="agents"');
+    expect(page).not.toMatch(/<span>came back<\/span>/);
+    expect(((await (await fetchWorker("/stats?format=json&f=at")).json()) as { agent_funnel: unknown }).agent_funnel).toBeNull();
   });
 });
 
 describe("home page live agent numbers (ADR 0030): everything counted, labelled as such", () => {
-  it("includes our House sessions and directory health checks, hides zeros, and the home page says so", async () => {
+  it("includes our House sessions and directory health checks, hides zeros, and /stats and the home band say so (ADR 0067 Amendment 1)", async () => {
     const { liveAgentCounts } = await import("../src/services/agent-funnel");
     const before = await liveAgentCounts(env);
     await bump(env, ["mcp:public:sessions", "mcp:client:glama", "mcp:house:sessions", "mcp:house:calls", "disc:agent-card", "visit:all", "visit:all"]);
@@ -101,12 +101,19 @@ describe("home page live agent numbers (ADR 0030): everything counted, labelled 
     expect(after.includes_house_and_directory_checks).toBe(true);
     const live = (await (await fetchWorker("/agents/live.json?t=1")).json()) as Record<string, unknown>;
     expect(live.agent_connections_total).toBeGreaterThan(0);
+    // The traffic totals are on /stats, in the "our own test agents included" totals table.
+    const stats = await (await fetchWorker("/stats?t=live", { headers: { Accept: "text/html" } })).text();
+    expect(stats).toContain("they include search and AI crawlers");
+    expect(stats).toMatch(/<td>AI connections \(House and directory checks included\)<\/td><td class="num">[\d,]+<\/td>/);
+    expect(stats).toMatch(/<td>Page views \(gross, crawlers included\)<\/td><td class="num">[\d,]+<\/td>/);
     const home = await (await fetchWorker("/?t=live", { headers: { Accept: "text/html" } })).text();
-    expect(home).toContain("data-agent-live");
-    expect(home).toContain("Counts include our test agents, uptime checks and crawlers.");
-    expect(home).toMatch(/<li data-k="agent_connections_total"><b>\d+<\/b><span>AI connections<\/span>/);
-    expect(home).toMatch(/<li data-k="page_views_total"><b>[\d,]+<\/b><span>page views<\/span>/);
-    expect(home).not.toMatch(/people arriving|human visits/i);
+    // ADR 0067 Amendment 1: the home band shows them again, as totals, with the honest footnote and no outside claim.
+    const band = home.slice(home.indexOf('<div class="live-band"'), home.indexOf("</div>", home.indexOf('<div class="live-band"')));
+    expect(band).toContain("data-agent-live");
+    expect(band).toMatch(/<li data-k="agent_connections_total"><b>[\d,]+<\/b><span>AI connections<\/span><\/li>/);
+    expect(band).toContain("page views, visits, connections and tool uses include crawlers, uptime checks and directory health checks");
+    expect(band).toContain("Includes The Forge's own test agents.");
+    expect(band).not.toMatch(/outside|independent|by other agents|people arriving|human visits/i);
   });
 
   it("are running totals: a visit a month ago still counts, where the 7-day funnel drops it", async () => {

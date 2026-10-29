@@ -11,3 +11,7 @@ dist/
 coverage/
 !integrations/github-action/dist/
 !integrations/skill-scan-action/dist/
+
+# Python bytecode (the sample loader test, ADR 0100)
+__pycache__/
+*.pyc

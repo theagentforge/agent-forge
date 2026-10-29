@@ -25,6 +25,22 @@ const termsVersion = (now: number) =>
     ? html`<p class="muted">Version ${NEXT_LEGAL.terms} · in force from ${NEXT_LEGAL.date}</p>`
     : html`<p class="muted">Version ${LEGAL_VERSION} · in force from ${LEGAL_DATE}</p>
 <p class="notice">Version ${NEXT_LEGAL.terms} takes effect on ${NEXT_LEGAL.date}. It extends the licence in section 6 to everything you submit (not only reports) and adds section 15: The Forge may move to a company or a successor. Both changes are shown below, marked "from ${NEXT_LEGAL.date}".</p>`;
+/**
+ * B3-09 (ADR 0103; Dinike approved this paragraph on 29 Oct 2026: "Yes, opt-out ID"). Exported so the test checks the
+ * page carries it word for word.
+ */
+export const INSTALL_ID_PARAGRAPH =
+  "our command-line tool (and its hooks for Codex, Gemini CLI and Copilot CLI) and our Claude Code plugin send a random install ID with each install check, so we can count how many installs are used again on a later day. The ID is made on your machine, contains no information about you or your machine, and is not linked to your account. We store only a keyed hash of it, the first and last day it was seen and which tool sent it, and we never store your IP address or the packages you checked with it. We delete it 400 days after it was last seen. Cloudflare's request logs keep each request (its address, which names the package checked, and its headers, including this ID) with the IP address for up to 7 days; we don't copy the ID out of them. You can turn it off with the command forge telemetry disable, the plugin's Random install ID setting, or by setting FORGE_NO_ANALYTICS=1 or DO_NOT_TRACK=1.";
+
+/**
+ * ADR 0110 (Dinike approved this paragraph on 29 Oct 2026, word for word). Exported so the test checks the page carries
+ * it unchanged. The version number stays as it is, as with the install-ID paragraph.
+ */
+export const API_KEY_PARAGRAPH =
+  "If you create an API key, we store a keyed hash of it (never the key), its name and first 12 characters, when it was created, last used and revoked, and the number of calls made with it each day, linked to your account. We don't store the contents of keyed requests or your IP address with them (Cloudflare's request logs, described above, still apply). Payments are handled by Polar, our merchant of record; we never receive card details.";
+/** The data-table row's retention, from the approved draft (docs/strategy/api-terms-draft.md section C). */
+export const API_KEY_RETENTION = "While your account exists, and up to 7 years for billing and tax records if you had a paid plan";
+
 /** Privacy Policy 1.1 (Dinike approved issue #108, 19 Oct 2026): Gauntlet runs and skill scans. The Terms stay at 1.0. */
 export const PRIVACY_VERSION = "1.1";
 export const PRIVACY_DATE = "19 October 2026";
@@ -156,10 +172,13 @@ ${next
 <tr><td data-label="What" class="wide">Gauntlet runs (no account): the agent's actions in the invented sandbox and the referee's result. No IP address, name or account. ${next ? "" : html`<strong>From ${NEXT_LEGAL.date}:</strong> `}${GAUNTLET_CLAIM_SENTENCE}</td><td data-label="Why">Running the test and showing its report to whoever has the link</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Actions: 30 days. Pass/fail summary and the trap card: kept</td></tr>
 <tr><td data-label="What" class="wide">Skill scans (no account): the file's fingerprint, the rules that matched, the line numbers and short excerpts, and the public link if you scanned by link. Never the pasted text</td><td data-label="Why">Showing the result, Skill Watch, the weekly check and README badges</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept. Pasted text that comes back clean gets no public page</td></tr>
 <tr><td data-label="What" class="wide">A one-day code made from your IP address when you run a check or start a Gauntlet run</td><td data-label="Why">Counting distinct users per day</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Kept as a daily count; can't be linked across days</td></tr>
-<tr><td data-label="What" class="wide">Request logs (IP address, browser, time) on Cloudflare</td><td data-label="Why">Security, abuse prevention and debugging</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Up to 7 days</td></tr>
+<tr><td data-label="What" class="wide">Request logs on Cloudflare (IP address, browser, time and request headers, such as the random install ID)</td><td data-label="Why">Security, abuse prevention and debugging</td><td data-label="Basis">Legitimate interest</td><td data-label="Kept">Up to 7 days</td></tr>
+<tr><td data-label="What" class="wide">API key usage records, if you create a key: a keyed hash of the key, its name and first 12 characters, when it was created, last used and revoked, and calls made with it each day</td><td data-label="Why">Rate limits and billing</td><td data-label="Basis">Contract; legitimate interest</td><td data-label="Kept">${API_KEY_RETENTION}</td></tr>
 </tbody>
 </table>
 <p><strong>About the one-day code:</strong> when anyone runs a check or starts a Gauntlet run, we make a keyed hash of their IP address with a key that changes each day. We store only that hash, never the IP. The same visitor gives the same code on one day and an unrelated code the next, so we can count people without being able to follow anyone over time.</p>
+<p id="install-id"><strong>About the random install ID:</strong> ${INSTALL_ID_PARAGRAPH}</p>
+<p id="api-keys"><strong>About API keys:</strong> ${API_KEY_PARAGRAPH}</p>
 
 <h2>Automated processing</h2>
 <ul>

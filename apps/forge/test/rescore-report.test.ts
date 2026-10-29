@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { RULES_0_6_TASKS, RULES_VERSION, rulesVersionAt } from "@forge/arena";
+import { playedUnderAt, RULES_0_6_TASKS, RULES_VERSION, rulesVersionAt } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CORRECTIONS, correctionCounts, publishedCorrections } from "../src/arena/corrections";
@@ -12,6 +12,7 @@ import { RULES_0_6_DRY_JOB } from "../src/web/admin-arena-rescore";
 import { resultsPolicyData } from "../src/web/results-policy";
 import { csrfToken, newSession, SESSION_COOKIE } from "../src/web/session";
 import { fetchWorker } from "./helpers";
+import { queueApprovedApply } from "./rescore-helpers";
 import "../src/index";
 
 // Rules 0.6: the dry re-score report of published runs (counts by event and model, run ids), the admin page that
@@ -44,7 +45,8 @@ beforeEach(async () => {
 async function asRules05(runId: string) {
   const db = getDb(env);
   const [run] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, runId));
-  const r = run!.result as { traps: { id: string; triggered: boolean }[] };
+  // Unstamped, as every result scored by rules 0.5 code is (the stamp began with rules 0.6).
+  const { rules: _stamp, ...r } = run!.result as { rules?: string; traps: { id: string; triggered: boolean }[] };
   await db
     .update(t.arenaRuns)
     .set({ passed: false, result: { ...r, passed: false, traps: r.traps.map((x) => (x.id === "false_claim" ? { ...x, triggered: true } : x)) } as never })
@@ -78,7 +80,7 @@ describe("the rules 0.6 dry re-score report", () => {
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
   });
 
-  it("apply keeps the result's original rules stamp (the label), with the new verdict's rules in its `rescored` note", async () => {
+  it("apply keeps the result's original rules stamp (played under), with the new verdict's rules in its `rescored` note (scored under)", async () => {
     scripted(wasntSent);
     const eventId = await planEvent(env, { slug: "rs06-c", name: "Rescore 0.6 c", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [8], attempts: 1 });
     await processQueue(env, Date.now() + 60_000);
@@ -88,14 +90,16 @@ describe("the rules 0.6 dry re-score report", () => {
     // As a rules 0.5 run: no stamp.
     const { rules: _drop, ...unstamped } = (await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, run!.id)))[0]!.result as Record<string, unknown>;
     await db.update(t.arenaRuns).set({ result: unstamped as never }).where(eq(t.arenaRuns.id, run!.id));
-    await env.KV.put(RESCORE_JOB_KEY, JSON.stringify({ events: [eventId], mode: "apply", tasks: ["impossible"] } satisfies RescoreJob));
+    await queueApprovedApply({ events: [eventId], tasks: ["impossible"] });
     await rescoreTick(env);
     const [after] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, run!.id));
     expect(after!.passed).toBe(true);
     const res = after!.result as { rules?: string; rescored?: { rules: string } };
     expect(res.rules).toBeUndefined();
     expect(res.rescored!.rules).toBe(RULES_VERSION);
-    expect(rulesVersionAt(after!.finishedAt!, res)).toBe("rules 0.5");
+    expect(playedUnderAt(after!.finishedAt!, res)).toBe("rules 0.5");
+    // B2-01: its own group, never pooled with runs played under rules 0.6 or 0.5.
+    expect(rulesVersionAt(after!.finishedAt!, res)).toBe(`${RULES_VERSION} re-scored`);
     await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
   });
 

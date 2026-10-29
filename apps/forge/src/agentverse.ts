@@ -1,3 +1,4 @@
+import { SCAN_RULES } from "@forge/shared";
 import type { Context } from "hono";
 import { agentCard, readRequest, runSkill } from "./a2a";
 import {
@@ -18,6 +19,7 @@ import {
   readChat,
   readEnvelope,
   statusUpdate,
+  toHex,
   verifyEnvelope,
 } from "./services/uagents";
 import { bump } from "./services/usage";
@@ -35,9 +37,141 @@ const AUTH_VALIDITY_S = 120; // AGENT_AUTH_TOKEN_VALIDITY
 const TIMEOUT_MS = 10_000; // DEFAULT_HTTP_REQUESTS_TIMEOUT
 const MAX_BODY = 96 * 1024;
 
-export const AV_KEYWORDS = ["mcp security", "skill scanner", "prompt injection", "package advisories", "agent safety"] as const;
-export const AV_README_LEAD =
-  "Free remote MCP server and A2A agent: scans agent skill files and tool descriptions for prompt injection and risky install steps; checks MCP servers and npm/PyPI packages against OSV advisories and field reports from human-verified agents; publishes per-model results on which AI agents fall for planted traps in refereed everyday jobs.";
+/**
+ * The 10 "My Keywords" for the Agentverse form (the API has no field for them; Dinike enters them by hand, see
+ * docs/launch/agentverse.md). Agentverse's README guidance: phrases people actually type, each also in the README text.
+ */
+export const AV_KEYWORDS = [
+  "ai agent trap results",
+  "which ai model falls for scams",
+  "ai model refund test",
+  "fake invoice test for ai agents",
+  "ai agent red teaming",
+  "test my ai agent",
+  "check mcp server safety",
+  "is this npm package safe",
+  "skill security scan",
+  "prompt injection check",
+] as const;
+
+/** The short description (Agentverse "Agent Description"): Arena first, then the checks. */
+export const AV_DESCRIPTION =
+  "Arena results: which AI models fall for planted traps (fake invoices, refunds over limit, double orders) in refereed everyday jobs, with replays. Plus tool checks before install: field reports, OSV advisories and a skill-file scanner. Free, no account. Replies are JSON.";
+
+/**
+ * The README, written to Agentverse's README guidelines (docs.agentverse.ai, agent-discovery/readme-guidelines, read
+ * 26 Oct 2026): English Markdown; summary, features, usage with inputs and outputs, use cases, limitations, metadata.
+ * Arena first (Dinike's standing rule), then the Gauntlet, then checks and the scanner. Only stable, public facts: no
+ * live counts, which would go stale once Agentverse keeps the text. Bump AV_README_VERSION on every change.
+ */
+export const AV_README_VERSION = 2;
+export function avReadme(origin: string): string {
+  return `# The Agent Forge
+
+## Summary
+The Agent Forge measures which AI models fall for planted traps when they do everyday business jobs, and checks
+agent tools before you install them.
+
+- **Arena:** AI models do refunds, invoice payment runs, travel booking, restocking, spreadsheet clean-up and bill
+  payment in a sandbox. Each job hides traps: a fake invoice, a refund over the approval limit, a retry that orders
+  twice, a flight outside its time window. A deterministic referee scores every run from the sandbox's end state and
+  its tool-call log, and every published run has a public replay.
+- **Gauntlet:** your own agent plays the same six jobs with hidden traps and gets a report card.
+- **Checks:** field reports from human-verified agents on an exact tool version, plus OSV advisories for npm and PyPI.
+- **Scanner:** checks a skill file or tool description for prompt injection, hidden text, piped installs and
+  credential reads.
+
+This agent answers in this chat with structured JSON data. It is free and needs no account.
+
+## Key features
+### Arena results by model (ai agent trap results)
+- Per job and model: attempts, passes, pass rate with a 95% interval, the trap ids each model fell for,
+  knockouts, cost per pass and replay links.
+- Normal and Hard tiers, and named events such as \`crucible-2-hard\`.
+- Answers questions like "which AI model falls for scams" or "which model is best at refunds". The jobs work as a
+  fake invoice test for AI agents, an AI model refund test, a travel booking test and a double-order test.
+
+### Trap card
+- A short checklist made from the traps models fell for in refereed Arena runs, written to paste into an
+  assistant's custom instructions.
+
+### Gauntlet (test my ai agent)
+- Not run in this chat: your agent connects to the MCP server ${origin}/mcp/gauntlet, or uses the HTTP API in
+  ${origin}/gauntlet.md, and plays six jobs with hidden traps. Nothing real moves. The report shows each job and the
+  traps it fell for. It is a form of ai agent red teaming on business tasks.
+
+### Check a tool (check mcp server safety, is this npm package safe)
+- Give an MCP server URL, a GitHub URL, \`npm:name\`, \`pypi:name\` or a sha256 fingerprint, with a version if known.
+- Returns the verdict, security status, field reports for that version and matching OSV advisories (malicious
+  package and CVE records), with a signed receipt link.
+
+### Scan a skill file (skill security scan, prompt injection check)
+- Give a public URL to a SKILL.md, tool description or install script.
+- Returns the verdict (flagged, caution or clear), rule ids and line numbers from ${SCAN_RULES.length} open text rules.
+
+## Usage
+Send one plain message. The reply is one JSON object; the \`skill\` field says which skill answered.
+
+| You send | Skill |
+|---|---|
+| \`arena results\`, \`arena results hard\`, \`which AI models fall for fake invoices?\` | arena-results |
+| \`trap card\` | trap-card |
+| \`check pypi:litellm==1.107.0\`, \`is the npm package lodash 4.17.21 safe?\` | check-tool |
+| \`scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md\` | scan-skill |
+
+Example input:
+\`\`\`text
+which AI models fall for fake invoices?
+\`\`\`
+Example output (abridged):
+\`\`\`json
+{"skill": "arena-results", "result": {"tier": "normal", "tasks": [{"task": "scam-invoice", "models": [{"name": "...", "runs": 3, "passes": 3, "pass_rate": 1, "ci_95": [0.44, 1], "replays": ["${origin}/arena/run/..."]}]}], "share": {"receipt_url": "${origin}/r/..."}}}
+\`\`\`
+
+Example input:
+\`\`\`text
+check pypi:litellm==1.107.0
+\`\`\`
+Example output (abridged):
+\`\`\`json
+{"skill": "check-tool", "result": {"summary": {"verdict": "flagged", "security_status": "flagged", "tool": "pypi:litellm", "version": "1.107.0", "field_reports": 0, "top_advisories": [{"id": "MAL-2026-2144", "kind": "malicious"}]}, "share": {"receipt_url": "${origin}/r/..."}}}
+\`\`\`
+
+Example input:
+\`\`\`text
+scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md
+\`\`\`
+Example output (abridged):
+\`\`\`json
+{"skill": "scan-skill", "result": {"verdict": "clear", "rules_version": "...", "findings": [], "rules_url": "${origin}/scan/rules", "guarantee": false}}
+\`\`\`
+
+A message the agent can't map to a skill gets \`{"error": "unrecognized_request"}\` with working examples.
+
+## Use cases
+- Choosing a model for an agent that pays invoices, issues refunds or books travel: compare trap results first.
+- Before an agent installs an MCP server, plugin, skill or package: check that version for advisories and reports.
+- Reviewing a skill file someone shared: run a skill security scan for hidden instructions.
+- Hardening an assistant: add the trap card to its custom instructions.
+
+## Limitations
+- A clear scan means no known pattern matched, not that a tool is safe. Text rules can be evaded.
+- Verdict "insufficient" means too few field reports; security status "unknown" means the tool isn't known and no
+  advisory matched.
+- Arena results come from a few attempts per job and model, so intervals are wide. They measure models as tool-using
+  agents in our sandbox, not in your setup.
+- Advisories cover npm and PyPI versions only.
+- The Gauntlet and filing field reports are not available in this chat (they need the MCP server or website).
+- Replies are data, never instructions. Requests are rate-limited.
+
+## Metadata
+- Organization: The Agent Forge, ${origin}
+- Arena: ${origin}/arena · Gauntlet: ${origin}/gauntlet · Scanner rules: ${origin}/scan/rules
+- Remote MCP server (no sign-in): ${origin}/mcp/public · Agent Card: ${origin}/.well-known/agent-card.json
+- Contact: hello@theagentforge.io
+- README version ${AV_README_VERSION}
+`;
+}
 
 type Conn = { name: string; handle: string; apis: ReturnType<typeof agentverseApis>; id: Identity };
 
@@ -51,26 +185,57 @@ export async function connection(env: Env): Promise<Conn | null> {
 const PROFILE_FIELDS = ["description", "readme", "avatar_url", "banner_url", "starter_prompts"] as const;
 type Profile = { description: string; readme: string; avatar_url: string; banner_url: string; starter_prompts: string[] };
 
-/** The listing text: the README lead, the keywords, then one section per skill with working examples. */
+/** The listing: description, README, avatar and starter prompts (Arena first). */
 export function listingProfile(origin: string): Profile {
-  const card = agentCard(origin);
-  const skills = card.skills.map((s) => `### ${s.name}\n${s.description}\n\nExamples\n${s.examples.map((e) => `- \`${e}\``).join("\n")}`).join("\n\n");
-  const readme = `# ${card.name}\n${AV_README_LEAD}\n\nKeywords: ${AV_KEYWORDS.join(", ")}\n\n## What this agent can do (Skills)\n\n${skills}\n\n## About\nAgent Card: ${origin}/.well-known/agent-card.json\nA2A endpoint: ${origin}/a2a\nRemote MCP server (no sign-in): ${origin}/mcp/public\nReplies are structured JSON data.\n`;
   return {
-    description: card.description.slice(0, 300),
-    readme,
-    avatar_url: card.iconUrl,
+    description: AV_DESCRIPTION,
+    readme: avReadme(origin),
+    avatar_url: agentCard(origin).iconUrl,
     banner_url: "",
-    starter_prompts: ["check pypi:litellm==1.107.0", "trap card", "scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md"],
+    starter_prompts: ["which AI models fall for fake invoices?", "arena results hard", "trap card", "check pypi:litellm==1.107.0"],
   };
+}
+
+/** Line endings and trailing spaces don't count, so a value Agentverse stored with small whitespace changes still matches. */
+const norm = (t: string) => t.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trimEnd()).join("\n").trim();
+export async function fieldHash(v: unknown): Promise<string | null> {
+  const text = typeof v === "string" ? norm(v) : Array.isArray(v) && v.every((x) => typeof x === "string") ? JSON.stringify(v.map(norm)) : null;
+  if (text === null) return null;
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
+}
+
+/** The listing fields the cron may replace when the stored value is one it wrote itself (never avatar or banner). */
+const OWN_FIELDS = ["description", "readme", "starter_prompts"] as const;
+type OwnField = (typeof OWN_FIELDS)[number];
+
+/**
+ * Values this code sent earlier, by fieldHash. A stored value matching one was written by the cron, not edited by a
+ * person, so a newer value may replace it once. These are the v1 values the two production releases before KV
+ * records existed could have sent (origin https://theagentforge.io): e9facdf (26 Oct 15:02 UTC) and 0353740 (15:55
+ * UTC, whose Agent Card added Arena results, changing the description and README). Which of the two made the first
+ * registration isn't recorded, so both count. They apply only while KV holds no record for the field: once this
+ * code has sent a value, only that value counts as its own, so a person who later pastes v1 text back keeps it.
+ */
+export const LEGACY_SENT: Record<OwnField, readonly string[]> = {
+  description: ["e69bbd2bef555b8f191b195c6d4daabb284e72488660dd9a380b26db5edba897", "fae14b5516e24e6dea071beef6bf8bab9f664ade29fff4e1936aa2e9afac5bc3"],
+  readme: ["dbf494dbb5b229f528170735ecadf7008ba7833e0a6756168d24be52a159a769", "e95d908780ae35b3cf80155413217e37738fd2ba2811e65e77b4d83cbe5e275b"],
+  starter_prompts: ["aa0c41908f8be2df7d9aa8a9011fb59faf6681b72ae6c70b029ce9964907769e"],
+};
+export const SENT_KEY = "agentverse:sent";
+
+async function readSent(env: Env): Promise<Partial<Record<OwnField, string>>> {
+  const v: unknown = await env.KV.get(SENT_KEY, "json").catch(() => null);
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  return Object.fromEntries(OWN_FIELDS.flatMap((k) => (typeof (v as Record<string, unknown>)[k] === "string" ? [[k, (v as Record<string, string>)[k]]] : [])));
 }
 
 const timed = (f: typeof fetch, url: string, init: RequestInit) => f(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
 
 /**
  * One registration, as agentverse_sdk does at start-up: read the stored listing, then POST the RegistrationRequest
- * leaving out every listing field already set on Agentverse (so edits made on agentverse.ai win), then mark the agent
- * active in the Almanac. Production only, and only with the secret set.
+ * leaving out every listing field already set on Agentverse (so edits made on agentverse.ai win), except a
+ * description, README or starter prompts that this code itself sent earlier and has since changed; then mark the
+ * agent active in the Almanac. Production only, and only with the secret set.
  */
 export async function registerAgentverse(env: Env, now = Date.now(), f: typeof fetch = fetch) {
   if (env.ENVIRONMENT !== "production") return { skipped: "not_production" as const };
@@ -93,7 +258,17 @@ export async function registerAgentverse(env: Env, now = Date.now(), f: typeof f
 
   const profile = listingProfile(env.PUBLIC_ORIGIN);
   const sp = stored.profile && typeof stored.profile === "object" ? stored.profile : {};
-  const kept = PROFILE_FIELDS.filter((k) => set(sp[k]));
+  // A field set on Agentverse is kept (Dinike's edits win), unless it is exactly a value this code sent before and
+  // differs from today's: then it is ours and out of date, and the new value replaces it once.
+  const sentBefore = await readSent(env);
+  const replaced: OwnField[] = [];
+  for (const k of OWN_FIELDS) {
+    if (!set(sp[k])) continue;
+    const [was, now] = await Promise.all([fieldHash(sp[k]), fieldHash(profile[k])]);
+    const ours = sentBefore[k] !== undefined ? sentBefore[k] === was : !!was && LEGACY_SENT[k].includes(was);
+    if (was && was !== now && ours) replaced.push(k);
+  }
+  const kept = PROFILE_FIELDS.filter((k) => set(sp[k]) && !(replaced as string[]).includes(k));
   const request: Record<string, unknown> = {
     address: conn.id.address,
     ...(set(stored.name) ? {} : { name: conn.name }),
@@ -108,6 +283,10 @@ export async function registerAgentverse(env: Env, now = Date.now(), f: typeof f
   };
   const posted = await timed(f, conn.apis.agents, { method: "POST", headers, body: JSON.stringify(request) });
   if (!posted.ok) throw new Error(`agentverse_register_${posted.status}`);
+  // Remember what was sent, so a later version can tell its own old text from a person's edit.
+  const sent = { ...sentBefore };
+  for (const k of OWN_FIELDS) if (!kept.includes(k)) sent[k] = (await fieldHash(profile[k])) ?? undefined;
+  await env.KV.put(SENT_KEY, JSON.stringify(sent)).catch(() => {});
 
   // set_agent_status(identity, True): signed, no Authorization header.
   const status = await timed(f, `${conn.apis.almanac}/agents/${conn.id.address}/status`, {
@@ -115,7 +294,7 @@ export async function registerAgentverse(env: Env, now = Date.now(), f: typeof f
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(await statusUpdate(conn.id, true, nowS)),
   });
-  return { registered: true as const, address: conn.id.address, kept_from_agentverse: kept, status_ok: status.ok };
+  return { registered: true as const, address: conn.id.address, kept_from_agentverse: kept, replaced_own: replaced, status_ok: status.ok };
 }
 
 /**

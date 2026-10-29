@@ -42,9 +42,10 @@ function walk(dir) {
   return out;
 }
 const base = walk(join(here, "plugin"));
-const version = JSON.parse(base[".claude-plugin/plugin.json"].toString()).version;
+const { version, description } = JSON.parse(base[".claude-plugin/plugin.json"].toString());
 
-const manifest = { version, files: {} };
+// The description too, so /marketplace.json says what this version does (it lists the plugin before install).
+const manifest = { version, description, files: {} };
 const outputs = {};
 for (const [env, origin] of Object.entries(ENVS)) {
   const files = {
@@ -53,8 +54,8 @@ for (const [env, origin] of Object.entries(ENVS)) {
     "forge.json": Buffer.from(JSON.stringify({ origin }) + "\n"),
     // The anonymous read-only address first, so the tools work straight after install with no sign-in (as /connect
     // says); the signed-in address alongside, for filing the field reports the Stop hook drafts. It asks for GitHub
-    // sign-in only when it's first used.
-    ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` } } }, null, 2) + "\n"),
+    // sign-in only when it's first used. The Gauntlet's no-sign-in server is for /forge:gauntlet (OA-04).
+    ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` }, "forge-gauntlet": { type: "http", url: `${origin}/mcp/gauntlet` } } }, null, 2) + "\n"),
   };
   const entries = Object.fromEntries(
     Object.keys(files)

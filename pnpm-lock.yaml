@@ -47,6 +47,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@cfworker/json-schema':
+        specifier: ^4.1.1
+        version: 4.1.1
       '@cloudflare/vitest-plugin':
         specifier: ^1.4.1
         version: 1.4.1(@cloudflare/workers-types@5.20261014.1)(@types/node@26.6.5)(vitest@4.1.11(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
@@ -56,6 +59,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
@@ -68,6 +74,9 @@ importers:
       wrangler:
         specifier: ^4.150.0
         version: 4.150.0(@cloudflare/workers-types@5.20261014.1)(@types/node@26.6.5)
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   integrations/claude-code-plugin:
     dependencies:
@@ -170,6 +179,9 @@ importers:
 
   packages/cli:
     devDependencies:
+      '@forge/arena':
+        specifier: workspace:*
+        version: link:../arena
       '@forge/shared':
         specifier: workspace:*
         version: link:../shared

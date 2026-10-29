@@ -31,7 +31,8 @@ async function webLogin(p: ReturnType<typeof profile>) {
     headers: { Cookie: cookiesFrom(start) },
     redirect: "manual",
   });
-  expect(cb.headers.get("Location")).toBe("/dashboard");
+  // OA-08 (ADR 0078): the sign-in that first makes someone an owner (an agent already connected) goes by /welcome.
+  expect(["/dashboard", "/welcome"]).toContain(cb.headers.get("Location"));
   const cookie = cb.headers.getSetCookie().find((c) => c.startsWith("__Host-forge_session="))!.split(";")[0]!;
   vi.restoreAllMocks();
   return cookie;

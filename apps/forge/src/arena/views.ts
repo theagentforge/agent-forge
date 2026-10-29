@@ -1,8 +1,10 @@
+import { publicTrapId, taskVersion } from "@forge/arena";
 import { boutOutcome, conservative, glicko2, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { EMBARGOED_MODEL_IDS, modelById, type ArenaModel } from "./lineup";
+import { rulesFields } from "./rules-label";
 
 // Read side of the Arena: what the pages, the Task Guide and the dataset show. Only finished, refereed runs.
 
@@ -73,7 +75,23 @@ export const modelName = (id: string) => modelById(id)?.name ?? id;
  * Lab #3 events (an `arm` is set) change the prompt, so they never mix into rankings, task guides, the hero or trap
  * rates. Only the lab's own measurement (arena/lift.ts) reads them, with `lab: true`. An event-id filter sees its own.
  */
-export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; now?: number; lab?: boolean; hard?: boolean; tier?: Tier } = {}) {
+/**
+ * The runs /arena/dataset.json publishes (finishedRuns with `hard: true`), as one condition: the data room's dataset
+ * table (ADR 0095) counts with it, so its "public runs" number is the dataset's row count, not a second definition.
+ */
+export const publicDatasetWhere = (now = Date.now()) => and(eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(now), isNull(t.arenaEvents.arm))!;
+
+/** One /arena/dataset.json row (before provenance): shared with the data room's bulk export (AQ-03). */
+export const datasetRow = (r: Awaited<ReturnType<typeof finishedRuns>>[number]) => ({
+  ...r.summary,
+  tier: tierOf(r.summary.task),
+  ...rulesFields(r.summary.finishedAt, r.result),
+  task_version: taskVersion(r.summary.task, r.summary.finishedAt),
+  traps_triggered: (r.result.traps ?? []).filter((x) => x.triggered).map((x) => publicTrapId(r.summary.task, x.id) ?? x.id),
+  log: `/arena/run/${r.summary.id}.json`,
+});
+
+export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; eventId?: string; limit?: number; offset?: number; now?: number; lab?: boolean; hard?: boolean; tier?: Tier } = {}) {
   const where = [eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(f.now ?? Date.now())];
   // Hard-tier runs (ADR 0021) stay out of the Normal pages, rankings, trap data and the home duel until asked for:
   // `tier: "hard"` gives only Hard runs, `hard: true` gives both tiers.
@@ -89,8 +107,9 @@ export async function finishedRuns(db: Db, f: { kinds?: Kind[]; task?: string; e
     .from(t.arenaRuns)
     .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
     .where(and(...where))
-    .orderBy(desc(t.arenaRuns.finishedAt))
-    .limit(f.limit ?? 5000);
+    .orderBy(desc(t.arenaRuns.finishedAt), t.arenaRuns.id)
+    .limit(f.limit ?? 5000)
+    .offset(f.offset ?? 0);
   return rows.map(({ run, event }) => ({
     summary: {
       id: run.id,

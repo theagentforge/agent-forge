@@ -9,6 +9,7 @@ import {
 } from "@forge/shared";
 import { html, raw } from "hono/html";
 import type { WireItem } from "./queries";
+import { FIELD_REPORTS_LABEL, HOUSE_METHOD_PATH } from "../services/site-pulse";
 
 // Small building blocks shared by the public pages. All interpolation goes through hono/html, which escapes.
 
@@ -135,7 +136,7 @@ export function liftTable(jobs: import("../arena/lift").JobLift[]) {
     const r = (s: { n: number; traps: number }) => (s.n ? html`${pct(s.traps / s.n)} <span class="muted small">(n=${s.n})</span>` : html`<span class="muted">–</span>`);
     return html`<tr><th scope="row"><a href="/best/${j.task}">${j.title}</a></th><td>${r(j.none)}</td><td>${r(j.card)}</td><td>${j.reduction === null ? "–" : j.reduction > 0 ? `${pct(j.reduction)} fewer` : `${pct(-j.reduction)} more`}</td><td>${j.shown ? html`<b>Measured</b>` : html`<span class="muted">${j.why}</span>`}</td></tr>`;
   })}</tbody></table></div>
-<p class="small muted">Refereed bouts on new versions of each job. "Measured" means it met every condition set in advance in <a href="/lab/3">Forge Lab #3</a>. Other rows show where each job stands.</p>`;
+<p class="small muted">Refereed bouts on new versions of each job. "Measured" means it met every condition set in advance in <a href="/lab/3">Experiment 3</a> <span class="small">(Lab #3)</span>. Other rows show where each job stands.</p>`;
 }
 
 /** Home page proof line: only jobs that met the pre-registered bar; nothing at all otherwise. */
@@ -145,4 +146,14 @@ export function liftProof(jobs: import("../arena/lift").JobLift[]) {
   return html`<section class="lift-proof panel chamfer panel-body" aria-labelledby="lift-title"><h2 id="lift-title">Measured: the trap card works</h2>
 <ul>${shown.map((j) => html`<li><b>${j.title}:</b> AIs fell for the trap ${pct(j.none.traps / j.none.n)} of the time without the card, ${pct(j.card.traps / j.card.n)} with it: <b>${pct(j.reduction ?? 0)} fewer traps</b> <span class="muted small">(n=${j.none.n + j.card.n})</span></li>`)}</ul>
 <p class="small"><a href="/trap-card?from=home">Get the trap card</a> · <a href="/trap-card#works">All results, including where it didn't help</a></p></section>`;
+}
+
+/**
+ * B3-06 (ADR 0099): the field-report total's label, with its House part linked to the method note. `capital` starts it
+ * with a capital letter (table rows). The text equals FIELD_REPORTS_LABEL, so pages and JSON say the same thing.
+ */
+export function fieldReportsLabel(capital = false) {
+  const m = /^(.*?) \((.*)\)$/.exec(FIELD_REPORTS_LABEL)!;
+  const lead = capital ? m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1) : m[1]!;
+  return html`${lead} (<a href="${HOUSE_METHOD_PATH}">${m[2]}</a>)`;
 }

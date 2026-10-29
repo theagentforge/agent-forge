@@ -415,6 +415,23 @@ main>section>.feed,main>.panel .feed{max-width:880px}
 @media (min-width:760px){.app-tiles{grid-template-columns:repeat(5,minmax(0,1fr))}.app-tile{min-height:64px}}
 .app-tile{display:flex;align-items:center;justify-content:center;min-height:48px;padding:var(--s3);background:var(--surface);border:1px solid var(--seam);color:var(--text);font-weight:600;text-decoration:none;text-align:center}
 .app-tile:hover,.app-tile.active{border-color:var(--brand);color:var(--brand)}
+.first-step{border-color:var(--brand)}.first-steps{margin:0 0 var(--s3);padding-left:1.25rem}.first-steps li p{margin:var(--s2) 0}
+.first-alt a{white-space:nowrap}.more-ways{margin-top:var(--s6)}
+/* OA-02: the yes/no, step 2 and the one collapsed "More ways to connect". Buttons wrap to full width on phones. */
+.worked-buttons{display:flex;flex-wrap:wrap;gap:var(--s3);margin:0 0 var(--s3)}
+.worked-buttons .btn{min-height:48px;flex:1 1 220px}
+.worked-fixes summary,.more-ways-box>summary{cursor:pointer;min-height:44px}
+.link-step{border-color:var(--brand)}
+.link-apps a{display:inline-block;padding:var(--s2) 0;min-height:44px}
+.link-apps a[aria-current]{color:var(--brand);font-weight:600}
+.link-done{color:var(--clear)}
+code.wrap{overflow-wrap:anywhere;word-break:break-all}
+.more-ways-box{margin-top:var(--s6)}
+.more-ways-box>summary{list-style:none;display:flex;flex-direction:column;gap:var(--s1);margin-bottom:var(--s4)}
+.more-ways-box>summary::-webkit-details-marker{display:none}
+.more-ways-box>summary .more-ways{margin:0}
+.more-ways-box>summary .more-ways::before{content:"▸ ";color:var(--text-muted)}
+.more-ways-box[open]>summary .more-ways::before{content:"▾ "}
 .app-tab{margin-bottom:var(--s5)}
 .app-tab h3{margin-top:var(--s5)}
 .test-status{font-family:var(--font-mono);font-size:var(--fs-sm);color:var(--text-muted)}
@@ -500,6 +517,8 @@ body:has(.teams.print-view) .site-head,body:has(.teams.print-view) .site-foot{di
 .scan-quick{display:flex;gap:var(--s2);max-width:640px;margin:var(--s4) 0 var(--s2)}
 .scan-quick input{flex:1;min-width:0}
 @media (max-width:560px){.scan-quick{flex-direction:column}.scan-quick .btn{width:100%}}
+.phone-step .scan-quick{flex-wrap:wrap}.phone-step .scan-quick label{flex-basis:100%}
+.share-card{max-width:100%;height:auto;border:1px solid var(--seam)}
 .report-scan{margin:var(--s5) 0;padding:var(--s4) var(--s5)}
 .report-scan p{margin:0}
 .report-scan .scan-quick{margin-bottom:0}
@@ -578,14 +597,14 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .gx-share code{font-size:var(--fs-md);letter-spacing:.04em;background:var(--bg);border:1px solid var(--seam);padding:8px 12px;overflow-wrap:anywhere}
 .gx.is-playing:not(.is-final) .duel-stakes{visibility:hidden}
 @media (max-width:640px){.gx{padding:var(--s3)}.gx-term-lines{min-height:calc(5 * 1.5em)}.gx-term{font-size:12px}}
-/* Home, 20 Oct (ADR 0029): the social network where agents warn each other. Hero copy beside the live Wire. */
+/* Home (ADR 0029; W2.1, 28 Oct: the BRAND.md hero headline, sourced to a replay). Hero copy beside the live Wire. */
 .hero2{display:grid;gap:var(--s6);grid-template-columns:minmax(0,1fr);padding:var(--s5) 0 var(--s5)}
 @media (min-width:960px){.hero2{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:var(--s7);align-items:start}}
 .live-pill{display:inline-flex;align-items:center;gap:8px;margin:0;font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--flagged);border:1px solid var(--seam);padding:6px 10px;background:var(--surface)}
 .advisory-line{margin:var(--s3) 0;max-width:60ch;border-left:2px solid var(--seam);padding-left:var(--s3)}
 .live-pill i{width:8px;height:8px;border-radius:50%;background:var(--flagged);animation:pulse 1.8s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,82,.6)}70%{box-shadow:0 0 0 10px rgba(255,93,82,0)}100%{box-shadow:0 0 0 0 rgba(255,93,82,0)}}
-.hero2 h1{font-size:clamp(2.3rem,1.5rem + 3.4vw,4.2rem);line-height:.98;margin:var(--s4) 0;font-stretch:112%;font-weight:800;letter-spacing:-.02em}
+.hero2 h1{font-size:var(--fs-hero);line-height:.98;margin:var(--s4) 0;font-stretch:112%;font-weight:800;letter-spacing:-.02em}
 .hero2 h1 em{font-style:normal;color:var(--brand)}
 .hero2 .lead{max-width:46ch}
 .who-tabs{display:inline-flex;margin:var(--s4) 0 var(--s3);border:1px solid var(--seam)}
@@ -598,6 +617,11 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .has-who .who-label{display:none}
 .has-who .who-panel[data-panel=agent] .who-label{display:block;font-weight:400}
 .who-actions{display:flex;flex-wrap:wrap;gap:var(--s2);margin:0}
+/* W2.1: the headline's source line and the one primary call to action (Run the Gauntlet), then the secondary two. */
+.hero-source{margin:0 0 var(--s4);max-width:60ch;color:var(--text)}
+.hero-source .mono{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.hero-ctas{display:flex;flex-wrap:wrap;gap:var(--s2);margin:var(--s4) 0 var(--s2)}
+@media (max-width:640px){.hero-ctas .btn{flex:1 1 100%;justify-content:center}.hero-ctas .btn:not(.primary){flex:1 1 0}}
 .counters{display:flex;flex-wrap:wrap;gap:var(--s5);margin:var(--s4) 0 0;padding:0;list-style:none}
 .counters b{display:block;font:700 var(--fs-xl)/1 var(--font-mono);font-variant-numeric:tabular-nums}
 .counters span{font-size:var(--fs-xs);color:var(--text-muted)}
@@ -749,4 +773,29 @@ p.mono,.mono-break{overflow-wrap:anywhere}
 .live-band .asof{max-width:62ch}
 @media (prefers-reduced-motion:no-preference){.live-band li.bumped b{animation:live-bump .6s ease-out}}
 @media (max-width:1100px){.live-band .counters.agents{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* Five headline totals (tools tracked added 29 Oct): a 3 + 2 grid in the hero column on wide screens; 2 columns below,
+   where an odd last total (tools tracked) spans both as a full-width closing stat. The House caption sits under the
+   field-report label, in the same stat item, in the label's small style. */
+.live-band .counters .stat-note{display:block;font-size:var(--fs-xs)}
+@media (min-width:1101px){.live-band .counters.work{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:1100px){.live-band .counters.work li:last-child:nth-child(odd){grid-column:1/-1}}
 @keyframes live-bump{0%{color:var(--clear)}100%{color:inherit}}
+/* Home: the trap card experiments, always side by side (Boardy review item 3). */
+@media (min-width:960px){.lab-band.experiments{grid-template-columns:minmax(0,1fr)}}
+.exp-head h2{margin-bottom:var(--s2)}
+.exp-grid{display:grid;gap:var(--s5);grid-template-columns:minmax(0,1fr)}
+@media (min-width:860px){.exp-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.exp{display:grid;gap:var(--s2);align-content:start;padding:var(--s4);border:1px solid var(--seam);background:var(--bg)}
+.exp h3{margin:0;font-size:var(--fs-lg)}
+.exp-result b{font-size:var(--fs-md)}
+.exp .lab-bars{margin:var(--s2) 0}
+.lab-jobs summary{cursor:pointer;min-height:44px;padding:10px 0;font-weight:700}
+.exp h3 small{font-weight:400;font-size:var(--fs-sm)}
+.exp-lab{white-space:nowrap}
+/* ADR 0083: "Run the 90-second Sprint" picker (a <details>, no script) */
+.sprint-cta{margin:var(--s3) 0}
+.sprint-cta>summary{list-style:none;cursor:pointer;display:inline-flex}
+.sprint-cta>summary::-webkit-details-marker{display:none}
+.sprint-cta-body{margin-top:var(--s2);max-width:100%}
+.sprint-cta-body ul.plain{list-style:none;padding:0;margin:0}
+.sprint-cta-body code{overflow-wrap:anywhere}

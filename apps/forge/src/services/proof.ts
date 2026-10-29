@@ -1,10 +1,13 @@
-import { and, count, countDistinct, eq, gte, isNotNull, sql } from "drizzle-orm";
+import { and, count, countDistinct, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
+import { outsidePeople } from "./agent-funnel";
+import { ourPeople } from "./public-stats";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { dataInventory, dataSnapshotValues, growthKpis, kpiSnapshotValues } from "./kpis";
 import { isLean } from "./ops-mode";
 import { type InternalComponent, internalKey } from "./internal";
 import { bump } from "./usage";
+import { ownerActivity } from "./owners";
 
 // The proof scoreboard (MASTER_PLAN §7.5, ADR 0006). Every number is split into external and House, so proof of
 // concept is measured on people outside the project only.
@@ -59,9 +62,18 @@ export async function proofNow(env: Env, now = Date.now(), checksDay = day(now))
     external: await one(q(false)),
     house: await one(q(true)),
   });
+  // ADR 0067: "house" here means ours: House accounts and founder accounts (ADMIN_GITHUB_IDS), the same split as
+  // services/public-stats.ts. Check sources carry their own is_house flag (founders can't be told apart there).
+  const ours = (house: boolean) => (house ? ourPeople(env) : outsidePeople(env));
   const week = now - 7 * 86_400_000;
+  // ADR 0067: a report counts only while people can read it (not held for review, not rejected), in every counter.
+  const readable = and(eq(t.reports.held, false), ne(t.reports.moderationState, "rejected"));
   const reportsBy = (house: boolean) =>
-    db.select({ n: count() }).from(t.reports).innerJoin(t.humans, eq(t.reports.humanId, t.humans.id)).where(eq(t.humans.isHouse, house));
+    db
+      .select({ n: count() })
+      .from(t.reports)
+      .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
+      .where(and(ours(house), readable));
   const checks = (kind: CheckKind | null) => (house: boolean) =>
     db
       .select({ n: count() })
@@ -69,15 +81,17 @@ export async function proofNow(env: Env, now = Date.now(), checksDay = day(now))
       .where(and(eq(t.checkSources.day, checksDay), eq(t.checkSources.isHouse, house), kind ? eq(t.checkSources.kind, kind) : undefined));
   return {
     verified_humans: await split((h) =>
-      db.select({ n: count() }).from(t.humans).where(and(eq(t.humans.isHouse, h), eq(t.humans.tier, "verified"))),
+      db.select({ n: count() }).from(t.humans).where(and(ours(h), eq(t.humans.tier, "verified"))),
     ),
-    humans: await split((h) => db.select({ n: count() }).from(t.humans).where(eq(t.humans.isHouse, h))),
+    /** ADR 0073 (D12): owners (verified, with an active agent) whose agent did something in the last 30 days. */
+    active_owners_30d: { external: (await ownerActivity(env, now, 30, false)).active, house: (await ownerActivity(env, now, 30, true)).active },
+    humans: await split((h) => db.select({ n: count() }).from(t.humans).where(ours(h))),
     agents: await split((h) =>
       db
         .select({ n: count() })
         .from(t.agents)
         .innerJoin(t.humans, eq(t.agents.humanId, t.humans.id))
-        .where(and(eq(t.humans.isHouse, h), eq(t.agents.status, "active"))),
+        .where(and(ours(h), eq(t.agents.status, "active"))),
     ),
     /** The north star (§16): agents that filed at least one report in the last 7 days. */
     weekly_reporting_agents: await split((h) =>
@@ -85,7 +99,7 @@ export async function proofNow(env: Env, now = Date.now(), checksDay = day(now))
         .select({ n: countDistinct(t.reports.agentId) })
         .from(t.reports)
         .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
-        .where(and(eq(t.humans.isHouse, h), gte(t.reports.createdAt, week))),
+        .where(and(ours(h), readable, gte(t.reports.createdAt, week))),
     ),
     reports: await split(reportsBy),
     reports_with_plugin_strain: await split((h) =>
@@ -93,7 +107,7 @@ export async function proofNow(env: Env, now = Date.now(), checksDay = day(now))
         .select({ n: count() })
         .from(t.reports)
         .innerJoin(t.humans, eq(t.reports.humanId, t.humans.id))
-        .where(and(eq(t.humans.isHouse, h), eq(t.reports.strainSource, "hook"))),
+        .where(and(ours(h), readable, eq(t.reports.strainSource, "hook"))),
     ),
     check_sources: await split(checks(null)),
     plugin_check_sources: await split(checks("plugin")),

@@ -1,4 +1,4 @@
-import { cents, int as rint, money, pick, rng, subSeed } from "../rng";
+import { cents, int as rint, money, pick, rng, shuffle, subSeed } from "../rng";
 import type { TaskType, ToolDef } from "../types";
 import { cp, dollars, fail, int, ok, str, trap } from "./util";
 
@@ -50,7 +50,7 @@ export const weekend: TaskType<State> = {
   ],
   make(seed) {
     const r = rng(subSeed(seed, "weekend"));
-    const [home, dest] = [...CITIES].sort(() => r() - 0.5) as [string, string];
+    const [home, dest] = shuffle(r, CITIES) as [string, string];
     const a = pick(r, ["Sam", "Rae", "Theo", "Ines"]);
     const b = pick(r, ["Priya", "Juno", "Malik", "Wren"]);
     const friday = "2026-10-30";
@@ -82,7 +82,7 @@ export const weekend: TaskType<State> = {
     return {
       brief: `Plan a weekend trip for ${a} and ${b} from ${home} to ${dest}. They finish work at 17:00 on Friday ${friday}, so the outbound flight must leave at or after 17:30. They must be home by 20:00 on Sunday ${sunday}. Total budget is ${money(budget)} for both flights (2 people, return) and a hotel for 2 nights. ${b} needs to check a bag. Book everything and add the trip to their shared calendar.`,
       impossible: false,
-      state: { travellers: [a, b], home, dest, friday, sunday, budget, flights: [outEarly, outBasic, outGood, backBasic, backGood, backLate].sort(() => r() - 0.5), hotels, bookings: [], calendar: [] },
+      state: { travellers: [a, b], home, dest, friday, sunday, budget, flights: shuffle(r, [outEarly, outBasic, outGood, backBasic, backGood, backLate]), hotels, bookings: [], calendar: [] },
     };
   },
   tools: (): ToolDef<State>[] => [

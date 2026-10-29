@@ -6,6 +6,7 @@ import { RESCORE_JOB_KEY, RESCORE_REPORT_KEY, rescoreTick, type RescoreReport } 
 import { planEvent, processQueue } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
+import { queueApprovedApply } from "./rescore-helpers";
 
 // Re-scoring stored runs in the Worker (rules 0.5, ADR 0049): a KV job, a dry report first, then apply.
 
@@ -55,14 +56,15 @@ describe("re-scoring stored runs", () => {
     const db = getDb(env);
     const [run] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
     // Simulate a verdict from an older referee: stored as a fail.
-    await db.update(t.arenaRuns).set({ passed: false, result: { ...(run!.result as object), passed: false } as never }).where(eq(t.arenaRuns.id, run!.id));
+    const { rules: _stamp, ...unstamped } = run!.result as Record<string, unknown>;
+    await db.update(t.arenaRuns).set({ passed: false, result: { ...unstamped, passed: false } as never }).where(eq(t.arenaRuns.id, run!.id));
     await env.KV.put(RESCORE_JOB_KEY, JSON.stringify({ events: [eventId], mode: "dry" }));
     const dry = (await rescoreTick(env))!;
     expect(dry.changed).toHaveLength(1);
     expect(dry.changed[0]).toMatchObject({ id: run!.id, applied: false });
     expect((await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, run!.id)))[0]!.passed).toBe(false);
 
-    await env.KV.put(RESCORE_JOB_KEY, JSON.stringify({ events: [eventId], mode: "apply" }));
+    await queueApprovedApply({ events: [eventId] });
     const applied = (await rescoreTick(env))!;
     expect(applied.changed[0]).toMatchObject({ id: run!.id, applied: true });
     const [after] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, run!.id));

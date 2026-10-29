@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { grossNumbers } from "../src/services/public-stats";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as t from "../src/db/schema";
@@ -182,7 +183,7 @@ describe("reports", () => {
 });
 
 describe("public stats", () => {
-  it("counts everyone outside the project, sandbox included, from each number's minimum", async () => {
+  it("counts everyone outside the project, sandbox included, internally; /api/v1/stats gives them as null (F-02)", async () => {
     await connectAgent({ profile: profile({ public_repos: 0, public_gists: 0, followers: 0 }) });
     const res = await fetchWorker("/api/v1/stats");
     expect(res.status).toBe(200);
@@ -191,7 +192,13 @@ describe("public stats", () => {
     expect(raw.humans).toBeGreaterThanOrEqual(1);
     expect(raw.agents).toBeGreaterThanOrEqual(1);
     expect(raw.humans).toBeGreaterThan(raw.verified_humans);
-    for (const k of ["humans", "agents", "reports"]) expect(stats[k] === null).toBe(stats.below_minimum.includes(k));
+    for (const k of ["humans", "agents", "reports"]) expect(stats[k], k).toBeNull();
+    // The gross twin counts everyone, sandbox and our own included.
+    // ADR 0099: the row appears once it passes its minimum (50), with the exact gross value.
+    const exact = (await grossNumbers(env)).signed_in_people;
+    expect(exact).toBeGreaterThanOrEqual(raw.humans);
+    const gross = (stats as unknown as { gross: { items: { key: string; value: number }[] } }).gross.items.find((i) => i.key === "signed_in_people");
+    expect(gross?.value ?? null).toBe(exact >= 50 ? exact : null);
   });
 });
 

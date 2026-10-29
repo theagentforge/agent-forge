@@ -21,19 +21,36 @@ describe("work done on the home page (ADR 0034)", () => {
     // Nothing is ever a zero: an empty total is null, and the page leaves it out.
     for (const [k] of WORK_LABELS) expect(w[k] === null || (w[k] as number) > 0).toBe(true);
 
+    // The same totals are on /stats, each with its rule.
+    const stats = await (await fetchWorker(`/stats?u=${Date.now()}`, { headers: { Accept: "text/html" } })).text();
+    expect(stats).toMatch(/<td>Field reports filed \(<a href="\/methodology#house-install-tests">most are our House agent&#39;s nightly install tests<\/a>\)<\/td><td class="num">[\d,]+<\/td>/);
+    expect(stats).toMatch(/<td>Tools with a page[^<]*<\/td><td class="num">[\d,]+<\/td>/);
     const body = await (await fetchWorker("/", { headers: { Accept: "text/html" } })).text();
+    // ADR 0067 Amendment 1 (Dinike, 28 Oct): the home band shows these totals again and is refreshed live from
+    // /agents/live.json, whose numbers are the same totals (House included), so a refresh can't change what a label means.
     expect(body).toContain("data-work-live");
-    expect(body).toMatch(/<b>[\d,]+<\/b><span>field reports filed<\/span>/);
-    expect(body).toMatch(/last field report <time data-ago="\d+" data-ago-k="last_report_at" datetime="[^"]+">\d+ min ago<\/time>/);
-    expect(body).not.toContain("in 24 h");
-    expect(body).toMatch(/<span data-k-inline="tools_tracked">[\d,]+<\/span> tools tracked/);
-    expect(body).toContain("<b>Counts include our test agents, uptime checks and crawlers.</b>");
-
+    expect(body).toContain("data-agent-live");
+    expect(body).not.toContain("data-headline-live");
+    for (const [k, label] of WORK_LABELS) {
+      if (w[k] === null) continue;
+      // ADR 0099: the field-report label links its House part to the method note.
+      const shown =
+        k === "field_reports"
+          ? 'field reports filed</span><a class="stat-note" href="/methodology#house-install-tests">mostly our House install tests</a>'
+          : k === "tools_tracked"
+            ? 'tools tracked</span><a class="stat-note" href="/stats/rules#tools_tracked">registry listings, not reviewed</a>'
+            : `${label}</span>`;
+      expect(body).toMatch(new RegExp(`<li data-k="${k}"><b>[\\d,]+</b><span>${shown}</li>`));
+    }
+    // Dinike, 29 Oct: tools tracked is a headline number, last in the top row, and no longer repeated in the footnote.
+    // Review ADR 0115: with PyPI name matches in it, the number carries what it is beside it, linked to its rule.
+    expect(body).toMatch(/<li data-k="tools_tracked"><b>[\d,]+<\/b><span>tools tracked<\/span><a class="stat-note" href="\/stats\/rules#tools_tracked">registry listings, not reviewed<\/a><\/li><\/ul>/);
+    expect(body).not.toContain("data-k-inline");
+    expect(body.match(/tools tracked/g)?.length).toBe(1);
+    expect(body).toMatch(/data-ago-k="last_report_at"/);
+    expect(body).toContain("Includes The Forge's own test agents.");
     expect(body).not.toMatch(/<b>0<\/b>/);
     expect(body).not.toContain("AI models ranked");
-    // One band, not two: the agent numbers sit in the same block.
-    expect(body.match(/data-agent-live/g)?.length).toBe(1);
-    expect(body).toMatch(/data-work-live data-agent-live/);
   });
 
   it("serves the same totals live, from the edge cache for 30 seconds", async () => {
@@ -52,5 +69,12 @@ describe("work done on the home page (ADR 0034)", () => {
     expect(count).toContain('b.setAttribute("aria-hidden", "true")');
     expect(count).toContain("b.style.minWidth");
     expect(count).toContain("ms = 1200");
+    // The live refresh (re-reading /agents/live.json) touches the [data-work-live] and [data-agent-live] band, and the
+    // count-up runs on the same band.
+    const refresh = js.slice(js.indexOf("ADR 0030 agent numbers"), js.indexOf("ADR 0034 amendment 2"));
+    expect(refresh).toContain('querySelector("[data-work-live]")');
+    expect(refresh).toContain('querySelector("[data-agent-live]")');
+    expect(count).toContain('querySelector("[data-work-live]")');
+    expect(count).not.toContain("data-headline-live");
   });
 });

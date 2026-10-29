@@ -4,19 +4,37 @@ name: House tester
 # with npx (5 parallel shards), check the MCP handshake, file honest "house"-labelled field reports for new versions,
 # and send the whole night's results to the public Forge House Report (docs/runbooks/house-tester.md, ADR 0011 b).
 #
+# Every morning, the weekly sweep (ADR 0108): a seventh of EVERY no-setup npm and PyPI server in the registry (a stable
+# hash split, so each server is tested once a week), npm with npx and PyPI with uvx, in 10 shards. Both modes also send
+# each working server's tools/list descriptions, which the site scans with the skill scanner's rules.
+#
 # The plan and probe jobs run untrusted code (the servers) or read untrusted data, and have no secrets and no write
 # permissions. The file job runs no third-party code; it proves who it is with GitHub's OIDC token, which the site checks.
 
 on:
   schedule:
     - cron: "23 2 * * *"
+    - cron: "41 5 * * *"
   workflow_dispatch:
     inputs:
+      mode:
+        description: "top = the most-downloaded servers; sweep = one day of the weekly rotation of every server"
+        type: choice
+        options: [top, sweep]
+        default: top
       count:
-        description: "How many of the most-downloaded servers to test"
+        description: "top: how many of the most-downloaded servers to test"
         default: "500"
+      day:
+        description: "sweep: which day of the rotation, 0-6 (empty = today's)"
+        default: ""
 
 permissions: {}
+
+# One run of each mode at a time; a second one waits instead of doubling the load.
+concurrency:
+  group: house-tester-${{ inputs.mode || (github.event.schedule == '41 5 * * *' && 'sweep') || 'top' }}
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -24,7 +42,21 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 60
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      shards: ${{ steps.mode.outputs.shards }}
+      count: ${{ steps.mode.outputs.count }}
     steps:
+      - name: Choose the mode
+        id: mode
+        env:
+          MODE: ${{ inputs.mode || (github.event.schedule == '41 5 * * *' && 'sweep') || 'top' }}
+        run: |
+          if [ "$MODE" = "sweep" ]; then
+            echo "mode=sweep" >> "$GITHUB_OUTPUT"; echo "shards=[0,1,2,3,4,5,6,7,8,9]" >> "$GITHUB_OUTPUT"; echo "count=10" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=top" >> "$GITHUB_OUTPUT"; echo "shards=[0,1,2,3,4]" >> "$GITHUB_OUTPUT"; echo "count=5" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -33,10 +65,17 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - name: Rank registry servers by npm downloads
+        if: steps.mode.outputs.mode == 'top'
         working-directory: ${{ runner.temp }}
         env:
           COUNT: ${{ inputs.count || '500' }}
         run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" plan "$COUNT"
+      - name: Pick today's seventh of every no-setup npm and PyPI server
+        if: steps.mode.outputs.mode == 'sweep'
+        working-directory: ${{ runner.temp }}
+        env:
+          DAY: ${{ inputs.day || '' }}
+        run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" sweep-plan "$DAY"
       - uses: actions/upload-artifact@v4
         with:
           name: house-plan
@@ -48,11 +87,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 45
+    # About 115 servers a shard (sweep) or 100 (top), 4 at a time, at most 75 s each.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
+      # Leaves room under the account's concurrent-job limit for CI and the other scheduled jobs.
+      max-parallel: 8
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -65,9 +107,15 @@ jobs:
         with:
           name: house-plan
           path: ${{ runner.temp }}
+      - name: Install uv for PyPI servers (pinned version, hash-checked)
+        if: needs.plan.outputs.mode == 'sweep'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv-venv"
+          "$RUNNER_TEMP/uv-venv/bin/pip" install --quiet --require-hashes --no-deps -r "$GITHUB_WORKSPACE/integrations/house/uv-requirements.txt"
+          echo "$RUNNER_TEMP/uv-venv/bin" >> "$GITHUB_PATH"
       - name: Start and handshake MCP servers (sandboxed, no secrets)
         working-directory: ${{ runner.temp }}
-        run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" run plan.json ${{ matrix.shard }} 5
+        run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" run plan.json ${{ matrix.shard }} ${{ needs.plan.outputs.count }}
       - uses: actions/upload-artifact@v4
         with:
           name: house-results-${{ matrix.shard }}
@@ -75,7 +123,7 @@ jobs:
           retention-days: 14
 
   file:
-    needs: probe
+    needs: [plan, probe]
     # Still file what the other shards found if one shard failed.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -86,8 +134,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # New versions are filed 7 s apart (10 a minute); the first night has ~500, later nights only what changed.
-    timeout-minutes: 120
+    # New versions are filed 7 s apart (10 a minute); the first sweep days can have ~1,000, later only what changed.
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v5
         with:
@@ -101,4 +149,6 @@ jobs:
           pattern: house-results-*
           path: results
       - name: File House reports and send the House Report run
-        run: node integrations/house/file.mjs https://theagentforge.io results/*/results.json
+        env:
+          SWEEP: ${{ needs.plan.outputs.mode == 'sweep' && '--sweep' || '' }}
+        run: node integrations/house/file.mjs https://theagentforge.io $SWEEP results/*/results.json

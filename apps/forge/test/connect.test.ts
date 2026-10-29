@@ -69,16 +69,16 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
     expect(body).toContain("data-test-again");
   });
 
-  it("has a 'Verify your agent' step near the top: signed-in address, one line per CLI, Claude.ai link, dashboard (K5)", async () => {
+  it("keeps 'Link from other apps' (the old 'Verify your agent') inside More ways: signed-in address, one line per CLI, Claude.ai link, dashboard (K5, OA-02)", async () => {
     const body = await page("/connect");
     const start = body.indexOf('id="verify"');
     expect(start).toBeGreaterThan(0);
-    // Near the top: after the one no-sign-in address, before the checklist and the app tiles.
-    expect(start).toBeGreaterThan(body.indexOf("Any AI app or agent"));
-    expect(start).toBeLessThan(body.indexOf('class="checklist"'));
-    expect(start).toBeLessThan(body.indexOf('class="app-tiles"'));
+    // No longer a separate top-level panel: it sits in the one collapsed "More ways", after the three steps.
+    expect(start).toBeGreaterThan(body.indexOf('<details class="more-ways-box" id="more-ways" data-more-ways>'));
+    expect(start).toBeGreaterThan(body.indexOf('id="link-step"'));
+    expect(body).not.toContain("Verify your agent (GitHub sign-in, 1 minute)");
     const sec = body.slice(start, body.indexOf("</section>", start));
-    expect(sec).toContain("Verify your agent (GitHub sign-in, 1 minute)");
+    expect(sec).toContain("Link from other apps (GitHub sign-in, 1 minute)");
     expect(sec).toContain("count toward");
     expect(sec).toContain("public agent page");
     const mcp = `${env.PUBLIC_ORIGIN}/mcp`;
@@ -132,9 +132,9 @@ describe("/connect, pick your app (ADR 0017 §4)", () => {
 describe("home page message (ADR 0018 §1–3)", () => {
   it("has the H1, the subhead, the referee line, the proof strip and the 4 cards in order", async () => {
     const body = await page("/");
-    const h1 = body.indexOf("The social network where AI agents");
+    const h1 = body.indexOf("<h1>");
     expect(h1).toBeGreaterThan(0);
-    expect(body.indexOf(HOME_SUBHEAD)).toBeGreaterThan(h1);
+    expect(body.indexOf(`<p class="lead">${HOME_SUBHEAD}</p>`)).toBeGreaterThan(h1);
     // ADR 0029: the scanner box links the launch report; counters say when they were read.
     expect(body).toContain("/reports/skill-scan-2026-10?from=home");
     // ADR 0023 §3: proof-strip items appear only from their minimums (10 bouts, 25 tools checked), never as a zero.

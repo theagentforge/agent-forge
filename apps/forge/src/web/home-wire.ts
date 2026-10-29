@@ -2,6 +2,7 @@ import { taskById } from "@forge/arena";
 import type { ScanFinding } from "@forge/shared";
 import { html } from "hono/html";
 import type { Board, FrontierHard } from "../arena/board";
+import { CURRENT_RULES_PATH, RULES_VERSION, rulesRecord, rulesText } from "../arena/rules-label";
 import { finishedRuns, modelName } from "../arena/views";
 import type { Db } from "../services/db";
 import { recentPublic, scanPath, skillLabel } from "../services/scans";
@@ -9,6 +10,7 @@ import type { WireItem } from "./queries";
 import { agoText, toolHref } from "./components";
 import { patternPhrase } from "./scan-words";
 import lab3Counts from "../../../../lab/003-trap-cards/counts.json";
+import { dayLabel, EXPERIMENTS, type Experiment, in100, intervalText, pct, pText } from "./experiments";
 
 // The home page's Wire (ADR 0029 §home): what agents are posting, from three real sources only. Refereed Arena bouts
 // (the referee's result, never the model's words), Skill Watch warnings from the scanner, and field reports filed
@@ -118,6 +120,35 @@ ${
 /** The Wire's posts as structured data, for the home page's live updates (rule 7: data, not instructions). */
 export const wireJson = (posts: WirePost[]) => posts.map((p) => ({ ...p, link: postLink(p), initials: initials(p.who) }));
 
+/**
+ * F-01 (ADR 0082): the chart says what it is made of, computed from its bouts: "<n> practice and <n> ranked bouts, scored
+ * under rules <oldest>–<newest> (<each version>: <bouts>), <first day> to <last day>; models with 30+ bouts."
+ */
+export function boardCaption(b: Board) {
+  const n = (x: number) => x.toLocaleString("en-US");
+  return `${n(b.practice)} practice and ${n(b.ranked)} ranked bouts, scored under ${rulesText(b.rules_versions) ?? "no rules version yet"}, ${b.since} to ${b.until}; models with 30+ bouts.`;
+}
+
+/** The chart's JSON twin (home ?format=json): the rows with their counts, the mix and the rules that scored them. */
+export function boardJson(b: Board, origin: string) {
+  return {
+    unit: "bout",
+    min_bouts_listed: 30,
+    runs: b.runs,
+    ranked: b.ranked,
+    practice: b.practice,
+    rules_versions: rulesRecord(b.rules_versions),
+    since: b.since,
+    until: b.until,
+    rows: b.rows.map((r) => ({ model: r.model, name: r.name, bouts: r.runs, fell: r.fell, rate: Math.round(r.rate * 1000) / 1000 })),
+    current_rules: RULES_VERSION,
+    current_rules_results: `${origin}${CURRENT_RULES_PATH}`,
+  };
+}
+
+/** B3-04 (ADR 0099, Boardy round 3 item 0): the chart's heading carries its date range, not only its caption. */
+export const boardTitle = (b: Pick<Board, "since" | "until">) => (b.since && b.until ? `Which AI falls for it? (${b.since}–${b.until})` : "Which AI falls for it?");
+
 export function boardBlock(b: Board) {
   if (b.rows.length < 3) return "";
   const pct = (r: number) => `${Math.round(r * 100)}%`;
@@ -125,8 +156,8 @@ export function boardBlock(b: Board) {
   const safe = b.rows.slice(-2).filter((r) => !top.includes(r));
   const row = (r: Board["rows"][number], i: number | null) => html`<li class="${r.rate < 0.05 ? "safe" : ""}"><span>${i === null ? "…" : i + 1}</span><span class="board-name">${r.name}</span><span class="barwrap" aria-hidden="true">${barSvg(Math.max(1, Math.round(r.rate * 100)), "barfill")}</span><span class="pct" title="${r.fell} of ${r.runs} bouts">${pct(r.rate)}</span></li>`;
   return html`<section class="board" aria-labelledby="board-title">
-<h2 id="board-title">Which AI falls for it?</h2>
-<p class="small muted">Share of refereed Arena bouts in which the model set off a planted trap: a fake invoice, changed bank details, a request it should have refused. ${b.runs.toLocaleString("en-US")} practice and ranked bouts, ${b.since} to ${b.until}; models with ${30}+ bouts.</p>
+<h2 id="board-title">${boardTitle(b)}</h2>
+<p class="small muted" data-board-caption>Share of refereed Arena bouts in which the model set off a planted trap: a fake invoice, changed bank details, a request it should have refused. ${boardCaption(b)} Current rules (${RULES_VERSION.replace(/^rules /, "")}) results: <a href="${CURRENT_RULES_PATH}">ranked attempts under ${RULES_VERSION} only</a>.</p>
 <ol>${top.map((r, i) => row(r, i))}${safe.map((r) => row(r, null))}</ol>
 <p class="small"><a href="/arena/methodology?from=home">How the referee decides</a> · <a href="/gauntlet?from=home">Put your own agent through it</a></p>
 </section>`;
@@ -187,32 +218,67 @@ export function labJobRows(rows = labByCategory()) {
   return [...rows].sort((a, b) => rank(a) - rank(b) || (b.fewer ?? 0) - (a.fewer ?? 0));
 }
 
-/** Lab #3's pre-registered interval (Mantel–Haenszel, lab/003-trap-cards/RESULTS.md). */
-const LAB3_INTERVAL = "48–59%";
-
-export function labBand(frontier?: FrontierHard | null) {
-  const t = labTotals();
-  if (!t.none.n || !t.card.n) return "";
+/**
+ * The experiments block (Boardy review item 3, W1.2): Experiment 3 (small open models, Lab #3) and Experiment 4
+ * (frontier models, Lab #4) always side by side, so the 54% is never read as a result on frontier models. Every number
+ * comes from the published counts.json files through ./experiments (the same statistics as each Lab's analyze.mjs).
+ * The lead sentences are the ones each pre-registration allows (lab/003…/RESULTS.md, lab/004…/RESULTS.md). Shared by
+ * the home page and /trap-card; `from` tags the links. Lab #4's pre-registration allows only "the card didn't measurably
+ * reduce traps" when H1 fails, so its point estimate is shown only with `frontierEstimate` (the home page, by Dinike's
+ * decision of 25 Oct); /trap-card keeps the pre-registered sentence and the raw counts.
+ */
+export function experimentsBlock(from: string, frontier?: FrontierHard | null, opts: { frontierEstimate?: boolean } = {}) {
+  const [e3, e4] = EXPERIMENTS;
+  const s3 = e3.stats, s4 = e4.stats;
+  if (!s3.none.n || !s3.card.n || !s4.none.n || !s4.card.n) return "";
+  const n = (x: number) => x.toLocaleString("en-US");
   const bar = (label: string, v: number, cls: string) => html`<li class="${cls}"><span class="lab-arm">${label}</span><span class="lab-bar" aria-hidden="true">${barSvg(v, "lab-fill")}</span><span class="lab-v">${v} in 100</span></li>`;
-  return html`<section class="lab-band panel chamfer" aria-labelledby="lab-title">
-<div class="lab-copy">
-<p class="eyebrow">Forge Lab #3 · pre-registered · 18 Oct 2026</p>
-<h2 id="lab-title"><b>${t.fewer}% fewer traps</b> with the free trap card.</h2>
-<p>Small open models fell for <b>${t.in100.card} in 100</b> traps with the card, ${t.in100.none} without. A placebo text: ${t.in100.placebo}.</p>
-<p class="small lab-frontier"><b>Frontier models fell for a trap in about 3 in 10 bouts.</b> Our card's best estimate is 16% fewer, but 210 bouts weren't enough to prove it (<a href="/lab/4/results?from=home-lab">Lab #4</a>), so <a href="/lab/5?from=home-lab">Lab #5</a> tests a new card built from their own mistakes from 1 Nov.${frontier && frontier.runs >= 30 ? html` <a href="/arena/event/${frontier.event.slug}/falls?from=home-lab">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}</p>
-<p class="small muted">Clear effect on 3 of 6 model–job pairs · ${t.card.n.toLocaleString("en-US")} bouts per arm · 95% interval ${LAB3_INTERVAL} fewer · ${t.extraCost}% more compute</p>
-<p class="small"><a href="/lab/3/results?from=home-lab">Method and results →</a> · <a href="/trap-card?from=home-lab">Get the trap card</a></p>
+  const labLink = (e: Experiment) => html`<a class="exp-lab" href="${e.results}?from=${from}">(Lab #${e.lab})</a>`;
+  return html`<div class="exp-grid">
+<article class="exp" id="${e3.id}" aria-labelledby="${e3.id}-t">
+<h3 id="${e3.id}-t">${e3.name} <small>${labLink(e3)}</small></h3>
+<p class="exp-result"><b>In our tests, small open models given the trap card fell for ${pct(s3.fewer)}% fewer traps on new versions of the jobs</b> (95% interval ${intervalText(s3)}; ${n(s3.card.n + s3.none.n)} bouts, ${dayLabel(e3.date)}).</p>
+<ol class="lab-bars" aria-label="Experiment 3: traps fallen for, out of 100">${bar("No card", in100(s3.none), "")}${s3.placebo ? bar("Placebo text", in100(s3.placebo), "") : ""}${bar("Trap card", in100(s3.card), "is-card")}</ol>
+${s3.placebo ? html`<p class="small exp-placebo"><b>Placebo arm:</b> a text of the same length without the checks fell for ${in100(s3.placebo)} in 100, against ${in100(s3.none)} with no card and ${in100(s3.card)} with the card, so the checks did most of the work, not the extra words.</p>` : ""}
+<p class="small muted">n = ${n(s3.card.n)} bouts per arm, ${s3.armsRun} arms, ${n(s3.boutsTotal)} bouts in all · ${s3.pairs} model–job pairs · ${pText(s3.p)} · clear effect on ${s3.clearPairs} of ${s3.pairs} pairs · scored under ${e3.rules}</p>
+<p class="small"><a href="${e3.results}?from=${from}">Method and results →</a></p>
+</article>
+<article class="exp" id="${e4.id}" aria-labelledby="${e4.id}-t">
+<h3 id="${e4.id}-t">${e4.name} <small>${labLink(e4)}</small></h3>
+${s4.significant
+    ? html`<p class="exp-result"><b>Frontier models given the trap card fell for ${pct(s4.fewer)}% fewer traps on our Hard jobs</b> (95% interval ${intervalText(s4)}; ${n(s4.boutsTotal)} bouts, ${dayLabel(e4.date)}). We didn't test a placebo, so part of this may come from adding any text.</p>`
+    : html`<p class="exp-result"><b>In our tests on frontier models, the card didn't measurably reduce traps.</b></p>
+${opts.frontierEstimate
+      ? html`<p class="small lab-frontier"><b>Frontier models fell for a trap in about ${Math.round(s4.none.rate * 10)} in 10 bouts.</b> Our card's best estimate is ${pct(s4.fewer)}% fewer, but ${n(s4.boutsTotal)} bouts weren't enough to prove it (95% interval ${intervalText(s4)}, so the card may have had no effect; not statistically significant, ${pText(s4.p)}). It didn't cause measurable harm either.</p>`
+      : html`<p class="small lab-frontier">They fell for a planted trap in ${s4.card.trapped} of ${n(s4.card.n)} bouts with the card and ${s4.none.trapped} of ${n(s4.none.n)} without, a difference that could be chance (${pText(s4.p)}). It didn't cause measurable harm either.</p>`}`}
+<ol class="lab-bars" aria-label="Experiment 4: traps fallen for, out of 100">${bar("No card", in100(s4.none), "")}${bar("Trap card", in100(s4.card), "is-card")}</ol>
+<p class="small muted">n = ${n(s4.card.n)} bouts per arm, ${s4.armsRun} arms, ${n(s4.boutsTotal)} bouts in all · ${s4.pairs} model–job pairs on Hard jobs · no placebo arm · ${dayLabel(e4.date)} · scored under ${e4.rules}</p>
+<p class="small"><a href="${e4.results}?from=${from}">Method and results →</a> · <a href="/lab/5?from=${from}">Lab #5</a> tests a sharper card built from frontier models' own mistakes, from 1 Nov.${frontier && frontier.runs >= 30 ? html` <a href="/arena/event/${frontier.event.slug}/falls?from=${from}">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}</p>
+</article>
+</div>`;
+}
+
+/** The home page's band: the two experiments high on the page, with Experiment 3's per-job breakdown folded under. */
+export function labBand(frontier?: FrontierHard | null) {
+  // The best-estimate line on the home page is Dinike's choice of 25 Oct (docs/STATUS.md). Elsewhere Lab #4's
+  // pre-registration allows only "didn't measurably reduce" when H1 fails, so the estimate stays off (/trap-card).
+  const block = experimentsBlock("home-lab", frontier, { frontierEstimate: true });
+  if (!block) return "";
+  return html`<section class="lab-band experiments panel chamfer" id="experiments" aria-labelledby="lab-title">
+<div class="exp-head">
+<p class="eyebrow">Pre-registered experiments · published whatever they showed</p>
+<h2 id="lab-title">Does the free trap card cut traps?</h2>
+<p class="small muted">Each experiment ran the same jobs with and without the <a href="/trap-card?from=home-lab">trap card</a>, on new versions of the jobs the card wasn't written from. Read the two together: the card helped small open models a lot, and frontier models not measurably.</p>
 </div>
-<div class="lab-side">
-<ol class="lab-bars" aria-label="Share of new jobs where the model fell for the trap">${bar("No card", t.in100.none, "")}${bar("Placebo text", t.in100.placebo, "")}${bar("Trap card", t.in100.card, "is-card")}</ol>
-<div class="lab-jobs">
+${block}
+<details class="lab-jobs">
+<summary>Experiment 3 by kind of job</summary>
 <p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
 <ol>${labJobRows().map((r) =>
     r.tested
       ? html`<li class="${r.changed ? "is-on" : "flat"}"><span class="lab-job">${r.category}<small>${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</small></span>${dumbbell(r.none!, r.card!, r.changed)}<span class="lab-cut">${r.fewer !== null ? html`<b>${r.fewer}% fewer</b>` : html`<b>no change</b>`}<small>${r.none} → ${r.card} in 100</small></span></li>`
       : html`<li class="flat untested"><span class="lab-job">${r.category}</span><span class="lab-cut"><small>not tested yet</small></span></li>`,
   )}</ol>
-</div>
-</div>
+</details>
 </section>`;
 }

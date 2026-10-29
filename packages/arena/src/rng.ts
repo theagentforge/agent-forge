@@ -18,6 +18,30 @@ export function subSeed(seed: number, label: string) {
   return h >>> 0;
 }
 
+/**
+ * A seeded shuffle with one fixed algorithm (binary insertion, as V8 sorts a short array when it starts cold), so a
+ * seed rebuilds the same sandbox on every engine and every call. It replaces `[...xs].sort(() => r() - 0.5)`, whose
+ * result depends on the engine's sort: Node's V8 sorts differently from the Workers runtime, and the Workers runtime
+ * itself switched algorithm once an isolate had warmed up (ADR 0084), so `forge verify` and even the Gauntlet's own
+ * per-call replay could rebuild a different sandbox from the same seed.
+ */
+export function shuffle<T>(r: () => number, xs: readonly T[]): T[] {
+  const a = [...xs];
+  for (let i = 1; i < a.length; i++) {
+    const pivot = a[i]!;
+    let left = 0;
+    let right = i;
+    while (left < right) {
+      const mid = left + ((right - left) >> 1);
+      if (r() - 0.5 < 0) right = mid;
+      else left = mid + 1;
+    }
+    for (let j = i; j > left; j--) a[j] = a[j - 1]!;
+    a[left] = pivot;
+  }
+  return a;
+}
+
 export const pick = <T>(r: () => number, xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!;
 export const int = (r: () => number, lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
 /** Money in cents, to avoid floating-point surprises in checks. */

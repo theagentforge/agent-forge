@@ -1,6 +1,7 @@
 // Caches OpenRouter's public model catalog (no key needed) in KV, so a session can check exact model ids, list
 // prices and tool support before choosing a lineup. Runs hourly with the registry seeding.
 
+import { FREE_CATALOG_KEY } from "./free-lane";
 import { ALL_MODELS } from "./lineup";
 
 export const CATALOG_KEY = "arena:or-models";
@@ -35,6 +36,13 @@ export async function refreshCatalog(env: Pick<Env, "KV">, fetcher: typeof fetch
     }))
     .sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
   await env.KV.put(CATALOG_KEY, JSON.stringify({ at: new Date().toISOString(), models: rows }), { expirationTtl: 3 * 86400 });
+  // ADR 0109: every tool-capable, zero-priced `:free` variant from any lab but xAI, for choosing the free lane's
+  // models (/admin/costs lists the ones not in the lane). An embargoed model's free variant is never listed (K2).
+  const embargoedBase = new Set(ALL_MODELS.filter((x) => x.embargoed && x.route.kind === "openrouter").map((x) => x.route.model.replace(/:free$/, "")));
+  const free = data
+    .filter((m) => m.id.endsWith(":free") && !m.id.startsWith("x-ai/") && m.supported_parameters?.includes("tools") && Number(m.pricing?.prompt ?? 1) === 0 && Number(m.pricing?.completion ?? 1) === 0 && !embargoedBase.has(m.id.replace(/:free$/, "")))
+    .map((m) => ({ id: m.id, name: m.name, context: m.context_length, tool_choice: m.supported_parameters?.includes("tool_choice") ?? false }));
+  await env.KV.put(FREE_CATALOG_KEY, JSON.stringify({ at: new Date().toISOString(), models: free }), { expirationTtl: 3 * 86400 });
   const endpoints: Record<string, unknown> = {};
   for (const m of ALL_MODELS.filter((x) => x.embargoed && x.route.kind === "openrouter")) {
     const r = await fetcher(`https://openrouter.ai/api/v1/models/${m.route.model}/endpoints`).catch(() => null);

@@ -92,13 +92,16 @@ async function gauntletStats(env: Pick<Env, "ADMIN_GITHUB_IDS">, db: ReturnType<
       reruns: sql<number>`sum(case when ${t.arenaGauntlets.status} = 'done' and ${t.arenaGauntlets.cardFrom} is not null then 1 else 0 end)`,
     })
     .from(t.arenaGauntlets)
-    .where(gte(t.arenaGauntlets.startedAt, since));
+    // ADR 0083: six-job runs only; Sprints are counted apart (usage keys sprint:*).
+    .where(and(gte(t.arenaGauntlets.startedAt, since), eq(t.arenaGauntlets.mode, "full")));
   // ADR 0048: opt-in claims in the same 7 days, by owners outside the project (House and founders left out).
   const [cl] = await db
     .select({ n: sql<number>`count(*)` })
     .from(t.gauntletClaims)
     .innerJoin(t.humans, eq(t.gauntletClaims.humanId, t.humans.id))
-    .where(and(gte(t.gauntletClaims.claimedAt, since), outsidePeople(env)));
+    // Review (ADR 0084): claims of six-job runs only, like the runs above; Sprint claims are counted apart.
+    .innerJoin(t.arenaGauntlets, eq(t.arenaGauntlets.id, t.gauntletClaims.gauntletId))
+    .where(and(gte(t.gauntletClaims.claimedAt, since), outsidePeople(env), eq(t.arenaGauntlets.mode, "full")));
   return { gauntlets_started_7d: Number(r?.started ?? 0), gauntlets_finished_7d: Number(r?.finished ?? 0), gauntlet_reruns_finished_7d: Number(r?.reruns ?? 0), gauntlet_claims_7d: Number(cl?.n ?? 0) };
 }
 
@@ -147,4 +150,40 @@ export async function growthStats(env: Env, now = Date.now()) {
       () => ({}),
     )),
   };
+}
+
+/**
+ * F-02 (Dinike, 28 Oct; ADR 0082): the growth fields that leave our own activity out (House, founders, tagged tests,
+ * directory clients or our own sites), so count outside activity only. Internal: /api/v1/growth gives them as null and
+ * lists them in `internal_only`; the full object stays available to the Worker (the admin pages and tests).
+ */
+export const GROWTH_OUTSIDE_ONLY = [
+  "badge_sites_7d",
+  "gauntlet_claims_7d",
+  "mcp_sessions_7d",
+  "mcp_sessions_signed_in_7d",
+  "mcp_tool_calls_7d",
+  "mcp_top_clients_7d",
+  "skill_scans_7d",
+  "skill_scans_by_channel_7d",
+  "skill_scans_flagged_7d",
+  "watch_checkins_7d",
+  "watch_fingerprints_7d",
+  "skill_file_agent_fetches_7d",
+  "skill_file_browser_views_7d",
+  "a2a_requests_7d",
+  "a2a_by_skill_7d",
+  "agent_funnel_7d",
+  "agent_funnel_yesterday",
+  "outside_tool_calls_yesterday",
+  "ai_indexers_7d",
+  "ai_live_fetches_7d",
+  "ai_coding_agents_7d",
+] as const;
+
+/** The public /api/v1/growth object: the gross fields as they are, the outside-only ones null. */
+export function publicGrowth(g: Record<string, unknown>) {
+  const out: Record<string, unknown> = { ...g };
+  for (const k of GROWTH_OUTSIDE_ONLY) out[k] = null;
+  return { ...out, internal_only: [...GROWTH_OUTSIDE_ONLY] };
 }

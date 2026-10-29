@@ -1,10 +1,14 @@
 import { badgeSvg, toolBadge } from "./badge-core";
 import { site } from "./pages";
+import { scoreBadgeResponse } from "./score";
 
 // GET /badge/<tool id>.svg|json (?v=<version> pins it): see badge-core.ts for what the badge counts.
 export * from "./badge-core";
 
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$/;
+
+// ADR 0069: the Gauntlet score badge, registered first so the tool badge route below never sees it.
+site.get("/badge/score/:file", (c) => scoreBadgeResponse(c, c.req.param("file")));
 
 site.get("/badge/:file{.+\\.(svg|json)}", async (c) => {
   const file = c.req.param("file");

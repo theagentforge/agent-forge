@@ -162,6 +162,69 @@
       "when": 1792990940320,
       "tag": "0022_owners_first_season",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1793029207124,
+      "tag": "0028_byok_cost",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1793144592057,
+      "tag": "0029_replay_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1793160562102,
+      "tag": "0030_owners_founding",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1793180260512,
+      "tag": "0031_gauntlet_sprint",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1793188133064,
+      "tag": "0032_held_event_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793202610374,
+      "tag": "0033_data_room",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1793235054304,
+      "tag": "0034_install_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1793240697666,
+      "tag": "0035_skill_scan_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1793242581249,
+      "tag": "0036_api_keys",
+      "breakpoints": true
     }
   ]
 }

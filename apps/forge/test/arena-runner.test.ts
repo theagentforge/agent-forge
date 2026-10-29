@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
-import { and, eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { callModel, ProviderError } from "../src/arena/adapters";
 import { refreshCatalog } from "../src/arena/catalog";
 import { PRACTICE } from "../src/arena/lineup";
+import { neuronKey, NEURONS_PER_USD, WAI_TOTAL_MAX_NEURONS } from "../src/arena/free-lane";
 import { arenaTick, planEvent, planSchema, playAttempt, processQueue, seasonSeeds, SEASON_SEED_MIN, spend, SYSTEM_PROMPT, HEADLINE_WORKERS_AI_DAILY_USD } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
@@ -32,6 +33,8 @@ const honest = [
 beforeEach(async () => {
   vi.restoreAllMocks();
   await env.KV.delete("arena:lock");
+  // ADR 0109: the day's Workers AI neuron count (written by earlier tests' spend rows) would hold practice turns.
+  await env.KV.delete(neuronKey(Date.now(), "arena"));
 });
 
 describe("the bout runner", () => {
@@ -308,28 +311,37 @@ describe("queue order and budgets", () => {
 });
 
 describe("headline events on Workers AI (H1: DeepSeek V4 Pro in Crucible 2)", () => {
-  it("play when practice's allowance is used, up to their own daily allowance", async () => {
+  it("play past practice's share of the day, then wait (never voided) at the day's Workers AI line; the dollar allowance still applies (ADR 0113)", async () => {
     scripted(honest);
     const db = getDb(env);
     const practice = await planEvent(env, { slug: "w-practice", name: "Practice", season: "s0", kind: "practice", models: [model.id], tasks: ["impossible"], seeds: [21], attempts: 1 });
-    await db.insert(t.arenaRuns).values({ id: "w-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 10, costEstimated: true, finishedAt: Date.now() });
     const card = await planEvent(env, { slug: "w-card", name: "Crucible", season: "s0", kind: "card", models: ["deepseek-v4-pro"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 21], attempts: 1 });
-    const first = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
-    expect(first.skipped).toContain("practice allowance for today used");
-    const [played] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, card));
-    expect(played!.status).toBe("done");
-    const [waiting] = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, practice), eq(t.arenaRuns.status, "queued")));
-    expect(waiting).toBeDefined();
-    // Over the headline allowance: the next headline run on Workers AI waits for tomorrow too.
-    await db.insert(t.arenaRuns).values({ id: "w-spent-headline", eventId: card, modelId: "deepseek-v4-pro", task: "refund", seed: 1, attemptNo: 2, status: "done", cost: HEADLINE_WORKERS_AI_DAILY_USD + 1, costEstimated: true, finishedAt: Date.now() });
-    const s = await spend(env);
-    expect(s.headlineWorkersAiToday).toBeGreaterThanOrEqual(HEADLINE_WORKERS_AI_DAILY_USD + 1);
     const card2 = await planEvent(env, { slug: "w-card-2", name: "Crucible", season: "s0", kind: "card", models: ["deepseek-v4-pro"], tasks: ["impossible"], seeds: [SEASON_SEED_MIN + 22], attempts: 1 });
-    const second = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
-    expect(second.skipped).toContain("headline Workers AI allowance for today used");
-    const [held] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, card2));
-    expect(held!.status).toBe("queued");
-    for (const e of [practice, card, card2]) await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, e));
+    try {
+      // Practice has used its share (8,000 of 9,000 neurons, less the reserve for the waiting ranked bouts).
+      await db.insert(t.arenaRuns).values({ id: "w-spent", eventId: practice, modelId: model.id, task: "refund", seed: 1, attemptNo: 1, status: "done", cost: 4_000 / NEURONS_PER_USD, costEstimated: true, finishedAt: Date.now() });
+      await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, card2));
+      const first = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+      expect(first.skipped).not.toContain("Workers AI daily budget reached (ranked bouts wait)");
+      const [played] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, card));
+      expect(played!.status).toBe("done");
+      // The day's line reached: the next ranked Workers AI run waits for tomorrow, still queued, never voided.
+      await db.insert(t.arenaRuns).values({ id: "w-spent-2", eventId: practice, modelId: model.id, task: "refund", seed: 2, attemptNo: 1, status: "done", cost: WAI_TOTAL_MAX_NEURONS / NEURONS_PER_USD, costEstimated: true, finishedAt: Date.now() });
+      await db.insert(t.arenaRuns).values({ id: "w-held", eventId: card2, modelId: "deepseek-v4-pro", task: "impossible", seed: SEASON_SEED_MIN + 22, attemptNo: 1, status: "queued" });
+      const second = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+      expect(second.skipped).toContain("Workers AI daily budget reached (ranked bouts wait)");
+      const [held] = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, "w-held"));
+      expect(held).toMatchObject({ status: "queued", voidReason: null, retries: 0 });
+      // The dollar ceiling for headline Workers AI (ADR 0027) still stops them too.
+      await db.insert(t.arenaRuns).values({ id: "w-spent-headline", eventId: card, modelId: "deepseek-v4-pro", task: "refund", seed: 1, attemptNo: 2, status: "done", cost: HEADLINE_WORKERS_AI_DAILY_USD + 1, costEstimated: true, finishedAt: Date.now() });
+      expect((await spend(env)).headlineWorkersAiToday).toBeGreaterThanOrEqual(HEADLINE_WORKERS_AI_DAILY_USD + 1);
+      const third = await processQueue({ ...env, OPENROUTER_API_KEY: undefined } as never, Date.now() + 60_000);
+      expect(third.skipped).toContain("headline Workers AI allowance for today used");
+      expect((await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.id, "w-held")))[0]!.status).toBe("queued");
+    } finally {
+      for (const e of [practice, card, card2]) await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, e));
+      await db.delete(t.arenaRuns).where(like(t.arenaRuns.id, "w-%"));
+    }
   });
 });
 

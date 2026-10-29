@@ -4,9 +4,11 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
 import { arenaStatus } from "./arena/status";
+import { isClaudeByok, opsCallAllowed } from "./arena/credit";
+import { modelById } from "./arena/lineup";
 import { agentView, fetchSkillText, scanAndRecord, scanByFingerprint, scanPath, watchStatus } from "./services/scans";
 import { SCAN_MAX_BYTES } from "@forge/shared";
-import { growthStats } from "./services/growth";
+import { growthStats, publicGrowth } from "./services/growth";
 import { mcpHandler } from "./mcp";
 import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
@@ -20,8 +22,11 @@ import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { scoutSignals } from "./services/scout-signals";
 import { connectTestSeen } from "./services/connect-test";
-import { storeRun } from "./services/house-report";
+import { storeRun, storeSweep } from "./services/house-report";
+import { storeToolLists } from "./services/house-tools";
 import { checkKind, recordCheck } from "./services/proof";
+import { INSTALL_ID_HEADER, recordInstallId } from "./services/install-ids";
+import { installClient, installCounters, isSkillScanOutcome, parseAnswer, recordInstallCheck, SKILL_SCAN_OUTCOMES } from "./services/install-metrics";
 import { internalCaller, internalKey, internalOf } from "./services/internal";
 import type { AgentProps } from "./services/props";
 import { eq } from "drizzle-orm";
@@ -30,6 +35,7 @@ import { getDb } from "./services/db";
 import { countsAsHouse } from "./services/identity";
 import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
+import { anonymousLimited, keyGate } from "./services/api-keys";
 import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
@@ -48,6 +54,12 @@ publicApi.get("/api/v1/check", async (c) => {
   const parsed = checkQuerySchema.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return c.json({ error: "invalid_query", detail: parsed.error.issues[0]?.message, ...CHECK_QUERY_HELP }, 400);
 
+  // ADR 0110: a call with an API key is metered per key (minute limit and monthly quota) before anything else, cached
+  // answers included; an unknown or revoked key is refused. Calls without a key take exactly the old path below.
+  const gate = await keyGate(c.env, c.req.raw.headers, c.executionCtx);
+  if (gate.kind === "refused") return c.json(gate.body, gate.status, gate.headers);
+  const keyed = gate.kind === "keyed" ? gate.headers : null;
+
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5). Our own
   // probes (services/internal.ts) are counted apart; the tag changes nothing else (same limits, same answer).
@@ -58,20 +70,61 @@ publicApi.get("/api/v1/check", async (c) => {
   const cache = caches.default;
   const cacheKey = new Request(url.toString(), { method: "GET" });
   const hit = await cache.match(cacheKey);
-  if (hit) return hit;
+  // B2-06 (ADR 0086): install-time clients (plugin, CLI and hooks, Action) are counted with what our answer means at
+  // the install (blocked, advisory or neither), cached answers included.
+  const ua = c.req.header("User-Agent");
+  if (hit) {
+    if (!installClient(ua)) return keyed ? withKeyHeaders(hit, keyed) : hit;
+    // Read once and answered from the copy, so counting never waits on the client reading the body.
+    const text = await hit.text();
+    // A cached answer skips the check limit, so its install count has a per-address limit of its own (the same 60 a
+    // minute): repeating one cached URL can't raise the counters faster than fresh checks could. The answer is
+    // served either way.
+    const counted = await c.env.CHECK_LIMITER.limit({ key: `install-count:${ip}` }).then((r) => r.success, () => false);
+    if (counted) {
+      c.executionCtx.waitUntil(recordInstallCheck(c.env, ua, internal, parseAnswer(text)));
+      c.executionCtx.waitUntil(recordInstallId(c.env, c.req.header(INSTALL_ID_HEADER), ua, internal));
+    }
+    return keyed ? withKeyHeaders(new Response(text, hit), keyed) : new Response(text, hit);
+  }
 
-  const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
-  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
+  if (!keyed) {
+    const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
+    if (!success) return c.json(anonymousLimited(c.env), 429, { "Retry-After": "60" });
+  }
 
   const checked = await checkTool(c.env, parsed.data);
   const share = await checkShare(c.env, checked, parsed.data.id ?? parsed.data.url ?? parsed.data.fingerprint ?? "");
   // The full shape the plugin, CLI and Action read, with `summary` first and `related` added (ADR 0056).
-  const res = c.json(restCheckAnswer({ ...checked, share }, parsed.data), 200, {
+  const answer = restCheckAnswer({ ...checked, share }, parsed.data);
+  const res = c.json(answer, 200, {
     "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}`,
   });
   c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
-  return res;
+  c.executionCtx.waitUntil(recordInstallCheck(c.env, ua, internal, answer));
+  // B3-09 (ADR 0103): the anonymous install ID, when an install-time client sent one (first and last day only).
+  c.executionCtx.waitUntil(recordInstallId(c.env, c.req.header(INSTALL_ID_HEADER), ua, internal));
+  return keyed ? withKeyHeaders(res, keyed) : res;
 });
+
+/** A keyed answer: the plan and quota headers, and never stored by a shared cache (the quota differs per key). */
+function withKeyHeaders(res: Response, headers: Record<string, string>) {
+  const out = new Response(res.body, res);
+  for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
+  out.headers.set("Cache-Control", "private, no-store");
+  return out;
+}
+
+/** ADR 0110: the key gate for the scan, watch and exposure routes. Null: no key, so the caller applies its IP limit. */
+async function gateOrIp(c: Context<{ Bindings: Env }>, bucket: string) {
+  const gate = await keyGate(c.env, c.req.raw.headers, c.executionCtx);
+  if (gate.kind === "refused") return { res: c.json(gate.body, gate.status, gate.headers), headers: null };
+  if (gate.kind === "keyed") return { res: null, headers: gate.headers };
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const { success } = await c.env.CHECK_LIMITER.limit({ key: `${bucket}:${ip}` });
+  return success ? { res: null, headers: null } : { res: c.json(anonymousLimited(c.env), 429, { "Retry-After": "60" }), headers: null };
+}
+const keyedJson = (res: Response, headers: Record<string, string> | null) => (headers ? withKeyHeaders(res, headers) : res);
 
 /**
  * POST /api/v1/house/report — the House tester workflow (GitHub Actions OIDC, no shared secret). Same validation,
@@ -107,6 +160,27 @@ publicApi.post("/api/v1/house/run", async (c) => {
   }
   const r = await storeRun(c.env, body);
   return r.ok ? c.json(r, 201) : c.json({ ok: false, reason: "invalid_run", detail: r.detail }, 422);
+});
+
+/** POST /api/v1/house/sweep — one day of the weekly sweep of every no-setup server (ADR 0108). Same OIDC check. */
+publicApi.post("/api/v1/house/sweep", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyHouseToken(token, c.env.PUBLIC_ORIGIN))) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json().catch(() => null);
+  const r = await storeSweep(c.env, body);
+  return r.ok ? c.json(r, 201) : c.json({ ok: false, reason: "invalid_sweep", detail: r.detail }, 422);
+});
+
+/**
+ * POST /api/v1/house/tools — working servers' tools/list (capped), scanned here with the skill scanner's rules and kept
+ * on each tool's page (ADR 0108). Same OIDC check. Up to 25 servers a call.
+ */
+publicApi.post("/api/v1/house/tools", async (c) => {
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!(await verifyHouseToken(token, c.env.PUBLIC_ORIGIN))) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json().catch(() => null);
+  const r = await storeToolLists(c.env, body);
+  return r.ok ? c.json(r, 201) : c.json({ ok: false, reason: "invalid_tools", detail: r.detail }, 422);
 });
 
 /**
@@ -155,6 +229,10 @@ publicApi.post("/api/v1/ops/tool-selection", async (c) => {
   const key = opsSpendKey();
   const spent = Number((await c.env.KV.get(key)) ?? 0);
   if (spent >= DAILY_CAP_USD) return c.json({ error: "daily_cap_reached", spent }, 429);
+  // ADR 0064: below the OpenRouter credit reserve, only the Claude (BYOK) half runs.
+  const selModel = modelById(String(b!.model));
+  const allowed = await opsCallAllowed(c.env, !!selModel && isClaudeByok(selModel));
+  if (!allowed.ok) return c.json({ error: "paused_credit", remaining: allowed.remaining, reserve: allowed.reserve }, 429);
   const r = await runSelection(c.env, b!.model as string, from, to);
   await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
   return c.json(r, 200);
@@ -174,6 +252,9 @@ publicApi.post("/api/v1/ops/citations", async (c) => {
   const key = opsSpendKey();
   const spent = Number((await c.env.KV.get(key)) ?? 0);
   if (spent >= DAILY_CAP_USD) return c.json({ error: "daily_cap_reached", spent }, 429);
+  // Every citation call spends credit: the Claude one runs on our key, but its web-search plugin is billed to credit.
+  const allowed = await opsCallAllowed(c.env, false);
+  if (!allowed.ok) return c.json({ error: "paused_credit", remaining: allowed.remaining, reserve: allowed.reserve }, 429);
   const r = await runCitations(c.env, b!.model as string, from, to);
   await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
   return c.json(r, 200);
@@ -198,8 +279,8 @@ publicApi.get("/api/v1/stats", async (c) => {
   return res;
 });
 
-/** GET /api/v1/growth — ADR 0011 leading indicators (claims, sites showing a badge), public for transparency. */
-publicApi.get("/api/v1/growth", async (c) => c.json(await growthStats(c.env), 200, { "Cache-Control": "public, max-age=300" }));
+/** GET /api/v1/growth — ADR 0011 leading indicators, gross ones only (F-02: outside-only fields are null, internal). */
+publicApi.get("/api/v1/growth", async (c) => c.json(publicGrowth(await growthStats(c.env)), 200, { "Cache-Control": "public, max-age=300" }));
 
 /** GET /api/v1/arena/status — Arena spend against the budget and the run queue (public, for transparency). */
 const bodyOf = async (c: Context) => (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -208,8 +289,8 @@ const bodyOf = async (c: Context) => (await c.req.json().catch(() => ({}))) as R
 const FP = /^(sha256:)?[0-9a-f]{64}$/;
 async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknown; url?: unknown; name?: unknown }) {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const { success } = await c.env.CHECK_LIMITER.limit({ key: `scan:${ip}` });
-  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
+  const g = await gateOrIp(c, "scan");
+  if (g.res) return g.res;
   let text: string, sourceUrl: string | null = null;
   if (typeof input.text === "string" && input.text.length) {
     if (input.text.length > SCAN_MAX_BYTES) return c.json({ error: "too_large", max_bytes: SCAN_MAX_BYTES }, 413);
@@ -224,7 +305,7 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
   const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
   const internal = internalCaller(c.req.raw.headers);
   c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "scans")] : scanCounters("api", result.verdict)).catch(() => {}));
-  return c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }) }, 200, { "Cache-Control": "no-store" });
+  return keyedJson(c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }) }, 200, { "Cache-Control": "no-store" }), g.headers);
 }
 
 publicApi.post("/api/v1/scan", async (c) => {
@@ -250,31 +331,45 @@ const POST_ONLY: Record<string, unknown> = {
 for (const [path, usage] of Object.entries(POST_ONLY))
   publicApi.get(path, (c) => c.json({ error: "method_not_allowed", method: "POST", content_type: "application/json", ...(usage as object), docs: `${c.env.PUBLIC_ORIGIN}/openapi.json` }, 405, { Allow: "POST" }));
 
-publicApi.post("/api/v1/watch", async (c) => {
+/**
+ * B2-06 (ADR 0086): the skill-scan GitHub Action's one anonymous count per run. It scans on the runner and never sends
+ * a file, so this is its only call: {"outcome":"blocked"|"findings"|"clear"}. Nothing else is read or stored (a daily
+ * counter row). Rate-limited per IP like a check; any other field is ignored.
+ */
+publicApi.post("/api/v1/install-outcome", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const { success } = await c.env.CHECK_LIMITER.limit({ key: `watch:${ip}` });
+  const { success } = await c.env.CHECK_LIMITER.limit({ key: `install:${ip}` });
   if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
+  const body = await bodyOf(c);
+  if (body.client !== "skill-scan" || !isSkillScanOutcome(body.outcome)) return c.json({ error: "invalid_body", client: ["skill-scan"], outcome: Object.keys(SKILL_SCAN_OUTCOMES) }, 400);
+  c.executionCtx.waitUntil(bump(c.env, installCounters("skill-scan", SKILL_SCAN_OUTCOMES[body.outcome], internalCaller(c.req.raw.headers))).catch(() => {}));
+  return c.json({ counted: true }, 202, { "Cache-Control": "no-store" });
+});
+
+publicApi.post("/api/v1/watch", async (c) => {
+  const g = await gateOrIp(c, "watch");
+  if (g.res) return g.res;
   const body = await bodyOf(c);
   const raw = Array.isArray(body.fingerprints) ? body.fingerprints : [];
   if (!raw.length || raw.length > 100) return c.json({ error: "give 1 to 100 fingerprints" }, 400);
   const fps = raw.filter((x): x is string => typeof x === "string" && FP.test(x)).map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
   const internal = internalCaller(c.req.raw.headers);
   c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "watch")] : watchCounters(fps.length)).catch(() => {}));
-  return c.json(await watchAnswer(c.env, await watchStatus(getDb(c.env), fps), fps), 200, { "Cache-Control": "no-store" });
+  return keyedJson(c.json(await watchAnswer(c.env, await watchStatus(getDb(c.env), fps), fps), 200, { "Cache-Control": "no-store" }), g.headers);
 });
 
 /** "Was my agent stack hit?" (crisis-wave plan C4): names and versions in, advisory matches out. Counts only. */
 publicApi.post("/api/v1/exposure", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
-  if (!success) return c.json(RATE_LIMITED, 429, { "Retry-After": "60" });
+  const g = await gateOrIp(c, "ip");
+  if (g.res) return g.res;
   if (Number(c.req.header("content-length") ?? 0) > EXPOSURE_MAX_TEXT * 2) return c.json({ error: "too_large", max_bytes: EXPOSURE_MAX_TEXT * 2 }, 413);
   c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal: internalCaller(c.req.raw.headers) }));
   const r = await exposureRequest(c.env, await bodyOf(c));
   if ("error" in r) return c.json(r, 400);
   c.executionCtx.waitUntil(bump(c.env, exposureCounters(r)).catch(() => {}));
   const { asked, ...result } = r;
-  return c.json(await exposureAnswer(c.env, result, asked ?? []), 200, { "Cache-Control": "no-store" });
+  return keyedJson(c.json(await exposureAnswer(c.env, result, asked ?? []), 200, { "Cache-Control": "no-store" }), g.headers);
 });
 
 // The Gauntlet over plain HTTP (ADR 0024), for agents that can fetch but don't speak MCP. Same calls as /mcp/public.
@@ -286,8 +381,11 @@ publicApi.post("/api/v1/gauntlet", async (c) => {
   if (body.card_from !== undefined && !cardFrom) return c.json({ error: "invalid_card_from" }, 400);
   const challenge = typeof body.challenge === "string" && CHALLENGE_PATTERN.test(body.challenge) ? body.challenge : undefined;
   if (body.challenge !== undefined && !challenge) return c.json({ error: "invalid_challenge" }, 400);
+  // ADR 0083: {"mode":"sprint"} starts the one-job Gauntlet Sprint; "full" (or nothing) the six-job run.
+  const mode = body.mode === "sprint" || body.mode === "full" ? body.mode : undefined;
+  if (body.mode !== undefined && !mode) return c.json({ error: "invalid_mode" }, 400);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const r = await startGauntlet(c.env, ip, { cardFrom, challenge });
+  const r = await startGauntlet(c.env, ip, { cardFrom, challenge, mode });
   if (!("error" in r)) c.executionCtx.waitUntil(recordCheck(c.env, "api", ip, { internal: internalCaller(c.req.raw.headers) }));
   return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
 });

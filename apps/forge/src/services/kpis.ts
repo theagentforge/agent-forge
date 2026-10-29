@@ -4,6 +4,7 @@ import { agentFunnel, outsidePeople } from "./agent-funnel";
 import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
 import { getDb } from "./db";
 import { ownerFunnel } from "./owner-funnel";
+import { ownerActivity, ownersBySource } from "./owners";
 
 // The growth KPIs (ADR 0039; ADR 0050 renamed the conversion KPI and added outside tool calls). Thirteen numbers, each with an exact
 // definition, today's value and its two targets (a first and a second). Internal only: /admin/kpis, Forge
@@ -216,7 +217,9 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
     .select({ n: count(), recent: sql<number>`sum(case when ${t.gauntletClaims.claimedAt} >= ${now - 30 * DAY} then 1 else 0 end)` })
     .from(t.gauntletClaims)
     .innerJoin(t.humans, eq(t.gauntletClaims.humanId, t.humans.id))
-    .where(outside);
+    // Review (ADR 0084): six-job runs only; a Sprint claim isn't a Gauntlet run claim.
+    .innerJoin(t.arenaGauntlets, eq(t.arenaGauntlets.id, t.gauntletClaims.gauntletId))
+    .where(and(outside, eq(t.arenaGauntlets.mode, "full")));
 
   const [ranked30] = await db
     .select({ n: count() })
@@ -228,11 +231,12 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
     .from(t.arenaRuns)
     .innerJoin(t.arenaEvents, eq(t.arenaRuns.eventId, t.arenaEvents.id))
     .where(and(inArray(t.arenaEvents.kind, ["card", "guest"]), eq(t.arenaRuns.status, "done"), isNull(t.arenaEvents.arm)));
-  const [gauntlets] = await db.select({ n: count() }).from(t.arenaGauntlets).where(gte(t.arenaGauntlets.startedAt, now - 30 * DAY));
+  // ADR 0083: six-job runs only; Sprints are never counted as Gauntlet runs.
+  const [gauntlets] = await db.select({ n: count() }).from(t.arenaGauntlets).where(and(gte(t.arenaGauntlets.startedAt, now - 30 * DAY), eq(t.arenaGauntlets.mode, "full")));
   const [gauntletsDone] = await db
     .select({ n: count() })
     .from(t.arenaGauntlets)
-    .where(and(gte(t.arenaGauntlets.startedAt, now - 30 * DAY), ne(t.arenaGauntlets.status, "open")));
+    .where(and(gte(t.arenaGauntlets.startedAt, now - 30 * DAY), ne(t.arenaGauntlets.status, "open"), eq(t.arenaGauntlets.mode, "full")));
 
   const citations = (await env.KV.get<Citation[]>(CITATIONS_KV, "json")) ?? [];
   const partners = (await env.KV.get<PartnerContact[]>(PARTNERS_KV, "json")) ?? [];
@@ -248,6 +252,11 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
   const live = DISTRIBUTION.filter((d) => d.status === "live").length;
   // ADR 0055 (D11): owners first. The funnel from a finished Gauntlet run to a verified owner.
   const owners = await ownerFunnel(env, now);
+  // ADR 0073 (OA-01): whether owners stay, and where they came from.
+  const activity = await ownerActivity(env, now, 30);
+  const sources = await ownersBySource(env, now, 30);
+  const [pendingClaims] = await db.select({ n: count(), people: countDistinct(t.pendingClaims.humanId) }).from(t.pendingClaims);
+  const [reviewsOpen] = await db.select({ n: count() }).from(t.ownerReviewRequests).where(isNull(t.ownerReviewRequests.decision));
 
   const kpis: Kpi[] = [
     kpi({
@@ -429,6 +438,27 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       detail: owners as unknown as Record<string, unknown>,
     }),
     kpi({
+      id: "active_owners",
+      name: "Active owners (30 days)",
+      value: activity.active,
+      unit: "owners",
+      first: 25,
+      second: 100,
+      definition: `${activity.definition} Report it next to verified owners (D12, 28 Oct): it's the smaller, more honest number. Targets proposed.`,
+      detail: { ...activity, pending_claims: Number(pendingClaims?.n ?? 0), pending_claim_people: Number(pendingClaims?.people ?? 0), review_requests_open: Number(reviewsOpen?.n ?? 0) },
+    }),
+    kpi({
+      id: "owners_by_source",
+      name: "New owners by source (30 days)",
+      value: sources.total,
+      unit: "new owners",
+      first: 25,
+      second: 100,
+      definition:
+        "People who became owners for the first time in the last 30 full UTC days, by the first `from` tag they arrived with (founding, connect, plugin, cli, action, clawhub, skills-sh, maintainer, badge, score, hackathon:<slug>; anything else or none is \"other\"). Daily counters owner:new:<from>, written once per person. House and founder accounts never count. A rough guide: one person may see several links before signing in.",
+      detail: sources as unknown as Record<string, unknown>,
+    }),
+    kpi({
       id: "company_readiness",
       name: "Company readiness",
       value: null,
@@ -458,8 +488,8 @@ export const DATA_CONTROLS = {
   canary_in_published_data: true,
   /** Referee tests in which an adversarial agent tries to game the end state (reward hacking). */
   verifier_hacking_tests: true, // ADR 0049 suite, run in CI on every push; why it counts: ADR 0054
-  /** Personal fields (GitHub logins) pseudonymised in any exported dataset. */
-  exports_pseudonymised: false,
+  /** Personal fields (GitHub logins) pseudonymised in any exported dataset: the AQ-03 bulk export (ADR 0095). */
+  exports_pseudonymised: true,
 };
 
 export interface DataInventory {
@@ -496,7 +526,7 @@ export async function dataInventory(env: Env, now = Date.now()): Promise<DataInv
     .where(ranked)
     .groupBy(t.arenaRuns.task);
   const measured = perTask.filter((x) => Number(x.n) >= 6).map((x) => ({ task: x.task, n: Number(x.n), pass_rate: Math.round((Number(x.passed) / Number(x.n)) * 1000) / 10 }));
-  const [g] = await db.select({ n: count() }).from(t.arenaGauntlets).where(ne(t.arenaGauntlets.status, "open"));
+  const [g] = await db.select({ n: count() }).from(t.arenaGauntlets).where(and(ne(t.arenaGauntlets.status, "open"), eq(t.arenaGauntlets.mode, "full")));
   const [pg] = await db.select({ n: count() }).from(t.arenaPgAttempts).where(eq(t.arenaPgAttempts.status, "done"));
   const [reps] = await db.select({ n: count(), tools: countDistinct(t.reports.toolVersionId) }).from(t.reports);
   const [ext] = await db.select({ n: count() }).from(t.reports).innerJoin(t.humans, eq(t.reports.humanId, t.humans.id)).where(outside);

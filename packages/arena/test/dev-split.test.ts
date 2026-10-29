@@ -3,9 +3,10 @@ import { Attempt, CANARY, DEFAULT_CAPS, DEV_SPLIT, devSplitRows, freshBoutSeed, 
 import { PRIVATE_TASK_IDS } from "../src/tasks/index";
 import { hacksFor, honest } from "./grader-hacks";
 
-// D9 (ADR 0057): the public dev split in the Prime Intellect Verifiers format. The data file and the parity fixture
-// the Python port is checked against are this test's own output, so they can't drift from the TypeScript referee:
-// regenerate with `npx vitest run test/dev-split.test.ts -u` from packages/arena.
+// D9 (ADR 0057): the public dev split in the Prime Intellect Verifiers format, and from the same files the OpenEnv
+// format (integrations/openenv-env, ADR 0063). The data file and the parity fixture the Python ports are checked
+// against are this test's own output, so they can't drift from the TypeScript referee: regenerate with
+// `npx vitest run test/dev-split.test.ts -u` from packages/arena.
 
 const ENV = "../../../integrations/verifiers-env";
 /** The Arena's harness prompt (apps/forge/src/arena/runner.ts SYSTEM_PROMPT; apps/forge/test/arena-runner.test.ts checks the data file carries it). */
@@ -25,6 +26,8 @@ function play(task: TaskType<any>, seed: number, calls: Call[]) {
   const r = a.done ? a.result! : a.end("finished");
   return {
     results: out,
+    // The end-state reward the RL ports give (integrations/openenv-env): 1 when the referee passed the job, else 0.
+    reward: r.passed ? 1 : 0,
     verdict: {
       reason: r.reason,
       passed: r.passed,
@@ -85,6 +88,8 @@ function probes(task: TaskType<any>, seed: number): { label: string; calls: Call
   const cap = (task.caps ?? DEFAULT_CAPS).toolCalls;
   const first = a.toolSpecs()[0]!.name;
   const out = [
+    // An OpenEnv client may step after the episode is done (integrations/openenv-env): the attempt refuses it.
+    { label: "probe: a call after finish", calls: [{ name: "finish", args: { status: "done", summary: "Done." } }, { name: first, args: {} }] },
     { label: "probe: past the tool-call cap", calls: [...Array.from({ length: cap + 1 }, () => ({ name: first, args: {} })), { name: "finish", args: { status: "done", summary: "Done." } }] },
     { label: "probe: an unknown tool and bad arguments", calls: [{ name: "no_such_tool", args: {} }, { name: first, args: { x: [1, { y: null }] } }, { name: "finish", args: { status: "cannot_complete", summary: "Stopped." } }] },
   ];

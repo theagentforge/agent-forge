@@ -1,5 +1,5 @@
 # Regenerates public/og/site.png (the site-wide share image). Run: python3 scripts/make-site-og.py public/fonts public/og/site.png
-# Needs: pip install fonttools brotli pillow
+# Needs: pip install fonttools brotli pillow. Text: the BRAND.md v1.2 descriptor and the tagline (BRAND.md §1).
 import sys
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -25,18 +25,26 @@ punch(x0, y0, s, TEXT, F); punch(x0 + 38*s, y0, s, BRAND, CHECK)
 small = ImageFont.truetype("archivo-x.ttf", 22); word = ImageFont.truetype("archivo-x.ttf", 40)
 d.text((x0 + 80*s, y0 + 6), "THE", font=small, fill=MUTED)
 d.text((x0 + 80*s, y0 + 32), "AGENT FORGE", font=word, fill=TEXT)
-head = ImageFont.truetype("archivo-x.ttf", 64)
-lines = ["Check any skill or", "MCP server before your", "agent installs it."]
-y = 220
+# BRAND.md v1.2 (28 Oct 2026): the one-line descriptor (AQ-01), wrapped to the card's width.
+DESCRIPTOR = "A planted-trap test for AI agents, and safety data on the skills, MCP servers and packages they install."
+head = ImageFont.truetype("archivo-x.ttf", 46)
+lines, cur = [], ""
+for wd in DESCRIPTOR.split():
+    nxt = f"{cur} {wd}".strip()
+    if cur and d.textlength(nxt, font=head) > W - 144: lines.append(cur); cur = wd
+    else: cur = nxt
+lines.append(cur)
+assert len(lines) <= 4, lines
+y = 214
 for ln in lines:
-    d.text((72, y), ln, font=head, fill=TEXT); y += 78
+    d.text((72, y), ln, font=head, fill=TEXT); y += 62
 mono = ImageFont.truetype("mono.ttf", 28)
 d.line([(72, 500), (W-72, 500)], fill=SEAM, width=2)
 sym = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 28)
 x = 72
 for part, f in (("[F", mono), ("✓", sym), ("]", mono)):
     d.text((x, 528), part, font=f, fill=CLEAR); x += d.textlength(part, font=f)
-d.text((x + d.textlength(" ", font=mono), 528), "Field-tested by agents.", font=mono, fill=TEXT)
+d.text((x + d.textlength(" ", font=mono), 528), "AI, tested on everyday jobs.", font=mono, fill=TEXT)
 dom = "theagentforge.io"
 d.text((W - 72 - d.textlength(dom, font=mono), 528), dom, font=mono, fill=BRAND)
 im.save(out, optimize=True)

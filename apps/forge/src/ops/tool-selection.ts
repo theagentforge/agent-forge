@@ -1,4 +1,5 @@
-import { callModel } from "../arena/adapters";
+import { billedToCredit, callModel } from "../arena/adapters";
+import { isClaudeByok, noteByokFallback } from "../arena/credit";
 import { modelById } from "../arena/lineup";
 import type { ToolSpec } from "@forge/arena";
 import { PUBLIC_TOOLS } from "../mcp-public";
@@ -107,6 +108,13 @@ export async function runSelection(env: Env & { OPENROUTER_API_KEY?: string }, m
       const reply = await callModel(env, model.route, [{ role: "system", content: SYSTEM }, { role: "user", content: p.prompt }], TOOL_LIST, fetcher);
       cost += reply.cost;
       chose = reply.toolCalls[0]?.function.name ?? "none";
+      // ADR 0064 Amendment 2: a Claude call billed to OpenRouter credit (not our key) holds every Claude call for an
+      // hour, and this slice stops here; its answer is kept, since it is already paid for.
+      if (isClaudeByok(model) && billedToCredit(reply)) {
+        rows.push({ i, expect: p.expect, chose, correct: judge(p.expect, chose) });
+        await noteByokFallback(env, `ops:${modelId}`).catch(() => {});
+        return { model: modelId, rows, cost: Math.round(cost * 10_000) / 10_000, held: "byok" as const };
+      }
     } catch {
       chose = "error";
     }

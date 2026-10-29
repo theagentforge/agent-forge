@@ -66,7 +66,28 @@ describe("matching a held entry", () => {
     expect(matchesHeld("sha256:" + "ab".repeat(32), "https://raw.githubusercontent.com/HeldCo/skills/main/weather/SKILL.md")).toBe(false);
     const r = await scanAndRecord(env, BAD("stub"), { now: BEFORE });
     expect(r.isPublic).toBe(true);
-    expect(await releaseHeldScans(env, NOTICE_ENDS - 1)).toEqual({ skipped: "held" });
+    expect(await releaseHeldScans(env, NOTICE_ENDS - 1)).toMatchObject({ skipped: "held" });
+  });
+
+  it("matches jsDelivr links, refs with slashes and encoded paths, without holding other files in the repository", async () => {
+    const list = await heldList();
+    list.rows.push([0, "SKILL.md", "ef".repeat(32), 1, 0, []], [0, "my skills/weather two/SKILL.md", "fe".repeat(32), 1, 0, []]);
+    useHeldFile(list);
+    const z = "sha256:" + "0".repeat(64);
+    expect(matchesHeld(z, "https://cdn.jsdelivr.net/gh/heldco/skills@main/weather/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://cdn.jsdelivr.net/gh/HeldCo/skills/weather/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://cdn.jsdelivr.net/gh/OtherCo/skills@main/weather/SKILL.md")).toBe(false);
+    expect(matchesHeld(z, "https://cdn.jsdelivr.net/npm/skills@1.0.0/weather/SKILL.md")).toBe(false);
+    // github.com/HeldCo/skills/blob/feature/x/weather/SKILL.md becomes this raw link (GitHub serves refs with slashes).
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/feature/x/weather/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/main/my%20skills/weather%20two/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/main/weather/SKILL.md/")).toBe(true);
+    // The held root SKILL.md: at the plain split and after refs/heads/<name> only, never as the tail of a deeper file.
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/HEAD/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/refs/heads/main/SKILL.md")).toBe(true);
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/main/other/SKILL.md")).toBe(false);
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/main/Weather/SKILL.md")).toBe(false); // paths are case-sensitive on GitHub
+    expect(matchesHeld(z, "https://raw.githubusercontent.com/HeldCo/skills/main/%E0%A4%A/SKILL.md")).toBe(false); // malformed encoding
   });
 });
 
@@ -150,6 +171,29 @@ describe("scanning a held file before the hold ends", () => {
   });
 });
 
+describe("rows made public before the hold existed", () => {
+  it("are unlisted once by the hourly job; files that aren't held stay public", async () => {
+    const text = BAD("pre-hold-paste");
+    useHeldFile(null);
+    const early = Date.UTC(2026, 9, 22);
+    const byUrl = await scanAndRecord(env, BAD("pre-hold-url"), { sourceUrl: "https://raw.githubusercontent.com/HeldCo/skills/main/weather/SKILL.md", now: early });
+    const byText = await scanAndRecord(env, text, { now: early });
+    const other = await scanAndRecord(env, BAD("pre-hold-other"), { sourceUrl: "https://raw.githubusercontent.com/HeldCo/skills/main/other/SKILL.md", now: early });
+    for (const r of [byUrl, byText, other]) expect(r.isPublic).toBe(true);
+    useHeldFile(await heldList(text));
+    await env.KV.delete("seed:skill-scan-held:unlisted");
+    const out = await releaseHeldScans(env, BEFORE);
+    expect(out).toMatchObject({ skipped: "held" });
+    expect((out as { unlisted: number }).unlisted).toBeGreaterThanOrEqual(2);
+    expect((await rowOf(byUrl.result.fingerprint))!.public).toBe(false);
+    expect((await rowOf(byText.result.fingerprint))!.public).toBe(false);
+    expect((await rowOf(other.result.fingerprint))!.public).toBe(true);
+    expect((await fetchWorker(`/scan/${hex(byUrl.result.fingerprint)}`, { headers: { Accept: "text/html" } })).status).toBe(404);
+    // Once only: the next hour reads one KV key and nothing else.
+    expect(await releaseHeldScans(env, BEFORE + 3_600_000)).toEqual({ skipped: "held", unlisted_done: true });
+  });
+});
+
 describe("when the hold ends", () => {
   it("new scans are public, and rows scanned during the hold are listed once by the hourly job; seed rows wait for the 2 Nov task", async () => {
     const text = BAD("release");
@@ -164,12 +208,12 @@ describe("when the hold ends", () => {
     const seedFp = "sha256:" + "cd".repeat(32);
     await db.insert(t.skillScans).values({ fingerprint: seedFp, sourceUrl: "https://raw.githubusercontent.com/HeldCo/skills/0123456789abcdef0123456789abcdef01234567/weather/SKILL.md", verdict: "caution", findings: [], counts: { high: 0, medium: 1, low: 0 }, rulesVersion: "test", bytes: 1, public: false, firstSeen: SEEDED_AT, lastSeen: SEEDED_AT });
 
-    expect(await releaseHeldScans(env, NOTICE_ENDS - 1)).toEqual({ skipped: "held" });
+    expect(await releaseHeldScans(env, NOTICE_ENDS - 1)).toMatchObject({ skipped: "held" });
     expect((await rowOf(byUrl.result.fingerprint))!.public).toBe(false);
 
     const out = await releaseHeldScans(env, NOTICE_ENDS + 60_000);
     // Every unlisted held row from this file's scans (the URL test's too), and nothing else.
-    expect(out.released).toBeGreaterThanOrEqual(2);
+    expect((out as { released: number }).released).toBeGreaterThanOrEqual(2);
     expect((await rowOf(byUrl.result.fingerprint))!.public).toBe(true);
     expect((await rowOf(byText.result.fingerprint))!.public).toBe(true);
     expect((await rowOf(unrelatedPrivate.result.fingerprint))!.public).toBe(false);

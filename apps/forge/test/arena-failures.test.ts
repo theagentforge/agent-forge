@@ -131,7 +131,7 @@ describe("/arena/failures", () => {
     const res = await fetchWorker("/arena/failures?format=json&tier=normal");
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as any;
-    expect(Object.keys(j).sort()).toEqual(["as_of", "attempts", "families", "models", "name", "rules", "tier"]);
+    expect(Object.keys(j).sort()).toEqual(["as_of", "attempts", "current_rules_results", "families", "models", "name", "rules", "rules_versions", "tier"]);
     expect(j.tier).toBe("normal");
     expect(j.rules).toMatchObject({ fall_rate: "fell_div_present", present: "listed_in_referee_result", knockout: "counted_present_not_fallen", interval: "wilson_95", early_read_below: 30, excluded: ["practice", "lab3_arms"] });
     const clm = j.families.find((f: any) => f.family === "CLM").traps.find((t: any) => t.id === "FA-CLM-001");
@@ -168,7 +168,7 @@ describe("/arena/failures/<public id>", () => {
 
   it("the JSON twin, a lowercase redirect and a 404 for an unknown ID", async () => {
     const j = (await (await fetchWorker("/arena/failures/FA-CLM-001?format=json")).json()) as any;
-    expect(Object.keys(j).sort()).toEqual(["description", "family", "family_name", "id", "image", "models", "overall", "provenance", "recent_catches", "recent_falls", "rules", "since", "tier", "traps"]);
+    expect(Object.keys(j).sort()).toEqual(["current_rules_results", "description", "family", "family_name", "id", "image", "models", "overall", "provenance", "recent_catches", "recent_falls", "rules", "rules_versions", "since", "tier", "traps"]);
     expect(j).toMatchObject({ id: "FA-CLM-001", family: "CLM", tier: "all", image: "/og/arena/failures/FA-CLM-001.png" });
     expect(j.models[0]).toMatchObject({ id: "kimi-k2.6", n: 4, fell: 3, early_read: true });
     expect(j.recent_falls[0]).toEqual({ run: expect.any(String), model: "kimi-k2.6", task: expect.any(String), finished_at: expect.stringMatching(/^\d{4}-\d\d-\d\d$/), url: expect.stringMatching(/^\/arena\/run\//) });
@@ -197,6 +197,8 @@ describe("/arena/failures/<public id>", () => {
       headline: "Told a payee who wasn't paid that the money was sent",
       stat: "Fell for it in 3 of 8 ranked attempts (38%) · 2 models · Early read",
       worst: "Highest so far: Kimi K2.6, 3 of 4",
+      // F-01 (ADR 0082): the card names the rules that scored its attempts.
+      rules: expect.stringMatching(/^rules 0\.\d/),
     });
     expect((await fetchWorker("/og/arena/failures/FA-XXX-999.png", { redirect: "manual" })).status).toBe(302);
   });

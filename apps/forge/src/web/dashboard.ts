@@ -13,10 +13,13 @@ import { canParticipate, isClosed } from "../services/access";
 import { approveLogin, isAdmin, MAX_AGENTS_PER_HUMAN, upsertHuman, vouch, vouchesRemaining } from "../services/identity";
 import { agentHref, ago, tierLabel } from "./components";
 import { feedPanel } from "./digest-feed";
-import { CLAIM_NOTICE, claimRun, ownerClaims, setClaimHidden } from "../arena/gauntlet-claims";
+import { CLAIM_NOTICE, claimRun, ownerClaims, PENDING_NOTICE, setClaimHidden } from "../arena/gauntlet-claims";
 import { reportPath, type GauntletSummary } from "../arena/gauntlet";
 import { enteredRuns, SEASON_1, SEASON_NOTICE, SEASON_REASONS, type EnterError } from "../arena/season";
 import { send, site } from "./pages";
+import { bump, likelyPerson } from "../services/usage";
+import { becameOwner, normalizeFrom, pendingClaimsOf, purgeOwnerShare, recordFirstFrom, requestReview, signInFrom, syncOwners, WELCOME_PATH, welcomeRedirect } from "../services/owners";
+import { purgeAgentBadge } from "../arena/score";
 import {
   checkCsrf,
   cookie,
@@ -65,9 +68,15 @@ const MESSAGES = {
   agent_limit_reached: "You already have the most agents allowed. Revoke one first.",
   invite_only: "Claiming opens once the founder approves you.",
   rate_limited: "Too many tries. Wait a minute and try again.",
+  pending_limit_reached: "You already have 20 runs waiting to count. They count once your account is verified (a vouch or a review); claim more after that.",
   run_hidden: "Run hidden. It's anonymous again on every public page.",
   run_shown: "Run shown on your agent's page again.",
   season_entered: "Entered in Gauntlet Season 1.",
+  claim_pending: "Claim saved privately. It counts, and goes on your agent's page, once your account is verified.",
+  review_requested: "Review requested. The founder goes through requests once a week.",
+  review_already_requested: "You've already asked for a review. The founder goes through requests once a week.",
+  review_already_verified: "You're already verified.",
+  review_not_found: "Sign in again, then try once more.",
   season_left: "Taken out of Season 1. It's off the board and its weekly snapshots.",
   ...(Object.fromEntries(Object.entries(SEASON_REASONS).map(([k, v]) => [`season_${k}`, v])) as Record<`season_${EnterError}`, string>),
 } as const;
@@ -95,11 +104,18 @@ export async function guardPost(c: Ctx) {
 /** Where to go after sign-in: a path on this site only (ADR 0038: back to the /report draft). */
 export const safeNext = (next: string | undefined) => (next && /^\/(?![/\\])[\x21-\x7e]{0,1023}$/.test(next) ? next : "/dashboard");
 
+/** True when sign-in was started from, and returns to, the Gauntlet claim page. */
+export const fromClaim = (next: string) => next === "/gauntlet/claim" || next.startsWith("/gauntlet/claim?");
+
 site.get("/auth/login", async (c) => {
   const verifier = crypto.randomUUID() + crypto.randomUUID();
   const state = `${WEB_STATE_PREFIX}${crypto.randomUUID()}`;
   const next = safeNext(c.req.query("next"));
-  const login = await sign(c.env.SESSION_SECRET, { state, verifier, next, exp: Math.floor(Date.now() / 1000) + 600 });
+  // The owner funnel (conversion review, 26 Oct): a GitHub sign-in started from the Gauntlet claim page. Daily count only.
+  if (fromClaim(next) && likelyPerson(c.req.raw.headers)) c.executionCtx.waitUntil(bump(c.env, ["owner:signin_start"]).catch(() => {}));
+  // ADR 0073 (OA-01): the fixed `from` tag of this sign-in (its own, or the one in the page it returns to), first touch.
+  const from = signInFrom(c.req.query("from"), next) ?? undefined;
+  const login = await sign(c.env.SESSION_SECRET, { state, verifier, next, from, exp: Math.floor(Date.now() / 1000) + 600 });
   return new Response(null, {
     status: 302,
     headers: {
@@ -111,7 +127,7 @@ site.get("/auth/login", async (c) => {
 });
 
 site.get("/callback/web", async (c) => {
-  const pending = await verify<{ state: string; verifier: string; next?: string }>(
+  const pending = await verify<{ state: string; verifier: string; next?: string; from?: string }>(
     c.env.SESSION_SECRET,
     readCookie(c.req.header("Cookie"), LOGIN_COOKIE),
   );
@@ -126,7 +142,15 @@ site.get("/callback/web", async (c) => {
     return new Response("GitHub sign-in failed. Please try again.", { status: 502 });
   }
   const human = await upsertHuman(getDb(c.env), identity.profile, Date.now());
-  const headers = new Headers({ Location: safeNext(pending.next), "Cache-Control": "no-store" });
+  await recordFirstFrom(getDb(c.env), human.id, normalizeFrom(pending.from));
+  // A sign-in can verify someone (new public activity, or a vouch waiting for them): their pending claims count now.
+  await syncOwners(c.env).catch((e) => console.error("sync_owners_failed", String(e)));
+  // OA-08 (ADR 0078): a sign-in that made someone an owner for the first time lands on /welcome, then where they were going.
+  const after = await getDb(c.env).query.humans.findFirst({ where: eq(t.humans.id, human.id) });
+  const dest = becameOwner(human, after) ? welcomeRedirect(safeNext(pending.next)) : safeNext(pending.next);
+  // Sign-in finished on the way back to the claim page; our own House and founder accounts never count.
+  if (fromClaim(safeNext(pending.next)) && !human.isHouse && !isAdmin(c.env, human.githubId)) c.executionCtx.waitUntil(bump(c.env, ["owner:signin_done"]).catch(() => {}));
+  const headers = new Headers({ Location: dest, "Cache-Control": "no-store" });
   headers.append("Set-Cookie", cookie(SESSION_COOKIE, await newSession(c.env.SESSION_SECRET, human.id, identity.orgs), SESSION_TTL_SECONDS));
   headers.append("Set-Cookie", cookie(LOGIN_COOKIE, "", 0));
   return new Response(null, { status: 302, headers });
@@ -202,7 +226,10 @@ ${human.tier === "sandbox" && !waitingForAccess ? html`<p class="notice warn">Yo
 
 ${yours}
 ${await feedPanel(c.env, human.id, csrf)}
+${human.tier === "sandbox" ? await pendingPanel(db, human, csrf) : ""}
 ${await claimsPanel(db, human.id, agents, csrf)}
+${human.ownerSince !== null && human.tier === "verified" && active > 0 && now - human.ownerSince < 14 * 86_400_000 ? html`<p class="notice">You're an owner now. <a href="${WELCOME_PATH}">What you got, and three next steps</a>.</p>` : ""}
+${human.tier === "verified" && !isAdmin(c.env, human.githubId) && !human.isHouse ? html`<p class="small"><a href="/founding">Founding Owners</a>: the first 100 owners can join a public list with their number. ${human.foundingAt ? "You're on it." : "Opt-in."}</p>` : ""}
 <section aria-labelledby="agents-h"><h2 id="agents-h">Agents (${active} of ${MAX_AGENTS_PER_HUMAN})</h2>
 ${agents.length === 0 ? html`<p class="empty">No agents yet. <a href="/connect">Connect one</a>.</p>` : ""}
 ${agents.map(
@@ -255,7 +282,7 @@ ${waiting.length
               )}</ul>`
             : html`<p class="muted">Nobody is waiting.</p>`}
 <h3 class="top-gap">House accounts</h3>
-<p class="small muted">Our own test agents' owners. Their reports show a "house" label and are left out of every proof number on /stats.</p>
+<p class="small muted">Our own test agents' owners. Their reports show a "house" label and count as one person in scores. Every public number on /stats includes them (gross); the outside-only numbers that leave them out are on /admin/kpis.</p>
 <form class="stack" method="post" action="/dashboard/house">
 <input type="hidden" name="csrf" value="${csrf}">
 <label for="house-login">GitHub username (must have signed in)</label>
@@ -286,6 +313,38 @@ ${a.scorecardPublic
 </form>`;
 }
 
+/**
+ * ADR 0073 (OA-06): for people who aren't verified yet. Their pending claims (private), and the two ways to be
+ * verified without public GitHub activity: a vouch, or a review by the founder (a weekly queue on /admin/owners).
+ */
+async function pendingPanel(db: ReturnType<typeof getDb>, human: typeof t.humans.$inferSelect, csrf: string) {
+  const pending = await pendingClaimsOf(db, human.id);
+  const request = await db.query.ownerReviewRequests.findFirst({ where: eq(t.ownerReviewRequests.humanId, human.id) });
+  return html`<section aria-labelledby="pending-h"><h2 id="pending-h">Not counted yet</h2>
+<p>${PENDING_NOTICE}</p>
+${pending.length
+  ? html`<p>Claims waiting (private, only you see them):</p><ul>${pending.map((p) => {
+      const sm = p.summary as GauntletSummary | null;
+      return html`<li class="mono">${p.id.slice(1, 9)} <span class="muted small">${sm ? (p.mode === "sprint" ? "Sprint (one job)" : `${sm.passed} of ${sm.jobs_total} right`) : ""} · saved ${ago(p.createdAt, Date.now())}</span></li>`;
+    })}</ul>`
+  : ""}
+<ol class="steps">
+<li><p><b>Ask a verified person to vouch for you.</b> They need your GitHub username: <code>${human.githubLogin}</code>. They vouch on their own dashboard.</p></li>
+<li><p><b>Or request a review.</b> The founder looks at requests once a week and sees only your GitHub username and how old your account is.</p>
+${request && request.decision === null
+  ? html`<p class="muted">Review requested ${ago(request.requestedAt, Date.now())}.</p>`
+  : html`<form method="post" action="/dashboard/review-request"><input type="hidden" name="csrf" value="${csrf}"><button class="btn chamfer" type="submit">Request a review</button></form>`}</li>
+</ol>
+</section>`;
+}
+
+site.post("/dashboard/review-request", async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("Forbidden", 403);
+  const r = await requestReview(getDb(c.env), g.session.h);
+  return back(r === "requested" ? "review_requested" : r === "already_requested" ? "review_already_requested" : r === "already_verified" ? "review_already_verified" : "review_not_found");
+});
+
 /** ADR 0048: claim a Gauntlet run with its private key, and hide or show claimed runs. The consent notice is shown here. */
 async function claimsPanel(db: ReturnType<typeof getDb>, humanId: string, agents: (typeof t.agents.$inferSelect)[], csrf: string) {
   const active = agents.filter((a) => a.status === "active");
@@ -308,11 +367,16 @@ ${runs.length
   ? html`<p class="small top-gap"><a href="${SEASON_1.path}">Gauntlet Season 1</a>: enter first runs on the board. ${SEASON_NOTICE}</p>
 <table class="table stack"><thead><tr><th>Run</th><th>Agent</th><th>Result</th><th>On public pages</th><th>Season 1</th></tr></thead><tbody>${runs.map((r) => {
       const sm = r.summary as GauntletSummary | null;
-      return html`<tr><td><a class="mono" href="${reportPath(r.id)}">${r.id.slice(1, 9)}</a>${r.challengeOf ? html` <span class="small muted">challenge</span>` : ""}</td><td data-label="Agent" class="mono">${r.agent}</td><td data-label="Result">${sm ? `${sm.passed} of ${sm.jobs_total} right, fell for ${sm.traps_fell} of ${sm.traps_total} traps` : "—"}</td><td data-label="Public"><form class="inline-form" method="post" action="/dashboard/gauntlet/${r.id}/hidden"><input type="hidden" name="csrf" value="${csrf}">${r.hidden
+      // Review (ADR 0084): a Sprint is labelled as one, never shown as "1 of 1 right" like a Gauntlet result.
+      const sprint = r.mode === "sprint";
+      const result = !sm ? "—" : sprint ? `Sprint: ${sm.traps_fell ? "fell for a trap" : sm.passed ? "passed" : "not passed"} (one job, not a Gauntlet score)` : `${sm.passed} of ${sm.jobs_total} right, fell for ${sm.traps_fell} of ${sm.traps_total} traps`;
+      return html`<tr><td><a class="mono" href="${reportPath(r.id)}">${r.id.slice(1, 9)}</a>${r.challengeOf ? html` <span class="small muted">challenge</span>` : ""}${sprint ? html` <span class="small muted">Sprint</span>` : ""}</td><td data-label="Agent" class="mono">${r.agent}</td><td data-label="Result">${result}</td><td data-label="Public"><form class="inline-form" method="post" action="/dashboard/gauntlet/${r.id}/hidden"><input type="hidden" name="csrf" value="${csrf}">${r.hidden
         ? html`hidden <button class="btn chamfer" type="submit" name="hidden" value="off">Show</button>`
         : html`shown <button class="btn chamfer" type="submit" name="hidden" value="on">Hide</button>`}</form></td><td data-label="Season 1"><form class="inline-form" method="post" action="/gauntlet/claim/season"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="run" value="${r.id}"><input type="hidden" name="back" value="dashboard">${entered.has(r.id)
         ? html`entered <button class="btn chamfer" type="submit" name="season" value="leave">Leave</button>`
-        : r.challengeOf
+        : sprint
+          ? html`<span class="small muted">Sprints don't enter</span>`
+          : r.challengeOf
           ? html`<span class="small muted">challenges don't enter</span>`
           : html`<button class="btn chamfer" type="submit" name="season" value="enter">Enter</button>`}</form></td></tr>`;
     })}</tbody></table>`
@@ -324,7 +388,7 @@ site.post("/dashboard/gauntlet/claim", async (c) => {
   const g = await guardPost(c);
   if (!g) return c.text("Forbidden", 403);
   const r = await claimRun(c.env, g.session.h, String(g.form.get("agent") ?? ""), String(g.form.get("claim_key") ?? "").trim());
-  return back(r.ok ? "claimed" : r.error);
+  return back(r.ok ? (r.pending ? "claim_pending" : "claimed") : r.error);
 });
 
 site.post("/dashboard/gauntlet/:id/hidden", async (c) => {
@@ -355,6 +419,8 @@ site.post("/dashboard/agents/:id/rename", async (c) => {
   const taken = await getDb(c.env).query.agents.findFirst({ where: eq(t.agents.handle, handle) });
   if (taken) return back("handle_taken");
   await getDb(c.env).update(t.agents).set({ handle }).where(eq(t.agents.id, agent.id));
+  // The old handle's per-agent badge stops at once here (ADR 0093).
+  await purgeAgentBadge(c.env, agent.handle);
   return back("renamed");
 });
 
@@ -365,6 +431,10 @@ site.post("/dashboard/agents/:id/revoke", async (c) => {
   if (!agent) return c.text("Not found", 404);
   const db = getDb(c.env);
   await db.update(t.agents).set({ status: "revoked" }).where(eq(t.agents.id, agent.id));
+  // OA-08 (ADR 0078): its owner share page and card stop at once in this data centre (elsewhere within the minute).
+  await purgeOwnerShare(c.env, agent.handle);
+  // Its per-agent score badge (B2-08) answers 404 from now on; drop this data centre's cached copy (ADR 0093).
+  await purgeAgentBadge(c.env, agent.handle);
   // Also drop its OAuth grant, so its access and refresh tokens stop working, not just its writes.
   try {
     const { items } = await c.env.OAUTH_PROVIDER.listUserGrants(g.session.h);
@@ -409,6 +479,7 @@ site.post("/dashboard/approve", async (c) => {
   const now = Date.now();
   await approveLogin(db, login, now);
   await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${me.id}`, action: "approve", target: `github:${login.toLowerCase()}`, createdAt: now });
+  await syncOwners(c.env, now).catch((e) => console.error("sync_owners_failed", String(e)));
   return back("approved");
 });
 
@@ -434,6 +505,8 @@ site.post("/dashboard/vouch", async (c) => {
   const login = String(g.form.get("github_login") ?? "").trim();
   if (!/^@?[A-Za-z0-9-]{1,39}$/.test(login)) return back("login_invalid");
   const r = await vouch(getDb(c.env), g.session.h, login, Date.now());
+  // OA-06: a vouch verifies the person at once (if they've signed in), so their pending claims count now.
+  if (r.ok) await syncOwners(c.env).catch((e) => console.error("sync_owners_failed", String(e)));
   if (r.ok) return back("vouched");
   const map = {
     voucher_not_verified: "not_verified",
@@ -453,11 +526,11 @@ function agentFunnelPanel(f: Awaited<ReturnType<typeof agentFunnel>>, daily: Awa
   };
   const d = f.detail;
   return html`<section aria-labelledby="funnel-h"><h2 id="funnel-h">AI agents using the Forge (founder only)</h2>
-<p class="small muted">Exact numbers, last 7 days, no minimums; <a href="/stats#agents">/stats</a> shows each step from its minimum. House agents and directory health checks are left out.</p>
+<p class="small muted">Exact numbers, last 7 days, no minimums. Internal only: /stats shows gross numbers. House agents and directory health checks are left out.</p>
 <div class="scroll-x"><table class="table">
 <thead><tr><th scope="col">Step</th><th scope="col" class="num">7 days</th><th scope="col" class="num">Of the step before</th></tr></thead>
 <tbody>${FUNNEL_STAGES.map(([k, short, long]) => html`<tr><td><strong>${short}</strong><br><span class="small muted">${long}</span></td><td class="num">${n(f.stages[k])}</td><td class="num">${rate(k)}</td></tr>`)}</tbody></table></div>
-<p class="small">Signed-in agents of people outside the project, all time: <strong>${n(f.signed_in_agents_all_time)}</strong>.</p>
+<p class="small">Outside-only totals (signed-in agents of people outside the project and the rest) are on <a href="/admin/kpis#third-party">/admin/kpis</a>.</p>
 <details><summary>Where the numbers come from</summary><ul class="small">
 <li>AI page fetches: ${n(d.ai_fetches)} · discovery files: ${n(d.discovery_file_fetches)} · skill files: ${n(d.skill_file_fetches)}</li>
 <li>MCP sessions: ${n(d.mcp_sessions)} · A2A requests: ${n(d.a2a_requests)} · tool calls: ${n(d.tool_calls)} · API scans: ${n(d.api_scans)}</li>

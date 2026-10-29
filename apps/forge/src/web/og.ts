@@ -7,18 +7,24 @@ import { getDb } from "../services/db";
 import { findTool } from "../services/forge";
 import { cardVersion, toolCardFields } from "./og-data";
 import { agentDetail } from "./queries";
-import { HOME_H1, site } from "./pages";
+import { PAGE_CACHE_SECONDS, site } from "./pages";
+import { homeHero } from "../arena/hero-proof";
 import { parseWeights, rankModels, summaryLines, taskById, TRAP_FAMILIES, type AttemptResult, type Duel } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { channelDuels, duelFromRuns } from "../arena/featured";
 import { modelName, runWithLog, taskBoard } from "../arena/views";
 import { stampOf } from "./duel";
 import { labTotals } from "./home-wire";
+import { EXPERIMENTS } from "./experiments";
+import { rulesSpan } from "../arena/rules-label";
 import { PLAY, robotSvg, stampWord, svgAt } from "../../public/gauntlet.js";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 import { trapBoard } from "../arena/failures";
 import { headToHead } from "../arena/head-to-head";
 import { vsHeadline } from "./gauntlet";
+import { gauntletRun, type GauntletSummary } from "../arena/gauntlet";
+import { sprintCardLines, sprintOutcome } from "../arena/sprint";
+import { sharedAgent, shareLines } from "./welcome";
 
 // Share cards, 1200×630 (docs/BRAND.md §9). The verdict, subject and domain are burned into the image, because X shows
 // large cards without the page title. Built from plain element objects (no HTML parsing), so nothing user-supplied can
@@ -196,18 +202,44 @@ site.get("/og/a/:file{.+\\.png}", async (c) => {
   );
 });
 
+// OA-08 (ADR 0078): the owner share card. Only what's public about the agent: its name, that its owner is verified and,
+// if they joined the list, "Founding owner #n". No counts and no site numbers.
+site.get("/og/owner/:file{.+\\.png}", async (c) => {
+  const d = await sharedAgent(c.env, c.req.param("file").replace(/\.png$/, ""));
+  if (!d) return c.redirect("/og/home.png", 302);
+  const l = shareLines(d.handle, d.founding);
+  const res = await respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", alignItems: "center", gap: "20px", marginBottom: "26px" }, [
+          punch(72, C.clear, ICON.clear),
+          el("span", { fontFamily: "Archivo Expanded", fontSize: 44, lineHeight: 1.1 }, l.headline),
+        ]),
+        el("div", { fontFamily: "JetBrains Mono", fontSize: d.handle.length > 24 ? 40 : 52, color: C.text, marginBottom: "18px" }, clip(d.handle, 32)),
+        el("div", { display: "flex", fontSize: 28, color: C.muted }, l.founding ? `${l.founding} · ${l.sub}` : l.sub),
+      ],
+      `theagentforge.io/a/${clip(d.handle, 30)}`,
+    ),
+  );
+  // The card says "Founding owner #n" only while the owner is on the list, and exists only while the agent is active:
+  // a minute's cache like the pages (purged here on leave or revoke), never an hour or an immutable ?v= copy.
+  if (res.status === 200) res.headers.set("Cache-Control", `public, max-age=${PAGE_CACHE_SECONDS}`);
+  return res;
+});
+
 // Arena, task guide and trap card images (ADR 0018 §4). Every line is template text filled from referee results
 // (model names, task titles, our own trap labels, verdicts): never anything a model wrote.
 
 const line = (s: string, size = 26, color = C.muted) => el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: size, color, marginBottom: "18px" }, s);
 const headline = (s: string, size = 60) => el("div", { display: "flex", fontFamily: "Archivo Expanded", fontSize: size, lineHeight: 1.08, marginBottom: "30px" }, s);
 
-/** The default share image: the home headline and today's featured bout as a score bug. */
-export function homeCardLines(duel: Duel | undefined) {
-  if (!duel) return { headline: HOME_H1, bug: null, title: null, sides: [] as { name: string; stamp: string; good: boolean }[] };
+/** The default share image: the home headline (whichever hero case applies) and today's featured bout as a score bug. */
+export function homeCardLines(duel: Duel | undefined, headline: string) {
+  if (!duel) return { headline, bug: null, title: null, sides: [] as { name: string; stamp: string; good: boolean }[] };
   const sides = [duel.a, duel.b].map((s) => ({ name: s.name, stamp: stampOf(s).text, good: stampOf(s).cls === "stamp-caught" }));
   const title = `${duel.practice ? "Practice · " : ""}${duel.title.replace(/^The /, "")}`;
-  return { headline: HOME_H1, title, sides, bug: `${title} · ${sides.map((x) => `${x.name}: ${x.stamp}`).join(" · ")}` };
+  return { headline, title, sides, bug: `${title} · ${sides.map((x) => `${x.name}: ${x.stamp}`).join(" · ")}` };
 }
 
 /** The Gauntlet robot on a lighter tile (its dark visor would vanish on the card background). */
@@ -238,6 +270,30 @@ site.get("/og/reports/skill-scan-2026-10.png", (c) =>
   ),
 );
 
+/**
+ * The State of Agent Reliability card (ADR 0079). No numbers on purpose: the edition's numbers live on the page with
+ * their sources (AQ-06), and a share image can't link one.
+ */
+site.get("/og/reports/state-of-agent-reliability-2026-q4.png", (c) =>
+  respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", alignItems: "center", justifyContent: "space-between" }, [
+          el("div", { display: "flex", flexDirection: "column", width: "780px" }, [
+            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 26, color: C.caution, marginBottom: "18px" }, "REPORT · EDITION 1 · 2026 Q4"),
+            headline("The State of Agent Reliability", 54),
+            line("How often AI agents fall for planted traps.", 28, C.text),
+            line("Every number sourced, with n and 95% intervals.", 26),
+          ]),
+          robotTile("alert", C.caution),
+        ]),
+      ],
+      "theagentforge.io/reports",
+    ),
+  ),
+);
+
 /** Forge Lab #3's card: the three arms as bars, counts summed from the published counts.json (via labTotals). */
 site.get("/og/lab/3.png", (c) => {
   const t = labTotals();
@@ -252,9 +308,9 @@ site.get("/og/lab/3.png", (c) => {
     frame(
       [
         el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.caution, marginBottom: "14px" }, "FORGE LAB #3 · PRE-REGISTERED"),
-        headline(`${t.fewer}% fewer traps with the free trap card.`, 46),
+        headline(`Small open models: ${t.fewer}% fewer traps with the free trap card.`, 46),
         el("div", { display: "flex", flexDirection: "column", marginTop: "6px" }, [bar("No card", t.in100.none, C.insufficient), bar("Placebo text", t.in100.placebo, C.insufficient), bar("Trap card", t.in100.card, C.clear)]),
-        line(`Small open models, new versions of the jobs · ${t.card.n} bouts per arm`, 22),
+        line(`New versions of the jobs · ${t.card.n} bouts per arm · 18 Oct 2026 · ${EXPERIMENTS[0].rules}`, 22),
       ],
       "theagentforge.io/lab/3/results",
     ),
@@ -284,12 +340,12 @@ export function gauntletImage(duel: Duel, size: number): Node | null {
 
 site.get("/og/home.png", async (c) => {
   const duel = (await channelDuels(c.env, getDb(c.env)).catch(() => []))[0];
-  const l = homeCardLines(duel);
+  const l = homeCardLines(duel, (await homeHero(c.env)).headline);
   const art = duel ? gauntletImage(duel, 400) : null;
   // ADR 0029: the headline beside today's Gauntlet, robots and all; the old text score bug only if there's no art.
   if (art && duel) {
     const left = el("div", { display: "flex", flexDirection: "column", width: "600px", justifyContent: "center" }, [
-      headline(l.headline, 50),
+      headline(l.headline, 44),
       el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.caution, marginBottom: "12px" }, "Same job, same hidden trap."),
       el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 24, color: C.muted }, clip(duel.headline ?? "Watch who falls for it.", 90)),
     ]);
@@ -307,7 +363,7 @@ site.get("/og/home.png", async (c) => {
         ]),
       ]
     : [];
-  return respond(c, frame([headline(l.headline, 64), ...bug], "theagentforge.io"));
+  return respond(c, frame([headline(l.headline, 56), ...bug], "theagentforge.io"));
 });
 
 /** One refereed attempt: verdict, the template summary line, task, date and whether it was practice. */
@@ -416,6 +472,34 @@ site.get("/og/gauntlet/vs/:a{[a-z0-9:.-]{1,70}}/:file{g[0-9a-f]{32}\\.png}", asy
   );
 });
 
+/**
+ * ADR 0083: the Gauntlet Sprint share card: verdict, the trap's public id and description, and its sandbox amount at
+ * stake, labelled as invented money. Template text from the referee's result only (sprintCardLines); never a claimed
+ * agent's name (images outlive a hide) and never a KPI or traffic number.
+ */
+site.get("/og/sprint/:file{g[0-9a-f]{32}\\.png}", async (c) => {
+  const id = c.req.param("file").replace(/\.png$/, "");
+  const run = await gauntletRun(getDb(c.env), id);
+  const s = run?.g.summary as GauntletSummary | null | undefined;
+  if (!run || run.g.mode !== "sprint" || !s || !run.g.sprint) return c.redirect("/og/home.png", 302);
+  const o = sprintOutcome(run.g.sprint, run.bouts[0]?.seed ?? 0, s.jobs[0]!, c.env.PUBLIC_ORIGIN);
+  const l = sprintCardLines(o, new Date(run.g.finishedAt ?? run.g.startedAt).toISOString().slice(0, 10), id, new URL(c.env.PUBLIC_ORIGIN).host);
+  return respond(
+    c,
+    frame(
+      [
+        el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 22, color: o.verdict === "passed" ? C.clear : C.caution, marginBottom: "14px" }, l.label),
+        headline(clip(l.headline, 110), 40),
+        line(clip(l.trap, 90), 24, C.text),
+        line(l.stake, 26, C.caution),
+        line(l.foot, 20),
+        line(l.verify!, 18, C.brand),
+      ],
+      "theagentforge.io/gauntlet/sprint",
+    ),
+  );
+});
+
 site.get("/og/best/:file{[a-z-]+\\.png}", async (c) => {
   const task = taskById(c.req.param("file").replace(/\.png$/, ""));
   if (!task) return c.redirect("/og/home.png", 302);
@@ -454,6 +538,8 @@ export function failureCardLines(b: NonNullable<Awaited<ReturnType<typeof trapBo
     family: TRAP_FAMILIES[b.entry.family].name,
     headline: b.entry.description,
     stat: o ? `Fell for it in ${o.fell} of ${o.n} ranked attempts (${Math.round(o.rate * 100)}%) · ${b.models.length} ${b.models.length === 1 ? "model" : "models"}${o.early ? " · Early read" : ""}` : "No ranked attempts yet",
+    /** F-01: the rules that scored these attempts. */
+    rules: rulesSpan(b.rulesVersions),
     worst: worst && worst.cell.fell ? `Highest so far: ${worst.name}, ${worst.cell.fell} of ${worst.cell.n}` : null,
   };
 }
@@ -474,6 +560,7 @@ site.get("/og/arena/failures/:file{[A-Za-z]+-[A-Za-z]+-[0-9]+\\.png}", async (c)
         el("div", { display: "flex", fontFamily: "Archivo Expanded", fontSize: l.headline.length <= 70 ? 48 : 40, lineHeight: 1.12, marginBottom: "26px" }, clip(l.headline, 130)),
         line(l.stat, 26, C.text),
         ...(l.worst ? [line(clip(l.worst, 70))] : []),
+        ...(l.rules ? [line(`Scored under ${l.rules}`, 22)] : []),
       ],
       `theagentforge.io/arena/failures/${b.entry.id}`,
     ),

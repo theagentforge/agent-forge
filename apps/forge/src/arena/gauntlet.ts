@@ -1,5 +1,6 @@
-import { Attempt, DEFAULT_CAPS, freshBoutSeed, publicTrapId, TASKS, type AttemptResult, type CallRecord } from "@forge/arena";
+import { Attempt, DEFAULT_CAPS, freshBoutSeed, publicTrapId, RULES_VERSION, TASKS, taskById, taskVersion, type AttemptResult, type CallRecord, type TaskType } from "@forge/arena";
 import { provenance } from "../services/provenance";
+import { sealRun } from "../services/replay-keys";
 import { TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import * as t from "../db/schema";
@@ -11,6 +12,8 @@ import { claimPagePath, newClaimKey } from "./gauntlet-claims";
 import { ensureSeason, SEASON_1, seasonEligibility } from "./season";
 import { bump as bumpUsage } from "../services/usage";
 import { modelName, notEmbargoed } from "./views";
+import { SPRINT_CAPS, SPRINT_DAILY_PER_SOURCE, SPRINT_MCP_CALLS_MAX, SPRINT_PATH, SPRINT_TIME_LIMIT_MS, SPRINT_TOOL_CALLS, sprintOutcome, sprintPick, sprintSeed } from "./sprint";
+import { verifyCommand } from "../web/replay-verify";
 
 // The Gauntlet (ADR 0024): the six everyday jobs in a row, for any agent, with no account. The server only referees:
 // it rebuilds each sandbox by replaying the stored calls, so a run costs D1 writes and no model. At the end the agent
@@ -25,6 +28,12 @@ export const GAUNTLET_DAILY_TOTAL = 3000;
 /** Tool calls and logs are deleted after this; the summary (pass/fail and traps per job) stays. */
 export const GAUNTLET_KEEP_LOGS_MS = 30 * 86_400_000;
 export const JOBS = TASKS;
+export type GauntletMode = "full" | "sprint";
+
+/** ADR 0083: the jobs a run plays: the six for a full run, the week's one job for a Sprint. */
+export const jobsOf = (g: Pick<G, "mode" | "sprint">): TaskType[] => (g.mode === "sprint" && g.sprint ? [taskById(g.sprint.task)!] : JOBS);
+const capsOf = (g: Pick<G, "mode">) => (g.mode === "sprint" ? SPRINT_CAPS : DEFAULT_CAPS);
+const timeLimitOf = (g: Pick<G, "mode">) => (g.mode === "sprint" ? SPRINT_TIME_LIMIT_MS : GAUNTLET_TIME_LIMIT_MS);
 
 type G = typeof t.arenaGauntlets.$inferSelect;
 type B = typeof t.arenaGauntletBouts.$inferSelect;
@@ -110,7 +119,7 @@ export async function standingOpponents(db: Db, now = Date.now(), only?: string)
 }
 
 /** The six seeds (and, for a model, the run ids) a challenge plays, or why it can't be played. */
-async function challengeFor(db: Db, target: string, now: number): Promise<ChallengeInfo | { error: "unknown_run" | "unknown_opponent" | "run_not_finished" | "challenge_needs_first_run" }> {
+async function challengeFor(db: Db, target: string, now: number): Promise<ChallengeInfo | { error: "unknown_run" | "unknown_opponent" | "run_not_finished" | "challenge_needs_first_run" | "challenge_needs_full_run" }> {
   if (target.startsWith("model:")) {
     const [o] = await standingOpponents(db, now, target.slice("model:".length));
     if (!o) return { error: "unknown_opponent" };
@@ -119,6 +128,8 @@ async function challengeFor(db: Db, target: string, now: number): Promise<Challe
   const [parent] = await db.select().from(t.arenaGauntlets).where(eq(t.arenaGauntlets.id, target));
   if (!parent) return { error: "unknown_run" };
   if (parent.status !== "done") return { error: "run_not_finished" };
+  // ADR 0083: a Sprint is one job; a challenge plays six.
+  if (parent.mode === "sprint") return { error: "challenge_needs_full_run" };
   // A measured re-run had the trap card in every brief, so a challenge of it wouldn't be like for like.
   if (parent.cardFrom) return { error: "challenge_needs_first_run" };
   const bouts = await db.select({ idx: t.arenaGauntletBouts.idx, seed: t.arenaGauntletBouts.seed }).from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, target));
@@ -126,10 +137,10 @@ async function challengeFor(db: Db, target: string, now: number): Promise<Challe
   return { seeds: JOBS.map((_, i) => bouts.find((b) => b.idx === i)?.seed ?? newSeed()) };
 }
 
-function replay(b: Pick<B, "task" | "seed" | "calls">) {
-  const task = JOBS.find((x) => x.id === b.task)!;
+function replay(b: Pick<B, "task" | "seed" | "calls">, caps = DEFAULT_CAPS) {
+  const task = taskById(b.task)!;
   let clock = 0;
-  const a = new Attempt(task, b.seed, { caps: DEFAULT_CAPS, now: () => (clock += 1000) });
+  const a = new Attempt(task, b.seed, { caps, now: () => (clock += 1000) });
   for (const c of b.calls as CallRecord[]) a.call(c.name, c.args);
   return a;
 }
@@ -148,12 +159,12 @@ export function tailoredCard(fell: string[], runId: string): string {
 }
 
 /** The job an agent sees. On a measured re-run, the card comes first, the way a user's standing instructions would. */
-function jobPayload(g: Pick<G, "id" | "card" | "cardFrom">, b: Pick<B, "idx" | "task" | "seed" | "calls">) {
-  const a = replay(b);
+function jobPayload(g: Pick<G, "id" | "card" | "cardFrom" | "mode" | "sprint">, b: Pick<B, "idx" | "task" | "seed" | "calls">) {
+  const a = replay(b, capsOf(g));
   const brief = g.cardFrom && g.card ? `Your owner's standing instructions:\n${g.card}\n\nThe job:\n${a.variant.brief}` : a.variant.brief;
   return {
     job: b.idx + 1,
-    of: JOBS.length,
+    of: jobsOf(g).length,
     task: b.task,
     title: a.task.title,
     brief,
@@ -174,7 +185,11 @@ async function bump(env: Env, key: string) {
   return n;
 }
 
-export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string; challenge?: string } = {}, now = Date.now()) {
+export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string; challenge?: string; mode?: GauntletMode } = {}, now = Date.now()) {
+  if (opts.mode === "sprint") {
+    if (opts.cardFrom || opts.challenge) return { error: "sprint_takes_no_card_from_or_challenge" as const };
+    return startSprint(env, ip, {}, now);
+  }
   const db = getDb(env);
   if (opts.cardFrom && opts.challenge) return { error: "challenge_with_card_from" as const };
   if (await isLean(env)) return { error: "busy_today" as const };
@@ -188,6 +203,8 @@ export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: str
   if (opts.cardFrom) {
     const [parent] = await db.select().from(t.arenaGauntlets).where(eq(t.arenaGauntlets.id, opts.cardFrom));
     if (!parent || parent.cardFrom) return { error: "unknown_run" as const };
+    // ADR 0083: a measured re-run plays six jobs with the card, so it needs a full first run.
+    if (parent.mode === "sprint") return { error: "card_from_needs_full_run" as const };
     if (parent.status !== "done" || !parent.card) return { error: "run_not_finished" as const };
     card = parent.card;
   }
@@ -234,7 +251,58 @@ export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: str
         }
       : null,
     how: "Call gauntlet_act with this gauntlet_id, a tool name from `tools` and its arguments. Call the job's `finish` tool when a job is done or can't be done; the next job follows.",
-    current: jobPayload({ id, card, cardFrom: opts.cardFrom ?? null }, first),
+    current: jobPayload({ id, card, cardFrom: opts.cardFrom ?? null, mode: "full", sprint: null }, first),
+  };
+}
+
+/**
+ * ADR 0083: the 90-second Gauntlet Sprint. One Normal job (the week's pick under the published rule), on a fresh
+ * seed that is never a dev-split or held-out one, with SPRINT_TOOL_CALLS sandbox calls. Same referee, replay seal and
+ * claim key as a Gauntlet job; stored with mode "sprint" so it is never counted or shown as a Gauntlet run.
+ * `house` marks a run by The Forge's own house agent (the model it ran on); visitors' runs never set it.
+ */
+export async function startSprint(env: Env, ip: string, opts: { house?: string } = {}, now = Date.now()) {
+  const db = getDb(env);
+  if (await isLean(env)) return { error: "busy_today" as const };
+  if (!opts.house) {
+    const { success } = await env.CHECK_LIMITER.limit({ key: `gauntlet:${ip}` });
+    if (!success) return { error: "rate_limited" as const };
+    const keys = await sourceCount(env, ip, now);
+    const mine = keys.mine.replace("gauntlet-src:", "sprint-src:");
+    if (Number((await env.KV.get(keys.all)) ?? 0) >= GAUNTLET_DAILY_TOTAL) return { error: "busy_today" as const };
+    if (Number((await env.KV.get(mine)) ?? 0) >= SPRINT_DAILY_PER_SOURCE) return { error: "daily_limit" as const, limit: SPRINT_DAILY_PER_SOURCE };
+    await bump(env, keys.all);
+    await bump(env, mine);
+  }
+  const detail = await sprintPick(env, db, now);
+  const pick = { trap: detail.trap, task: detail.task, referee_trap: detail.referee_trap, week: detail.week, rule: detail.rule, house_model: opts.house ?? null };
+  const id = newGauntletId();
+  const claim = opts.house ? null : await newClaimKey();
+  await db.insert(t.arenaGauntlets).values({ id, status: "open", cardFrom: null, card: null, current: 0, startedAt: now, challengeOf: null, challenge: null, claimKeyHash: claim?.hash ?? null, mode: "sprint", sprint: pick });
+  const first = { id: crypto.randomUUID(), gauntletId: id, idx: 0, task: pick.task, seed: sprintSeed(), calls: [], status: "open" as const, startedAt: now };
+  await db.insert(t.arenaGauntletBouts).values(first);
+  await bumpUsage(env, [opts.house ? "sprint:house_started" : "sprint:started"], now).catch(() => {});
+  return {
+    gauntlet_id: id,
+    mode: "sprint" as const,
+    /** ADR 0083: a Sprint is one job; its result is a Sprint result, never a Gauntlet score. */
+    sprint: { jobs: 1, tool_calls_max: SPRINT_MCP_CALLS_MAX, sandbox_tool_calls: SPRINT_TOOL_CALLS, time_limit_minutes: SPRINT_TIME_LIMIT_MS / 60_000, rules_url: `${env.PUBLIC_ORIGIN}${SPRINT_PATH}/rules`, full_gauntlet_jobs: JOBS.length },
+    jobs: [pick.task],
+    report_url: reportPath(id),
+    claim_key: claim?.key ?? null,
+    claim: claim
+      ? {
+          private: true,
+          shown_once: true,
+          optional: true,
+          where: [`${env.PUBLIC_ORIGIN}/dashboard`, "gauntlet_claim on the signed-in MCP server /mcp"],
+          not_the_share_link: true,
+          url: `${env.PUBLIC_ORIGIN}${claimPagePath(id)}#${claim.key}`,
+          url_contains_key: true,
+        }
+      : null,
+    how: "Call gauntlet_act with this gauntlet_id, a tool name from `tools` and its arguments. Call `finish` when the job is done or can't be done; the result carries the Sprint report.",
+    current: jobPayload({ id, card: null, cardFrom: null, mode: "sprint", sprint: pick }, first),
   };
 }
 
@@ -253,20 +321,20 @@ export async function gauntletAct(env: Env, id: string, tool: string, args: unkn
   if (!got) return { error: "not_found" as const };
   let { g, b } = got;
   if (g.status === "done" || !b) return { error: "gauntlet_over" as const, report: await reportOf(env, g) };
-  if (now - g.startedAt > GAUNTLET_TIME_LIMIT_MS) {
+  if (now - g.startedAt > timeLimitOf(g)) {
     g = await finishAll(env, g, b, now);
     return { error: "gauntlet_over" as const, reason: "time_limit", report: await reportOf(env, g) };
   }
-  const a = replay(b);
+  const a = replay(b, capsOf(g));
   const out = a.call(tool, args);
   const calls = [...(b.calls as CallRecord[]), { name: tool, args: (args && typeof args === "object" ? args : {}) as Record<string, unknown>, ok: out.ok }];
   if (!a.done) {
     await db.update(t.arenaGauntletBouts).set({ calls }).where(eq(t.arenaGauntletBouts.id, b.id));
     return { ok: out.ok, result: safeParse(out.content), tool_calls_left: a.caps.toolCalls - calls.length };
   }
-  const verdict = await closeBout(db, { ...b, calls }, a.result!, a, now);
-  if (b.idx + 1 < JOBS.length) {
-    const next = { id: crypto.randomUUID(), gauntletId: g.id, idx: b.idx + 1, task: JOBS[b.idx + 1]!.id, seed: seedAt(g, b.idx + 1), calls: [], status: "open" as const, startedAt: now };
+  const verdict = await closeBout(env, { ...b, calls }, a.result!, a, now);
+  if (b.idx + 1 < jobsOf(g).length) {
+    const next = { id: crypto.randomUUID(), gauntletId: g.id, idx: b.idx + 1, task: jobsOf(g)[b.idx + 1]!.id, seed: seedAt(g, b.idx + 1), calls: [], status: "open" as const, startedAt: now };
     await db.insert(t.arenaGauntletBouts).values(next);
     await db.update(t.arenaGauntlets).set({ current: next.idx }).where(eq(t.arenaGauntlets.id, g.id));
     return { ok: out.ok, result: safeParse(out.content), job_verdict: verdict, next: jobPayload(g, next) };
@@ -280,7 +348,7 @@ export async function gauntletStatus(env: Env, id: string, now = Date.now()) {
   const got = await load(db, id);
   if (!got) return { error: "not_found" as const };
   let { g, b } = got;
-  if (g.status === "open" && b && now - g.startedAt > GAUNTLET_TIME_LIMIT_MS) g = await finishAll(env, g, b, now);
+  if (g.status === "open" && b && now - g.startedAt > timeLimitOf(g)) g = await finishAll(env, g, b, now);
   if (g.status === "done" || !b) return { status: "done" as const, report: await reportOf(env, g) };
   return { status: "open" as const, current: jobPayload(g, b) };
 }
@@ -295,36 +363,47 @@ const verdictOf = (r: AttemptResult) => ({ passed: r.passed, reason: r.reason, t
 const CLAIM_KEY_ANYWHERE = /gck_[A-Za-z0-9_-]{43}/g;
 export const redactClaimKeys = <T>(v: T): T => (v == null ? v : (JSON.parse(JSON.stringify(v).replace(CLAIM_KEY_ANYWHERE, "gck_[redacted]")) as T));
 
-async function closeBout(db: Db, b: B, result: AttemptResult, a: Attempt, now: number) {
+async function closeBout(env: Env, b: B, result: AttemptResult, a: Attempt, now: number) {
+  const db = getDb(env);
+  const res = redactClaimKeys({ ...result, rules: RULES_VERSION });
+  const log = redactClaimKeys(a.log);
+  // Replay format v2 (ADR 0066): sealed over the stored (redacted) log and result. A failure never loses the job.
+  const replaySeal = await sealRun(env, { kind: "gauntlet", runId: `${b.gauntletId}/${b.idx + 1}`, model: null, rules: RULES_VERSION, taskVersion: taskVersion(b.task, now), log, result: res, signedAt: now }).catch((e) => {
+    console.warn("gauntlet_replay_seal_failed", b.id, String(e));
+    return null;
+  });
   await db
     .update(t.arenaGauntletBouts)
-    .set({ status: "done", calls: redactClaimKeys(b.calls), passed: result.passed, result: redactClaimKeys(result), log: redactClaimKeys(a.log), finishedAt: now })
+    .set({ status: "done", calls: redactClaimKeys(b.calls), passed: result.passed, result: res, log, replaySeal, finishedAt: now })
     .where(eq(t.arenaGauntletBouts.id, b.id));
   return verdictOf(result);
 }
 
 /** Time ran out: the open job ends as a time knockout, and jobs never reached count as not passed. */
-async function finishAll(env: Env, g: G, b: B, now: number) {
-  const a = replay(b);
-  const result = a.done ? a.result! : a.end("knockout_time");
-  await closeBout(getDb(env), b, result, a, now);
+async function finishAll(env: Env, g: G, b: B, now: number, reason: "knockout_time" | "knockout_turns" | "knockout_tokens" = "knockout_time") {
+  const a = replay(b, capsOf(g));
+  const result = a.done ? a.result! : a.end(reason);
+  await closeBout(env, b, result, a, now);
   return finalize(env, g, now);
 }
 
 async function finalize(env: Env, g: G, now: number): Promise<G> {
   const db = getDb(env);
   const bouts = await db.select().from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, g.id)).orderBy(asc(t.arenaGauntletBouts.idx));
-  const summary = summarise(bouts);
-  // The first run gets its own card; a measured re-run keeps the card it was given.
-  const card = g.cardFrom ? g.card : tailoredCard(summary.fell, g.id);
+  const summary = summarise(bouts, jobsOf(g));
+  // The first run gets its own card; a measured re-run keeps the card it was given; a Sprint (one job) gets none.
+  const card = g.mode === "sprint" ? null : g.cardFrom ? g.card : tailoredCard(summary.fell, g.id);
   await db.update(t.arenaGauntlets).set({ status: "done", summary, card, finishedAt: now }).where(eq(t.arenaGauntlets.id, g.id));
   // ADR 0055 owner funnel: a finished run, and whether its end-of-run result carried a claim link (claimable runs).
-  await bumpUsage(env, ["owner:run_finished", ...(g.claimKeyHash && !g.cardFrom ? ["owner:claim_link_shown"] : [])], now).catch(() => {});
+  const finished = g.mode === "sprint" ? [g.sprint?.house_model ? "sprint:house_finished" : "sprint:finished"] : ["owner:run_finished"];
+  // Review (ADR 0084): a Sprint's claim link is counted apart, so the owner funnel's six-job stages stay like for like.
+  const shown = g.claimKeyHash && !g.cardFrom ? [g.mode === "sprint" ? "sprint:claim_link_shown" : "owner:claim_link_shown"] : [];
+  await bumpUsage(env, [...finished, ...shown], now).catch(() => {});
   return { ...g, status: "done", summary, card, finishedAt: now };
 }
 
-export function summarise(bouts: Pick<B, "idx" | "task" | "result">[]): GauntletSummary {
-  const jobs: GauntletJob[] = JOBS.map((task, idx) => {
+export function summarise(bouts: Pick<B, "idx" | "task" | "result">[], list: TaskType[] = JOBS): GauntletSummary {
+  const jobs: GauntletJob[] = list.map((task, idx) => {
     const r = bouts.find((x) => x.idx === idx)?.result as AttemptResult | null | undefined;
     return {
       idx,
@@ -351,6 +430,7 @@ async function reportOf(env: Env, g: G) {
   const origin = env.PUBLIC_ORIGIN;
   const s = g.summary as GauntletSummary | null;
   if (!s) return null;
+  if (g.mode === "sprint") return sprintReport(env, g, s);
   const db = getDb(env);
   // ADR 0055: claim status and link, and the season, as data. The claim key itself is never here (ADR 0048).
   const [claimed] = await db.select({ hidden: t.gauntletClaims.hidden }).from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, g.id));
@@ -426,4 +506,61 @@ export async function sweepGauntletLogs(env: Env, now = Date.now()) {
     .set({ calls: [], log: null })
     .where(and(lt(t.arenaGauntletBouts.startedAt, now - GAUNTLET_KEEP_LOGS_MS), sql`(${t.arenaGauntletBouts.log} is not null or ${t.arenaGauntletBouts.calls} != '[]')`));
   return { cleared: res.meta?.changes ?? 0 };
+}
+
+/**
+ * ADR 0083: a finished Sprint's report, as data: the verdict, the trap the card names (public id, description, link to
+ * the Trap Set), its sandbox amount at stake (invented money), the share card, the signed replay and its verify command,
+ * the claim status, and the full Gauntlet as the upgrade. Never a Gauntlet score.
+ */
+export async function sprintReport(env: Env, g: G, s: GauntletSummary) {
+  const origin = env.PUBLIC_ORIGIN;
+  const db = getDb(env);
+  const [bout] = await db.select().from(t.arenaGauntletBouts).where(and(eq(t.arenaGauntletBouts.gauntletId, g.id), eq(t.arenaGauntletBouts.idx, 0)));
+  const job = s.jobs[0]!;
+  const o = sprintOutcome(g.sprint!, bout?.seed ?? 0, job, origin);
+  const [claimed] = await db.select({ hidden: t.gauntletClaims.hidden }).from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, g.id));
+  const claimStatus = claimed ? ("claimed" as const) : g.claimKeyHash ? ("unclaimed" as const) : ("not_claimable" as const);
+  const when = new Date(g.finishedAt ?? g.startedAt).toISOString().slice(0, 10);
+  const jsonUrl = `${origin}${reportPath(g.id)}/1.json`;
+  const kept = !!bout?.log;
+  return {
+    mode: "sprint" as const,
+    /** A Sprint result (one job), never a Gauntlet score (six jobs). */
+    not_a_gauntlet_score: true as const,
+    report_url: reportPath(g.id),
+    verdict: o.verdict,
+    job: { task: job.task, title: job.title, right: job.passed, ended: job.reason },
+    trap: o.trap,
+    featured_trap: g.sprint!.trap,
+    fell_for: o.fell_for,
+    fell_for_unlisted: o.fell_for_unlisted,
+    sandbox_at_stake: o.sandbox_at_stake,
+    card_image_url: `${origin}/og/sprint/${g.id}.png`,
+    share: { url: `${origin}${reportPath(g.id)}`, summary: `Forge Gauntlet Sprint, ${when}: ${o.card.headline}. ${o.card.stake}.` },
+    replay: {
+      url: kept ? `${origin}${reportPath(g.id)}/1` : null,
+      json_url: kept ? jsonUrl : null,
+      format: bout?.replaySeal ? ("v2" as const) : ("v1" as const),
+      verify_command: kept && bout?.replaySeal ? verifyCommand(jsonUrl) : null,
+      keys_url: `${origin}/.well-known/forge-keys.json`,
+    },
+    claim_status: claimStatus,
+    claim_url: claimStatus === "unclaimed" ? `${origin}${claimPagePath(g.id)}` : null,
+    claim_key_from: claimStatus === "unclaimed" ? "gauntlet_start" : null,
+    pick: { week: g.sprint!.week, rule: g.sprint!.rule, rules_url: `${origin}${SPRINT_PATH}/rules` },
+    house_model: g.sprint!.house_model ?? null,
+    upgrade: { mode: "full" as const, jobs: JOBS.length, start: { tool: "gauntlet_start", arguments: {} }, page: `${origin}/gauntlet` },
+    provenance: provenance("gauntlet", g.finishedAt ?? g.startedAt),
+  };
+}
+
+/**
+ * ADR 0083: ends a house Sprint whose model stopped without calling finish (out of turns or tokens), with the same
+ * knockout the model's own bout ended with. Only the house runner calls this; visitors' runs end by finish or time.
+ */
+export async function endHouseSprint(env: Env, id: string, reason: "knockout_turns" | "knockout_tokens" | "knockout_time", now = Date.now()) {
+  const got = await load(getDb(env), id);
+  if (!got || got.g.status === "done" || !got.b || got.g.mode !== "sprint" || !got.g.sprint?.house_model) return null;
+  return finishAll(env, got.g, got.b, now, reason);
 }

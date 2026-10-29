@@ -21,3 +21,4 @@ export function proofStripList(p: Gated<ProofStrip> | null, opts: { links?: bool
   });
   return items.length ? html`<ul class="proof-strip" aria-label="Live numbers">${items}</ul>` : null;
 }
+

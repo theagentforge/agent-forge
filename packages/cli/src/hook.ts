@@ -115,6 +115,8 @@ export interface HookDeps {
   /** Filled with the tools checked, for `forge report` drafts (ids and versions only). */
   noted?: NotedTool[];
   client?: string;
+  /** Extra request headers (the B3-09 install ID), asked for once and only when the command installs something. */
+  headers?: () => Promise<Record<string, string>>;
 }
 
 type Answer = VerdictInput & CheckAnswerLike & { tool: { id: string; kind?: string } | null; fingerprint?: string | null };
@@ -133,13 +135,14 @@ export async function hookAnswer(client: HookClient, stdin: string, deps: HookDe
     if (!refs.length) return c.allow;
     // One deadline for the whole check, so several packages still answer within the timeout.
     const signal = AbortSignal.timeout(deps.timeoutMs ?? HOOK_TIMEOUT_MS);
+    const extra = (await deps.headers?.().catch(() => ({}))) ?? {};
     const results = await Promise.all(
       refs.map(async (ref) => {
         const { id } = ref;
         try {
           // The pinned version (npm name@1.2.3, pip name==1.2.3) lets an advisory for that version flag it.
           const res = await deps.fetch(`${deps.origin}/api/v1/check?${checkParams(ref)}`, {
-            headers: { Accept: "application/json", "User-Agent": deps.userAgent },
+            headers: { ...extra, Accept: "application/json", "User-Agent": deps.userAgent },
             signal,
           });
           if (!res.ok) return null;

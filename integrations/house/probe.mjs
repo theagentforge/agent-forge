@@ -4,6 +4,8 @@
 // Usage:
 //   node probe.mjs plan [count]                 → plan.json: the `count` most-downloaded candidates (ADR 0011 b)
 //   node probe.mjs run plan.json <shard> <of>   → results.json for one shard of the plan
+//   node probe.mjs sweep-plan [day]             → plan.json: today's seventh of EVERY no-setup npm and PyPI server
+//                                                 (weekly rotation, ADR 0108; day = 0–6, default from the UTC date)
 //   node probe.mjs [count]                      → legacy: a rotating slice of the registry
 // MASTER_PLAN §7.2; docs/runbooks/house-tester.md
 import { spawn } from "node:child_process";
@@ -32,6 +34,27 @@ export function candidateFrom(entry) {
   if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(p.identifier)) return null;
   const version = p.version && /^[A-Za-z0-9][A-Za-z0-9.+_-]*$/.test(p.version) && p.version !== "latest" ? p.version : null;
   return { registryName: s.name, pkg: p.identifier.toLowerCase(), version };
+}
+
+/** PEP 503 name: lower case, runs of "-", "_" and "." become one "-". */
+export const pep503 = (name) => String(name).toLowerCase().replace(/[-_.]+/g, "-");
+const PYPI_NAME = /^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$/i;
+
+/**
+ * A PyPI, stdio package that needs no required environment variables or arguments (ADR 0108). It runs with `uvx`, the
+ * launcher the registry lists for Python servers. The name is normalised (PEP 503); anything else is skipped.
+ */
+export function pypiCandidateFrom(entry) {
+  const s = entry?.server;
+  if (!s?.name) return null;
+  if (entry._meta?.["io.modelcontextprotocol.registry/official"]?.status === "deleted") return null;
+  const p = (s.packages ?? []).find((x) => (x.registryType ?? x.registry_type) === "pypi" && x.identifier);
+  if (!p || !PYPI_NAME.test(p.identifier)) return null;
+  if (p.transport?.type && p.transport.type !== "stdio") return null;
+  const required = (xs) => (xs ?? []).some((x) => x.isRequired && x.value === undefined && x.default === undefined);
+  if (required(p.environmentVariables) || required(p.packageArguments) || required(p.runtimeArguments)) return null;
+  const version = p.version && /^[0-9][A-Za-z0-9.+_!-]{0,63}$/.test(p.version) ? p.version : null;
+  return { registry: "pypi", registryName: s.name, pkg: pep503(p.identifier), version };
 }
 
 async function getJson(u, fetcher, tries = 3) {
@@ -82,7 +105,7 @@ export async function pickCandidates(count, dayIndex, fetcher = fetch) {
  * Every candidate in the registry (deduplicated by package), for ranking by popularity. 450 pages of 100 covers the
  * whole registry (about 37,000 entries in Oct 2026); 120 pages only reached the first third.
  */
-export async function allCandidates(fetcher = fetch, maxPages = 450) {
+export async function allCandidates(fetcher = fetch, maxPages = 450, { pypi = false } = {}) {
   const out = [];
   const seen = new Set();
   let cursor = null;
@@ -99,12 +122,26 @@ export async function allCandidates(fetcher = fetch, maxPages = 450) {
         seen.add(c.pkg);
         out.push(c);
       }
+      const py = pypi ? pypiCandidateFrom(e) : null;
+      if (py && !seen.has(`pypi:${py.pkg}`)) {
+        seen.add(`pypi:${py.pkg}`);
+        out.push(py);
+      }
     }
     cursor = data.metadata?.nextCursor;
     if (!cursor) break;
   }
   return out;
 }
+
+export const SWEEP_DAYS = 7;
+/** Which day of the weekly rotation a server belongs to: a hash of its id, so the split is stable as the registry grows. */
+export const sweepDay = (c) => createHash("sha256").update(`${c.registry ?? "npm"}:${c.pkg}`).digest().readUInt32BE(0) % SWEEP_DAYS;
+/** Today's seventh of the candidates (every server once a week), in a stable order. */
+export const sweepSlice = (candidates, day) =>
+  candidates.filter((c) => sweepDay(c) === day).sort((a, b) => (a.registry ?? "npm").localeCompare(b.registry ?? "npm") || a.pkg.localeCompare(b.pkg));
+/** The rotation day for a time: days since 1970 (UTC), modulo 7. */
+export const sweepDayFor = (ms) => Math.floor(ms / 86_400_000) % SWEEP_DAYS;
 
 /**
  * Last week's npm downloads per package. Unscoped names go 128 at a time through npm's bulk endpoint; scoped names
@@ -175,8 +212,46 @@ export async function npmVersion(pkg, version, fetcher = fetch) {
   return { version: meta.version, fingerprint: `sha256:${sha256(meta.dist.integrity)}` };
 }
 
+/** The version a PyPI file name carries (wheel or sdist), given the project's PEP 503 name; null if it doesn't parse. */
+export function versionFromFilename(filename, name) {
+  const f = String(filename);
+  const stem = f.replace(/\.(tar\.gz|zip|whl)$/i, "");
+  if (stem === f) return null;
+  const parts = stem.split("-");
+  // The project name may itself contain "-" (sdists) or "_" (wheels): take the parts that make up the name.
+  for (let i = 1; i < parts.length; i++) {
+    if (pep503(parts.slice(0, i).join("-")) === name) return parts[i] || null;
+  }
+  return null;
+}
+
+/**
+ * The exact published version (the registry's, or the newest upload) and a fingerprint of its files: sha256 over the
+ * sorted sha256 digests PyPI publishes for that version. One read of the project's index page, as any installer does.
+ */
+export async function pypiVersion(pkg, version, fetcher = fetch) {
+  const res = await fetcher(`https://pypi.org/simple/${encodeURIComponent(pep503(pkg))}/`, {
+    headers: { Accept: "application/vnd.pypi.simple.v1+json", "User-Agent": "theagentforge-house-tester (+https://theagentforge.io/reports/house)" },
+  });
+  if (res.status === 404) return { missing: true };
+  if (!res.ok) throw new Error(`pypi ${res.status}`);
+  const meta = await res.json();
+  const files = (Array.isArray(meta.files) ? meta.files : []).filter((f) => !f.yanked && typeof f.hashes?.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.hashes.sha256));
+  const withVersion = files.map((f) => ({ ...f, v: versionFromFilename(f.filename, pep503(pkg)) })).filter((f) => f.v);
+  let v = version;
+  if (!v) {
+    const newest = [...withVersion].sort((a, b) => String(b["upload-time"] ?? "").localeCompare(String(a["upload-time"] ?? "")))[0];
+    v = newest?.v ?? null;
+  }
+  const mine = withVersion.filter((f) => f.v === v);
+  if (!v || !mine.length) return { missing: true };
+  return { version: v, fingerprint: `sha256:${sha256(mine.map((f) => f.hashes.sha256).sort().join("\n"))}` };
+}
+
 const NEEDS_CONFIG = /(api[_ -]?key|access[_ -]?token|\btoken\b|credential|unauthori[sz]ed|environment variable|env var|is required|must be set|not set|missing required|usage:|--help)/i;
-const INSTALL_FAILED = /(npm (ERR|error)!? code (E404|ETARGET|EINVALIDPACKAGENAME)|404 Not Found|No matching version|notarget)/i;
+const INSTALL_FAILED = /(npm (ERR|error)!? code (E404|ETARGET|EINVALIDPACKAGENAME)|404 Not Found|No matching version|notarget|No solution found when resolving|Failed to (build|download|fetch)|not found in the package registry)/i;
+/** uvx found the package but it has no command of that name (the registry gave no other): not the server's failure. */
+const NO_COMMAND = /An executable named `[^`]+` is not provided by package/i;
 
 /**
  * Turns what happened into a report, or null when the honest answer is "can't tell" (the server wants config we
@@ -193,23 +268,65 @@ export function classify(r) {
 }
 
 /** Why there's no report for a result: it asked for configuration, or it never answered the handshake. */
-export const skipReason = (r) => (NEEDS_CONFIG.test(r.stderr) ? "needs_config" : "no_answer");
+export const skipReason = (r) => (NO_COMMAND.test(r.stderr) ? "no_command" : NEEDS_CONFIG.test(r.stderr) ? "needs_config" : "no_answer");
 
-/** Starts one server with npx and speaks just enough MCP to list its tools. */
-export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = []) {
+/** Caps on what we keep from tools/list (ADR 0108): enough to scan, never a whole server's dump. */
+export const TOOL_CAPS = { tools: 100, name: 128, description: 2_000, schema: 4_000, total: 65_536 };
+
+/**
+ * The tools a server listed, kept as plain strings and capped: name, description, and the input schema as JSON text
+ * (dropped when longer than the cap). Untrusted text: it is only stored and scanned, never followed.
+ */
+export function keepTools(tools, caps = TOOL_CAPS) {
+  const out = [];
+  let total = 0;
+  for (const t of Array.isArray(tools) ? tools.slice(0, caps.tools) : []) {
+    const name = typeof t?.name === "string" ? t.name.slice(0, caps.name) : "";
+    if (!name) continue;
+    const description = typeof t.description === "string" ? t.description.slice(0, caps.description) : "";
+    let schema = null;
+    try {
+      const j = t.inputSchema === undefined ? null : JSON.stringify(t.inputSchema);
+      schema = j && j.length <= caps.schema ? j : null;
+    } catch {}
+    const size = name.length + description.length + (schema?.length ?? 0);
+    if (total + size > caps.total) break;
+    total += size;
+    out.push({ name, description, schema });
+  }
+  return out;
+}
+
+/**
+ * The command that starts a server: `npx -y pkg@version` for npm, `uvx pkg@version` for PyPI (uv's own syntax). Start
+ * arguments come only from PRIORITY (constants in this file), never from the registry.
+ */
+export function launcher(registry, pkg, version, args = []) {
+  const safe = args.filter((x) => typeof x === "string" && /^[\w./-]{1,64}$/.test(x));
+  return registry === "pypi" ? ["uvx", [`${pkg}@${version}`, ...safe]] : ["npx", ["-y", `${pkg}@${version}`, ...safe]];
+}
+
+/** Starts one server with npx (or uvx) and speaks just enough MCP to list its tools. */
+export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [], registry = "npm") {
   return new Promise((resolve) => {
     const dir = mkdtempSync(join(tmpdir(), "house-"));
     const started = Date.now();
-    // Start arguments come only from PRIORITY (constants in this file), never from the registry.
-    const child = spawn("npx", ["-y", `${pkg}@${version}`, ...args.filter((x) => typeof x === "string" && /^[\w./-]{1,64}$/.test(x))], {
+    const [cmd, argv] = launcher(registry, pkg, version, args);
+    const child = spawn(cmd, argv, {
       cwd: dir,
       // A clean environment: no tokens or secrets reach the server. Proxy settings pass through where they exist.
+      // uv keeps its cache, tools and any Python it downloads inside the scratch folder too.
       env: {
         PATH: process.env.PATH,
         HOME: dir,
         CI: "1",
         npm_config_cache: join(dir, ".npm"),
         npm_config_update_notifier: "false",
+        UV_CACHE_DIR: join(dir, ".uv-cache"),
+        UV_TOOL_DIR: join(dir, ".uv-tools"),
+        UV_PYTHON_INSTALL_DIR: join(dir, ".uv-python"),
+        UV_PYTHON_PREFERENCE: "system",
+        UV_NO_CONFIG: "1",
         ...Object.fromEntries(
           ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
             .filter((k) => process.env[k])
@@ -257,7 +374,7 @@ export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [])
         } else if (msg.id === 2) {
           if (msg.result && Array.isArray(msg.result.tools)) {
             result.toolsListed = msg.result.tools.length;
-            result.tools = msg.result.tools.map((t) => String(t?.name ?? "")).slice(0, 100);
+            result.tools = keepTools(msg.result.tools);
           }
           clearTimeout(timer);
           finish();
@@ -295,17 +412,23 @@ async function pool(items, size, fn) {
   return out;
 }
 
+export async function probeOne(c, { npm = npmVersion, pypi = pypiVersion, shake = handshake } = {}) {
+  const py = c.registry === "pypi";
+  const v = await (py ? pypi : npm)(c.pkg, c.version);
+  if (v.missing) return { ...c, outcome: "skip", why: py ? "not_on_pypi" : "not_on_npm" };
+  const r = await shake(c.pkg, v.version, PROBE_TIMEOUT_MS, Array.isArray(c.args) ? c.args : [], py ? "pypi" : "npm");
+  const verdict = classify(r);
+  console.log(`${py ? "pypi:" : ""}${c.pkg}@${v.version}: ${verdict ? `${verdict.outcome} (${r.toolsListed ?? 0} tools, ${r.ms} ms)` : `skipped (${skipReason(r)})`}`);
+  const tools = verdict?.outcome === "worked" && Array.isArray(r.tools) && r.tools.length ? { tools: r.tools } : {};
+  return verdict
+    ? { ...c, version: v.version, fingerprint: v.fingerprint, ms: r.ms, ...verdict, ...tools }
+    : { ...c, version: v.version, fingerprint: v.fingerprint, ms: r.ms, outcome: "skip", why: skipReason(r) };
+}
+
 async function probeAll(candidates) {
   return pool(candidates, 4, async (c) => {
     try {
-      const v = await npmVersion(c.pkg, c.version);
-      if (v.missing) return { ...c, outcome: "skip", why: "not_on_npm" };
-      const r = await handshake(c.pkg, v.version, PROBE_TIMEOUT_MS, Array.isArray(c.args) ? c.args : []);
-      const verdict = classify(r);
-      console.log(`${c.pkg}@${v.version}: ${verdict ? `${verdict.outcome} (${r.toolsListed ?? 0} tools, ${r.ms} ms)` : `skipped (${skipReason(r)})`}`);
-      return verdict
-        ? { ...c, version: v.version, fingerprint: v.fingerprint, ms: r.ms, ...verdict }
-        : { ...c, version: v.version, fingerprint: v.fingerprint, ms: r.ms, outcome: "skip", why: skipReason(r) };
+      return await probeOne(c);
     } catch (e) {
       return { ...c, outcome: "skip", why: "error" };
     }
@@ -327,6 +450,15 @@ async function main() {
     const plan = withPriority(rankTop(candidates, downloads, count), count);
     writeFileSync("plan.json", JSON.stringify(plan, null, 2));
     console.log(`Planned ${plan.length} of ${candidates.length} candidates`);
+    return;
+  }
+  if (mode === "sweep-plan") {
+    const day = rest[0] !== undefined && rest[0] !== "" ? Number(rest[0]) % SWEEP_DAYS : sweepDayFor(Date.now());
+    const candidates = await allCandidates(fetch, 450, { pypi: true });
+    const plan = sweepSlice(candidates, day);
+    writeFileSync("plan.json", JSON.stringify(plan, null, 2));
+    const py = plan.filter((c) => c.registry === "pypi").length;
+    console.log(`Sweep day ${day}: planned ${plan.length} (${plan.length - py} npm, ${py} PyPI) of ${candidates.length} candidates`);
     return;
   }
   if (mode === "run") {

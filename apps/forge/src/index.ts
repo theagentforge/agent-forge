@@ -9,22 +9,32 @@ import { auth } from "./auth";
 import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { type InternalComponent, internalOf } from "./services/internal";
+import { identifyKey } from "./services/api-keys";
 import { seedRun } from "./seed/mcp-registry";
+import { seedPypiMcp } from "./seed/pypi-mcp";
+import { seedSmithery } from "./seed/smithery";
 import { seedReferenceServers } from "./seed/reference-servers";
 import { seedAiStack } from "./seed/ai-stack";
 import { refreshCatalog } from "./arena/catalog";
 import { arenaTick } from "./arena/runner";
+import { queueFreeLane } from "./arena/free-lane-queue";
 import { rescoreTick } from "./arena/rescore-job";
 import { refreshClipIndex } from "./arena/clips";
 import { sweepGauntletLogs } from "./arena/gauntlet";
+import { sweepInstallIds } from "./services/install-ids";
+import { houseSprint } from "./arena/sprint-house";
 import { writeSeasonSnapshot } from "./arena/season";
 import { importSkillSeed, releaseHeldScans } from "./services/skill-seed";
+import { weeklyExport } from "./services/bulk-export";
+import { bulkScanTick } from "./services/bulk-scan-cron";
+import { weeklyR2Backup } from "./services/backup";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
 import { getDb } from "./services/db";
 import { writeLadderSnapshot } from "./services/digest";
 import { runMoltbookReplies } from "./social/moltbook-replies";
 import { notFound, site } from "./web/pages";
+import { syncOwners } from "./services/owners";
 import "./web/static-pages";
 import "./web/about";
 import "./web/teams";
@@ -32,19 +42,30 @@ import "./web/legal";
 import "./web/publications";
 import "./web/admin-moltbook";
 import "./web/admin-kpis";
+import "./web/admin-data-room";
+import "./web/admin-backup";
 import "./web/admin-review";
 import "./web/admin-arena-panel";
 import "./web/admin-arena-rescore";
+import "./web/admin-arena-held";
 import "./web/arena";
 import "./web/arena-fans";
 import "./web/arena-proving";
 import "./web/gauntlet";
+import "./web/sprint";
 import "./web/gauntlet-season";
 import "./web/scan";
 import "./web/arena-agent";
+import "./web/agent-index";
 import "./web/arena-methodology";
+import "./web/benchmark";
+import "./web/benchmark-versions";
+import "./web/reliability-report";
 import "./web/croissant";
+import "./web/dataset-sample";
+import "./web/dataset-spec";
 import "./web/results-policy";
+import "./web/security";
 import "./web/arena-history";
 import "./web/arena-clip";
 import "./web/arena-failures";
@@ -56,8 +77,12 @@ import "./web/registry";
 import "./web/house-report";
 import "./web/trap-card";
 import "./web/connect";
+import "./web/stats";
 import "./web/contribute";
 import "./web/dashboard";
+import "./web/founding";
+import "./web/welcome";
+import "./web/admin-owners";
 import "./web/digest-feed";
 import "./web/publishers";
 import "./web/og";
@@ -67,6 +92,10 @@ import "./web/answers";
 import "./web/skills-index";
 import "./web/receipt";
 import "./web/openapi";
+import "./web/osv-feed";
+import "./web/admin-costs";
+import "./web/pricing";
+import "./web/admin-usage";
 import { CARD_PATHS } from "./web/discovery";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
@@ -127,6 +156,13 @@ export default {
       // Awaited, not waitUntil: work left to waitUntil after the handler returns gets about 30 seconds, which cut each
       // tick to ~3 bouts. A Cron Trigger itself may run for 15 minutes; arenaTick stops after 10, and its lock prevents
       // overlap with the next tick.
+      // B3-13 (ADR 0109): the free-model lane's practice bouts, queued before the tick plays the queue.
+      try {
+        const q = await queueFreeLane(env, controller.scheduledTime);
+        if (q.or || q.wai) console.log("arena_free_lane_queued", JSON.stringify(q));
+      } catch (e) {
+        console.error("arena_free_lane_not_queued", String(e));
+      }
       try {
         console.log("arena_tick", JSON.stringify(await arenaTick(env)));
       } catch (e) {
@@ -141,6 +177,12 @@ export default {
       }
       return;
     }
+    // B3-11 (ADR 0112): the bulk skill scan's hourly slice (a few minutes, at most 600 files), started first and awaited
+    // at the end, so it runs alongside the rest of this hour's work. Awaited, not waitUntil: it outlasts waitUntil's ~30 s.
+    const bulkScan = bulkScanTick(env).then(
+      (r) => r.ran && console.log("bulk_scan", JSON.stringify(r)),
+      (e) => console.error("bulk_scan_failed", String(e).slice(0, 200)),
+    );
     ctx.waitUntil(
       refreshCatalog(env).then(
         (n) => console.log("arena_catalog", n),
@@ -152,6 +194,13 @@ export default {
         writeSnapshot(env, controller.scheduledTime).then(
           (r) => console.log("proof_snapshot", JSON.stringify(r)),
           (e) => console.error("proof_snapshot_failed", String(e)),
+        ),
+      );
+      // B3-09 (ADR 0103): anonymous install IDs are deleted 400 days after they were last seen.
+      ctx.waitUntil(
+        sweepInstallIds(env, controller.scheduledTime).then(
+          (r) => console.log("install_id_sweep", JSON.stringify(r)),
+          (e) => console.error("install_id_sweep_failed", String(e)),
         ),
       );
     }
@@ -193,6 +242,20 @@ export default {
         (e) => console.error("seed_failed", String(e)),
       ),
     );
+    // B3-14 (ADR 0108): the rest of the tools-tracked census. PyPI's sitemap (a few buckets an hour, only changed ones,
+    // once a week) and Smithery's registry API (off until the SMITHERY_API_KEY secret is set). New names only are written.
+    ctx.waitUntil(
+      seedPypiMcp(env, controller.scheduledTime).then(
+        (r) => "buckets" in r && console.log("seed_pypi_mcp", JSON.stringify(r)),
+        (e) => console.error("seed_pypi_mcp_failed", String(e)),
+      ),
+    );
+    ctx.waitUntil(
+      seedSmithery(env, controller.scheduledTime).then(
+        (r) => "pages" in r && console.log("seed_smithery", JSON.stringify(r)),
+        (e) => console.error("seed_smithery_failed", String(e)),
+      ),
+    );
     ctx.waitUntil(
       refreshClipIndex(env).then(
         (r) => console.log("clip_index", JSON.stringify(r)),
@@ -217,11 +280,44 @@ export default {
         (e) => console.error("gauntlet_sweep_failed", String(e)),
       ),
     );
+    // ADR 0083: the house agent's one Sprint a day (labelled house), after 09:00 UTC. Awaited, not waitUntil: a bout
+    // can outlast the ~30 seconds waitUntil gets after the handler returns.
+    if (new Date(controller.scheduledTime).getUTCHours() >= 9) {
+      try {
+        console.log("house_sprint", JSON.stringify(await houseSprint(env, controller.scheduledTime)));
+      } catch (e) {
+        console.error("house_sprint_failed", String(e));
+      }
+    }
+    // AQ-03 (ADR 0095): the week's pseudonymised bulk export for the private data room, once per ISO week.
+    ctx.waitUntil(
+      weeklyExport(env, controller.scheduledTime).then(
+        (r) => r.written && console.log("bulk_export", JSON.stringify(r)),
+        (e) => console.error("bulk_export_failed", String(e)),
+      ),
+    );
+    // B3-08 (ADR 0102): the weekly off-site copy to R2. Off (returns at once) until the BACKUPS binding is added.
+    // Awaited, not waitUntil: the dump can take longer than the ~30 s waitUntil gets after the handler returns.
+    if (env.BACKUPS) {
+      try {
+        const r = await weeklyR2Backup(env, controller.scheduledTime);
+        if ("written" in r && r.written) console.log("backup_r2", JSON.stringify(r));
+      } catch (e) {
+        console.error("backup_r2_failed", String(e));
+      }
+    }
     // ADR 0055: Gauntlet Season 1's weekly snapshot, frozen once at the end of each season week.
     ctx.waitUntil(
       writeSeasonSnapshot(env, controller.scheduledTime).then(
         (r) => r.written && console.log("season_snapshot", JSON.stringify(r)),
         (e) => console.error("season_snapshot_failed", String(e)),
+      ),
+    );
+    // ADR 0073: pending claims of people verified since, new owners and owner numbers (also done on each sign-in).
+    ctx.waitUntil(
+      syncOwners(env, controller.scheduledTime).then(
+        (r) => (r.promoted || r.new_owners || r.numbered) && console.log("sync_owners", JSON.stringify(r)),
+        (e) => console.error("sync_owners_failed", String(e)),
       ),
     );
     // V5: one Ranked Ladder snapshot a day (written once), so the weekly digest can show rank moves.
@@ -245,7 +341,13 @@ export default {
       return r.ok ? r.text() : null;
     };
     // Production only: staging shares no comments with it, and two Workers answering the same thread would double up.
-    if (env.ENVIRONMENT === "production") console.log("moltbook_replies", JSON.stringify(await runMoltbookReplies(env, readPage)));
+    // The bulk scan's slice is awaited even if the replies throw: a handler that ends early would cut the slice off
+    // before it saves its place, and the next hour would redo the same files (ADR 0115).
+    try {
+      if (env.ENVIRONMENT === "production") console.log("moltbook_replies", JSON.stringify(await runMoltbookReplies(env, readPage)));
+    } finally {
+      await bulkScan;
+    }
   },
   fetch(request, env, ctx) {
     // The anonymous, read-only MCP endpoint (ADR 0017 §3) is answered before the OAuth provider, which would
@@ -293,7 +395,13 @@ export default {
     if (path === PUBLIC_MCP_ROUTE || path.startsWith(`${PUBLIC_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return internalOf(request).then((internal) => counted("public", publicMcpHandler(env, ip, internal)(request, env, ctx), copy, internal));
+      // ADR 0110: an API key (Authorization: Bearer forge_sk_…) is checked once per request; each check, scan, watch or
+      // exposure call in it is then metered per key. A bad key is refused here; without one nothing changes.
+      return identifyKey(env, request.headers).then((id) => {
+        if (id.kind === "refused") return new Response(JSON.stringify(id.body), { status: id.status, headers: { "Content-Type": "application/json", ...id.headers } });
+        const keyed = id.kind === "key" ? { key: id.key, ctx } : null;
+        return internalOf(request).then((internal) => counted("public", publicMcpHandler(env, ip, internal, keyed)(request, env, ctx), copy, internal));
+      });
     }
     if (path === GAUNTLET_MCP_ROUTE || path.startsWith(`${GAUNTLET_MCP_ROUTE}/`)) {
       const copy = copyIfPost();

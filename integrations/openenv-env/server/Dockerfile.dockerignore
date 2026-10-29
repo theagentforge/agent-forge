@@ -1,0 +1,8 @@
+# The build context is integrations/ (see server/Dockerfile): send only this environment and the shared port.
+*
+!openenv-env
+!verifiers-env/forge_arena_dev
+**/__pycache__
+**/.venv
+**/*.pyc
+**/*.egg-info

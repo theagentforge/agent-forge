@@ -19,6 +19,8 @@ export const COUNTER_MINIMUMS = {
   weekly_reporting_agents: 10,
   humans: 10,
   verified_humans: 10,
+  /** ADR 0073 (D12): owners whose agent did something in the last 30 days, shown next to verified people. */
+  active_owners_30d: 10,
   agents: 10,
   reports: 10,
   reports_last_24h: 10,
@@ -82,3 +84,31 @@ export function gate<T extends Partial<Record<CounterKey, number>>>(values: T): 
   }
   return { ...(out as { [K in keyof T]: number | null }), below_minimum: below, minimums };
 }
+
+// B3-04 (ADR 0099, Dinike 29 Oct: "Hide small rows"). Some public /stats rows are gross totals (our own accounts and
+// tests included) that are still small. Each such row is left out of /stats, /stats.json and /api/v1/stats until its
+// gross value reaches the minimum below, then appears by itself; nothing says a row is hidden, and the counting rules
+// (/stats/rules) publish each minimum with the line "rows appear once they pass the minimum". Same pattern as
+// COUNTER_MINIMUMS above, but these are gross numbers, never outside-only ones. The big gross totals have no minimum.
+// /admin/kpis and the data room still show every row.
+export const PUBLIC_ROW_MINIMUMS = {
+  /** Gauntlet runs finished (six jobs), anyone. */
+  gauntlet_runs_finished: 25,
+  /** Gauntlet Sprints finished (one job), anyone. */
+  gauntlet_sprints_finished: 25,
+  /** People signed in, our own accounts included. */
+  signed_in_people: 50,
+  /** Agents linked to a signed-in person, our own test agents included. */
+  signed_in_agents: 50,
+  /** Each install-check row (checked, would block, advisory; last 7 days and all time), and the home band's total. */
+  install_checks: 25,
+} as const;
+
+export type PublicRowKey = keyof typeof PUBLIC_ROW_MINIMUMS;
+
+/** The line the counting rules give with every minimum. */
+export const ROWS_APPEAR_TEXT = "Rows appear once they pass the minimum.";
+
+/** True when a public row may be shown: its gross value has reached the row's minimum. */
+export const rowShown = (key: PublicRowKey, value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= PUBLIC_ROW_MINIMUMS[key];

@@ -123,7 +123,10 @@ describe("findable from each other, and nothing dead", () => {
     const locs = new Set([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]!.slice(ORIGIN.length)));
     for (const p of PUBLICATIONS.filter((x) => x.live)) expect(locs.has(p.path), p.path).toBe(true);
     const pages = [...(await llms()).matchAll(/\]\((\/[^)\s?#]*)\)/g)].map((m) => m[1]!).filter((p) => !/\.[a-z]+$/.test(p) && !p.startsWith("/.well-known") && !p.startsWith("/api/"));
-    for (const p of new Set(pages)) expect(locs.has(p), p).toBe(true);
+    // Gated pages (ADR 0094: /agents is noindex and out of the sitemap until 10 outside owners show a run).
+    // ADR 0110: /pricing is noindex while PRICING_MODE is "keys", and /dashboard/keys is a signed-in page.
+    const gated = new Set(["/agents", "/pricing", "/dashboard/keys"]);
+    for (const p of new Set(pages)) if (!gated.has(p)) expect(locs.has(p), p).toBe(true);
   });
 
   it("the API catalog, the agent card and every page's Link header point at the other discovery files", async () => {

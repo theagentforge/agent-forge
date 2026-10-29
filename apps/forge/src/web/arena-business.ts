@@ -1,6 +1,8 @@
 import { PUBLIC_NAME, VERDICT_RUNS } from "@forge/arena";
 import type { Context } from "hono";
 import { html } from "hono/html";
+import { CURRENT_RULES_PATH } from "../arena/rules-label";
+import { rulesLine } from "./arena-failures";
 import { BUSINESS_RULES, businessBoard, cellJson, MIN_CELL_ATTEMPTS, toCsv, type BizCell, type BusinessBoard } from "../arena/business";
 import { parseFailTier, type FailTier } from "../arena/failures";
 import { getDb } from "../services/db";
@@ -30,6 +32,10 @@ export function businessData(b: BusinessBoard) {
     attempts: b.attempts,
     knockouts: b.knockouts,
     rules: BUSINESS_RULES,
+    /** F-01 (ADR 0082): the referee rules versions that scored the counted attempts (every version is pooled here). */
+    rules_versions: Object.fromEntries(b.rulesVersions.map((v) => [v.version, v.attempts])),
+    rules_pooled: b.rules === null,
+    current_rules_results: CURRENT_RULES_PATH,
     models: b.models,
     events: b.events.map((e) => ({ slug: e.slug, url: `/arena/event/${e.slug}` })),
     overall: cellJson(b.overall),
@@ -62,6 +68,9 @@ const TABLE_HEAD = html`<thead><tr><th scope="col">Model</th><th scope="col" cla
 
 export const METHOD_NOTE = html`<p>Every number comes from the Arena's referee, never from what an AI said. Only ranked bouts count (headline and guest events), not practice runs, prompt experiments, models whose results aren't published yet or events still being checked. An attempt counts in a group when one of the group's planted traps was in its job, and it <b>broke policy</b> when the referee found one of those traps sprung in the sandbox's end state or its log of tool calls. An attempt that ran out of time, tokens, turns or tool calls is shown as <b>ran out</b>: it's left out of the attempts and the break rate and never counted as a break (those still show on <a href="/arena/failures">the failure board</a>). Each rate has a 95% Wilson interval, which treats attempts as independent; a model gets 3 attempts at the same version of a job, so the real uncertainty is a little wider. Cells with fewer than ${MIN_CELL_ATTEMPTS} attempts say "too few", and under ${VERDICT_RUNS} they're marked Early read.</p>`;
 
+/** F-01: which rules versions scored these attempts (pooled here), and where the current rules are kept apart. */
+const bizRulesLine = (b: BusinessBoard) => rulesLine(b.rulesVersions.map((v) => ({ version: v.version, n: v.attempts })).reverse());
+
 function tierLinks(tier: FailTier) {
   const link = (t: FailTier) => html`<a class="btn chamfer${t === tier ? " primary" : ""}" href="${BUSINESS_PATH}${tierQuery(t)}"${t === tier ? html` aria-current="page"` : ""}>${TIER_NAME[t]}</a>`;
   return html`<nav class="presets tier-switch" aria-label="Tier">${link("all")}${link("normal")}${link("hard")}</nav>`;
@@ -92,6 +101,7 @@ site.get(BUSINESS_PATH, async (c) => {
 <h1 class="page-title">How often do AI agents break business policy?</h1>
 <p class="lead">The Arena's refereed results, grouped by the kind of business task: how many attempts, the share that broke a business rule by falling for a planted trap, and replays you can watch.${b.asOf ? ` Ranked results to ${fmtDay(b.asOf)}.` : ""}</p>
 ${b.attempts && b.overall.shown ? html`<p><b>All models, all groups: ${pct(b.overall.rate!)}</b> of ${b.attempts} attempts broke policy (95% ${pct(b.overall.ci![0])}–${pct(b.overall.ci![1])}); ${b.knockouts} more ran out.</p>` : ""}
+${bizRulesLine(b)}
 ${tierLinks(tier)}
 <h2 id="method">How it's counted</h2>
 ${METHOD_NOTE}
@@ -134,6 +144,7 @@ site.get(BUSINESS_REPORT_PATH, async (c) => {
 <p class="lead">This page is computed live from the Arena's referee results each time it loads, so the numbers change as new ranked events are published. Cite it with the data date above.</p>
 
 <h2 id="headline">Headline numbers</h2>
+${bizRulesLine(b)}
 ${b.attempts && b.overall.shown
   ? html`<ul>
 <li><b>${pct(b.overall.rate!)}</b> of ${b.attempts} refereed attempts broke a business rule (95% interval ${pct(b.overall.ci![0])}–${pct(b.overall.ci![1])}), across ${b.models.length} ${b.models.length === 1 ? "model" : "models"}. ${b.knockouts} further ${b.knockouts === 1 ? "attempt" : "attempts"} ran out of time or moves and ${b.knockouts === 1 ? "is" : "are"} counted apart.</li>

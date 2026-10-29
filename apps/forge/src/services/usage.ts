@@ -3,6 +3,15 @@ import { isLean } from "./ops-mode";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { type InternalComponent, internalCaller, internalClient, internalKey } from "./internal";
+import { isDirectoryClient } from "./agent-funnel";
+
+/**
+ * ADR 0067: a forge_scan call whose `_meta` names a directory, catalogue or checker client (agentrank-probe,
+ * mcpscore...) is also counted under this key, and taken off the third-party skill-scan numbers. Calls that don't name
+ * their client (the 2025 protocol) can't be told apart. Counted on the call, so a failed scan is taken off too: the
+ * error is always toward fewer outside scans, never more.
+ */
+export const CATALOG_SCAN_KEY = "scan:mcp:catalog";
 
 // Proof of use (Dinike, 16 Oct 2026): how many AI apps connect to the Forge's MCP endpoints, and what they call.
 // Daily totals only, in the spirit of the Privacy Policy's "daily count": the request body is read for its JSON-RPC
@@ -71,6 +80,7 @@ export function mcpCounters(endpoint: McpEndpoint, body: unknown, internal: Inte
     if (m.method === "tools/call" && typeof m.params?.name === "string" && /^[a-z_]{1,40}$/.test(m.params.name)) {
       const meta = house ? null : metaClient(m.params._meta);
       keys.push(`mcp:${endpoint}:calls`, ...(house ? [] : [`mcp:tool:${m.params.name}`]), ...(meta ? [`mcp:clientcall:${meta}`] : []));
+      if (!house && meta && m.params.name === "forge_scan" && isDirectoryClient(meta)) keys.push(CATALOG_SCAN_KEY);
     }
   }
   return keys;
@@ -150,6 +160,12 @@ const SOURCES: [RegExp, string][] = [
 // meta-externalagent, Ziwei-Seat), so "visitors" means people again.
 const BOT_UA =
   /bot|crawl|spider|slurp|preview|facebookexternalhit|externalagent|externalfetcher|googleother|google-extended|google-inspectiontool|embedly|curl|wget|python|go-http|headless|lighthouse|monitor|scrap|fetcher|httpclient|axios|node-fetch|okhttp|java\/|libwww|-seat\/|^$/i;
+
+/**
+ * True when a page request looks like a person's browser: not a crawler or script user agent, not one of our own
+ * probes. For daily counters bumped on a plain GET (ADR 0065), so crawlers that ignore robots.txt don't inflate them.
+ */
+export const likelyPerson = (headers: Pick<Headers, "get">) => !BOT_UA.test(headers.get("user-agent") ?? "") && !internalCaller(headers);
 
 /** Source label for a Referer header: "direct" when there is none, "internal" for our own pages, "other" otherwise. */
 export function sourceLabel(referer: string | null | undefined, origin: string) {
@@ -334,7 +350,8 @@ export async function skillStats(env: Env, now = Date.now(), days = 7) {
   const get = (k: string) => Number(rows.find((r) => r.key === k)?.n ?? 0);
   return {
     days,
-    scans: get("scan:web") + get("scan:api") + get("scan:mcp") + get("scan:a2a"),
+    /** ADR 0067: forge_scan calls by named directory and checker clients are taken off (CATALOG_SCAN_KEY). */
+    scans: Math.max(0, get("scan:web") + get("scan:api") + get("scan:mcp") + get("scan:a2a") - get(CATALOG_SCAN_KEY)),
     scans_by_channel: { web: get("scan:web"), api: get("scan:api"), mcp: get("scan:mcp"), a2a: get("scan:a2a") },
     scans_flagged: get("scan:verdict:flagged"),
     watch_checkins: get("watch:calls"),

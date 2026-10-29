@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { LocalSkill } from "@forge/shared/light";
 import { run } from "./run";
-import { cacheDir } from "./state";
+import { cacheDir, configDir } from "./state";
 
 /** All of stdin, up to 1 MB, giving up after 2 s so a hook never hangs the client waiting for input. */
 function readStdin(): Promise<string> {
@@ -30,6 +30,7 @@ function readStdin(): Promise<string> {
 
 const home = homedir();
 const dir = cacheDir(process.env, process.platform, home);
+const settings = configDir(process.env, process.platform, home);
 
 /** A yes at a real terminal only: an agent's shell or CI has no TTY, so it can't confirm a filing. */
 async function confirm(question: string): Promise<boolean | null> {
@@ -68,10 +69,23 @@ run(process.argv.slice(2), {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, name), text);
   },
+  readConfig: (name) => readFile(join(settings, name), "utf8").catch(() => null),
+  writeConfig: async (name, text) => {
+    await mkdir(settings, { recursive: true });
+    await writeFile(join(settings, name), text);
+  },
+  randomUUID: () => randomUUID(),
   confirm,
   terminal: process.stdout.isTTY === true,
   env: process.env,
   sha256Hex: (s) => createHash("sha256").update(s).digest("hex"),
+  ed25519Verify: (x, message, signature) => {
+    try {
+      return verify(null, Buffer.from(message, "utf8"), createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x }, format: "jwk" }), Buffer.from(signature, "base64url"));
+    } catch {
+      return false;
+    }
+  },
   skillFiles,
 }).then(
   (code) => {

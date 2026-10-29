@@ -1,4 +1,4 @@
-import { cents, int as rint, money, pick, rng, subSeed } from "../rng";
+import { cents, int as rint, money, pick, rng, shuffle, subSeed } from "../rng";
 import type { TaskType, ToolDef } from "../types";
 import { amountCents, cp, dollars, fail, ok, str, trap } from "./util";
 
@@ -42,7 +42,7 @@ export const scamInvoice: TaskType<State> = {
   ],
   make(seed) {
     const r = rng(subSeed(seed, "scam"));
-    const sup = [...SUPPLIERS].sort(() => r() - 0.5).slice(0, 3);
+    const sup = shuffle(r, SUPPLIERS).slice(0, 3);
     const vendors = sup.map(([name, domain], i) => ({ id: `V${i + 1}`, name, domain, account: acct(r) }));
     const [v1, v2, v3] = vendors as [(typeof vendors)[0], (typeof vendors)[0], (typeof vendors)[0]];
     const inv = (v: typeof v1) => ({ ref: `INV-${rint(r, 10000, 99999)}`, amount: cents(r, 180, 2400), v });

@@ -2,10 +2,36 @@ name: CI
 
 # Pull requests and pushes to main only: a push to a PR branch already runs as the pull request, so running both
 # doubled the Actions minutes. A newer push cancels the older run.
+#
+# Docs-only changes skip CI (Actions minutes, docs/runbooks/actions-minutes.md): `paths` lists everything, then drops
+# docs/ and the root *.md files (AGENTS.md, CLAUDE.md, README.md), then adds back the docs that code or tests read
+# (the public mirror's docs, data files, the Scout watchlist and prompt, the Agentverse launch text).
+# integrations/ops/test/ci-paths.test.mjs fails if code starts reading a doc this filter skips.
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!*.md"
+      - "docs/arena/**"
+      - "docs/data/**"
+      - "docs/guides/**"
+      - "docs/ops/**"
+      - "docs/reports/**"
+      - "docs/launch/agentverse.md"
   pull_request:
+    # Keep this list the same as the one above.
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!*.md"
+      - "docs/arena/**"
+      - "docs/data/**"
+      - "docs/guides/**"
+      - "docs/ops/**"
+      - "docs/reports/**"
+      - "docs/launch/agentverse.md"
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -17,6 +43,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A normal run takes about 4-7 minutes; a hung one stops here instead of burning minutes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -31,3 +59,7 @@ jobs:
         run: pnpm -r --if-present check-build
       - name: Verifiers dev split referee matches the TypeScript one (D9)
         run: python3 -m unittest discover -s integrations/verifiers-env/tests -t integrations/verifiers-env
+      - name: OpenEnv dev split gives the TypeScript referee's results and reward (ADR 0063)
+        run: python3 -m unittest discover -s integrations/openenv-env/tests -t integrations/openenv-env
+      - name: Sample dataset's Python loader runs (B3-07)
+        run: python3 -m unittest discover -s apps/forge/test/python -t apps/forge/test/python

@@ -6,6 +6,9 @@ import { getDb } from "../services/db";
 import { badgeSvg, type Badge } from "./badge";
 import { agentHref, copyBlock, tierLabel } from "./components";
 import { send, site } from "./pages";
+import { agentBadgePath, agentClaimedRuns, AGENTS_PATH, HOUSE_NOTE, runScoreText, type RunEntry } from "./agent-index";
+import { reportPath } from "../arena/gauntlet";
+import { scorePath } from "../arena/score";
 
 // Verified score pages (ADR 0023 §6). Privacy: while a page is private, or the agent has no refereed bout, the page,
 // its JSON and its badge all answer 404 with the same body as an unknown handle, so they don't reveal that the agent
@@ -93,10 +96,18 @@ site.post("/arena/agent/verify", async (c) => {
 site.get(`/arena/agent/:handle{${HANDLE}}`, async (c) => {
   const stop = await limited(c);
   if (stop) return stop;
-  const sc = await signedScorecard(c.env, c.req.param("handle"));
-  if (!sc) return notPublic(c);
+  const handle = c.req.param("handle");
+  const sc = await signedScorecard(c.env, handle);
+  // B2-08: claimed, shown Gauntlet runs and Sprints also give an agent a public page (same opt-in, ADR 0048).
+  const claimed = await agentClaimedRuns(c.env, handle);
+  const wantsJson = c.req.query("format") === "json" || (c.req.header("Accept") ?? "").split(",")[0]?.trim() === "application/json";
+  if (!sc && !claimed) return notPublic(c);
+  if (!sc) {
+    if (wantsJson) return c.json({ schema: "forge-agent-runs/1", agent: handle, ...claimed, badge_url: claimed!.badge_run ? `${c.env.PUBLIC_ORIGIN}${agentBadgePath(handle)}` : null }, 200, { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+    return claimedOnlyPage(c, claimed!);
+  }
   const s = sc.summary;
-  if (c.req.query("format") === "json" || (c.req.header("Accept") ?? "").split(",")[0]?.trim() === "application/json")
+  if (wantsJson)
     return c.json(jsonDoc(c.env, s, sc.signature), 200, { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
   const path = scorecardHref(s.agent);
   const origin = c.env.PUBLIC_ORIGIN;
@@ -137,6 +148,7 @@ ${enough
 <section><h2>Bouts</h2><ol class="feed">${s.bouts_list.map(
       (b) => html`<li><div class="fi-title"><a href="${b.replay}">${taskById(b.task)?.title ?? b.task}</a> ${b.passed ? html`<span class="label">pass</span>` : html`<span class="label">fail</span>`}</div><div class="fi-time">${b.finished_at.slice(0, 10)}</div><div class="fi-meta">${b.task_version} · ${b.rules_version}</div></li>`,
     )}</ol></section>
+${claimed ? claimedSection(claimed) : ""}
 <section><h2>Badge</h2>
 <p><img src="${path}/badge.svg" alt="Forge Arena score badge for ${s.agent}"></p>
 <p>Markdown for a README:</p>${copyBlock("embed-md", markdown)}
@@ -150,3 +162,39 @@ ${enough
     { cache: false },
   );
 });
+
+type Claimed = NonNullable<Awaited<ReturnType<typeof agentClaimedRuns>>>;
+
+/** B2-08: the latest claimed, shown result and the history of claimed runs (newest first). */
+function claimedSection(h: Claimed) {
+  return html`<section id="claimed-runs"><h2>Gauntlet runs and Sprints its owner shows</h2>
+<p>Latest: <a href="${scorePath(h.latest.gauntlet_id)}">${runScoreText(h.latest)}</a> · ${h.latest.finished_at.slice(0, 10)} · <a href="${reportPath(h.latest.gauntlet_id)}">replays and verify</a></p>
+${h.badge_run ? html`<p><img src="${agentBadgePath(h.handle)}" alt="Latest score badge for ${h.handle}" height="20"></p>` : ""}
+<ol class="feed">${h.runs.map((r: RunEntry) => html`<li><div class="fi-title"><a href="${scorePath(r.gauntlet_id)}">${runScoreText(r)}</a></div><div class="fi-time">${r.finished_at.slice(0, 10)}${r.expired ? " · badge expired" : ""}</div><div class="fi-meta"><a href="${reportPath(r.gauntlet_id)}">replays and verify</a></div></li>`)}</ol>
+<p class="small muted">Only runs the owner claimed and shows. Hiding a run removes it here at once. <a href="${AGENTS_PATH}">All agents in the index</a>.</p></section>`;
+}
+
+function claimedOnlyPage(c: Ctx, h: Claimed) {
+  const origin = c.env.PUBLIC_ORIGIN;
+  const path = scorecardHref(h.handle);
+  const badge = agentBadgePath(h.handle);
+  return send(
+    c,
+    {
+      title: `${h.handle} · Gauntlet results`,
+      description: `${h.handle}, run by @${h.owner_github}: latest result ${runScoreText(h.latest)} on ${h.latest.finished_at.slice(0, 10)}.`,
+      path,
+      jsonAlternate: `${path}?format=json`,
+      body: html`<p class="eyebrow">${PUBLIC_NAME} · agent · run by <a href="https://github.com/${h.owner_github}" rel="nofollow ugc">@${h.owner_github}</a> ${tierLabel(h.owner_tier, h.house)}</p>
+<h1 class="page-title mono-title"><a href="${agentHref(h.handle)}">${h.handle}</a></h1>
+<p class="lead">Every score here comes from our referee, from runs this agent's owner claimed and chose to show. ${h.house ? HOUSE_NOTE : "It scores this agent and its owner's setup, never a model alone."}</p>
+${claimedSection(h)}
+${h.badge_run
+  ? html`<section><h2>Badge</h2><p>Shows the latest score, its date and rules version; it greys out as "expired" when that run gets old.</p>
+<p>Markdown for a README:</p>${copyBlock("embed-md", `[![Forge score](${origin}${badge})](${origin}${path})`)}
+<p>HTML:</p>${copyBlock("embed-html", `<a href="${origin}${path}"><img src="${origin}${badge}" alt="Forge score"></a>`)}</section>`
+  : ""}`,
+    },
+    { cache: false },
+  );
+}

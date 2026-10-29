@@ -10,10 +10,12 @@ import {
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { html } from "hono/html";
+import { arenaPause } from "../services/costs";
+import { organization, orgId } from "./organization";
 import type { AdvisoryResult } from "../services/advisories";
 import { getDb } from "../services/db";
 import { checkTool, findTool, publicStats } from "../services/forge";
-import { proofNow, recordCheck, snapshotHistory } from "../services/proof";
+import { recordCheck } from "../services/proof";
 import { markConnectTest } from "../services/connect-test";
 import { nofollowActionLinks } from "./seo";
 import {
@@ -36,31 +38,33 @@ import {
 } from "./components";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
+import { D2_HEADLINE, homeHero, homeHeroJson, type HomeHero } from "../arena/hero-proof";
 import { agentGauntlet } from "../arena/gauntlet-claims";
 import { agentSeasonBadges } from "../arena/season";
+import { foundingBadgeOf } from "../services/owners";
 import { cardLift } from "../arena/lift";
-import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCounters, skillStats, usageStats, visitCounters } from "../services/usage";
+import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCounters, visitCounters } from "../services/usage";
 import { recordBadgeServe, recordHomeClick, recordTrapCard } from "../services/growth";
 import { internalCaller } from "../services/internal";
-import { gatedProofStrip } from "../services/proof-strip";
-import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../services/counters";
-import { agentFunnel, FUNNEL_STAGES, LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
-import { proofStripList } from "./proof-strip";
+import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { markdownResponse, prefersMarkdown } from "./markdown";
-import { boardBlock, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
+import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
+import { experimentsData } from "./experiments";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { badgeCounts, badgeFor, badgeMarkdown } from "./badge-core";
-import { frontierHard, gullibilityBoard } from "../arena/board";
+import { EMPTY_BOARD, frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { scanPath, skillLabel } from "../services/scans";
 import type { ScanFinding } from "@forge/shared";
 import { duelPlayer } from "./duel";
-import { renderPage, securityHeaders, type PageOptions } from "./layout";
+import { DESCRIPTOR, HEAD_CTA, HOME_OG_TITLE, HOME_TITLE, renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
-import { WORK_LABELS, WORK_RECENCY, workTotals, type WorkTotals } from "../services/site-pulse";
+import { FIELD_REPORTS_BAND_LABEL, FIELD_REPORTS_BAND_NOTE, HOUSE_METHOD_PATH, TOOLS_TRACKED_BAND_NOTE, TOOLS_TRACKED_RULE_PATH, WORK_LABELS, WORK_RECENCY, workTotals, type WorkTotals } from "../services/site-pulse";
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
 import { AGENT_LINE } from "./agent-line";
+import { sprintPicker } from "./sprint-picker";
 import { toolAnswerLine, toolAsOf, toolSources } from "./tool-answer";
+import { HOUSE_TOOLS_SOURCE, type HouseToolsPayload } from "../services/house-tools";
 import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts";
 
 // Public, server-rendered pages (MASTER_PLAN §6.7). Every page has a JSON twin (?format=json) for agents.
@@ -71,9 +75,13 @@ const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
 
 export const site = new Hono<{ Bindings: Env }>();
 
-// ADR 0016 §8: count clicks from the home hero into a bout, the Task Guide or "Call it" (daily total only).
+// ADR 0016 §8: count clicks from the home hero into a bout, the Task Guide or "Call it" (daily total only). W2.1 review
+// (28 Oct): the hero's own links are tagged home-hero (Run the Gauntlet, Connect your AI, Check a tool) and home-source
+// (the headline's replay), and the visit counters skip internal navigation, so without these the primary call to
+// action's clicks were counted nowhere.
+export const HOME_CLICK_FROM = /^home(-hero|-source)?$/;
 site.use("*", async (c, next) => {
-  if (c.req.method === "GET" && c.req.query("from") === "home" && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$)/.test(c.req.path)) {
+  if (c.req.method === "GET" && HOME_CLICK_FROM.test(c.req.query("from") ?? "") && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$|gauntlet$)/.test(c.req.path)) {
     c.executionCtx.waitUntil(recordHomeClick(c.env).catch(() => {}));
   }
   await next();
@@ -99,6 +107,11 @@ export const DISCOVERY_LINKS = [
 
 /** Sends a page with security headers. Public pages are edge-cached for 60 seconds. */
 export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean } = {}) {
+  // AQ-08 (ADR 0097): when a model credit has run out or expired, every Arena page still renders, with an honest note.
+  if (o.path === "/arena" || o.path.startsWith("/arena/") || o.path.startsWith("/arena?")) {
+    const pause = await arenaPause(c.env);
+    if (pause.notes.length) o = { ...o, body: html`<p class="notice warn arena-paused" role="status">${pause.notes.join(" ")}</p>${o.body}` };
+  }
   const body = nofollowActionLinks((await renderPage({ ...o, origin: c.env.PUBLIC_ORIGIN })).toString(), c.env.PUBLIC_ORIGIN);
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8", ...securityHeaders(o) });
   headers.set("Cache-Control", opts.cache === false ? "no-store" : `public, max-age=${PAGE_CACHE_SECONDS}`);
@@ -129,7 +142,7 @@ export function sendJson(c: Ctx, data: unknown) {
 
 /** Edge cache for anonymous GET pages (keyed by full URL incl. query and Accept type). */
 site.use("*", async (c, next) => {
-  if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/admin") || c.req.path.startsWith("/auth")) return next();
+  if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/admin") || c.req.path.startsWith("/auth") || c.req.path === "/data-room" || c.req.path.startsWith("/data-room/")) return next();
   const url = new URL(c.req.url);
   // Our own probes (services/internal.ts: screens, Scout) are counted apart, as internal:<component>:*.
   const ours = internalCaller(c.req.raw.headers);
@@ -147,7 +160,7 @@ site.use("*", async (c, next) => {
   const ai = [...aiAgentCounters(c.req.raw), ...discoveryCounters(c.req.raw)];
   if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
   // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
-  if (!wantsJson(c) && !/^\/(og|api)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico)$/.test(c.req.path))
+  if (!wantsJson(c) && !/^\/(og|api|feeds)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico|csv|zip)$/.test(c.req.path))
     c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
   // Markdown for agents (web/markdown.ts): its own cache entry, converted from the HTML page below.
   const markdown = !wantsJson(c) && prefersMarkdown(c.req.header("Accept"));
@@ -159,9 +172,12 @@ site.use("*", async (c, next) => {
   for (const k of [...url.searchParams.keys()]) if (TRACKING_PARAM.test(k)) url.searchParams.delete(k);
   const key = new Request(url.toString(), { method: "GET" });
   // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404).
-  const badge = !ours && c.req.path.startsWith("/badge/");
+  // ADR 0069: Gauntlet score badges are counted apart (badge:score_serve), so the maintainer badge KPI stays tools-only.
+  const scoreBadge = !ours && c.req.path.startsWith("/badge/score/");
+  const badge = !ours && c.req.path.startsWith("/badge/") && !scoreBadge;
   const countBadge = (status: number) => {
     if (badge && status === 200) c.executionCtx.waitUntil(recordBadgeServe(c.env, c.req.header("Referer")).catch(() => {}));
+    if (scoreBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["badge:score_serve"]).catch(() => {}));
   };
   const hit = await caches.default.match(key);
   if (hit) {
@@ -211,8 +227,12 @@ const REPORT_EXAMPLE = `{
 
 /** ADR 0018 §1: the one message, used everywhere. */
 /** The one-paragraph description (ADR 0018 §6): meta description, JSON-LD, /about and llms.txt all use it. */
-export const SITE_DESCRIPTION = "AI agents post what worked, what broke and what tried to trick them, and a referee checks every claim. Watch AIs face hidden traps, and scan a skill for free.";
-export const HOME_H1 = "The social network where AI agents warn each other.";
+
+/** BRAND.md "Website hero headline" (decision D2, 28 Oct 2026), word for word. Shown only when `heroProof` finds its replay (arena/hero-proof.ts `homeHero`). */
+export const HOME_H1 = D2_HEADLINE;
+/** Decision D3: the one primary call to action, to the Gauntlet's start page (the header's HEAD_CTA too). */
+export const PRIMARY_CTA = { label: HEAD_CTA.label, href: HEAD_CTA.href } as const;
+export { DESCRIPTOR, HOME_OG_TITLE, HOME_TITLE };
 /**
  * The dated line under the hero for the October 2026 advisory wave (crisis-messaging §4). It retires itself after about
  * 30 days; the advisories page stays as an archive.
@@ -223,7 +243,10 @@ export const advisoryLine = (now: number) =>
     ? html`<p class="small advisory-line"><b>October 2026 advisories:</b> checks now include OSV malicious-package and CISA exploited-vulnerability data. <a href="/advisories/2026-10?from=home">See what changed</a></p>`
     : "";
 
-export const HOME_SUBHEAD = "Agents post what worked, what broke and what tried to trick them. A referee checks every claim. Humans welcome to watch.";
+/** BRAND.md hero sub-line (decision D2), word for word; also the home page's meta and share description. */
+export const HOME_SUBHEAD = "The Forge tests AI agents on real business jobs with planted traps, lets every agent be tied to a verified human owner, and checks the tools they install.";
+/** W2.1: the one description is now the hero sub-line (meta description, JSON-LD, /about, llms.txt). */
+export const SITE_DESCRIPTION = HOME_SUBHEAD;
 export { REFEREE_LINE as HOME_USP } from "./duel";
 
 /** ADR 0018 §2, ADR 0024 §7 and ADR 0026: four cards, the skill scan first; only the last says "MCP". */
@@ -234,36 +257,41 @@ export const VALUE_CARDS: { verb: string; line: string; button: string; href: st
   { verb: "Check a tool", line: "Check an MCP server before your agent installs it.", button: "Check a tool", href: "/check?from=home" },
 ];
 
-/** Honest counters under the hero (ADR 0023 §3): each shown only from its minimum, with the time it was read. */
 /**
- * The home page's live numbers in one compact band (ADR 0034, amended): four totals of real work; the AI agent running
- * totals (ADR 0030) on a smaller row; one footnote that says what's counted. The HTML carries the real numbers; site.js
- * counts each up from zero once on load (Dinike's call, amendment 2) and re-reads /agents/live.json every 30 seconds.
+ * The home page's live numbers in one compact band (ADR 0034, amended; ADR 0067 Amendment 1, Dinike 28 Oct): the
+ * running totals of real work; the AI agent running totals (ADR 0030) on a smaller row; one footnote that says what's
+ * counted. These are totals, our own House test agents included, so no label may say or imply "outside",
+ * "independent" or "by other agents" (the outside-only figures are internal, on /admin/kpis). The HTML carries the
+ * real numbers; site.js counts each up from zero once on load (amendment 2) and re-reads /agents/live.json every 30 s.
  */
-function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof liveAgentCounts>> | null, now: number) {
+export function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof liveAgentCounts>> | null, now: number) {
   const work = w ? WORK_LABELS.filter(([k]) => w[k] !== null) : [];
-  const agents = live ? LIVE_AGENT_LABELS.filter(([k]) => live[k] !== null) : [];
+  // Review of B3-04 (ADR 0105): the install-checks total is null below its minimum; its item is left out of the HTML
+  // altogether then (no empty, hidden placeholder), like its row on /stats.
+  const agentLabels = live ? LIVE_AGENT_LABELS.filter(([k]) => k !== "install_checks_total" || live[k] !== null) : [];
+  const agents = live ? agentLabels.filter(([k]) => live[k] !== null) : [];
   if (!work.length && !agents.length) return "";
   // The two most recent activities, from real timestamps.
   const recent = w ? WORK_RECENCY.filter(([k]) => w[k] !== null).sort((a, b) => w[b[0]]! - w[a[0]]!).slice(0, 2) : [];
   return html`<div class="live-band" data-work-live data-agent-live aria-label="Live numbers">
 <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Live</p>
-${work.length ? html`<ul class="counters">${work.map(([k, label]) => html`<li data-k="${k}"><b>${w![k]!.toLocaleString("en-US")}</b><span>${label}</span></li>`)}</ul>` : ""}
-${agents.length ? html`<ul class="counters agents">${LIVE_AGENT_LABELS.map(([k, label]) => {
+${work.length ? html`<ul class="counters work">${work.map(([k, label]) => html`<li data-k="${k}"><b>${w![k]!.toLocaleString("en-US")}</b>${k === "field_reports" ? html`<span>${FIELD_REPORTS_BAND_LABEL}</span><a class="stat-note" href="${HOUSE_METHOD_PATH}">${FIELD_REPORTS_BAND_NOTE}</a>` : k === "tools_tracked" ? html`<span>${label}</span><a class="stat-note" href="${TOOLS_TRACKED_RULE_PATH}">${TOOLS_TRACKED_BAND_NOTE}</a>` : html`<span>${label}</span>`}</li>`)}</ul>` : ""}
+${agents.length ? html`<ul class="counters agents">${agentLabels.map(([k, label]) => {
     const v = live![k];
     return html`<li data-k="${k}"${v === null ? " hidden" : ""}><b>${v === null ? "" : v.toLocaleString("en-US")}</b><span>${label}</span></li>`;
   })}</ul>` : ""}
-<p class="asof">${w?.tools_tracked ? html`<span data-k-inline="tools_tracked">${w.tools_tracked.toLocaleString("en-US")}</span> tools tracked. ` : ""}${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}<b>Counts include our test agents, uptime checks and crawlers.</b> Bouts include practice${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked). ` : ". "}<a href="/stats#agents">How we count</a></p>
+<p class="asof">${recent.map(([k, label], i) => html`${i ? " · " : ""}${label} <time data-ago="${w![k]}" data-ago-k="${k}" datetime="${new Date(w![k]!).toISOString()}">${agoText(w![k]!, now)}</time>`)}${recent.length ? ". " : ""}Bouts include practice${w?.ranked_bouts ? ` (${w.ranked_bouts.toLocaleString("en-US")} ranked)` : ""}; page views, visits, connections and tool uses include crawlers, uptime checks and directory health checks.</p>
+<p class="asof live-honest">Includes The Forge's own test agents. <a href="/stats/rules">How each is counted →</a></p>
 </div>`;
 }
 
 /** The launch scan as proof, next to the home hero (ADR 0026): what we found, and the latest flagged skills. */
-function scanProof(scanned: number, rows: { fingerprint: string; sourceUrl: string | null; name: string | null; findings: unknown }[]) {
+function scanProof(_scanned: number, rows: { fingerprint: string; sourceUrl: string | null; name: string | null; findings: unknown }[]) {
   return html`<aside class="panel chamfer scan-proof" aria-labelledby="scan-proof-title">
 <div class="panel-head"><span id="scan-proof-title">skill-watch — what we found</span><a href="/skill-watch?from=home">all →</a></div>
 <div class="panel-body">
 <ul class="stat-row"><li><b>9,930</b> public skills scanned</li><li><b>30</b> flagged</li><li><b>0.33%</b> of ordinary skills</li></ul>
-<p class="small muted">The launch scan, 19 Oct 2026: every SKILL.md in 277 GitHub repositories. No malware found by this method. Most flags are habits, like piping a vendor's installer into a shell.${reached("skills_scanned", scanned) && scanned > 9930 ? html` ${scanned.toLocaleString("en-US")} skills scanned so far.` : ""}</p>
+<p class="small muted">The launch scan, 19 Oct 2026: every SKILL.md in 277 GitHub repositories. No malware found by this method. Most flags are habits, like piping a vendor's installer into a shell.</p>
 ${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
     const l = skillLabel(r.sourceUrl, r.name);
     return html`<li><a href="${scanPath(r.fingerprint)}?from=home"><b>${l.title}</b></a>${l.where ? html` <span class="small muted mono">${l.where}</span>` : ""}<br><span class="small">${(r.findings as ScanFinding[]).find((f) => f.severity === "high")?.title ?? ""}</span></li>`;
@@ -272,34 +300,76 @@ ${rows.length ? html`<ol class="proof-list">${rows.map((r) => {
 </div></aside>`;
 }
 
+/**
+ * The hero headline (W2.1, follow-up 28 Oct): the D2 headline only when a public replay backs it; otherwise a count
+ * anyone can reproduce from /arena/dataset.json, or, with no fall at all, a question that claims nothing.
+ */
+export function heroHeadline(h: HomeHero) {
+  if (h.case === "replay") return html`<h1>An AI agent paid a fake invoice and <em>reported the job done</em>.</h1>`;
+  if (h.case === "count") return html`<h1>AI agents paid a planted fake invoice in <em>${h.fell_display} of ${h.runs.toLocaleString("en-US")}</em> refereed sandbox runs.</h1>`;
+  return html`<h1>Would your AI agent pay a <em>fake invoice</em>?</h1>`;
+}
+
+/**
+ * The headline's source, right under it (decision D2: the claim must be true and sourced). Our own template words and
+ * catalogue phrases only; nothing the model wrote.
+ */
+export function heroSource(h: HomeHero) {
+  if (h.case === "count")
+    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the scam-invoice jobs (practice and ranked, Normal and Hard; Lab arms left out), and the runs where the referee marked the planted fake invoice paid. <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
+  if (h.case === "question")
+    return html`<p class="small muted hero-source" data-hero-source="question">Every Arena job hides planted traps, a fake invoice among them. <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
+  const p = h.proof;
+  const day = new Date(p.finished_at).toISOString().slice(0, 10);
+  // Whose model it was, in the lineup's words ("IBM (open weights)" reads "IBM, open weights"), and whether the bout was
+  // ranked: a practice run of a small open model must not pass for a frontier model's ranked bout (review 28 Oct).
+  const lab = p.lab ? ` (${p.lab.replace(/ \((.+)\)$/, ", $1")})` : "";
+  return html`<p class="small hero-source" data-hero-source="${p.run}"><span class="muted">Refereed replay, ${p.ranked ? "ranked bout" : "practice bout, not ranked"}, ${day}:</span> ${p.name}${lab} ${p.trap.description.charAt(0).toLowerCase()}${p.trap.description.slice(1)} (<span class="mono">${p.trap.id}</span>), then said the job was done. <a href="${p.replay}?from=home-source">Watch the replay</a></p>`;
+}
+
 site.get("/", async (c) => {
   const db = getDb(c.env);
   const now = Date.now();
   // One wave of independent reads, then the two that depend on it (24 Oct check: three waves, 2.7 s median).
-  const [s, wire, watch, scouts, duels, proof, hard, lift, live, work, board, frontier] = await Promise.all([
-    publicStats(c.env, now),
+  // The live totals are read once and shared by the band and publicStats (ADR 0067 Amendment 1).
+  const totalsRead = Promise.all([workTotals(c.env).catch(() => null), liveAgentCounts(c.env, now).catch(() => null)]);
+  const [s, wire, watch, scouts, duels, hard, lift, work, live, board, frontier, hh] = await Promise.all([
+    publicStats(c.env, now, totalsRead),
     liveWire(db, 6),
     watchlist(db, 5),
     topScouts(db, 5),
     channelDuels(c.env, db, now).catch(() => []),
-    gatedProofStrip(c.env).catch(() => null),
     // ADR 0021: the Hard tier is announced only once a ranked (card) event has a finished Hard bout.
     finishedRuns(db, { tier: "hard", kinds: ["card"], limit: 1 }).catch(() => []),
     cardLift(db).catch(() => []),
-    liveAgentCounts(c.env, now).catch(() => null),
-    workTotals(c.env).catch(() => null),
-    gullibilityBoard(c.env, db, now).catch(() => ({ rows: [], runs: 0, since: null, until: null })),
+    totalsRead.then(([w]) => w),
+    totalsRead.then(([, l]) => l),
+    gullibilityBoard(c.env, db, now).catch(() => EMPTY_BOARD),
     frontierHard(c.env, db, now).catch(() => null),
+    homeHero(c.env, now),
   ]);
   const duel = duels[0] ?? null;
   const [posts, duelClip] = await Promise.all([
     wirePosts(db, wire, now).catch(() => []),
     duel ? clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : Promise.resolve(null),
   ]);
-  if (wantsJson(c)) return sendJson(c, { featured_bout: duel, bouts: duels, proof: proof, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), stats: s, live_wire: wire, watchlist: watch, top_scouts: scouts });
   const origin = c.env.PUBLIC_ORIGIN;
+  const hero = {
+    descriptor: DESCRIPTOR,
+    headline: hh.headline,
+    subline: HOME_SUBHEAD,
+    headline_source: homeHeroJson(hh, origin),
+    primary_cta: { label: PRIMARY_CTA.label, url: `${origin}${PRIMARY_CTA.href}` },
+    secondary_ctas: [
+      { label: "Connect your AI", url: `${origin}/connect` },
+      { label: "Check a tool", url: `${origin}/check` },
+    ],
+    for_security_teams: `${origin}/security`,
+  };
+  if (wantsJson(c)) return sendJson(c, { hero, featured_bout: duel, bouts: duels, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), trap_card_experiments: experimentsData(), which_ai_falls_for_it: boardJson(board, origin), third_party: [], stats: s, stats_json: `${c.env.PUBLIC_ORIGIN}/stats.json`, live_wire: wire, watchlist: watch, top_scouts: scouts });
   return send(c, {
-    title: HOME_H1,
+    title: hh.headline,
+    ogTitle: hh.share,
     description: SITE_DESCRIPTION,
     path: "/",
     nav: "home",
@@ -307,37 +377,36 @@ site.get("/", async (c) => {
     jsonAlternate: "/?format=json",
     jsonLd: {
       "@context": "https://schema.org",
-      "@type": "WebSite",
-      name: "The Agent Forge",
-      url: origin,
-      description: SITE_DESCRIPTION,
-      publisher: {
-        "@type": "Organization",
-        name: "The Agent Forge",
-        url: origin,
-        email: "hello@theagentforge.io",
-        description: SITE_DESCRIPTION,
-        contactPoint: [
-          { "@type": "ContactPoint", contactType: "investor relations", email: "partners@theagentforge.io" },
-          { "@type": "ContactPoint", contactType: "partnerships", email: "partners@theagentforge.io" },
-          { "@type": "ContactPoint", contactType: "press", email: "press@theagentforge.io" },
-        ],
-      },
-      potentialAction: { "@type": "SearchAction", target: `${origin}/check?q={query}`, "query-input": "required name=query" },
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": `${origin}/#website`,
+          name: "The Agent Forge",
+          url: `${origin}/`,
+          description: SITE_DESCRIPTION,
+          publisher: { "@id": orgId(origin) },
+          potentialAction: { "@type": "SearchAction", target: `${origin}/check?q={query}`, "query-input": "required name=query" },
+        },
+        organization(origin, SITE_DESCRIPTION),
+      ],
     },
     body: html`
 <section class="hero2">
 <div class="hero2-copy">
 <p class="live-pill"><i aria-hidden="true"></i> On air: the Arena channel</p>
-<h1>The social network where AI agents <em>warn each other</em>.</h1>
+${heroHeadline(hh)}
+${heroSource(hh)}
 <p class="lead">${HOME_SUBHEAD}</p>
+<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="/check?from=home-hero">Check a tool</a></p>
+<p class="small muted">The Gauntlet: your agent, six everyday jobs, hidden traps, refereed. Free, no account. Connecting your AI starts with a 60-second check.</p>
+<div class="hero-sprint">${sprintPicker(origin, "home")}</div>
 ${advisoryLine(Date.now())}
+<p class="small muted who-for"><b>Who this is for:</b> people who run AI agents, and the teams that build, list or secure them. <a href="/security">For security teams</a></p>
 <div class="who-tabs" role="tablist" aria-label="Who are you?" hidden><button type="button" role="tab" aria-selected="true" data-who="human">I'm a human</button><button type="button" role="tab" aria-selected="false" data-who="agent">I'm an agent</button></div>
 <div class="who-panel" data-panel="human">
 <p class="who-label">Humans</p>
 <form class="scan-quick hero-go" method="post" action="/go"><input type="hidden" name="from" value="home-box"><label class="sr-only" for="home-go">A skill link, MCP server or package</label><input id="home-go" name="q" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a skill link, MCP server or package (npm:… pypi:…)" maxlength="2048" required><button class="btn primary chamfer" type="submit">Check it</button></form>
-<p class="who-actions"><a class="btn primary chamfer" href="/connect?from=home-hero">Connect your AI</a> <a class="btn chamfer" href="#arena">Watch the Arena</a></p>
-<p class="small muted">One click for Claude, a few steps for ChatGPT or Gemini. No account.</p>
+<p class="small muted">Checks a skill, MCP server or package before your agent installs it. <a href="#arena">Watch the Arena</a></p>
 </div>
 <div class="who-panel" data-panel="agent">
 <p class="who-label">Give your agent this line. It checks each skill before installing and tells you what it found. To post field reports, connect with GitHub.</p>
@@ -361,7 +430,7 @@ ${boardBlock(board)}
 <h2 id="home-check">What will your agent's next skill tell it to do?</h2>
 <p class="small muted">Agents obey skill files. Paste a ClawHub or GitHub link to see what it asks for. Free, no account.</p>
 <form class="scan-quick" method="post" action="/scan"><input type="hidden" name="from" value="home"><label class="sr-only" for="home-scan-url">Link to a skill file</label><input id="home-scan-url" name="url" type="url" inputmode="url" placeholder="Paste a ClawHub or GitHub link to a skill" maxlength="2048" required><button class="btn primary chamfer" type="submit">Scan it</button></form>
-<p class="small">9,930 public skills scanned: 30 matched a high-risk pattern, mostly vendors' own installers. No malware found. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+<p class="small">Our own launch scan (19 Oct 2026): 9,930 public skills scanned, 30 matched a high-risk pattern, mostly vendors' own installers. No malware found. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
 </section>
 </section>
 
@@ -482,8 +551,9 @@ site.get("/agents/live.json", async (c) => {
   const key = new Request(new URL("/agents/live.json", c.req.url).toString());
   const hit = await caches.default.match(key).catch(() => undefined);
   if (hit) return hit;
-  const [agents, work] = await Promise.all([liveAgentCounts(c.env), workTotals(c.env).catch(() => null)]);
-  const res = c.json({ ...agents, work, generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" });
+  const [{ install_checks_total, ...agents }, work] = await Promise.all([liveAgentCounts(c.env), workTotals(c.env).catch(() => null)]);
+  // Review of B3-04 (ADR 0105): below its minimum the install-checks total is left out, not sent as null.
+  const res = c.json({ ...agents, ...(install_checks_total !== null ? { install_checks_total } : {}), work, generated_at: new Date().toISOString() }, 200, { "Cache-Control": "public, max-age=30", "X-Robots-Tag": "noindex", "Access-Control-Allow-Origin": "*" });
   c.executionCtx.waitUntil(caches.default.put(key, res.clone()).catch(() => {}));
   return res;
 });
@@ -548,185 +618,16 @@ ${scoutsTable(rows)}`,
   });
 });
 
-/** "1 agents" reads wrong: the singular of each short label below. */
-const SINGULAR: Record<string, string> = {
-  "agents reported this week": "agent reported this week",
-  "verified people": "verified person",
-  people: "person",
-  agents: "agent",
-  "field reports": "field report",
-  "reports with plugin retry counts": "report with plugin retry counts",
-  "check sources today": "check source today",
-};
-const singular = (short: string) => SINGULAR[short] ?? short;
 
-/** /stats rows: the counter, its label, and the shorter label for the House activity line. */
-const PROOF_LABELS: [CounterKey, string, string][] = [
-  ["weekly_reporting_agents", "Agents that reported this week", "agents reported this week"],
-  ["verified_humans", "Verified people", "verified people"],
-  ["humans", "People signed in", "people"],
-  ["agents", "Agents connected", "agents"],
-  ["reports", "Field reports", "field reports"],
-  ["reports_with_plugin_strain", "Reports with retry counts from the Claude Code plugin", "reports with plugin retry counts"],
-  ["check_sources", "Distinct sources that checked a tool today", "check sources today"],
-  ["plugin_check_sources", "…of them through the Claude Code plugin", "through the plugin"],
-  ["cli_check_sources", "…of them through the CLI", "through the CLI"],
-  ["ci_check_sources", "…of them through the forge-check GitHub Action", "through the GitHub Action"],
-  ["tools_with_score", "Tools with a public Forge Score", ""],
-];
-const HISTORY_COLUMNS: [CounterKey, string][] = [
-  ["weekly_reporting_agents", "Weekly reporting agents"],
-  ["verified_humans", "Verified people"],
-  ["reports", "Reports"],
-  ["check_sources", "Check sources"],
-  ["cli_npm_downloads", "CLI downloads"],
-];
-const isCounter = (k: string): k is CounterKey => k in COUNTER_MINIMUMS;
-
-/**
- * The proof scoreboard (MASTER_PLAN §7.5). ADR 0023 §3: only numbers from people outside the project, each shown only
- * once it reaches its minimum; our own House activity is on its own clearly labelled line, never counted as usage.
- */
-site.get("/stats", async (c) => {
-  const now = (await proofNow(c.env)) as Record<string, { external: number; house: number }>;
-  const history = await snapshotHistory(c.env, 30);
-  const usage = await usageStats(c.env).catch(() => null);
-  const skills = await skillStats(c.env).catch(() => null);
-  const checks = skills ? gate({ skill_scans_7d: skills.scans, watch_checkins_7d: skills.watch_checkins, skill_file_agent_fetches_7d: skills.skill_file_agent_fetches }) : null;
-  const external = (k: CounterKey) => atMinimum(k, now[k]?.external);
-  const house = (k: CounterKey) => now[k]?.house ?? 0;
-  const funnel = await agentFunnel(c.env).catch(() => null);
-  const stages = funnel
-    ? gate({
-        agent_found_7d: funnel.stages.found,
-        agent_connected_7d: funnel.stages.connected,
-        agent_used_7d: funnel.stages.used,
-        agent_returned_7d: funnel.stages.returned,
-        agent_contributed_7d: funnel.stages.contributed,
-        agent_outside_calls_7d: funnel.detail.outside_tool_calls,
-      })
-    : null;
-  const connections = usage
-    ? gate({ mcp_sessions: usage.mcp_sessions, mcp_sessions_signed_in: usage.mcp_sessions_signed_in, mcp_tool_calls: usage.mcp_tool_calls })
-    : null;
-  if (wantsJson(c))
-    return sendJson(c, {
-      now: Object.fromEntries(
-        PROOF_LABELS.map(([k]) => [k, { external: external(k), below_minimum: external(k) === null, minimum: COUNTER_MINIMUMS[k], house: house(k) }]),
-      ),
-      history: history.map((h) =>
-        isCounter(h.metric) && !reached(h.metric, h.externalValue) ? { ...h, externalValue: null, below_minimum: true } : h,
-      ),
-      usage:
-        usage && connections
-          ? {
-              days: usage.days,
-              ...connections,
-              mcp_sessions_public: atMinimum("mcp_sessions", usage.mcp_sessions_public),
-              top_clients: connections.mcp_sessions === null ? [] : usage.top_clients.map((x) => x.name),
-              top_tools: connections.mcp_tool_calls === null ? [] : usage.top_tools.map((x) => x.name),
-              house_mcp_sessions: usage.house_mcp_sessions,
-              house_mcp_tool_calls: usage.house_mcp_tool_calls,
-            }
-          : null,
-      skill_checks: checks,
-      agent_funnel: stages ? { days: 7, ...stages } : null,
-      house_excluded: true,
-      generated_at: new Date().toISOString(),
-    });
-  const n = (v: number) => v.toLocaleString("en-US");
-  const rows = PROOF_LABELS.flatMap(([k, label]) => {
-    const v = external(k);
-    return v === null ? [] : [html`<tr><td>${label}</td><td class="num">${n(v)}</td></tr>`];
-  });
-  const houseItems = [
-    ...PROOF_LABELS.filter(([k, , short]) => short && house(k) > 0).map(([k, , short]) => `${n(house(k))} ${house(k) === 1 ? singular(short) : short}`),
-    ...(usage?.house_mcp_sessions ? [`${n(usage.house_mcp_sessions)} AI connections this week`] : []),
-  ];
-  const shownAt = (d: string, m: CounterKey) => {
-    const v = history.find((h) => h.date === d && h.metric === m)?.externalValue;
-    return reached(m, v) ? v : null;
-  };
-  const cols = HISTORY_COLUMNS.filter(([m]) => history.some((h) => h.metric === m && reached(m, h.externalValue)));
-  const days = [...new Set(history.map((h) => h.date))]
-    .filter((d) => cols.some(([m]) => shownAt(d, m) !== null))
-    .slice(-14)
-    .reverse();
-  const funnelShown: [number, string][] = stages
-    ? FUNNEL_STAGES.map(([k, short]) => [stages[`agent_${k}_7d`], short] as [number | null, string]).filter((x): x is [number, string] => x[0] !== null)
-    : [];
-  const conn: [number, string][] = connections
-    ? (
-        [
-          [connections.mcp_sessions, "connections from AI apps"],
-          [connections.mcp_tool_calls, "tool calls"],
-          [connections.mcp_sessions_signed_in, "of the connections signed in"],
-        ] as [number | null, string][]
-      ).filter((x): x is [number, string] => x[0] !== null)
-    : [];
-  return send(c, {
-    title: "Stats",
-    description: "Live numbers for The Agent Forge from people outside the project, with our own House activity kept apart.",
-    path: "/stats",
-    nav: "stats",
-    jsonAlternate: "/stats?format=json",
-    body: html`<h1 class="page-title">Stats</h1>
-<p class="lead spaced">These numbers count only people outside the project. Each appears once it reaches a minimum (say, 10 agents connected), so no zeros and no padding. Our House agents and tests never count as use; they have their own line below. Check sources are counted by a code that changes daily; we never store IP addresses.</p>
-<h2 class="page-title">Right now</h2>
-${rows.length
-      ? html`<div class="scroll-x spaced"><table class="table">
-<thead><tr><th scope="col">People outside the project</th><th scope="col" class="num">Number</th></tr></thead>
-<tbody>${rows}</tbody></table></div>`
-      : html`<p class="empty">Nothing has reached its minimum yet.</p>`}
-<h2 class="page-title" id="agents">AI agents using the Forge, last 7 days</h2>
-${funnelShown.length
-      ? html`<div class="stats spaced">${funnelShown.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>`
-      : html`<p class="empty">Not enough yet. Each step appears once it reaches its minimum.</p>`}
-${stages?.agent_outside_calls_7d != null ? html`<p class="spaced"><b>${n(stages.agent_outside_calls_7d)}</b> tool calls from outside apps in 7 days: the number that counts as use.</p>` : ""}
-<p class="small muted">From finding the Forge to filing a report: ${FUNNEL_STAGES.map(([, short, long]) => `${short} (${long})`).join("; ")}. Daily totals, so these count fetches, sessions and calls, not distinct agents. House agents, our own tests, directory health checks and monitors (apps that connect but never use a tool, such as uptime checkers and catalogues) are never counted.</p>
-${conn.length && usage
-      ? html`<h2 class="page-title" id="connections">AI connections, last 7 days</h2>
-<div class="stats spaced">${conn.map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
-${connections?.mcp_sessions !== null && usage.top_clients.length ? html`<p class="small muted">Most-used apps: ${usage.top_clients.map((x) => x.name).join(", ")}.</p>` : ""}
-<p class="small muted">A connection is an AI app opening a session with the Forge's MCP server; a tool call is the AI using it. Daily totals only; we keep nothing about who connected. Our own signed-in sessions are counted apart, below. Anonymous connections can't be told apart, so a few may be ours.</p>`
-      : ""}
-${checks && (checks.skill_scans_7d !== null || checks.watch_checkins_7d !== null || checks.skill_file_agent_fetches_7d !== null)
-      ? html`<h2 class="page-title" id="skill-checks">Skill checks, last 7 days</h2>
-<div class="stats spaced">${(
-          [
-            [checks.skill_scans_7d, "skills scanned (web, API and AI apps)"],
-            [checks.skill_file_agent_fetches_7d, "agents fetched the forge-check skill"],
-            [checks.watch_checkins_7d, "weekly-watch check-ins from agents"],
-          ] as [number | null, string][]
-        )
-          .filter((x): x is [number, string] => x[0] !== null)
-          .map(([v, label]) => html`<div class="stat"><b>${n(v)}</b><span>${label}</span></div>`)}</div>
-<p class="small muted">Daily totals only. A check-in is an agent's own weekly question: did its installed skills change? An agent fetch is a non-browser download of <a href="/skill.md">/skill.md</a>, crawlers excluded. Our own tests may be among them.</p>`
-      : ""}
-${days.length
-      ? html`<h2 class="page-title">Daily history</h2>
-<div class="scroll-x"><table class="table">
-<thead><tr><th scope="col">Day (UTC)</th>${cols.map(([, label]) => html`<th scope="col" class="num">${label}</th>`)}</tr></thead>
-<tbody>${days.map(
-          (d) => html`<tr><td class="mono">${d}</td>${cols.map(([m]) => {
-            const v = shownAt(d, m);
-            return html`<td class="num">${v === null ? "" : n(v)}</td>`;
-          })}</tr>`,
-        )}</tbody></table></div><p class="small muted">People outside the project, saved daily just after midnight UTC. A blank cell was below the minimum that day.</p>`
-      : ""}
-<h2 class="page-title" id="house">House activity</h2>
-${houseItems.length
-      ? html`<p class="house-activity"><span class="label">house</span> ${houseItems.join(" · ")}.</p>`
-      : html`<p class="muted">No House activity yet.</p>`}
-<p class="small muted">Our test agents (labelled "house" everywhere) and the founder's own testing. Never counted above.</p>
-<details class="spaced"><summary>The minimums</summary>
-<ul class="small">${PROOF_LABELS.map(([k, label]) => html`<li>${label}: from ${COUNTER_MINIMUMS[k]}</li>`)}
-<li>AI connections in 7 days: from ${COUNTER_MINIMUMS.mcp_sessions} (tool calls from ${COUNTER_MINIMUMS.mcp_tool_calls}, signed in from ${COUNTER_MINIMUMS.mcp_sessions_signed_in})</li>
-<li>CLI downloads in a day: from ${COUNTER_MINIMUMS.cli_npm_downloads}</li>
-<li>AI agents in 7 days: ${FUNNEL_STAGES.map(([k, short]) => `${short} from ${COUNTER_MINIMUMS[`agent_${k}_7d`]}`).join(", ")}; tool calls from outside apps from ${COUNTER_MINIMUMS.agent_outside_calls_7d}</li></ul>
-</details>`,
-  });
-});
+/** The House tester's scan of a server's own tool descriptions (ADR 0108): pattern matches for a person, never a verdict. */
+function houseToolsBox(p: HouseToolsPayload, fetchedAt: number, now: number) {
+  const word = p.verdict === "flagged" ? "matched a high-risk pattern" : p.verdict === "caution" ? "matched a pattern worth a look" : "matched no known pattern";
+  return html`<div class="panel chamfer panel-body spaced" id="house-tools"><p class="eyebrow"><span class="label">house</span>tool descriptions · scanned ${ago(fetchedAt, now)}</p>
+<h3>${p.tools_count} tool${p.tools_count === 1 ? "" : "s"} listed by v${p.version}: ${word}</h3>
+<p class="muted small">Our House tester started this server with ${p.registry === "pypi" ? "uvx" : "npx"}, no credentials, and read what <code>tools/list</code> says about each tool. Scanned with rules ${p.rules_version} (<a href="/scan/rules">the skill scanner's rules</a>). A match means a person should read that text; it isn't a finding that the server is malicious.</p>
+${p.findings.length ? html`<ul>${p.findings.map((f) => html`<li><b>${f.severity}</b> ${f.title} (${f.rule}) in tool <code>${f.tool}</code>${f.context === "warning" ? " (reads as a warning or example)" : ""}: <code>${f.evidence}</code></li>`)}</ul>` : ""}
+<p class="muted small">Tools: ${p.tools.map((t) => t.name).slice(0, 40).join(", ")}${p.tools.length > 40 ? ", …" : ""}</p></div>`;
+}
 
 site.get("/t/:id{.+}", async (c) => {
   let id: string;
@@ -835,10 +736,11 @@ ${d.signals.length ? html`<section aria-labelledby="signals"><h2 id="signals">Pu
 <p class="muted small">From public sources, not agents, and labelled apart from field reports.</p>
 ${d.signals.map((s) => {
       if (s.source === "osv") return advisoryBox(s.payload as AdvisoryResult, s.fetchedAt, now);
-      const p = s.payload as { title?: string | null; description?: string | null; version?: string | null; repository?: string | null; registry_name?: string; status?: string | null; remote_transports?: string[] };
+      if (s.source === HOUSE_TOOLS_SOURCE) return houseToolsBox(s.payload as HouseToolsPayload, s.fetchedAt, now);
+      const p = s.payload as { title?: string | null; description?: string | null; version?: string | null; repository?: string | null; registry_name?: string; status?: string | null; remote_transports?: string[]; registry_url?: string | null };
       return html`<div class="panel chamfer panel-body spaced"><p class="eyebrow"><span class="label">public signal</span>${s.source} · fetched ${ago(s.fetchedAt, now)}</p>
 ${p.title ? html`<h3>${p.title}</h3>` : ""}${p.description ? html`<p>${p.description}</p>` : ""}
-<dl class="kv">${p.registry_name ? html`<dt>Registry name</dt><dd>${p.registry_name}</dd>` : ""}${p.version ? html`<dt>Latest version</dt><dd>${p.version}</dd>` : ""}${p.status ? html`<dt>Registry status</dt><dd>${p.status}</dd>` : ""}${p.remote_transports?.length ? html`<dt>Remote</dt><dd>${p.remote_transports.join(", ")}</dd>` : ""}${p.repository ? html`<dt>Source</dt><dd><a href="${p.repository}" rel="nofollow noopener">${p.repository.replace("https://", "")}</a></dd>` : ""}</dl></div>`;
+<dl class="kv">${p.registry_name ? html`<dt>Registry name</dt><dd>${p.registry_name}</dd>` : ""}${p.version ? html`<dt>Latest version</dt><dd>${p.version}</dd>` : ""}${p.status ? html`<dt>Registry status</dt><dd>${p.status}</dd>` : ""}${p.remote_transports?.length ? html`<dt>Remote</dt><dd>${p.remote_transports.join(", ")}</dd>` : ""}${p.repository ? html`<dt>Source</dt><dd><a href="${p.repository}" rel="nofollow noopener">${p.repository.replace("https://", "")}</a></dd>` : ""}${p.registry_url && /^https:\/\/(pypi\.org|smithery\.ai|www\.npmjs\.com)\//.test(p.registry_url) ? html`<dt>Listing</dt><dd><a href="${p.registry_url}" rel="nofollow noopener">${p.registry_url.replace("https://", "")}</a></dd>` : ""}</dl></div>`;
     })}</section>` : ""}
 
 ${toolSources(check, d.reports.length, asOf)}
@@ -857,6 +759,9 @@ site.get("/a/:handle", async (c) => {
   const gx = await agentGauntlet(db, d.agent.id, c.env.PUBLIC_ORIGIN);
   // ADR 0055: Season 1 badges, when its owner entered one of its runs.
   const season = await agentSeasonBadges(c.env, d.agent.id).catch(() => null);
+  // ADR 0073 (OA-07): "Founding owner #n", only when the owner joined the list (outside owners numbered 1–100).
+  // F-02: the number shows only once the /founding list is open; before that the badge reads "Founding owner".
+  const founding = await foundingBadgeOf(c.env, d.agent.humanId).catch(() => null);
   const ownerVerified = d.ownerTier === "verified" && !d.ownerHouse;
   if (wantsJson(c))
     return sendJson(c, {
@@ -878,6 +783,7 @@ site.get("/a/:handle", async (c) => {
       reports: d.reports.map((r) => ({ ...r, verdicts: iv.received.get(r.id) ?? NO_VERDICTS })),
       gauntlet: { claimed_runs: gx.runs.length, best: gx.best, challenges: gx.challenges, runs: gx.runs },
       season,
+      founding_owner: founding === null ? null : { ...founding, url: `${c.env.PUBLIC_ORIGIN}/founding` },
     });
   const now = Date.now();
   return send(c, {
@@ -888,6 +794,7 @@ site.get("/a/:handle", async (c) => {
     jsonAlternate: `${agentHref(d.agent.handle)}?format=json`,
     body: html`<p class="eyebrow">${d.agent.framework} agent · run by <a href="https://github.com/${d.ownerLogin}" rel="nofollow ugc">@${d.ownerLogin}</a> ${tierLabel(d.ownerTier, d.ownerHouse)}${ownerVerified ? html` <span class="owner-tick" title="The person who runs this agent is a verified human">✓ owner verified</span>` : ""}${d.agent.status === "revoked" ? html` · <strong>revoked</strong>` : ""}</p>
 <h1 class="mono-title page-title">${breakableId(d.agent.handle)}</h1>
+${founding !== null ? html`<p class="founding-badge"><a class="label" href="/founding">${founding.label}</a></p>` : ""}
 ${season ? html`<p class="season-badges">${season.badges.map((b) => html`<a class="label" href="${season.url}">${b.label}</a> `)}</p>` : ""}
 <div class="stats spaced">
 <div class="stat"><b>${d.reports.length}</b><span>field reports</span></div>

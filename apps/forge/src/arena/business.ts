@@ -1,6 +1,7 @@
-import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, VERDICT_RUNS, wilsonInterval } from "@forge/arena";
+import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, playedUnderAt, publicTrapId, rulesVersionAt, TASKS, VERDICT_RUNS } from "@forge/arena";
 import type { Db } from "../services/db";
 import { rankedRuns, type FailTier } from "./failures";
+import { outward, wilson } from "./holdout";
 import { isKnockout, modelName } from "./views";
 
 // Business Agent reliability (K3, acquisition-strategy §5 Phase A item 2): the Arena's refereed ranked results grouped
@@ -133,7 +134,7 @@ export interface BizCell {
   /** Attempts that broke policy (null when hidden). */
   breaks: number | null;
   rate: number | null;
-  /** 95% Wilson interval for the break rate (null when hidden). */
+  /** 95% Wilson interval for the break rate, bounds rounded outwards to 3 places (null when hidden). */
   ci: [number, number] | null;
   /** Fewer than VERDICT_RUNS attempts: a first look, not a verdict. */
   early: boolean;
@@ -170,7 +171,7 @@ export function cellFrom(a: Acc): BizCell {
     shown,
     breaks: shown ? a.breaks : null,
     rate: shown ? r3(a.breaks / a.n) : null,
-    ci: shown ? wilsonInterval(a.breaks, a.n) : null,
+    ci: shown ? outward(wilson(a.breaks, a.n)) : null,
     early: a.n < VERDICT_RUNS,
     topTrap: shown && top ? { id: top[0], falls: top[1] } : null,
     knockouts: a.knockouts,
@@ -223,19 +224,35 @@ export interface BusinessBoard {
   events: { slug: string; name: string }[];
   /** Every group, all models: an attempt broke policy when any of its traps sprang. */
   overall: BizCell;
+  /** Set when the board was narrowed to one rules version: the version counted here. */
+  rules: string | null;
+  /** Counted attempts (knockouts apart) per rules version among all the tier's ranked runs, before any narrowing. */
+  rulesVersions: { version: string; attempts: number }[];
+  /** Counted attempts by the rules they were played under (differs from `rules` only for a re-scored group, ADR 0088). */
+  playedUnder: { version: string; attempts: number }[];
+  /** Every group, per model: an attempt broke policy when any of its traps sprang (/security's "which models fell"). */
+  byModel: { id: string; name: string; cell: BizCell }[];
   groups: { group: BusinessGroup; overall: BizCell; models: { id: string; name: string; cell: BizCell }[] }[];
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** The whole view. Runs come newest first, so the first replays of each kind are the latest. */
-export async function businessBoard(db: Db, tier: FailTier = "all"): Promise<BusinessBoard> {
-  const runs = await rankedRuns(db, tier);
+export async function businessBoard(db: Db, tier: FailTier = "all", f: { rules?: string } = {}): Promise<BusinessBoard> {
+  const all = await rankedRuns(db, tier);
+  // A rules change can change how a trap is scored (rules 0.5 and 0.6 fixed referee checks), so a caller that must not
+  // pool across rules versions (ADR 0068 Amendment 1; /security) narrows to one; the per-version counts say what's left out.
+  const versionOf = (r: (typeof all)[number]) => rulesVersionAt(r.summary.finishedAt, r.result);
+  const perVersion = new Map<string, number>();
+  for (const r of all) if (!isKnockout(r.result) && groupsOfRun(r.summary.task, r.result?.traps).size) perVersion.set(versionOf(r), (perVersion.get(versionOf(r)) ?? 0) + 1);
+  const runs = f.rules ? all.filter((r) => versionOf(r) === f.rules) : all;
   const overall = newAcc();
   const byGroup = new Map<BusinessGroupId, Acc>();
   const byCell = new Map<string, Acc>(); // `${group}|${model}`
+  const byModel = new Map<string, Acc>();
   const models = new Map<string, number>();
   const events = new Map<string, string>();
+  const played = new Map<string, number>();
   let knockouts = 0;
   for (const r of runs) {
     const s = r.summary;
@@ -244,10 +261,17 @@ export async function businessBoard(db: Db, tier: FailTier = "all"): Promise<Bus
     if (!groups.size) continue;
     events.set(s.event, s.eventName);
     if (ko) knockouts++;
-    else models.set(s.model, (models.get(s.model) ?? 0) + 1);
+    else {
+      models.set(s.model, (models.get(s.model) ?? 0) + 1);
+      const p = playedUnderAt(s.finishedAt, r.result);
+      played.set(p, (played.get(p) ?? 0) + 1);
+    }
     if (ko && !models.has(s.model)) models.set(s.model, 0);
     const anyBroke = [...groups.values()].some((g) => g.broke);
-    add(overall, s.id, ko, anyBroke, [...groups.values()].flatMap((g) => [...g.sprung]));
+    const sprung = [...groups.values()].flatMap((g) => [...g.sprung]);
+    add(overall, s.id, ko, anyBroke, sprung);
+    if (!byModel.has(s.model)) byModel.set(s.model, newAcc());
+    add(byModel.get(s.model)!, s.id, ko, anyBroke, sprung);
     for (const [g, x] of groups) {
       if (!byGroup.has(g)) byGroup.set(g, newAcc());
       add(byGroup.get(g)!, s.id, ko, x.broke, x.sprung);
@@ -257,9 +281,12 @@ export async function businessBoard(db: Db, tier: FailTier = "all"): Promise<Bus
     }
   }
   const cols = [...models.entries()].map(([id, attempts]) => ({ id, name: modelName(id), attempts })).sort((a, b) => a.name.localeCompare(b.name));
-  const times = runs.map((r) => r.summary.finishedAt);
+  const times = runs.filter((r) => groupsOfRun(r.summary.task, r.result?.traps).size).map((r) => r.summary.finishedAt);
   return {
     tier,
+    rules: f.rules ?? null,
+    rulesVersions: [...perVersion.entries()].map(([version, attempts]) => ({ version, attempts })).sort((a, b) => b.version.localeCompare(a.version, "en", { numeric: true })),
+    playedUnder: [...played.entries()].map(([version, attempts]) => ({ version, attempts })).sort((a, b) => a.version.localeCompare(b.version, "en", { numeric: true })),
     since: times.length ? day(Math.min(...times)) : null,
     asOf: times.length ? day(Math.max(...times)) : null,
     attempts: overall.n,
@@ -267,6 +294,7 @@ export async function businessBoard(db: Db, tier: FailTier = "all"): Promise<Bus
     models: cols,
     events: [...events.entries()].map(([slug, name]) => ({ slug, name })),
     overall: cellFrom(overall),
+    byModel: cols.map((m) => ({ id: m.id, name: m.name, cell: cellFrom(byModel.get(m.id) ?? newAcc()) })),
     groups: BUSINESS_GROUPS.map((group) => ({
       group,
       overall: cellFrom(byGroup.get(group.id) ?? newAcc()),

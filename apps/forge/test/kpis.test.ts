@@ -128,7 +128,7 @@ describe("the other KPIs", () => {
     const snap = kpiSnapshotValues(k.kpis);
     expect(Object.keys(snap)).toContain("kpi_north_star");
     expect(Object.keys(snap)).not.toContain("kpi_company_readiness");
-    expect(k.kpis).toHaveLength(14);
+    expect(k.kpis).toHaveLength(16);
     await env.KV.delete(PARTNERS_KV);
     await env.KV.delete(CITATIONS_KV);
   });

@@ -8,3 +8,4 @@ export * from "./since";
 export * from "./field-draft";
 export * from "./weekly";
 export * from "./claim";
+export * from "./install-id";

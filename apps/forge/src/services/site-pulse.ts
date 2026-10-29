@@ -48,12 +48,41 @@ export async function workTotals(env: Env): Promise<WorkTotals> {
   };
 }
 
-/** The headline totals, in order. Tools tracked goes in the footnote: it's mostly registry facts, not our work. */
+/**
+ * B3-06 (ADR 0099, Boardy round 3): the field-report total says what most of it is, wherever it appears (home band,
+ * /about, /stats, /stats.json). The House agent's nightly install tests (integrations/house) are real installs, not
+ * simulated, and the method is at HOUSE_METHOD_PATH. The number itself is unchanged; no House-only count is published
+ * next to it (the total less a House count would be an outside-only number).
+ */
+export const FIELD_REPORTS_LABEL = "field reports filed (most are our House agent's nightly install tests)";
+/**
+ * The home band's short form (coordinator review, 29 Oct): the label is "field reports filed" and, in the same stat
+ * item right under it, a one-line caption link to the House method note, so the House wording stays next to the
+ * number (B3-06) without the long label wrapping on phones.
+ */
+export const FIELD_REPORTS_BAND_LABEL = "field reports filed";
+export const FIELD_REPORTS_BAND_NOTE = "mostly our House install tests";
+/**
+ * The caption under tools tracked on the home band (review ADR 0115): most tools are registry listings, and since B3-14
+ * about 20,000 are PyPI name matches ("mcp" in the name), so the number says what it is, beside it, linked to its rule.
+ */
+export const TOOLS_TRACKED_BAND_NOTE = "registry listings, not reviewed";
+export const TOOLS_TRACKED_RULE_PATH = "/stats/rules#tools_tracked";
+/** The method note for House install tests (/methodology). */
+export const HOUSE_METHOD_ANCHOR = "house-install-tests";
+export const HOUSE_METHOD_PATH = `/methodology#${HOUSE_METHOD_ANCHOR}`;
+
+/**
+ * The headline totals, in order. Tools tracked is a headline number too (Dinike, 29 Oct: a key metric for users and
+ * buyers), shown last: our own work comes first and the registry-led count after it, the same order as PUBLIC_TOTALS
+ * (/stats.json, /about, the buyer brief). It was only in the footnote before.
+ */
 export const WORK_LABELS = [
   ["bouts_refereed", "bouts refereed"],
   ["traps_sprung", "traps sprung"],
-  ["skills_scanned", "skills scanned"],
-  ["field_reports", "field reports filed"],
+  ["skills_scanned", "skill files scanned"],
+  ["field_reports", FIELD_REPORTS_LABEL],
+  ["tools_tracked", "tools tracked"],
 ] as const;
 
 /** The "last … ago" candidates for the footnote; the page shows the two most recent. */

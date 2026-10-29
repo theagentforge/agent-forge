@@ -63,12 +63,18 @@ describe("trap card (ADR 0017 §1)", () => {
     expect(page).toContain("Keep your own approval step for payments.");
     for (const app of ["ChatGPT", "Claude", "Gemini", "Copilot"]) expect(page).toContain(`<h3>${app}</h3>`);
     expect(page).not.toMatch(/protects you|stops fraud/i);
-    // The only percentage is the pre-registered Lab #3 sentence, with its interval (lab/003-trap-cards/RESULTS.md).
-    const claim = /<p><b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs<\/b> \(95% interval 48–59%;[^<]*<a href="\/lab\/3\/results">/;
-    expect(page).toMatch(claim);
-    expect(page.replace(claim, "")).not.toMatch(/\d+\s?%/);
-    // Lab #4's pre-registered sentence (H1 didn't hold), linked to its results.
-    expect(page).toMatch(/<b>In our tests on frontier models, the card didn't measurably reduce traps<\/b>[^<]*<a href="\/lab\/4\/results">/);
+    // The only percentages are the two experiments (Boardy review item 3): Experiment 3's pre-registered sentence with
+    // its interval, and Experiment 4's pre-registered "didn't measurably reduce" sentence followed by its estimate and
+    // interval. No other percentage anywhere on the page.
+    const block = page.slice(page.indexOf('<div class="exp-grid">'), page.indexOf("</div>", page.indexOf('id="experiment-4"')));
+    expect(block).toMatch(/<b>In our tests, small open models given the trap card fell for 54% fewer traps on new versions of the jobs<\/b> \(95% interval 48–59% fewer;[^<]*<\/p>/);
+    expect(block).toMatch(/<b>In our tests on frontier models, the card didn't measurably reduce traps\.<\/b>/);
+    expect(block).toContain('href="/lab/3/results?from=trap-card"');
+    expect(block).toContain('href="/lab/4/results?from=trap-card"');
+    expect(block.indexOf('id="experiment-3"')).toBeGreaterThan(-1);
+    expect(page.replace(block, "")).not.toMatch(/\d+\s?%/);
+    // The block sits above the paste guides.
+    expect(page.indexOf('id="experiment-4"')).toBeLessThan(page.indexOf('id="where"'));
   });
 });
 

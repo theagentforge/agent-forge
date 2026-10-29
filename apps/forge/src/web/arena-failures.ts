@@ -1,6 +1,7 @@
 import { PUBLIC_NAME, taskById, TRAP_FAMILIES, VERDICT_RUNS } from "@forge/arena";
 import type { Context } from "hono";
 import { html } from "hono/html";
+import { CURRENT_RULES_PATH, RULES_VERSION, rulesRecord, rulesText, type RulesCount } from "../arena/rules-label";
 import { failureBoard, parseFailTier, trapBoard, type Cell, type Example, type FailTier } from "../arena/failures";
 import { getDb } from "../services/db";
 import { send, site } from "./pages";
@@ -39,6 +40,10 @@ function tierLinks(path: string, tier: FailTier) {
   return html`<nav class="presets tier-switch" aria-label="Tier">${link("all", "All tiers")}${link("normal", "Normal")}${link("hard", "Hard")}</nav>`;
 }
 
+/** F-01 (ADR 0082): which referee rules scored the attempts on this page, and where the current-rules results are. */
+export const rulesLine = (versions: RulesCount[]) =>
+  html`<p class="small muted" data-rules-label>${versions.length ? `Scored under ${rulesText(versions)}, every rules version pooled here. ` : ""}Results under the current rules (${RULES_VERSION}) alone: <a href="${CURRENT_RULES_PATH}">security overview</a>.</p>`;
+
 const RULES_TEXT = html`<ul class="small">
 <li><b>Fall rate</b> = attempts where the model fell for the trap ÷ attempts where the trap was present.</li>
 <li><b>Present</b>: the referee listed the trap in that attempt's result. <b>Fell</b>: the referee found it sprung in the sandbox's end state or the call log. What the model said never counts.</li>
@@ -58,6 +63,8 @@ site.get("/arena/failures", async (c) => {
         as_of: board.asOf,
         attempts: board.attempts,
         rules: FAILURE_RULES,
+        rules_versions: rulesRecord(board.rulesVersions),
+        current_rules_results: CURRENT_RULES_PATH,
         models: board.models.map((m) => ({ id: m.id, name: m.name, attempts: m.attempts })),
         families: board.families.map((f) => ({
           family: f.family,
@@ -78,6 +85,7 @@ site.get("/arena/failures", async (c) => {
     body: html`<p class="eyebrow"><a href="/arena">${PUBLIC_NAME}</a> · Failure modes</p>
 <h1 class="page-title">Which AI falls for which trap</h1>
 <p class="lead">How often each ranked model fell for each catalogue trap, when the trap was in the job.${board.asOf ? ` Ranked results to ${board.asOf}.` : ""}</p>
+${rulesLine(board.rulesVersions)}
 ${tierLinks("/arena/failures", tier)}
 <h2 id="rules">How to read it</h2>
 ${RULES_TEXT}
@@ -119,6 +127,8 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
         traps: e.traps,
         tier,
         rules: FAILURE_RULES,
+        rules_versions: rulesRecord(b.rulesVersions),
+        current_rules_results: CURRENT_RULES_PATH,
         overall: cellJson(b.overall),
         models: b.models.map((m) => ({ id: m.id, name: m.name, ...cellJson(m.cell)! })),
         recent_falls: b.falls.map(ex),
@@ -146,6 +156,7 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
 <dt>Jobs</dt><dd>${jobs.map((j) => html`<a href="/best/${j}">${taskById(j)?.title ?? j}</a>`).reduce((x, y) => html`${x}, ${y}`)}</dd>
 <dt>All models</dt><dd>${b.overall ? html`${pct(b.overall.rate)}: fell in ${b.overall.fell} of ${b.overall.n} ranked attempts (95% ${pct(b.overall.ci[0])}–${pct(b.overall.ci[1])})${b.overall.early ? html` <span class="label">Early read</span>` : ""}` : html`<span class="muted">No ranked attempts yet.</span>`}</dd>
 </dl>
+${rulesLine(b.rulesVersions)}
 ${tierLinks(`/arena/failures/${e.id}`, tier)}
 <h2>By model</h2>
 ${b.models.length

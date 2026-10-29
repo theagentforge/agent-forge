@@ -1,3 +1,4 @@
+import { FREE_TRAINING_LABEL } from "../arena/free-lane";
 import { ATTEMPTS, CANARY, CANARY_GUID, CHANGELOG, FIRST_STAMPED_RULES, LONGITUDINAL, citation, PUBLIC_NAME, RULES_HISTORY, RULES_VERSION, TASK_VERSIONS, TRAP_CATALOG, TRAP_FAMILIES, type TrapFamily } from "@forge/arena";
 import { html } from "hono/html";
 import { copyBlock } from "./components";
@@ -39,7 +40,7 @@ export function methodologyData(origin: string) {
     contamination: {
       canary: CANARY,
       canary_guid: CANARY_GUID,
-      canary_in: ["/arena/dataset.json", "/arena/run/:id.json", "/arena/events/:slug.json", "/arena/events/:slug.csv", "/arena/event/:slug?format=json", "/arena/event/:slug/falls?format=json", "/arena/history?format=json", "/arena/run/:id", "/arena/event/:slug", "/arena/history", "/gauntlet/r/:id/:job", "/arena/proving-ground/:id"],
+      canary_in: ["/arena/dataset.json", "/arena/run/:id.json", "/arena/events/:slug.json", "/arena/events/:slug.csv", "/arena/event/:slug?format=json", "/arena/event/:slug/falls?format=json", "/arena/history?format=json", "/arena/run/:id", "/arena/event/:slug", "/arena/history", "/gauntlet/r/:id/:job", "/arena/proving-ground/:id", "/benchmark", "/benchmark/v1.json", "/benchmark/v1/traps.json"],
       held_out_seeds_published: false,
       held_out_reported_as: "public_vs_held_out_pass_rate_gap_per_model_per_event",
       longitudinal_panel: { version: LONGITUDINAL.version, tier: "normal", attempts: LONGITUDINAL.attempts, max_bouts_per_model_version: LONGITUDINAL.maxBoutsPerModel, held_out: true },
@@ -68,9 +69,9 @@ site.get("/arena/methodology", async (c) => {
 <li><b>Traps named in advance.</b> Each job has planted traps, listed below, each modelled on a real fraud or failure pattern. A trap is "sprung" when the end state or the call log shows the model fell for it.</li>
 <li><b>Seeds.</b> Each job builds its world from a seed, so the same seed always gives the same world and the same failures. Season events draw their seeds at random when the event is queued and publish them with the results.</li>
 <li><b>Attempts.</b> Every model gets ${ATTEMPTS} attempts per variant, with the same prompt, tools and limits. Results say whether a model got the same variant right every time, not just once.</li>
-<li><b>Signed logs.</b> Every bout's full log is signed when it finishes. A replay is marked "Verified" only when the stored signature matches a fresh signature over the stored log. Logs are public: <a href="/arena/dataset.json">the dataset</a> lists every run.</li>
+<li><b>Signed logs.</b> Every bout's full log is signed when it finishes. Bouts finished since replay format v2 went live (October 2026) are hash-chained and signed with a published key, so anyone can check them with <code>forge verify</code> (<a href="/methodology#replays">how</a>). Older replays are marked "Verified" when the stored signature matches a fresh signature over the stored log. Logs are public: <a href="/arena/dataset.json">the dataset</a> lists every run.</li>
 </ul>
-<p>The scoring weights, caps and tie rules are on the <a href="/arena/rules">rules page</a>.</p>
+<p>The scoring weights, caps and tie rules are on the <a href="/arena/rules">rules page</a>. The public traps as a versioned, citable benchmark (schema per trap, citation, per-model results): <a href="/benchmark">The Forge Trap Set</a>.</p>
 
 <h2 id="contamination">Keeping the test clean</h2>
 <ul>
@@ -78,6 +79,7 @@ site.get("/arena/methodology", async (c) => {
 <li><b>Model versions over time.</b> Every new model version runs the same frozen, private set of Normal job versions (at most ${LONGITUDINAL.maxBoutsPerModel} bouts), with the exact model string pinned and the run date kept. Pass rates per version are on <a href="/arena/history">Arena history</a>.</li>
 <li><b>Canary.</b> Every Arena data file (the dataset, run logs, event files) and every replay page carries this line, so anyone can search a training set for it and see whether our data leaked in: <code>${CANARY}</code></li>
 <li>Ranked headline events keep public replays: their seeds are fresh random draws each event.</li>
+<li id="free-lane"><b>Free-model practice.</b> Practice bouts on OpenRouter's free model variants are labelled "free variant via OpenRouter" and "${FREE_TRAINING_LABEL}": free providers may keep and train on what they are sent, so these bouts only ever play the six public Gauntlet jobs on public seeds, never a held-out seed, a private job family, a Lab arm or a held event. Every other bout, free Workers AI practice included, goes only to providers that don't train on prompts.</li>
 </ul>
 
 <h2 id="catalog">Trap catalogue</h2>
@@ -101,7 +103,7 @@ ${copyBlock("cite-text", cite.text)}
 <p class="muted">Cite a single trap by its ID and this page, for example "FA-PAY-002, ${cite.title} (${RULES_VERSION})". Data from <a href="/arena/dataset.json">the dataset</a> is free to use for evaluation, research and reporting, with attribution (<a href="#licence">licence</a>).</p>
 
 <h2 id="licence">Data licence and provenance</h2>
-<p>${DATASET_LICENCE}</p>
+<p>${DATASET_LICENCE} The licence on its own page: <a href="/benchmark/licence">/benchmark/licence</a>.</p>
 <ul>
 <li><b>Allowed:</b> evaluating and comparing models and agents, research, journalism and reports, with a link to theagentforge.io/arena.</li>
 <li><b>Not allowed:</b> training or fine-tuning AI models on the dataset, the event files or the run logs.</li>

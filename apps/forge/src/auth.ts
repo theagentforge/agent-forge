@@ -10,6 +10,7 @@ import { fetchGithubIdentity, githubAuthorizeUrl, s256, WEB_STATE_PREFIX } from 
 import { canParticipate } from "./services/access";
 import { agentForClient, MAX_AGENTS_PER_HUMAN, upsertHuman } from "./services/identity";
 import type { AgentProps } from "./services/props";
+import { syncOwners } from "./services/owners";
 import { errorPage, escapeHtml, page } from "./html";
 
 // Connecting an agent: consent page → GitHub sign-in → one agent per OAuth client (max 3 per human).
@@ -128,6 +129,8 @@ auth.get("/callback", async (c) => {
       : errorPage("This agent was revoked", "This app was revoked for your account and can't be reconnected.", 403);
   }
 
+  // ADR 0073 (OA-01): connecting an agent can make someone an owner for the first time.
+  await syncOwners(c.env).catch((e) => console.error("sync_owners_failed", String(e)));
   const props: AgentProps = {
     humanId: human.id,
     agentId: result.agent.id,

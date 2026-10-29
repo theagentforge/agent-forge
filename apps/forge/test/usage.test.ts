@@ -48,19 +48,19 @@ describe("usage counts (proof of use, daily totals only)", () => {
     expect(refused.status).toBe(401);
     await new Promise((r) => setTimeout(r, 50));
     expect((await usageStats(env)).mcp_sessions_signed_in).toBe(before);
-    // ADR 0023 §3: the public numbers appear only from 25 connections in 7 days.
+    // F-02 (ADR 0082): the outside-only 7-day connections are internal (gated as before, on /admin), never on /stats.
+    const { outsideStatsData } = await import("../src/web/stats");
     const shown = (await usageStats(env)).mcp_sessions;
     if (shown < 25) {
-      expect(await (await fetchWorker("/stats?c=below")).text()).not.toContain('id="connections"');
-      const below = (await (await fetchWorker("/stats?format=json&c=below")).json()) as { usage: { mcp_sessions: number | null; below_minimum: string[] } };
-      expect(below.usage.mcp_sessions).toBeNull();
-      expect(below.usage.below_minimum).toContain("mcp_sessions");
+      const below = (await outsideStatsData(env)).usage!;
+      expect(below.mcp_sessions).toBeNull();
+      expect(below.below_minimum).toContain("mcp_sessions");
     }
     for (let i = shown; i < 25; i++) await recordMcp(env, "public", new Request("https://x/mcp/public", { method: "POST", body: JSON.stringify(init("test-client")) }));
+    expect((await outsideStatsData(env)).usage!.mcp_sessions).toBeGreaterThanOrEqual(25);
     const stats = await (await fetchWorker("/stats?c=at")).text();
-    expect(stats).toContain('id="connections"');
-    const json = (await (await fetchWorker("/stats?format=json&c=at")).json()) as { usage: { mcp_sessions: number } };
-    expect(json.usage.mcp_sessions).toBeGreaterThanOrEqual(25);
+    expect(stats).not.toContain('id="connections"');
+    expect(((await (await fetchWorker("/stats?format=json&c=at")).json()) as { usage: unknown }).usage).toBeNull();
   });
 });
 

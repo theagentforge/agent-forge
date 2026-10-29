@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import * as t from "../src/db/schema";
-import { atMinimum, COUNTER_MINIMUMS, gate, reached, type CounterKey } from "../src/services/counters";
+import { atMinimum, COUNTER_MINIMUMS, gate, PUBLIC_ROW_MINIMUMS, reached, type CounterKey } from "../src/services/counters";
 import { getDb } from "../src/services/db";
 import { publicCounts } from "../src/services/forge";
 import { countsAsHouse } from "../src/services/identity";
@@ -115,8 +115,10 @@ describe("the proof strip", () => {
   it("the home page and its JSON twin never show a number below its minimum", async () => {
     const page = await (await fetchWorker(`/?u=${uid("x")}`)).text();
     expect(page).not.toMatch(/<b>0<\/b>/);
-    const json = (await (await fetchWorker(`/?format=json&u=${uid("x")}`)).json()) as { proof: Parameters<typeof expectGated>[0]; stats: Parameters<typeof expectGated>[0] };
-    expectGated(json.proof);
+    const json = (await (await fetchWorker(`/?format=json&u=${uid("x")}`)).json()) as { third_party: unknown[]; stats: Parameters<typeof expectGated>[0] & { totals: { items: { value: number | null }[] } } };
+    // ADR 0067 Amendment 1: the outside-only headline is internal (an empty array here); totals are never a zero.
+    expect(json.third_party).toEqual([]);
+    for (const i of json.stats.totals.items) expect(i.value === null || i.value > 0).toBe(true);
     expectGated(json.stats);
   });
 });
@@ -144,9 +146,11 @@ describe("House and our own testing are never counted as usage", () => {
     expect(countsAsHouse(e, { isHouse: false, githubId: 1 })).toBe(false);
   });
 
-  it("/api/v1/stats leaves House out and nulls every number below its minimum", async () => {
-    const s = (await (await fetchWorker("/api/v1/stats")).json()) as Parameters<typeof expectGated>[0] & { house_excluded: boolean; tools: number };
-    expect(s.house_excluded).toBe(true);
+  it("/api/v1/stats shows no outside-only number (F-02): those fields are null, and the gross twins include ours", async () => {
+    const s = (await (await fetchWorker("/api/v1/stats")).json()) as Parameters<typeof expectGated>[0] & { house_excluded: boolean; tools: number; gross: { includes_own_test_agents: boolean } };
+    expect(s.house_excluded).toBe(false);
+    for (const k of ["humans", "verified_humans", "agents", "reports", "reports_last_24h", "tool_versions_reported"]) expect(s[k], k).toBeNull();
+    expect(s.gross.includes_own_test_agents).toBe(true);
     expect(typeof s.tools).toBe("number"); // a registry fact (tools with a page), not usage
     expectGated(s);
   });
@@ -173,36 +177,31 @@ describe("/stats", () => {
     const today = day(Date.now());
     for (let i = 0; i < 12; i++) await db.insert(t.checkSources).values({ day: today, source: uid("house-src"), kind: "api", isHouse: true });
 
-    const json = (await (await fetchWorker(`/stats?format=json&u=${uid("x")}`)).json()) as {
-      now: Record<string, { external: number | null; below_minimum: boolean; minimum: number; house: number }>;
-      history: { metric: string; externalValue: number | null }[];
-      usage: { mcp_sessions: number | null; below_minimum: string[] } | null;
-      house_excluded: boolean;
-    };
-    expect(json.house_excluded).toBe(true);
+    // F-02 (ADR 0082): the outside-only counters, gated as before, are internal now (/admin).
+    const { outsideStatsData } = await import("../src/web/stats");
+    const json = await outsideStatsData(env);
     for (const [k, v] of Object.entries(json.now)) {
       expect(v.below_minimum, k).toBe(v.external === null);
       if (v.external !== null) expect(v.external).toBeGreaterThanOrEqual(v.minimum);
     }
     expect(json.now.reports!.house).toBeGreaterThan(0);
     expect(json.now.check_sources!.house).toBeGreaterThanOrEqual(12);
-    for (const h of json.history) if (h.metric in COUNTER_MINIMUMS && h.externalValue !== null) expect(h.externalValue).toBeGreaterThanOrEqual(COUNTER_MINIMUMS[h.metric as CounterKey]);
     if (json.usage) expect(json.usage.mcp_sessions === null).toBe(json.usage.below_minimum.includes("mcp_sessions"));
 
+    // /stats: gross numbers only, no zeros, no House-only line (a gross number minus a House number is the outside one).
     const page = await (await fetchWorker(`/stats?u=${uid("x")}`)).text();
     expect(page).not.toMatch(/<(b|td class="num")>0<\//);
-    expect(page).toContain('<h2 class="page-title" id="house">House activity</h2>');
-    expect(page).toMatch(/<span class="label">house<\/span> [^<]*field reports/);
-
-    // Enough people outside the project: the row appears with the real number.
-    const n = (await publicCounts(env)).humans;
-    await insertOutsideHumans(Math.max(0, COUNTER_MINIMUMS.humans - n));
-    const total = Math.max(n, COUNTER_MINIMUMS.humans);
+    expect(page).not.toContain('id="house"');
+    // ADR 0099: the gross row appears once it passes its minimum (50 people, our own included).
+    const n = Number((await env.DB.prepare("SELECT count(*) AS n FROM humans").first<{ n: number }>())!.n);
+    await insertOutsideHumans(Math.max(0, PUBLIC_ROW_MINIMUMS.signed_in_people - n));
+    const all = Number((await env.DB.prepare("SELECT count(*) AS n FROM humans").first<{ n: number }>())!.n);
     const after = await (await fetchWorker(`/stats?u=${uid("x")}`)).text();
-    expect(after).toContain(`<tr><td>People signed in</td><td class="num">${total.toLocaleString("en-US")}</td></tr>`);
+    expect(after).not.toContain("<td>People signed in</td>");
+    expect(after).toMatch(new RegExp(`<tr data-k="signed_in_people"><td>[^<]*</td><td class="num">${all.toLocaleString("en-US")}</td>`));
   });
 
-  it("/connect shows today's checks only from people outside the project, and only from the minimum", async () => {
+  it("/connect never shows today's outside-only check count (F-02); /admin has it", async () => {
     const db = getDb(env);
     const today = day(Date.now());
     const outside = async () =>
@@ -210,9 +209,11 @@ describe("/stats", () => {
     for (let i = 0; i < 15; i++) await db.insert(t.checkSources).values({ day: today, source: uid("house-src"), kind: "web", isHouse: true });
     const ext = await outside();
     const page = await (await fetchWorker(`/connect?u=${uid("x")}`)).text();
-    if (ext < COUNTER_MINIMUMS.check_sources) expect(page).not.toContain("checked a tool today");
+    expect(page).not.toContain("checked a tool today");
     for (let i = ext; i < COUNTER_MINIMUMS.check_sources; i++) await db.insert(t.checkSources).values({ day: today, source: uid("src"), kind: "web" });
     const shown = await (await fetchWorker(`/connect?u=${uid("x")}`)).text();
-    expect(shown).toContain(`${(await outside()).toLocaleString("en-US")} different people and agents checked a tool today.`);
+    expect(shown).not.toContain("checked a tool today");
+    const { connectChecksToday } = await import("../src/web/connect");
+    expect(await connectChecksToday(env)).toBe(await outside());
   });
 });

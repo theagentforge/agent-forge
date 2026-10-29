@@ -85,8 +85,9 @@ describe("growth signals", () => {
     await recordBadgeReferrer(env, "not a url");
     const g = await growthStats(env);
     expect(g.badge_sites_7d).toBe(1);
+    // F-02: sites showing a badge leave our own out, so the count is internal; the public endpoint has it null.
     const res = await fetchWorker("/api/v1/growth");
-    expect(await res.json()).toMatchObject({ badge_sites_7d: 1, claims: expect.any(Number) });
+    expect(await res.json()).toMatchObject({ badge_sites_7d: null, claims: expect.any(Number) });
   });
 });
 

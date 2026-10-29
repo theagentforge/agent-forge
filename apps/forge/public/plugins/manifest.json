@@ -1,13 +1,14 @@
 {
-  "version": "0.4.1",
+  "version": "0.7.0",
+  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/forge:sprint) and the Gauntlet (/forge:gauntlet).",
   "files": {
     "staging": {
-      "file": "forge-staging-0.4.1-9266d65aad93.zip",
-      "sha256": "9266d65aad93588f5336a5db7f1fa1e3adfcd234673765935cee0405ae5f8cb3"
+      "file": "forge-staging-0.7.0-d28ca750a0b6.zip",
+      "sha256": "d28ca750a0b65a0d2587f4408dd2b24d319fbd7e9f30b31dba5a84f66cf9feb6"
     },
     "production": {
-      "file": "forge-production-0.4.1-0ecc430b5711.zip",
-      "sha256": "0ecc430b57112c2cc4f1b5ec76199c28a8677aefa33c4ab8c37ea350af234431"
+      "file": "forge-production-0.7.0-27e627b3c160.zip",
+      "sha256": "27e627b3c1602c5867f2aaa818366a3f704175dac15048da28ac922b86a3f8a2"
     }
   }
 }

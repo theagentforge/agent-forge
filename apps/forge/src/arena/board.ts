@@ -1,6 +1,7 @@
 import { utcDay } from "@forge/arena";
 import type { Db } from "../services/db";
-import { finishedRuns, modelName } from "./views";
+import { tallyRules, type RulesCount } from "./rules-label";
+import { finishedRuns, isRankedEvent, modelName } from "./views";
 
 // "Which AI falls for it?" (ADR 0029 §home): the share of refereed Arena bouts in which each model set off at least
 // one planted trap. Normal-tier practice and ranked bouts only: Lab runs with trap cards (they change the prompt) and
@@ -19,36 +20,47 @@ export interface BoardRow {
 export interface Board {
   rows: BoardRow[];
   runs: number;
+  /** F-01 (ADR 0082): of `runs`, bouts in ranked events (headline and guest) and in practice or other unranked events. */
+  ranked: number;
+  practice: number;
+  /** F-01: the rules version that scored each counted bout (oldest first); the counts sum to `runs`. */
+  rules_versions: RulesCount[];
   since: string | null;
   until: string | null;
 }
 
+export const EMPTY_BOARD: Board = { rows: [], runs: 0, ranked: 0, practice: 0, rules_versions: [], since: null, until: null };
+
 export async function gullibilityBoard(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<Board> {
-  const key = `arena:board:v1:${utcDay(now)}`;
+  const key = `arena:board:v2:${utcDay(now)}`;
   const hit = await env.KV.get<Board>(key, "json");
   if (hit) return hit;
   const runs = await finishedRuns(db, { limit: 5000, now });
-  const by = new Map<string, { runs: number; fell: number }>();
-  let first = Infinity;
-  let last = 0;
-  for (const { summary: s, result } of runs) {
-    if (!result.traps.length) continue;
-    const m = by.get(s.model) ?? { runs: 0, fell: 0 };
+  const by = new Map<string, { runs: number; fell: number; bouts: (typeof runs)[number][] }>();
+  for (const r of runs) {
+    if (!r.result.traps.length) continue;
+    const m = by.get(r.summary.model) ?? { runs: 0, fell: 0, bouts: [] };
     m.runs++;
-    if (result.traps.some((t) => t.triggered)) m.fell++;
-    by.set(s.model, m);
-    first = Math.min(first, s.finishedAt);
-    last = Math.max(last, s.finishedAt);
+    if (r.result.traps.some((t) => t.triggered)) m.fell++;
+    m.bouts.push(r);
+    by.set(r.summary.model, m);
   }
-  const rows = [...by]
-    .filter(([, m]) => m.runs >= MIN_RUNS)
+  const listed = [...by].filter(([, m]) => m.runs >= MIN_RUNS);
+  const rows = listed
     .map(([model, m]) => ({ model, name: modelName(model), runs: m.runs, fell: m.fell, rate: m.fell / m.runs }))
     .sort((a, b) => b.rate - a.rate || b.runs - a.runs || a.model.localeCompare(b.model));
+  // The caption counts exactly the bouts behind the listed rows: their dates, ranked/practice mix and rules versions.
+  const counted = listed.flatMap(([, m]) => m.bouts);
+  const ranked = counted.filter((r) => isRankedEvent({ kind: r.summary.kind, arm: r.summary.arm ?? null })).length;
+  const times = counted.map((r) => r.summary.finishedAt);
   const board: Board = {
     rows,
-    runs: rows.reduce((n, r) => n + r.runs, 0),
-    since: Number.isFinite(first) ? new Date(first).toISOString().slice(0, 10) : null,
-    until: last ? new Date(last).toISOString().slice(0, 10) : null,
+    runs: counted.length,
+    ranked,
+    practice: counted.length - ranked,
+    rules_versions: tallyRules(counted.map((r) => ({ finishedAt: r.summary.finishedAt, result: r.result }))),
+    since: times.length ? new Date(Math.min(...times)).toISOString().slice(0, 10) : null,
+    until: times.length ? new Date(Math.max(...times)).toISOString().slice(0, 10) : null,
   };
   await env.KV.put(key, JSON.stringify(board), { expirationTtl: 2 * 86_400 });
   return board;

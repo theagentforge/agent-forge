@@ -172,7 +172,8 @@ describe("empty and wrong first calls on /mcp/gauntlet", () => {
   it("gauntlet_start with nothing starts a run (as before); a wrong-typed field is input_needed", async () => {
     expect((await gauntlet("gauntlet_start", undefined)).structuredContent.gauntlet_id).toMatch(/^g[0-9a-f]{32}$/);
     const sc = expectInputNeeded(await gauntlet("gauntlet_start", { challenge: 5 }), "gauntlet_start");
-    expect(sc.examples).toEqual([{}]);
+    // ADR 0083: the second example starts the one-job Gauntlet Sprint.
+    expect(sc.examples).toEqual([{}, { mode: "sprint" }]);
   });
 
   it("gauntlet_act and gauntlet_status without a run are input_needed; the examples work with a run's id in the slot", async () => {

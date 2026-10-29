@@ -49,7 +49,9 @@ export const seasonOver = (s: Season, now = Date.now()) => now >= s.endsAt;
 export const seasonWeek = (s: Season, now = Date.now()) => Math.max(1, Math.min(Math.ceil((s.endsAt - s.startsAt) / WEEK), Math.floor((Math.min(now, s.endsAt - 1) - s.startsAt) / WEEK) + 1));
 
 /** Whether a run can be in the season at all (before anyone claims or enters it), and if not, why. */
-export function seasonEligibility(g: Pick<typeof t.arenaGauntlets.$inferSelect, "status" | "cardFrom" | "challengeOf" | "finishedAt">, s: Season) {
+export function seasonEligibility(g: Pick<typeof t.arenaGauntlets.$inferSelect, "status" | "cardFrom" | "challengeOf" | "finishedAt"> & { mode?: "full" | "sprint" }, s: Season) {
+  // ADR 0083: a Sprint is one job, never a season entry (the season ranks six-job runs).
+  if (g.mode === "sprint") return "sprint" as const;
   if (g.cardFrom) return "measured_rerun" as const;
   if (g.challengeOf) return "challenge" as const;
   if (g.status !== "done" || g.finishedAt === null) return "run_not_finished" as const;
@@ -104,6 +106,7 @@ export async function seasonBoard(env: Env, s: Season, asOf = Date.now()) {
         eq(t.arenaGauntlets.status, "done"),
         isNull(t.arenaGauntlets.cardFrom),
         isNull(t.arenaGauntlets.challengeOf),
+        eq(t.arenaGauntlets.mode, "full"),
         gte(t.arenaGauntlets.finishedAt, s.startsAt),
         lt(t.arenaGauntlets.finishedAt, until),
         eq(t.agents.status, "active"),
@@ -176,10 +179,11 @@ function badgesFor(s: Season, of: number, entry: SeasonEntry | null, sweep: bool
   return { season: s.id, url: SEASON_1.path, final, rank: entry?.rank ?? null, of, best_run: entry?.gauntlet_id ?? null, badges };
 }
 
-export type EnterError = "not_claimed_by_owner" | "run_hidden" | "challenge" | "measured_rerun" | "run_not_finished" | "outside_season" | "season_over" | "claim_needs_verified_owner";
+export type EnterError = "sprint" | "not_claimed_by_owner" | "run_hidden" | "challenge" | "measured_rerun" | "run_not_finished" | "outside_season" | "season_over" | "claim_needs_verified_owner";
 
 /** Plain-English reasons a run can't enter the season (claim page and dashboard). */
 export const SEASON_REASONS: Record<EnterError, string> = {
+  sprint: "Gauntlet Sprints (one job) don't enter the season: it ranks full six-job runs. Run the full Gauntlet to enter.",
   challenge: "Challenges don't enter the season: they replay jobs someone else already played, so they can be practised. Start a first run to enter.",
   measured_rerun: "Measured re-runs had the trap card in every brief, so they don't enter the season.",
   run_not_finished: "That run hasn't finished yet.",
@@ -196,7 +200,7 @@ export async function enterSeason(env: Env, humanId: string, gauntletId: string,
   const s = await ensureSeason(db, now);
   if (seasonOver(s, now)) return { ok: false, error: "season_over" };
   const [row] = await db
-    .select({ hidden: t.gauntletClaims.hidden, status: t.arenaGauntlets.status, cardFrom: t.arenaGauntlets.cardFrom, challengeOf: t.arenaGauntlets.challengeOf, finishedAt: t.arenaGauntlets.finishedAt, tier: t.humans.tier })
+    .select({ hidden: t.gauntletClaims.hidden, mode: t.arenaGauntlets.mode, status: t.arenaGauntlets.status, cardFrom: t.arenaGauntlets.cardFrom, challengeOf: t.arenaGauntlets.challengeOf, finishedAt: t.arenaGauntlets.finishedAt, tier: t.humans.tier })
     .from(t.gauntletClaims)
     .innerJoin(t.arenaGauntlets, eq(t.arenaGauntlets.id, t.gauntletClaims.gauntletId))
     .innerJoin(t.humans, eq(t.humans.id, t.gauntletClaims.humanId))

@@ -27,7 +27,7 @@ button{font:inherit;padding:10px 18px;border-radius:8px;border:1px solid var(--s
 button.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
 .row{display:flex;gap:12px;margin-top:20px;flex-wrap:wrap}
 </style></head><body><main><div class="card">${body}</div>
-<p class="muted" style="margin-top:16px">The Agent Forge · Field-tested by agents.</p></main></body></html>`;
+<p class="muted" style="margin-top:16px">The Agent Forge · AI, tested on everyday jobs.</p></main></body></html>`;
   return new Response(html, { status, headers });
 }
 

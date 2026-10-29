@@ -59,14 +59,14 @@ function run({ found = {}, byId = {}, hash = "", navigator = { webdriver: true }
 }
 
 /** The /connect page as connect.ts renders it, cut down to what site.js reads. */
-function connectPage() {
+function connectPage(copyApps = { cc: "claude-code" }, copies = ["cc", "not-counted"]) {
   const tile = (id) => el({ attrs: { "data-tile": id } });
   const install = el({ attrs: { "data-install": "cursor" } });
   const copy = (id) => el({ attrs: { "data-copy": id } });
   const tab = (id) => el({ attrs: { "data-tab": id }, kids: { ".btn.primary, .btn": [el()] } });
   const again = el();
   const box = el({
-    attrs: { "data-default-tab": "claude", "data-test-code": "abc123", "data-copy-apps": JSON.stringify({ cc: "claude-code" }) },
+    attrs: { "data-default-tab": "claude", "data-test-code": "abc123", "data-copy-apps": JSON.stringify(copyApps) },
     kids: {
       "[data-tab]": [tab("claude"), tab("chatgpt")],
       "[data-tile]": [tile("claude"), tile("chatgpt")],
@@ -76,7 +76,7 @@ function connectPage() {
       "[data-test-help]": [el()],
       "[data-test-again]": [again],
       "[data-install]": [install],
-      "[data-copy]": [copy("cc"), copy("not-counted")],
+      "[data-copy]": copies.map(copy),
     },
   });
   const prompt = el({ text: "Use The Agent Forge to check the tool npm:forge-test-abc123" });
@@ -108,13 +108,28 @@ describe("site.js in a page", () => {
     click(claudeTile);
     click(p.install);
     for (const b of p.box.querySelectorAll("[data-copy]")) click(b);
-    expect(beacons).toEqual(["/v", "/connect/step?e=tile&app=claude", "/connect/step?e=copied&app=cursor", "/connect/step?e=copied&app=claude-code"]);
+    // The first client choice also sends "chose", once per page load (ADR 0065).
+    expect(beacons).toEqual(["/v", "/connect/step?e=tile&app=claude", "/connect/step?e=chose", "/connect/step?e=copied&app=cursor", "/connect/step?e=copied&app=claude-code"]);
     // Automated browsers send nothing.
     const q = connectPage();
     const none = [];
     run({ found: q.found, byId: q.byId, navigator: { webdriver: true, sendBeacon: (u) => none.push(u) } });
     click(q.box.querySelectorAll("[data-tile]")[0]);
     expect(none).toEqual([]);
+  });
+
+  it("/connect: copying the example question or the Gauntlet line is not 'chose a client'; an install copy is (ADR 0065)", () => {
+    const p = connectPage({ "first-prompt": "first-prompt", "gauntlet-line": "gauntlet-line", "first-cc": "claude-code" }, ["first-prompt", "gauntlet-line", "first-cc"]);
+    const beacons = [];
+    run({ found: p.found, byId: p.byId, navigator: { sendBeacon: (u) => beacons.push(u) } });
+    const click = (e) => (e.listeners.click ?? []).forEach((fn) => fn({ preventDefault() {} }));
+    const [prompt, line, cc] = p.box.querySelectorAll("[data-copy]");
+    click(prompt);
+    click(line);
+    expect(beacons).toEqual(["/v", "/connect/step?e=copied&app=first-prompt", "/connect/step?e=copied&app=gauntlet-line"]);
+    click(cc);
+    click(cc);
+    expect(beacons.slice(3)).toEqual(["/connect/step?e=copied&app=claude-code", "/connect/step?e=chose"]);
   });
 
   it("/connect: a #tab- link opens that tab and the test still starts", () => {

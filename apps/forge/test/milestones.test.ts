@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { bump } from "../src/services/usage";
-import { draftsFor, MILESTONE_SLOTS } from "../src/social/drafts";
+import { draftsFor, MILESTONE_POSTS, MILESTONE_SLOTS } from "../src/social/drafts";
 import { crossed, metricValues, METRICS, milestoneTexts } from "../src/social/milestones";
 import { connectApprovedAgent, fp, postReport, profile, report } from "./helpers";
 import "../src/index";
@@ -46,7 +46,20 @@ describe("milestone posts (outside numbers only, always approved by hand)", () =
     expect(after.now.connections - before.now.connections).toBe(1);
   });
 
-  it("drafts it on a Tuesday in the 9 am slot instead of the board change, with the stats link as the reply", async () => {
+  // Review of ADR 0082 (ADR 0085): milestones quote outside-only numbers, which Dinike's rule of 28 Oct keeps private, and
+  // the drafts API is public, so none is drafted while MILESTONE_POSTS is off; the board change keeps its slot.
+  it("drafts no milestone while milestone posts are off, even when a threshold was crossed", async () => {
+    expect(MILESTONE_POSTS).toBe(false);
+    const tue = "2027-03-09";
+    const now = Date.UTC(2027, 2, 8, 12);
+    const { now: v } = await metricValues(env, getDb(env), now, now - 1);
+    const need = 100 - v.connections;
+    if (need > 0) await bump(env, Array.from({ length: need }, () => "a2a:requests"), Date.UTC(2027, 2, 6, 12));
+    expect(crossed(await metricValues(env, getDb(env), now, now - 7 * 86_400_000)).length).toBeGreaterThan(0);
+    for (const d of [tue, "2027-03-10", "2027-03-11"]) expect((await draftsFor(env, getDb(env), d, now)).some((x) => x.type === "milestone"), d).toBe(false);
+  });
+
+  it("if Dinike turns them back on: drafts it on a Tuesday in the 9 am slot instead of the board change, with the stats link", async () => {
     expect(MILESTONE_SLOTS[2]).toEqual({ hour: 9, replaces: "board-change" });
     // Cross 100 outside connections in the week before a Tuesday.
     const tue = "2027-03-02";
@@ -54,13 +67,13 @@ describe("milestone posts (outside numbers only, always approved by hand)", () =
     const { now: v } = await metricValues(env, getDb(env), now, now - 1);
     const need = 100 - v.connections;
     if (need > 0) await bump(env, Array.from({ length: need }, () => "a2a:requests"), Date.UTC(2027, 1, 27, 12));
-    const drafts = await draftsFor(env, getDb(env), tue, now);
+    const drafts = await draftsFor(env, getDb(env), tue, now, null, { milestones: true });
     const m = drafts.find((d) => d.type === "milestone");
     expect(m?.milestone).toBe("connections-100");
     expect(m?.at).toBe("2027-03-02T14:00:00.000Z");
-    expect(m?.reply).toMatch(/^Live numbers, outside agents only: https:\/\/theagentforge\.io\/stats/);
+    expect(m?.reply).toMatch(/^Live numbers: https:\/\/theagentforge\.io\/stats/);
     expect(drafts.some((d) => d.type === "board-change")).toBe(false);
     // No milestone on a Monday.
-    expect((await draftsFor(env, getDb(env), "2027-03-01", now)).some((d) => d.type === "milestone")).toBe(false);
+    expect((await draftsFor(env, getDb(env), "2027-03-01", now, null, { milestones: true })).some((d) => d.type === "milestone")).toBe(false);
   });
 });

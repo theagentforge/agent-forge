@@ -5,8 +5,12 @@ including `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, Cursor rules and Copilot instruc
 scanners miss: downloads piped into a shell, reads of key files, data sent to throwaway servers, hidden
 instructions and invisible characters.
 
-- **Nothing leaves GitHub.** The scan runs on the runner, using the same rules as
+- **No file leaves GitHub.** The scan runs on the runner, using the same rules as
   [theagentforge.io/scan](https://theagentforge.io/scan?from=skill-scan-readme). It needs no account and no key.
+- **Sends nothing to The Forge by default.** If you opt in with `count-run: true`, it sends one anonymous run count
+  at the end of each run, the outcome only (`blocked`, `findings` or `clear`), for the public install totals on
+  [theagentforge.io/stats](https://theagentforge.io/stats). No file, path, finding, repository or account goes with
+  it, and `DO_NOT_TRACK=1` always keeps it off (see [Run count](#run-count)).
 - **One calm comment per pull request,** edited in place, plus notes on the flagged lines. It never calls anything
   "malicious": a match is a reason to read the line.
 - **It fails only on high-risk patterns** by default. Medium ones warn.
@@ -49,6 +53,7 @@ the line notes and job summary still show every finding.
 | `fail-on` | `high` | `high`, `medium` (also fail on medium), or `never` (report only) |
 | `comment` | `auto` | One pull request comment, posted when there is something to say and the token may write. `never` turns it off |
 | `sarif-file` | none | Also write SARIF to this path, for GitHub code scanning (see below) |
+| `count-run` | `false` | Off by default: nothing is sent. `true` opts in to one anonymous count per run to The Forge, with the outcome only (`blocked`, `findings` or `clear`): no file, path, finding, repository or account. It feeds the public install totals on theagentforge.io/stats. `DO_NOT_TRACK=1` always wins (see [Run count](#run-count)) |
 | `state-file` | none | A file for the last run's results (inside the workspace or `runner.temp`), kept by `actions/cache`. The job summary then says what changed since the last run (see below) |
 
 Outputs: `files`, `high`, `medium`, `low` and `verdict` (`flagged`, `caution` or `clear`).
@@ -107,3 +112,22 @@ Add your workflow's status badge:
 
 The rules are public at [theagentforge.io/scan/rules](https://theagentforge.io/scan/rules). This action is MIT
 licensed.
+
+## Run count
+
+The run count is **off by default**: unless you set `count-run: true`, the action sends nothing to The Forge. With
+`count-run: true` (and no `DO_NOT_TRACK=1` in the job's environment, which always wins), it makes one request at the
+end of each run: `POST https://theagentforge.io/api/v1/install-outcome` with the body
+`{"client":"skill-scan","outcome":"blocked"}` (or `"findings"` or `"clear"`). That is all it sends: no file, path,
+finding, repository name, actor or account. The Forge adds one to a daily counter and stores nothing else. Like any
+web request, it arrives from the runner's network address, which Cloudflare's request logs keep for up to 7 days
+([privacy](https://theagentforge.io/privacy)); on a self-hosted runner that is your own network's address. The job log
+says whether a count was sent. A failed or slow count (5 seconds at most) never changes the job's result.
+
+To opt in and add your runs to the public totals:
+
+```yaml
+      - uses: theagentforge/skill-scan@v1
+        with:
+          count-run: true
+```

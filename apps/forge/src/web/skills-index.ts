@@ -1,5 +1,6 @@
 import skillMd from "../../public/skill.md";
 import beforeInstallMd from "../../../../integrations/skill/forge-check-before-install/SKILL.md";
+import gauntletMd from "../../../../integrations/skill/forge-run-the-gauntlet/SKILL.md";
 import { site } from "./pages";
 
 // Skills discovery (docs/launch/agent-channels.md §4.3): `npx skills add https://theagentforge.io` and other installers
@@ -11,6 +12,8 @@ export const SKILLS_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/sch
 export const SKILLS = [
   { name: "forge-check-before-install", text: beforeInstallMd },
   { name: "forge-check", text: skillMd },
+  // W2.5: the Gauntlet as a skill (ClawHub, skills.sh): an agent runs it with its human's OK, the human claims the score.
+  { name: "forge-run-the-gauntlet", text: gauntletMd },
 ] as const;
 
 /** The `description` from a SKILL.md's YAML front matter (single line, as ours are written). */

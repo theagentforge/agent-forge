@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "./db";
 import { findTool } from "./forge";
-import { markConnectTest, type TestChannel } from "./connect-test";
+import { markConnectTest, markFirstCheck, type TestChannel } from "./connect-test";
 import { day } from "./proof";
 import { canonicalFromUrl, canonicalToolId, splitInlineVersion, versionFromUrl } from "./tools";
 import { answeredByAdvisories, missLabel, recordMiss } from "./misses";
@@ -20,6 +20,8 @@ export async function recordToolCheck(env: Env, q: CheckQuery, now = Date.now(),
   try {
     // Our own probes (services/internal.ts) aren't counted, but the /connect "Test it" tick still works for them.
     if ((await markConnectTest(env, q, opts.channel)) || opts.internal) return;
+    // The /connect example check (step 1): counted for the funnel, and still a real check of a real tool below.
+    await markFirstCheck(env, q, opts.channel);
     const db = getDb(env);
     let toolId: string | undefined, asked: string | undefined, version: string | null = null;
     if (q.fingerprint) {

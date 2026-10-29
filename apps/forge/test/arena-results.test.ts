@@ -205,7 +205,9 @@ describe("/arena/events/<slug>.json and .csv", () => {
     expect(s2).toEqual({
       run: ids.s2, model: SONNET, model_name: "Claude Sonnet 5.5", task: "refund-hard3", tier: "hard", seed: SEED, attempt: 2, passed: false, reason: "finished",
       traps_fell: [expect.stringMatching(/^FA-/)], knockout: false, replay_url: `${ORIGIN}/arena/run/${ids.s2}`,
-      rules_version: expect.stringMatching(/^rules /), task_version: expect.any(String), finished_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+      rules_version: expect.stringMatching(/^rules /), task_version: expect.any(String),
+      // ADR 0088: both rules readings; not re-scored here, so scored under = played under.
+      scored_under: expect.stringMatching(/^rules /), played_under: expect.stringMatching(/^rules /), rescored_from_signed_logs: false, finished_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
       // ADR 0053: where the record came from and its licence.
       provenance: expect.objectContaining({ source: "house_bout", licence: "evaluation-only", model: expect.objectContaining({ exact: "anthropic/claude-sonnet-5.5" }) }),
     });

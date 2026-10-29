@@ -131,6 +131,11 @@ describe("/arena/croissant.json (Croissant 1.0 + RAI)", () => {
     expect(c.license).toBe(`${ORIGIN}/arena/methodology#licence`);
     expect(c.isLiveDataset).toBe(true);
     for (const k of ["rai:dataCollection", "rai:dataUseCases", "rai:dataLimitations", "rai:dataBiases", "rai:personalSensitiveInformation", "rai:dataReleaseMaintenancePlan"]) expect(String(c[k]).length, k).toBeGreaterThan(20);
+    // ADR 0109 Amendment 1: free variants have no pinned provider and their providers may train on prompts, so the
+    // collection note doesn't say every OpenRouter model is pinned, and Workers AI isn't only for practice.
+    expect(String(c["rai:dataCollection"])).toContain("pinned provider and no fallbacks for paid models");
+    expect(String(c["rai:dataCollection"])).toContain("may train on prompts");
+    expect(String(c["rai:dataCollection"])).not.toContain("Workers AI for practice models");
     expect(c.distribution[0]!.contentUrl).toBe(`${ORIGIN}/arena/dataset.json`);
     // The standard Croissant 1.0 @context (mlcroissant 1.1.1, rdf.make_context for a 1.0 file): the validator warns if
     // any key is missing, and recommends datePublished.

@@ -9,6 +9,7 @@ import { toolHref } from "./components";
 import { currentSession, guardPost } from "./dashboard";
 import { send, site } from "./pages";
 import { csrfToken } from "./session";
+import { bump, likelyPerson } from "../services/usage";
 
 // Publisher claims, replies (free, always: MASTER_PLAN §8.2, §13) and disputes.
 
@@ -16,8 +17,12 @@ type Ctx = Context<{ Bindings: Env }>;
 export const REPLY_MAX = 1000;
 export const DISPUTE_MAX = 2000;
 
+// Sign-in comes straight back to this page (the maintainer right of reply starts here, ADR 0065).
 const signIn = (next: string) =>
-  html`<p><a class="btn primary chamfer" href="/auth/login">Sign in with GitHub</a> <span class="hint">Then come back to <a href="${next}">this page</a>.</span></p>`;
+  html`<p><a class="btn primary chamfer" href="/auth/login?next=${encodeURIComponent(next)}">Sign in with GitHub</a> <span class="hint">You come back to <a href="${next}">this page</a>.</span></p>`;
+
+/** A scan fingerprint's 64 hex characters, or "" (the dispute page's `scan` field). */
+const scanHex = (v: unknown) => (typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : "");
 
 /** A tool is claimable automatically when its id names a GitHub owner the person is, or belongs to publicly. */
 function canClaim(toolId: string, login: string, orgs: string[]) {
@@ -103,7 +108,10 @@ site.get("/disputes", async (c) => {
   const s = await currentSession(c);
   const tool = canonicalToolId(c.req.query("tool") ?? "");
   const sent = c.req.query("sent") === "1";
-  const path = tool ? `/disputes?tool=${encodeURIComponent(tool)}` : "/disputes";
+  const scan = scanHex(c.req.query("scan"));
+  const path = tool ? `/disputes?tool=${encodeURIComponent(tool)}${scan ? `&scan=${scan}` : ""}` : "/disputes";
+  // Maintainers arriving from a scan or answer page: a daily count only.
+  if (c.req.query("from") === "maintainer" && !sent && likelyPerson(c.req.raw.headers)) c.executionCtx.waitUntil(bump(c.env, ["maintainer:reply_page"]).catch(() => {}));
   const csrf = s ? await csrfToken(c.env.SESSION_SECRET, s.token) : "";
   return send(
     c,
@@ -114,10 +122,11 @@ site.get("/disputes", async (c) => {
       noindex: true,
       body: html`<h1 class="page-title">Disputes</h1>
 <p>If you think a report, a score or a Watchlist status is wrong or unfair, tell us. A person reviews every dispute and aims to answer within 7 days. Publishers can also reply publicly by <a href="/claim${tool ? `?tool=${encodeURIComponent(tool)}` : ""}">claiming their tool</a>.</p>
+${scan ? html`<p class="notice">About the scan <a href="/scan/${scan}">${scan.slice(0, 12)}…</a>${tool ? html` in <span class="mono">${tool}</span>` : ""}. Maintainers: reply to the findings, tell us what's a false match, or name the commit that fixes it (then <a href="/scan/${scan}">scan the latest version</a>, which gets its own page).</p>` : ""}
 ${sent ? html`<p class="notice">Thanks. Your dispute is logged and a person will review it.</p>` : ""}
 ${s
   ? html`<form class="stack" method="post" action="/disputes">
-<input type="hidden" name="csrf" value="${csrf}">
+<input type="hidden" name="csrf" value="${csrf}">${scan ? html`<input type="hidden" name="scan" value="${scan}">` : ""}
 <label for="d-tool">Tool</label><input id="d-tool" type="text" name="tool" value="${tool}" maxlength="512" placeholder="npm:@scope/name or github.com/owner/repo">
 <label for="d-report">Report ID (optional)</label><input id="d-report" type="text" name="report" maxlength="64">
 <label for="d-reason">What's wrong?</label><textarea id="d-reason" name="reason" maxlength="${DISPUTE_MAX}" required></textarea>
@@ -132,10 +141,15 @@ site.post("/disputes", async (c) => {
   const g = await guardPost(c);
   if (!g) return c.text("Forbidden", 403);
   const db = getDb(c.env);
-  const reason = String(g.form.get("reason") ?? "").trim().slice(0, DISPUTE_MAX);
+  let reason = String(g.form.get("reason") ?? "").trim().slice(0, DISPUTE_MAX);
   if (!reason) return new Response(null, { status: 303, headers: { Location: "/disputes" } });
   const toolId = canonicalToolId(String(g.form.get("tool") ?? ""));
   const tool = toolId ? await db.query.tools.findFirst({ where: eq(t.tools.canonicalId, toolId) }) : undefined;
+  // A scan, or a repository with no tool row yet (most scanned skills), is kept in the dispute's text so it isn't lost.
+  const scan = scanHex(g.form.get("scan"));
+  const about = [scan ? `[scan sha256:${scan}]` : "", !tool && toolId ? `[tool ${toolId.slice(0, 200)}]` : ""].filter(Boolean).join(" ");
+  if (about) reason = `${about} ${reason}`.slice(0, DISPUTE_MAX + 300);
+  if (scan) c.executionCtx.waitUntil(bump(c.env, ["maintainer:dispute_sent"]).catch(() => {}));
   const reportId = String(g.form.get("report") ?? "").trim();
   const report = reportId ? await db.query.reports.findFirst({ where: eq(t.reports.id, reportId) }) : undefined;
   const now = Date.now();

@@ -1,8 +1,11 @@
 import { env } from "cloudflare:workers";
 import { base64 } from "@scure/base";
+import { SCAN_RULES } from "@forge/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { listingProfile, registerAgentverse, replyUrlAllowed } from "../src/agentverse";
+import { AV_DESCRIPTION, AV_KEYWORDS, avReadme, fieldHash, LEGACY_SENT, listingProfile, registerAgentverse, replyUrlAllowed, SENT_KEY } from "../src/agentverse";
+import v1Readme from "./fixtures/agentverse-readme-v1.md";
+import v1bReadme from "./fixtures/agentverse-readme-v1-0353740.md";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { day } from "../src/services/proof";
@@ -153,7 +156,7 @@ describe("registration from the hourly cron", () => {
   it("registers the listing, keeping fields already edited on Agentverse, then marks the agent active", async () => {
     const { calls, f } = fakeAgentverse({ name: "Edited name", handle: "fake-handle", profile: { readme: "edited on agentverse.ai", description: "", starter_prompts: [] } });
     const r = await registerAgentverse({ ...env, AGENTVERSE_CONNECTION: FAKE } as Env, 1793000000_000, f);
-    expect(r).toMatchObject({ registered: true, address: ME.address, kept_from_agentverse: ["readme"], status_ok: true });
+    expect(r).toMatchObject({ registered: true, address: ME.address, kept_from_agentverse: ["readme"], replaced_own: [], status_ok: true });
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET https://agentverse.ai/v2/agents/${ME.address}`, "POST https://agentverse.ai/v2/agents", `POST https://agentverse.ai/v1/almanac/agents/${ME.address}/status`]);
     expect(calls[0]!.headers.get("Authorization")).toMatch(/^Agent attr:[A-Za-z0-9+/=]+:sig1[02-9ac-hj-np-z]+$/);
     const body = JSON.parse(calls[1]!.body!);
@@ -173,9 +176,149 @@ describe("registration from the hourly cron", () => {
     const body = JSON.parse(calls[1]!.body!);
     expect(body).toMatchObject({ name: "The Agent Forge", handle: "fake-handle" });
     expect(body.profile).toEqual(listingProfile(env.PUBLIC_ORIGIN));
-    expect(body.profile.readme).toContain("Free remote MCP server and A2A agent: scans agent skill files");
-    expect(body.profile.readme).toContain("Keywords: mcp security, skill scanner, prompt injection, package advisories, agent safety");
+    expect(body.profile.readme).toContain("## Summary\nThe Agent Forge measures which AI models fall for planted traps");
     expect(body.profile.description.length).toBeLessThanOrEqual(300);
+    // What was sent is recorded, so a later README can replace this one but never a person's edit.
+    expect(await env.KV.get(SENT_KEY, "json")).toEqual({ description: await fieldHash(body.profile.description), readme: await fieldHash(body.profile.readme), starter_prompts: await fieldHash(body.profile.starter_prompts) });
+  });
+
+  it("replaces the README, description and prompts that release e9facdf sent, once", async () => {
+    await env.KV.delete(SENT_KEY);
+    // The v1 values exactly as the earlier cron sent them on production; Agentverse may store them with CRLF endings.
+    expect(await fieldHash(v1Readme)).toBe(LEGACY_SENT.readme[0]);
+    const v1 = {
+      readme: v1Readme.replace(/\n/g, "\r\n"),
+      description: "A check before an AI agent trusts a tool: field reports from human-verified agents on skills, MCP servers and APIs, a skill-file scanner, and the Arena's trap card. Free, no account. Every response is structured data.",
+      starter_prompts: ["check pypi:litellm==1.107.0", "trap card", "scan https://github.com/anthropics/skills/blob/main/skills/pdf/SKILL.md"],
+      avatar_url: "https://example.com/edited.png",
+    };
+    const { calls, f } = fakeAgentverse({ name: "The Agent Forge", handle: "fake-handle", profile: v1 });
+    const prod = { ...env, AGENTVERSE_CONNECTION: FAKE, PUBLIC_ORIGIN: "https://theagentforge.io" } as Env;
+    const r = await registerAgentverse(prod, Date.now(), f);
+    expect(r).toMatchObject({ registered: true, kept_from_agentverse: ["avatar_url"], replaced_own: ["description", "readme", "starter_prompts"] });
+    const body = JSON.parse(calls[1]!.body!);
+    expect(body.profile.readme).toBe(avReadme("https://theagentforge.io"));
+    expect(body.profile.description).toBe(AV_DESCRIPTION);
+    expect(body.profile.avatar_url).toBeUndefined();
+
+    // The next hour Agentverse holds the new values: nothing more is replaced.
+    const now = listingProfile("https://theagentforge.io");
+    const again = fakeAgentverse({ name: "The Agent Forge", handle: "fake-handle", profile: { ...now, avatar_url: v1.avatar_url } });
+    expect(await registerAgentverse(prod, Date.now(), again.f)).toMatchObject({ replaced_own: [], kept_from_agentverse: ["description", "readme", "avatar_url", "starter_prompts"] });
+    expect(Object.keys(JSON.parse(again.calls[1]!.body!).profile)).toEqual(["banner_url"]);
+  });
+
+  it("also recognises the v1 text release 0353740 would have sent, since either release may have registered first", async () => {
+    await env.KV.delete(SENT_KEY);
+    // Built by the e9facdf template from 0353740's Agent Card (which added Arena results); see the fixture.
+    expect(await fieldHash(v1bReadme)).toBe(LEGACY_SENT.readme[1]);
+    const description =
+      "A check before an AI agent trusts a tool: field reports from human-verified agents on skills, MCP servers and APIs, a skill-file scanner, and the Arena's trap card and results per model. Free, no account. Every response is structured data.";
+    expect(await fieldHash(description)).toBe(LEGACY_SENT.description[1]);
+    const { f } = fakeAgentverse({ name: "n", handle: "h", profile: { readme: v1bReadme, description } });
+    expect(await registerAgentverse({ ...env, AGENTVERSE_CONNECTION: FAKE } as Env, Date.now(), f)).toMatchObject({ replaced_own: ["description", "readme"] });
+  });
+
+  it("stops treating v1 text as its own once it has sent a newer value, so a person can paste v1 back and keep it", async () => {
+    await env.KV.delete(SENT_KEY);
+    const prod = { ...env, AGENTVERSE_CONNECTION: FAKE, PUBLIC_ORIGIN: "https://theagentforge.io" } as Env;
+    const first = fakeAgentverse({ name: "n", handle: "h", profile: { readme: v1Readme } });
+    expect(await registerAgentverse(prod, Date.now(), first.f)).toMatchObject({ replaced_own: ["readme"] });
+    // Dinike pastes the old README back on agentverse.ai: from now on it is a person's edit, every hour.
+    for (let hour = 0; hour < 3; hour++) {
+      const pasted = fakeAgentverse({ name: "n", handle: "h", profile: { readme: v1Readme } });
+      expect(await registerAgentverse(prod, Date.now(), pasted.f)).toMatchObject({ replaced_own: [], kept_from_agentverse: ["readme"] });
+      expect(JSON.parse(pasted.calls[1]!.body!).profile.readme).toBeUndefined();
+    }
+  });
+
+  it("never loops when Agentverse stores something other than what was sent", async () => {
+    await env.KV.delete(SENT_KEY);
+    const prod = { ...env, AGENTVERSE_CONNECTION: FAKE, PUBLIC_ORIGIN: "https://theagentforge.io" } as Env;
+    const first = fakeAgentverse({ name: "n", handle: "h", profile: { readme: v1Readme } });
+    expect(await registerAgentverse(prod, Date.now(), first.f)).toMatchObject({ replaced_own: ["readme"] });
+    // Agentverse ignored the update, or rewrote the text: the next hours send nothing for the README.
+    for (const stored of [v1Readme, `${avReadme("https://theagentforge.io")} (edited by Agentverse)`]) {
+      const next = fakeAgentverse({ name: "n", handle: "h", profile: { readme: stored } });
+      expect(await registerAgentverse(prod, Date.now(), next.f)).toMatchObject({ replaced_own: [] });
+      expect(JSON.parse(next.calls[1]!.body!).profile.readme).toBeUndefined();
+    }
+  });
+
+  it("replaces an older README it recorded sending, but never one a person edited", async () => {
+    await env.KV.put(SENT_KEY, JSON.stringify({ readme: await fieldHash("# The Agent Forge\nan older generated README") }));
+    const older = fakeAgentverse({ name: "n", handle: "h", profile: { readme: "# The Agent Forge\nan older generated README  \n" } });
+    expect(await registerAgentverse({ ...env, AGENTVERSE_CONNECTION: FAKE } as Env, Date.now(), older.f)).toMatchObject({ replaced_own: ["readme"] });
+    expect(JSON.parse(older.calls[1]!.body!).profile.readme).toBe(avReadme(env.PUBLIC_ORIGIN));
+
+    // Dinike edits the README on agentverse.ai: it no longer matches anything sent, so it stays.
+    const edited = fakeAgentverse({ name: "n", handle: "h", profile: { readme: `${avReadme(env.PUBLIC_ORIGIN)}\nOne line Dinike added.` } });
+    expect(await registerAgentverse({ ...env, AGENTVERSE_CONNECTION: FAKE } as Env, Date.now(), edited.f)).toMatchObject({ replaced_own: [], kept_from_agentverse: ["readme"] });
+    expect(JSON.parse(edited.calls[1]!.body!).profile.readme).toBeUndefined();
+    // A stored value of an unexpected type is never treated as ours.
+    expect(await fieldHash({ x: 1 })).toBeNull();
+  });
+});
+
+describe("the listing follows Agentverse's README guidelines", () => {
+  const readme = avReadme("https://theagentforge.io");
+  it("has the six recommended sections in order, Arena first", () => {
+    const heads = [...readme.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+    expect(heads).toEqual(["Summary", "Key features", "Usage", "Use cases", "Limitations", "Metadata"]);
+    const features = readme.slice(readme.indexOf("## Key features"), readme.indexOf("## Usage"));
+    const order = ["Arena results", "Gauntlet", "Check a tool", "Scan a skill file"].map((h) => features.indexOf(`### ${h}`));
+    expect(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]!))).toBe(true);
+    expect(readme).not.toMatch(/<[a-z]+[\s>]/i); // Markdown, not HTML
+  });
+
+  it("uses each of at most 10 keywords in its own words, and a short description", () => {
+    expect(AV_KEYWORDS.length).toBeLessThanOrEqual(10);
+    for (const k of AV_KEYWORDS) expect(`${readme} ${AV_DESCRIPTION}`.toLowerCase()).toContain(k);
+    expect(AV_DESCRIPTION.length).toBeLessThanOrEqual(300);
+    expect(new Set(AV_KEYWORDS).size).toBe(AV_KEYWORDS.length);
+  });
+
+  it("only shows example inputs that reach the skill it says", async () => {
+    const { readRequest } = await import("../src/a2a");
+    const rows = [...readme.matchAll(/^\| (.+) \| ([a-z-]+) \|$/gm)].filter((m) => m[2] !== "Skill" && !m[1]!.startsWith("---"));
+    expect(rows.length).toBe(4);
+    for (const [, inputs, skill] of rows) for (const [, input] of inputs!.matchAll(/`([^`]+)`/g)) expect(readRequest([{ text: input }])?.skill, input).toBe(skill);
+    for (const p of listingProfile("https://theagentforge.io").starter_prompts) expect(readRequest([{ text: p }])).not.toBeNull();
+  });
+});
+
+describe("the README's example outputs match real replies (Agentverse fails a reply that contradicts the README)", () => {
+  /** Every key path in `example` that `actual` also has to have; an empty actual list ends the walk. */
+  const missing = (example: unknown, actual: unknown, at = ""): string[] => {
+    if (Array.isArray(example)) {
+      if (!Array.isArray(actual)) return [at];
+      return actual.length && example.length ? missing(example[0], actual[0], `${at}[]`) : [];
+    }
+    if (example && typeof example === "object") {
+      if (!actual || typeof actual !== "object" || Array.isArray(actual)) return [at];
+      return Object.entries(example).flatMap(([k, v]) => (k in actual ? missing(v, (actual as Record<string, unknown>)[k], `${at}.${k}`) : [`${at}.${k}`]));
+    }
+    return [];
+  };
+
+  it("each example input gives a reply with every field its example output shows", async () => {
+    const { readRequest, runSkill } = await import("../src/a2a");
+    const { modelRow } = await import("../src/arena/results");
+    const readme = avReadme(env.PUBLIC_ORIGIN);
+    const pairs = [...readme.matchAll(/Example input:\n```text\n(.+)\n```\nExample output \(abridged\):\n```json\n(.+)\n```/g)];
+    expect(pairs.length).toBe(3);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("---\nname: pdf\ndescription: PDF tools.\n---\nRead and write PDF files.", { status: 200 }));
+    for (const [, input, output] of pairs) {
+      const example = JSON.parse(output!) as Record<string, unknown>;
+      const actual = await runSkill(env, `198.51.100.200`, readRequest([{ text: input! }]));
+      expect(missing(example, actual), input).toEqual([]);
+      if (example.skill === "arena-results") {
+        // The test database has no Arena runs, so a model row's fields are checked against modelRow itself.
+        const row = (example as { result: { tasks: { models: Record<string, unknown>[] }[] } }).result.tasks[0]!.models[0]!;
+        expect(missing(row, modelRow("m", [], env.PUBLIC_ORIGIN))).toEqual([]);
+      }
+    }
+    expect(readme).toContain(`from ${SCAN_RULES.length} open text rules`);
   });
 });
 
@@ -245,23 +388,41 @@ describe("POST /av/chat", () => {
     expect(calls).toHaveLength(0);
   });
 
+  // The real Rate Limiting binding counts in fixed windows aligned to the wall clock (miniflare: epoch = now / period),
+  // so a loop that crossed a minute boundary started a fresh window and never reached 429; that happened at random
+  // when test files ran in parallel and the loop slowed down. Counting limiters with wrangler.jsonc's limits make the
+  // test deterministic and also check which key each limit uses.
+  const counting = (limit: number) => {
+    const counts = new Map<string, number>();
+    return { counts, limit: async ({ key }: { key: string }) => { counts.set(key, (counts.get(key) ?? 0) + 1); return { success: counts.get(key)! <= limit }; } };
+  };
+
   it("rate-limits per IP before checking signatures, and per sender when running skills", async () => {
-    let last = 0;
-    for (let i = 0; i < 121; i++) last = (await post({}, "203.0.113.99")).status;
-    expect(last).toBe(429);
+    const av = counting(120); // AGENTVERSE_LIMITER in wrangler.jsonc
+    const check = counting(60); // CHECK_LIMITER
+    const limited = { ...withSecret, AGENTVERSE_LIMITER: av, CHECK_LIMITER: check } as unknown as Env;
+    const statuses: number[] = [];
+    for (let i = 0; i < 121; i++) statuses.push((await post({}, "203.0.113.99", limited)).status);
+    expect(statuses.slice(0, 120).every((s) => s === 400)).toBe(true);
+    expect(statuses[120]).toBe(429);
+    expect([...av.counts]).toEqual([["ip:203.0.113.99", 121]]);
+    expect(check.counts.size).toBe(0); // nothing past the IP limit and the envelope check ran a skill
 
     const { calls, f } = fakeAgentverse();
     vi.spyOn(globalThis, "fetch").mockImplementation(f);
+    const busy = (await identityFromSeed("fake-busy-sender")).address;
     const replies: Record<string, unknown>[] = [];
     for (let i = 0; i < 61; i++) {
       const before = calls.length;
-      await post(await chat("trap card", "fake-busy-sender"), `198.51.100.${i}`);
+      await post(await chat("trap card", "fake-busy-sender"), `198.51.100.${i}`, limited);
       const sent = calls.slice(before).filter((c) => c.url === "https://peer.example/submit");
       const env2 = JSON.parse(sent[sent.length - 1]!.body!) as Envelope;
       replies.push(JSON.parse(JSON.parse(new TextDecoder().decode(base64.decode(env2.payload!))).content[0].text));
     }
-    expect(replies[0]!.skill).toBe("trap-card");
+    expect(replies.slice(0, 60).every((r) => r.skill === "trap-card" && !("error" in r))).toBe(true);
     expect(replies[60]).toMatchObject({ skill: "trap-card", error: "rate_limited" });
+    // One budget per sender address, whatever IP the proxy forwards from.
+    expect([...check.counts]).toEqual([[`ip:av:${busy}`, 61]]);
   });
 });
 

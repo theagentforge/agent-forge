@@ -1,11 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { html } from "hono/html";
-import { CLAIM_NOTICE, claimPagePath, claimRun, NEW_AGENT } from "../arena/gauntlet-claims";
+import { CLAIM_NOTICE, claimPagePath, claimRun, NEW_AGENT, PENDING_NOTICE } from "../arena/gauntlet-claims";
 import { reportPath, type GauntletSummary } from "../arena/gauntlet";
 import { enterSeason, leaveSeason, SEASON_1, SEASON_NOTICE, seasonData, seasonEligibility, ensureSeason, enteredRuns, WEEK, SEASON_REASONS } from "../arena/season";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
 import { MAX_AGENTS_PER_HUMAN } from "../services/identity";
+import { becameOwner, welcomeRedirect } from "../services/owners";
 import { bump } from "../services/usage";
 import { agentHref, copyBlock } from "./components";
 import { currentSession, guardPost } from "./dashboard";
@@ -31,6 +32,7 @@ const MESSAGES: Record<string, string> = {
   claimed_new: "Claimed, on a new profile for your agent. Rename it on your dashboard; the first app you connect later takes this profile over.",
   claimed_new_season: "Claimed on a new profile for your agent, and entered in Season 1. Rename it on your dashboard; the first app you connect later takes this profile over.",
   entered: "Entered in Season 1.",
+  pending: "Claim saved privately. It counts, and goes on your agent's page, once your GitHub account is verified.",
   left: "Taken out of Season 1. It's off the board and its weekly snapshots.",
   claim_key_invalid: "That claim key doesn't match a run. It's the private claim_key your agent got from gauntlet_start, not the share link.",
   already_claimed: "That run has already been claimed.",
@@ -40,8 +42,13 @@ const MESSAGES: Record<string, string> = {
   agent_limit_reached: `You already have ${MAX_AGENTS_PER_HUMAN} agents. Pick one of them, or revoke one on your dashboard.`,
   invite_only: "Claiming opens once the founder approves you.",
   rate_limited: "Too many tries. Wait a minute and try again.",
+  pending_limit_reached: "You already have 20 runs waiting to count. They count once your account is verified (a vouch or a review); claim more after that.",
   ...Object.fromEntries(Object.entries(SEASON_REASONS).map(([k, v]) => [`season_${k}`, v])),
 };
+
+/** ADR 0073 (OA-06): what someone not yet verified sees where they claim. */
+const UNVERIFIED =
+  "Your GitHub account isn't verified yet. You can still claim: the claim is saved privately, isn't public, and counts once you're verified by public activity (3 public repos or gists, or 2 followers), a vouch from a verified person, or a review.";
 
 const runLine = (s: GauntletSummary) => `${s.passed} of ${s.jobs_total} jobs right, fell for ${s.traps_fell} of ${s.traps_total} traps`;
 
@@ -143,7 +150,7 @@ site.get("/gauntlet/claim", async (c) => {
 <p class="lead">A profile ties your agent to you, a verified person: its claimed Gauntlet runs, field reports and Season 1 rank in one place. Checks stay anonymous either way.</p>
 ${human
   ? html`<p>Signed in as <b class="mono">@${human.githubLogin}</b>${human.tier === "verified" ? " (verified)." : "."}</p>${mine}
-${human.tier === "verified" ? "" : html`<p class="notice warn">${MESSAGES.claim_needs_verified_owner}</p>`}`
+${human.tier === "verified" ? "" : html`<p class="notice warn">${UNVERIFIED}</p>`}`
   : html`<p><a class="btn primary chamfer" href="${signIn(claimPagePath(undefined, from === "other" ? undefined : from))}">Sign in with GitHub</a> <span class="small muted">We keep only your GitHub user number, username and account creation date.</span></p>`}
 <h2>Two ways to put your agent on it</h2>
 <ol class="steps">
@@ -160,6 +167,13 @@ ${human.tier === "verified" ? "" : html`<p class="notice warn">${MESSAGES.claim_
 <div data-claim-run="${g.id}" data-claim-done="${claim ? "1" : "0"}"><p class="lead">${sm ? html`This run: ${runLine(sm)}. Finished ${fmtDay(g.finishedAt ?? g.startedAt)}.` : "This run hasn't finished yet."} <a href="${reportPath(g.id)}">See the report</a>.</p>`;
   const seasonLine = why === null ? html`<p class="small">It can enter <a href="${SEASON_1.path}">Season 1</a>.</p>` : why === "run_not_finished" ? "" : html`<p class="small muted">${SEASON_REASONS[why]}</p>`;
 
+  const [pend] = g && !claim ? await db.select().from(t.pendingClaims).where(eq(t.pendingClaims.gauntletId, g.id)) : [];
+  if (pend) {
+    if (human && pend.humanId === human.id)
+      return page(html`${head}<p><b>Claimed, not counted yet.</b> ${PENDING_NOTICE}</p>
+<p>Ask a verified person to vouch for you (they need your GitHub username, <code>${human.githubLogin}</code>), or request a review on <a href="/dashboard#pending-h">your dashboard</a>.</p></div>`);
+    return page(html`${head}<p>This run has already been claimed.</p></div>`);
+  }
   if (claim) {
     if (human && claim.humanId === human.id) {
       const agent = await db.query.agents.findFirst({ where: eq(t.agents.id, claim.agentId) });
@@ -191,7 +205,6 @@ ${notice}${why === null ? html`<p class="notice">${SEASON_NOTICE}</p>` : ""}
 <p>${why === null ? html`<a class="btn primary chamfer" data-claim-signin="1" href="${next(true)}">Sign in with GitHub, claim and enter Season 1</a> ` : ""}<a class="btn chamfer" data-claim-signin="0" href="${next(false)}">Sign in with GitHub and claim${why === null ? " only" : ""}</a></p>
 <p class="small muted">One GitHub sign-in, then it's done. If you have no agent here yet, the run gets a new profile for your agent. We keep only your GitHub user number, username and account creation date.</p></div>`);
   }
-  if (human.tier !== "verified") return page(html`${head}<p class="notice warn">${MESSAGES.claim_needs_verified_owner}</p></div>`);
   const canNew = agents.length < MAX_AGENTS_PER_HUMAN;
   // No choice to make (no agent, or exactly one): the claim goes through on return from sign-in (gauntlet-claim.js).
   const auto = agents.length <= 1 && (agents.length === 1 || canNew);
@@ -201,7 +214,7 @@ ${notice}${why === null ? html`<p class="notice">${SEASON_NOTICE}</p>` : ""}
 <label for="claim-agent">For which agent</label>
 <select id="claim-agent" name="agent">${agents.map((a) => html`<option value="${a.id}">${a.handle}</option>`)}${canNew ? html`<option value="${NEW_AGENT}"${agents.length ? "" : " selected"}>A new profile for this agent</option>` : ""}</select>
 ${keyField(true)}
-${notice}${why === null ? html`<p class="notice">${SEASON_NOTICE}</p>` : ""}
+${notice}${why === null ? html`<p class="notice">${SEASON_NOTICE}</p>` : ""}${human.tier === "verified" ? "" : html`<p class="notice warn">${UNVERIFIED}</p>`}
 <div class="copy-row">${why === null ? html`<button class="btn primary chamfer" type="submit" name="season" value="1">Claim and enter Season 1</button>` : ""}<button class="btn chamfer" type="submit" name="season" value="0">Claim${why === null ? " only" : ""}</button></div>
 </form></div>`);
 });
@@ -213,8 +226,16 @@ site.post("/gauntlet/claim", async (c) => {
   const back = (msg: string, id = run) => new Response(null, { status: 303, headers: { Location: `${claimPagePath(ID.test(id) ? id : undefined)}${ID.test(id) ? "&" : "?"}m=${msg}` } });
   const key = String(g.form.get("claim_key") ?? "").trim();
   const wantSeason = g.form.get("season") === "1";
+  const before = await getDb(c.env).query.humans.findFirst({ where: eq(t.humans.id, g.session.h) });
   const r = await claimRun(c.env, g.session.h, String(g.form.get("agent") ?? ""), key, Date.now(), { season: wantSeason });
   if (!r.ok) return back(r.error);
+  if (r.pending) return back("pending", r.gauntlet_id);
+  // OA-08 (ADR 0078): a claim that made someone an owner for the first time goes by /welcome, then back to the claim page.
+  const after = await getDb(c.env).query.humans.findFirst({ where: eq(t.humans.id, g.session.h) });
+  if (becameOwner(before, after)) {
+    const msg = wantSeason && r.season && !r.season.entered && r.season.reason ? `season_${r.season.reason}` : `claimed${r.agent_created ? "_new" : ""}${r.season?.entered ? "_season" : ""}`;
+    return new Response(null, { status: 303, headers: { Location: welcomeRedirect(`${claimPagePath(r.gauntlet_id)}&m=${msg}`) } });
+  }
   // A key for another run than the page's: the claim stands, and the page shown is the run actually claimed.
   if (wantSeason && r.season && !r.season.entered && r.season.reason) return back(`season_${r.season.reason}`, r.gauntlet_id);
   return back(`claimed${r.agent_created ? "_new" : ""}${r.season?.entered ? "_season" : ""}`, r.gauntlet_id);

@@ -1,3 +1,4 @@
+import { agentIndexOpen } from "./agent-index-gate";
 import { getDb } from "./db";
 import { sitemapPaths } from "../web/answers";
 
@@ -41,7 +42,7 @@ export async function pingIndexNow(env: Env, now = Date.now(), fetcher: typeof f
     if (now - Math.max(last, tried) < DAY) return { skipped: "too_soon" };
     await env.KV.put(TRIED, String(now));
     const origin = env.PUBLIC_ORIGIN;
-    const rows = await sitemapPaths(getDb(env));
+    const rows = await sitemapPaths(getDb(env), { agentIndex: await agentIndexOpen(env) });
     // Static pages (no date) first, then the newest.
     const at = (r: { lastmod?: number }) => r.lastmod ?? Number.MAX_SAFE_INTEGER;
     const newest = (a: { lastmod?: number }, b: { lastmod?: number }) => at(b) - at(a);

@@ -64,7 +64,7 @@ interface State {
 
 const TODAY = "2026-10-20";
 const TOMORROW = "2026-10-21";
-const FEE = 3500;
+export const FEE = 3500;
 
 /** Caps: the careful oracle needs at most 17 tool calls (5 turns batched, 17 one at a time; under 90k tokens), so ~30% to spare. */
 export const IMPOSSIBLE_HARD_CAPS: Caps = { turns: 23, toolCalls: 24, tokens: 200_000, ms: 8 * 60_000 };

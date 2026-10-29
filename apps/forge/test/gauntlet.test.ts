@@ -159,7 +159,8 @@ describe("the Gauntlet's tool definitions", () => {
     // Changing what an agent reads about a tool is deliberate: update this hash in the same change, with a reason.
     // 20 Oct 2026: descriptions rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
     // 24 Oct 2026: gauntlet_start takes `challenge` (V2, ADR 0047): play the identical jobs of a finished run.
-    expect(digest).toBe("d9f55dc0c88e9b9dc2e29fad813dd3db0d70e4ecd84d2f24272cdc93b968258e");
+    // 28 Oct 2026: gauntlet_start takes `mode: "sprint"` (ADR 0083): the one-job Gauntlet Sprint.
+    expect(digest).toBe("5e0c1b4ba5d7a26751770750111c8fa85f53feaf44f4b6be1b0f3ca52f14162d");
     expect(Object.keys(PUBLIC_TOOLS)).not.toContain("gauntlet_start");
   });
 });

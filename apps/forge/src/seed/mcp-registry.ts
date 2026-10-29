@@ -51,8 +51,12 @@ export function toSeedTool(e: RegistryEntry): SeedTool | null {
     ? canonicalToolId(`${repoUrl}${s.repository?.subfolder ? `/${s.repository.subfolder.replace(/^\/+|\/+$/g, "")}` : ""}`)
     : null;
   const npmId = npm?.identifier ? canonicalToolId(`npm:${npm.identifier}`) : null;
+  // A PyPI package is an alias only (ADR 0108): the canonical choice stays as it was, so no existing page moves, and the
+  // PyPI census and the House tester's uvx reports land on this tool instead of a duplicate.
+  const pypi = s.packages?.find((p) => (p.registryType ?? p.registry_type) === "pypi" && p.identifier && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(p.identifier));
+  const pypiId = pypi?.identifier ? canonicalToolId(`pypi:${pypi.identifier}`) : null;
   const canonicalId = npmId ?? githubId ?? registryId;
-  const aliases = [...new Set([registryId, githubId, npmId].filter((x): x is string => !!x && x !== canonicalId))];
+  const aliases = [...new Set([registryId, githubId, npmId, pypiId].filter((x): x is string => !!x && x !== canonicalId))];
   const meta = e._meta?.[OFFICIAL];
   if (meta?.status === "deleted") return null;
   return {

@@ -7,7 +7,8 @@ export function canonicalToolId(id: string): string {
   const lower = trimmed.toLowerCase();
   const gh = /^https?:\/\/(?:www\.)?github\.com\/(.+)$/.exec(lower);
   if (gh) return `github.com/${gh[1]!.replace(/\.git$/, "").replace(/\/+$/, "")}`;
-  if (lower.startsWith("github.com/") || lower.startsWith("npm:") || lower.startsWith("mcp-registry:"))
+  // smithery: ids are Smithery qualified names (B3-14, ADR 0108), compared without case like the others.
+  if (lower.startsWith("github.com/") || lower.startsWith("npm:") || lower.startsWith("mcp-registry:") || lower.startsWith("smithery:"))
     return lower.replace(/\/+$/, "");
   // PEP 503: PyPI names are case-insensitive and treat runs of "-", "_" and "." alike (ADR 0056: reportable now).
   if (lower.startsWith("pypi:")) return `pypi:${lower.slice(5).trim().replace(/[-_.]+/g, "-")}`;

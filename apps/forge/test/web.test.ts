@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { grossNumbers } from "../src/services/public-stats";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { publicCounts } from "../src/services/forge";
 import { connectAgent, fetchWorker, fp, postReport, profile, report } from "./helpers";
@@ -19,12 +20,14 @@ describe("public site", () => {
   it("home page renders with headline, check box, live numbers and security headers", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    expect(body).toContain("The social network where AI agents <em>warn each other</em>.");
-    // Plain-word navigation (ADR 0019 §6, ADR 0029): the Arena and the Wire first; insider pages move to the footer.
+    // W2.1: one of the three hero cases (test/home-hero.test.ts covers which applies when).
+    expect(body).toMatch(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|AI agents paid a planted fake invoice in <em>[^<]+<\/em> refereed Arena runs\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
+    // W2.1 navigation: Arena, Benchmark, Check a tool, Security, Stats; the Wire and Skill Watch move to the footer.
     const nav = body.slice(body.indexOf('class="nav"'), body.indexOf("</nav>", body.indexOf('class="nav"')));
-    for (const label of ["Arena", "The Wire", "Skill Watch", "Check a tool", "How it works"]) expect(nav).toContain(`>${label}</a>`);
+    for (const label of ["Arena", "Benchmark", "Check a tool", "Security", "Stats"]) expect(nav).toContain(`>${label}</a>`);
     expect(nav).not.toContain("Live Wire");
     expect(body).toContain('<a href="/wire">The Wire</a>');
+    expect(body).toContain('<a href="/skill-watch">Skill Watch</a>');
     expect(body).toContain("Field reports on MCP servers and packages");
     expect(body).toContain('id="check-input"');
     expect(body).toContain('name="twitter:card" content="summary_large_image"');
@@ -119,9 +122,14 @@ describe("public site", () => {
     const before = (await publicCounts(env)).humans;
     await connectAgent({ profile: profile({ public_repos: 0, public_gists: 0, followers: 0 }) });
     expect((await publicCounts(env)).humans).toBe(before + 1);
-    // ADR 0023 §3: the public twin shows the number only from its minimum.
-    const s = (await (await fetchWorker("/?format=json&n=2")).json()) as { stats: { humans: number | null; below_minimum: string[] } };
-    expect(s.stats.humans === null).toBe(s.stats.below_minimum.includes("humans"));
+    // F-02 (ADR 0082): the outside-only count is internal; the public twin gives it as null, with a gross twin.
+    const s = (await (await fetchWorker("/?format=json&n=2")).json()) as { stats: { humans: number | null; internal_only: string[]; gross: { items: { key: string; value: number }[] } } };
+    expect(s.stats.humans).toBeNull();
+    expect(s.stats.internal_only).toContain("humans");
+    // ADR 0099: the gross row appears once it passes its minimum (50), with the exact value.
+    const exact = (await grossNumbers(env)).signed_in_people;
+    expect(exact).toBeGreaterThanOrEqual(before + 1);
+    expect(s.stats.gross.items.find((i) => i.key === "signed_in_people")?.value ?? null).toBe(exact >= 50 ? exact : null);
   });
 });
 
@@ -167,5 +175,13 @@ describe("Claude Code plugin marketplace", () => {
     expect(src.source).toBe("archive");
     expect(src.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(src.url).toMatch(/\/plugins\/forge-(staging|production)-[0-9.]+-[0-9a-f]{12}\.zip$/);
+  });
+
+  it("lists the plugin with the same version and description as its build (from its plugin.json; CI checks the build)", async () => {
+    const m = (await (await fetchWorker("/marketplace.json")).json()) as { plugins: { version: string; description: string; source: { url: string } }[] };
+    const plugin = (await import("../public/plugins/manifest.json")).default as { version: string; description: string };
+    expect(m.plugins[0]).toMatchObject({ version: plugin.version, description: plugin.description });
+    expect(m.plugins[0]!.source.url).toContain(`-${plugin.version}-`);
+    expect(m.plugins[0]!.description).toContain("/forge:gauntlet");
   });
 });

@@ -2,6 +2,7 @@ import { CANARY, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, rulesVers
 import type * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { csvCell } from "./business";
+import { rulesFields } from "./rules-label";
 import { LICENCE_ID, LICENCE_PATH, runProvenance, type Provenance } from "../services/provenance";
 import { GAP_METHOD, heldOutGap, weeklyPooledGap } from "./holdout";
 import { consistency, DATASET_LICENCE, finishedRuns, isKnockout, isRankedEvent, modelName, publicEvent, tierOf, type Tier } from "./views";
@@ -156,7 +157,7 @@ export async function eventData(db: Db, slug: string, origin = "") {
         traps_fell: trapsFell(s.task, r.result),
         knockout: isKnockout(r.result),
         replay_url: `${origin}/arena/run/${s.id}`,
-        rules_version: rulesVersionAt(s.finishedAt, r.result),
+        ...rulesFields(s.finishedAt, r.result),
         task_version: taskVersion(s.task, s.finishedAt),
         finished_at: new Date(s.finishedAt).toISOString(),
         provenance: runProvenance(s),

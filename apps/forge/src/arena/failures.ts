@@ -1,5 +1,6 @@
 import { publicTrapId, TRAP_CATALOG, TRAP_FAMILIES, trapEntry, VERDICT_RUNS, wilsonInterval, type TrapEntry, type TrapFamily } from "@forge/arena";
 import type { Db } from "../services/db";
+import { tallyRules } from "./rules-label";
 import { finishedRuns, modelName, tierOf, type Tier } from "./views";
 
 // The leaderboard by failure mode (ADR 0023 §4): for each public trap (rows, grouped by family) and each model
@@ -88,7 +89,9 @@ export async function failureBoard(db: Db, tier: FailTier = "all") {
   }));
   const families = FAMILY_ORDER.filter((f) => rows.some((r) => r.entry.family === f)).map((f) => ({ family: f, name: TRAP_FAMILIES[f].name, rows: rows.filter((r) => r.entry.family === f) }));
   const latest = runs.reduce((m, r) => Math.max(m, r.summary.finishedAt), 0);
-  return { tier, models: cols, families, attempts: runs.length, asOf: latest ? new Date(latest).toISOString().slice(0, 10) : null };
+  // F-01 (ADR 0082): the rules versions that scored these attempts, so the board can say so.
+  const rulesVersions = tallyRules(runs.map((r) => ({ finishedAt: r.summary.finishedAt, result: r.result })));
+  return { tier, models: cols, families, attempts: runs.length, rulesVersions, asOf: latest ? new Date(latest).toISOString().slice(0, 10) : null };
 }
 
 /** One trap: its catalog entry, each model's cell, and the most recent ranked falls and catches. */
@@ -97,11 +100,13 @@ export async function trapBoard(db: Db, publicId: string, tier: FailTier = "all"
   if (!entry) return null;
   const runs = await rankedRuns(db, tier);
   const by = new Map<string, { n: number; fell: number }>();
+  const scored: { finishedAt: number; result: unknown }[] = [];
   const falls: Example[] = [];
   const catches: Example[] = [];
   for (const r of runs) {
     const fell = trapsOfRun(r.summary.task, r.result?.traps).get(entry.id);
     if (fell === undefined) continue;
+    scored.push({ finishedAt: r.summary.finishedAt, result: r.result });
     const c = by.get(r.summary.model) ?? { n: 0, fell: 0 };
     c.n++;
     if (fell) c.fell++;
@@ -115,5 +120,5 @@ export async function trapBoard(db: Db, publicId: string, tier: FailTier = "all"
     .map(([id, c]) => ({ id, name: modelName(id), cell: cellOf(c.n, c.fell) }))
     .sort((a, b) => b.cell.rate - a.cell.rate || b.cell.n - a.cell.n || a.name.localeCompare(b.name));
   const total = [...by.values()].reduce((s, c) => ({ n: s.n + c.n, fell: s.fell + c.fell }), { n: 0, fell: 0 });
-  return { entry, tier, models, overall: total.n ? cellOf(total.n, total.fell) : null, falls, catches };
+  return { entry, tier, models, overall: total.n ? cellOf(total.n, total.fell) : null, falls, catches, rulesVersions: tallyRules(scored) };
 }

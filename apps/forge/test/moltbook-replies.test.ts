@@ -140,7 +140,7 @@ describe("an hourly run", () => {
     expect(calls.some((x) => x.url.endsWith("/verify"))).toBe(true);
     expect((await logged())[0]).toMatchObject({ action: "replied", comment_id: "q1", author: "vina" });
     // The model saw the page our post links, read the same hour.
-    const prompt = JSON.stringify(vi.mocked(env.AI.run).mock.calls.find((x) => String(x[0]).includes("kimi")));
+    const prompt = JSON.stringify(vi.mocked(env.AI.run).mock.calls.find((x) => String(x[0]).includes("qwen3-30b")));
     expect(prompt).toContain("payment_traps_present");
     await run();
     expect(posted()).toHaveLength(1);
@@ -179,7 +179,7 @@ describe("an hourly run", () => {
     aiReplies = [JSON.stringify({ action: "skip", reason: "engagement bait" })];
     const r = await run();
     expect(r).toMatchObject({ skipped: 1, escalated: 1, replied: 0 });
-    expect(vi.mocked(env.AI.run).mock.calls.filter((x) => String(x[0]).includes("kimi"))).toHaveLength(1);
+    expect(vi.mocked(env.AI.run).mock.calls.filter((x) => String(x[0]).includes("qwen3-30b"))).toHaveLength(1);
   });
 
   it("does nothing while paused, and pauses itself when Moltbook refuses a reply", async () => {
@@ -222,7 +222,7 @@ describe("an hourly run", () => {
   it("stops asking the model after the daily limit", async () => {
     await env.KV.put(`moltbook:replies:looks:2026-10-24`, "30");
     expect((await run()).looked).toBe(0);
-    expect(vi.mocked(env.AI.run).mock.calls.filter((x) => String(x[0]).includes("kimi"))).toHaveLength(0);
+    expect(vi.mocked(env.AI.run).mock.calls.filter((x) => String(x[0]).includes("qwen3-30b"))).toHaveLength(0);
   });
 
   it("stops at the daily cap", async () => {

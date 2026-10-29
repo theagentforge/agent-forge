@@ -7,6 +7,7 @@ import { getDb } from "../src/services/db";
 import { signReport } from "../src/services/signing";
 import { fetchWorker } from "./helpers";
 import "../src/index";
+import { outward, wilson } from "../src/arena/holdout";
 
 // K3: Business Agent reliability (/arena/business and the living report). Ranked results only, grouped by business
 // task, with n, a 95% Wilson interval, the most common trap and replays; small cells hidden, knockouts counted apart,
@@ -130,7 +131,9 @@ describe("cells: intervals and small n", () => {
     const [lo, hi] = wilsonInterval(3, 6);
     expect(lo).toBeCloseTo(0.1876, 3);
     expect(hi).toBeCloseTo(0.8124, 3);
-    expect(cellFrom(acc(6, 3))).toMatchObject({ n: 6, shown: true, breaks: 3, rate: 0.5, ci: wilsonInterval(3, 6), early: true });
+    expect(cellFrom(acc(6, 3))).toMatchObject({ n: 6, shown: true, breaks: 3, rate: 0.5, ci: outward(wilson(3, 6)), early: true });
+    // Rounded outwards (ADR 0072), so a shown interval is never narrower than the computed one.
+    expect(cellFrom(acc(5, 0)).ci).toEqual([0, 0.435]);
   });
 
   it(`a cell under ${MIN_CELL_ATTEMPTS} attempts shows "too few": no rate, interval, trap or replay`, () => {
@@ -170,11 +173,11 @@ describe("the board", () => {
   it("per group: all models, the per-model cells, the most common trap, and small cells hidden", async () => {
     const b = await businessBoard(getDb(env), "all");
     const g = Object.fromEntries(b.groups.map((x) => [x.group.id, x]));
-    expect(b.overall).toMatchObject({ n: 15, breaks: 10, rate: 0.667, ci: wilsonInterval(10, 15) });
+    expect(b.overall).toMatchObject({ n: 15, breaks: 10, rate: 0.667, ci: outward(wilson(10, 15)) });
     expect(g.refunds!.overall).toMatchObject({ n: 9, breaks: 4, rate: 0.444 });
     expect(g.refunds!.models.find((m) => m.id === GPT)!.cell).toMatchObject({ n: 3, shown: false, rate: null, replays: [] });
-    expect(g.truthful_done!.overall).toMatchObject({ n: 5, breaks: 5, rate: 1, ci: [0.5655, 1], topTrap: { id: "FA-CLM-001", falls: 5 } });
-    expect(g.payments!.overall).toMatchObject({ n: 5, breaks: 0, rate: 0, ci: [0, 0.4345], topTrap: null });
+    expect(g.truthful_done!.overall).toMatchObject({ n: 5, breaks: 5, rate: 1, ci: [0.565, 1], topTrap: { id: "FA-CLM-001", falls: 5 } });
+    expect(g.payments!.overall).toMatchObject({ n: 5, breaks: 0, rate: 0, ci: [0, 0.435], topTrap: null });
     expect(g.permissions!.overall).toMatchObject({ n: 1, shown: false });
     expect(g.bookings!.overall.n).toBe(0);
     expect(g.bookings!.models).toEqual([]);
@@ -215,7 +218,7 @@ describe("/arena/business, its JSON twin and CSV", () => {
     const res = await fetchWorker("/arena/business?format=json");
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as any;
-    expect(Object.keys(j).sort()).toEqual(["as_of", "attempts", "csv", "events", "groups", "knockouts", "models", "name", "overall", "report", "rules", "since", "tier"]);
+    expect(Object.keys(j).sort()).toEqual(["as_of", "attempts", "csv", "current_rules_results", "events", "groups", "knockouts", "models", "name", "overall", "report", "rules", "rules_pooled", "rules_versions", "since", "tier"]);
     expect(j.rules).toMatchObject({ knockout: "excluded_from_attempts_counted_apart", interval: "wilson_95", min_attempts_shown: 5, excluded: ["practice", "lab3_arms", "embargoed_models", "events_on_review_hold"] });
     const refunds = j.groups.find((g: any) => g.id === "refunds");
     expect(refunds.models.find((m: any) => m.id === GPT)).toMatchObject({ attempts: 3, shown: false, policy_breaks: null, break_rate: null, ci_95: null, top_trap: null, replays: [] });

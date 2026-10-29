@@ -130,7 +130,7 @@ export const publicTrapId = (task: string, trap: string): string | null => TRAP_
 /**
  * A public catalog entry by ID. Private families' entries (ADR 0057) are never found here: every public page and feed
  * (/arena/failures/:id, its JSON and share image, answers, scorecards) looks traps up with this, so a guessed private
- * ID like FA-POL-101 is a 404, not a leak of the private job's name and trap.
+ * ID (FA-<family>-1xx) is a 404, not a leak of the private job's name and trap.
  */
 export const trapEntry = (publicId: string) => TRAP_CATALOG.find((e) => e.id === publicId) ?? null;
 /** Any catalog entry, private ones included: for private reports and tests only, never a public surface. */

@@ -21,8 +21,27 @@ export interface ModelReply {
   toolCalls: ToolCall[];
   tokensIn: number;
   tokensOut: number;
-  /** Dollars. OpenRouter's `usage.cost`; for Workers AI, tokens × list price (estimated). */
+  /**
+   * Dollars: what the turn cost in total. OpenRouter's `usage.cost` (billed to OpenRouter credit) plus, for a turn served
+   * on our own key through BYOK, the provider's charge to that key (`byokCost`), so a BYOK bout costs the same as it
+   * would have on credit and cost-per-success stays comparable (ADR 0064). For Workers AI, tokens × list price (estimated).
+   */
   cost: number;
+  /**
+   * The part of `cost` billed to our own provider key through OpenRouter BYOK (`usage.cost_details.upstream_inference_cost`),
+   * not to OpenRouter credit. Absent when the turn wasn't served on a BYOK key.
+   */
+  byokCost?: number;
+  /**
+   * OpenRouter's answer to "was this turn served on our own key?": true (BYOK), false (OpenRouter credit), or absent when
+   * the response doesn't say. Read from `usage.is_byok`, or true when an upstream (BYOK) cost is reported.
+   */
+  byok?: boolean;
+  /**
+   * A BYOK turn whose upstream cost OpenRouter reported neither in the reply nor in the generation stats: its `cost`
+   * leaves out what our key was billed, so it is too low (ADR 0064).
+   */
+  byokUnpriced?: boolean;
   costEstimated: boolean;
   latencyMs: number;
   provider: string | null;
@@ -46,6 +65,11 @@ export class ProviderError extends Error {
     readonly retryable: boolean,
     /** The provider asked us to slow down (HTTP 429): the bout pauses and carries on later; it isn't a failure. */
     readonly rateLimited = false,
+    /**
+     * A `:free` variant was refused (402, 403, 404 or 429; ADR 0109): the free lane stops until the next UTC day. It never
+     * touches the paid-credit pause note.
+     */
+    readonly freeLaneStop = false,
   ) {
     super(message);
   }
@@ -84,20 +108,55 @@ const EPHEMERAL = { type: "ephemeral" } as const;
 
 /** Models whose provider refused a cache hint (HTTP 400) in this isolate: sent without one from then on. */
 const cacheRefused = new Set<string>();
+/** Models whose provider refused the system-prompt breakpoint (ADR 0113): sent with the top-level hint only. */
+const systemBreakRefused = new Set<string>();
 
 const toolsParam = (tools: ToolSpec[]) => tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.parameters } }));
 
 /** The OpenRouter request body. With `cache`, the route's cache hint is added and nothing else changes. */
-export function openRouterBody(route: Extract<Route, { kind: "openrouter" }>, messages: ChatMessage[], tools: ToolSpec[], cache: CacheOptions | null) {
+/**
+ * The provider options for a `:free` variant (ADR 0109; OpenRouter's model-variant, fallback and provider-selection
+ * docs, checked 29 Oct 2026). Billing follows the model that serves the request, and only a `models` fallback list can
+ * move a request to another model, so none is sent. `allow_fallbacks: false` keeps it on the variant's own endpoints and
+ * `max_price` 0 refuses any endpoint that charges. ADR 0109 Amendment 1 (Dinike, 29 Oct: "Allow, free lane only"): no
+ * `data_collection: "deny"` here, so free providers that may train on prompts are allowed. Only public Gauntlet jobs on
+ * public seeds may reach this route (free-lane.ts `freeLaneRunAllowed`, checked by the runner before every free turn).
+ * Every other route keeps ADR 0014's no-training rule.
+ */
+export const FREE_PROVIDER = {
+  allow_fallbacks: false,
+  require_parameters: true,
+  max_price: { prompt: 0, completion: 0, request: 0 },
+} as const;
+
+/**
+ * ADR 0113: with the top-level hint, the system prompt also gets its own breakpoint, so the tools and system prompt
+ * (the same for every bout of a job, about 700–1,100 tokens) are cached as their own entry and a later bout of the same
+ * job reads them within 5 minutes even when its brief differs. Anthropic allows the two together (the automatic
+ * breakpoint takes one of the four slots; prompt-caching docs, checked 29 Oct 2026). The text is unchanged.
+ */
+export function openRouterBody(route: Extract<Route, { kind: "openrouter" }>, messages: ChatMessage[], tools: ToolSpec[], cache: CacheOptions | null, systemBreak = true) {
+  if (route.free) {
+    // A free route can only name a `:free` model: anything else would be billed.
+    if (!route.model.endsWith(":free")) throw new ProviderError(`free route ${route.model} is not a :free variant`, false);
+    return {
+      hint: "none" as CacheHint,
+      body: { model: route.model, messages, tools: toolsParam(tools), tool_choice: "auto", temperature: 0, provider: FREE_PROVIDER, usage: { include: true } },
+    };
+  }
   const brief = messages.findIndex((m) => m.role === "user");
   let hint = cache && !cacheRefused.has(route.model) ? cacheHint(route) : "none";
   if (hint === "brief-breakpoint" && brief < 0) hint = "none";
+  const sys = hint === "top-level" && systemBreak && !systemBreakRefused.has(route.model) ? messages.findIndex((m) => m.role === "system") : -1;
   const sent =
     hint === "brief-breakpoint"
       ? messages.map((m, i) => (i === brief ? { role: "user" as const, content: [{ type: "text" as const, text: m.content ?? "", cache_control: EPHEMERAL }] } : m))
-      : messages;
+      : sys >= 0
+        ? messages.map((m, i) => (i === sys ? { role: "system" as const, content: [{ type: "text" as const, text: m.content ?? "", cache_control: EPHEMERAL }] } : m))
+        : messages;
   return {
     hint,
+    systemBreak: sys >= 0,
     body: {
       model: route.model,
       messages: sent,
@@ -132,6 +191,12 @@ export async function callModel(
       });
     const req = openRouterBody(route, messages, tools, cache);
     let res = await post(req.body);
+    if (res.status === 400 && "systemBreak" in req && req.systemBreak) {
+      // ADR 0113: the provider refused the system-prompt breakpoint: try once with the top-level hint only.
+      console.warn("arena_cache_system_break_refused", route.model, (await res.text().catch(() => "")).slice(0, 200));
+      systemBreakRefused.add(route.model);
+      res = await post(openRouterBody(route, messages, tools, cache, false).body);
+    }
     if (res.status === 400 && req.hint !== "none") {
       // The provider refused the cache hint: send the same request without it (a 400 isn't billed) and stop adding it.
       console.warn("arena_cache_hint_refused", route.model, (await res.text().catch(() => "")).slice(0, 200));
@@ -139,6 +204,11 @@ export async function callModel(
       res = await post(openRouterBody(route, messages, tools, null).body);
     }
     const body = (await res.json().catch(() => null)) as OpenAiShape | null;
+    if (route.free && !res.ok && [402, 403, 404, 429].includes(res.status)) {
+      // ADR 0109: out of free requests, a free endpoint refused (or none matches the no-training rule): the lane stops
+      // until the next UTC day. Never the paid-credit "out of credit" path.
+      throw new ProviderError(`OpenRouter free ${res.status}: ${body?.error?.message ?? "refused"}`.slice(0, 300), true, true, true);
+    }
     if (!res.ok || !body?.choices?.[0]) {
       const msg = `OpenRouter ${res.status}: ${body?.error?.message ?? "no choices"}`.slice(0, 300);
       // Out of prepaid credit or over the key's limit (402, or 403 "key limit"): the bout pauses until the limit is
@@ -146,7 +216,13 @@ export async function callModel(
       const outOfCredit = res.status === 402 || (res.status === 403 && /limit|credit/i.test(msg));
       throw new ProviderError(msg, res.status === 429 || res.status >= 500 || res.status === 408 || outOfCredit, res.status === 429 || outOfCredit);
     }
-    return { ...fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0), servedModel: typeof body.model === "string" && body.model ? body.model.slice(0, 120) : route.model };
+    let reply = fromOpenAi(body, Date.now() - t0, body.provider ?? route.provider, false, 0, 0);
+    // A BYOK turn without its upstream cost would look nearly free: read it from the generation stats instead.
+    if (reply.byok === true && !reply.byokCost) {
+      const up = typeof body.id === "string" && body.id ? await generationUpstreamCost(env.OPENROUTER_API_KEY, body.id, fetcher) : 0;
+      reply = up > 0 ? { ...reply, cost: reply.cost + up, byokCost: up } : { ...reply, byokUnpriced: true };
+    }
+    return { ...reply, servedModel: typeof body.model === "string" && body.model ? body.model.slice(0, 120) : route.model };
   }
 
   let out: unknown;
@@ -192,9 +268,11 @@ function fromLegacy(o: (OpenAiShape & LegacyShape) | null, ms: number, route: Ex
 
 interface OpenAiShape {
   choices?: { message?: { content?: string | null; reasoning?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; is_byok?: boolean; cost_details?: { upstream_inference_cost?: number | null } | null; prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null };
   provider?: string;
   model?: string;
+  /** OpenRouter's generation id. */
+  id?: string;
   error?: { message?: string };
 }
 
@@ -207,6 +285,7 @@ function fromOpenAi(o: OpenAiShape, ms: number, provider: string, estimated: boo
   const m = o.choices![0]!.message ?? {};
   const tokensIn = o.usage?.prompt_tokens ?? 0;
   const tokensOut = o.usage?.completion_tokens ?? 0;
+  const byok = estimated ? {} : byokOf(o.usage);
   return {
     text: m.content ?? null,
     toolCalls: (m.tool_calls ?? []).map((c, i) => ({
@@ -216,13 +295,64 @@ function fromOpenAi(o: OpenAiShape, ms: number, provider: string, estimated: boo
     })),
     tokensIn,
     tokensOut,
-    // OpenRouter's `usage.cost` is what the generation was billed, cache reads and writes included.
-    cost: estimated ? (tokensIn * priceIn + tokensOut * priceOut) / 1e6 : (o.usage?.cost ?? 0),
+    // OpenRouter's `usage.cost` is what the generation was billed to credit, cache reads and writes included; a BYOK
+    // turn adds what the provider billed our own key (ADR 0064).
+    cost: estimated ? (tokensIn * priceIn + tokensOut * priceOut) / 1e6 : (o.usage?.cost ?? 0) + (byok.byokCost ?? 0),
     costEstimated: estimated,
     latencyMs: ms,
     provider,
     ...cacheCounts(o.usage),
+    ...(estimated ? {} : byok),
   };
+}
+
+/**
+ * BYOK accounting from OpenRouter's usage object (usage accounting docs, checked 26 Oct 2026): `cost` is what our
+ * OpenRouter account was charged (for a BYOK request, only OpenRouter's BYOK fee, 5% at most);
+ * `cost_details.upstream_inference_cost` is what the upstream provider charged our own key. The upstream figure is
+ * added to the turn's cost only when the turn really was BYOK: never when `is_byok` is false (a credit turn that
+ * happens to report an upstream figure would otherwise be counted twice), and, when `is_byok` isn't reported, only when
+ * the credit charge is no more than a fee-sized fraction of the upstream figure.
+ */
+export const BYOK_FEE_MAX_SHARE = 0.1;
+/**
+ * A Claude (BYOK) reply that was billed to OpenRouter credit instead of our key (ADR 0064 Amendment 2): OpenRouter said
+ * so (`is_byok` false, usage type "Credits"), or it charged credit without reporting a BYOK cost.
+ */
+export const billedToCredit = (r: Pick<ModelReply, "byok" | "byokCost" | "cost" | "costEstimated">) =>
+  !r.costEstimated && (r.byok === false || (r.byok === undefined && !r.byokCost && r.cost > 0));
+export function byokOf(u: OpenAiShape["usage"]): Pick<ModelReply, "byok" | "byokCost"> {
+  const up = Number(u?.cost_details?.upstream_inference_cost ?? 0);
+  const upstream = Number.isFinite(up) && up > 0 ? up : 0;
+  if (u?.is_byok === false) return { byok: false };
+  if (u?.is_byok === true) return { byok: true, ...(upstream > 0 ? { byokCost: upstream } : {}) };
+  const charged = Number(u?.cost ?? 0);
+  if (upstream > 0 && Number.isFinite(charged) && charged <= upstream * BYOK_FEE_MAX_SHARE) return { byok: true, byokCost: upstream };
+  return {};
+}
+
+/**
+ * The upstream (BYOK) cost of one generation from OpenRouter's generation stats (GET /api/v1/generation?id=), for a
+ * turn that says it was BYOK but carries no upstream cost in its usage object. The stats can lag a moment behind the
+ * reply, so a 404 is asked once more after a second. 0 when it can't be read.
+ */
+export async function generationUpstreamCost(key: string, id: string, fetcher: typeof fetch = fetch, wait = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<number> {
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await fetcher(`https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${key}` } });
+      if (res.status === 404 && i === 0) {
+        await wait(1000);
+        continue;
+      }
+      if (!res.ok) return 0;
+      const j = (await res.json().catch(() => null)) as { data?: { upstream_inference_cost?: unknown } } | null;
+      const v = Number(j?.data?.upstream_inference_cost ?? 0);
+      return Number.isFinite(v) && v > 0 ? v : 0;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
 }
 
 /** Cached-token counts from `usage.prompt_tokens_details`, only when the provider reports them. */

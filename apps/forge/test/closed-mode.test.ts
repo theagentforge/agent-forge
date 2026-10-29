@@ -87,12 +87,13 @@ describe("House accounts and the proof scoreboard", () => {
     expect(rows.find((x) => x.metric === "cli_npm_downloads")?.externalValue).toBe(42);
     expect(new Set(rows.map((x) => x.metric)).size).toBe(rows.length);
 
-    // ADR 0023 §3: people outside the project and the House are shown apart; small numbers stay hidden.
+    // F-02 (ADR 0082): the outside-only daily history is internal now (/admin); /stats shows gross numbers only.
     const page = await (await fetchWorker("/stats")).text();
-    expect(page).toContain("These numbers count only people outside the project.");
-    expect(page).toContain('id="house">House activity</h2>');
-    const json = (await (await fetchWorker("/stats?format=json")).json()) as { history: { date: string; metric: string; externalValue: number | null }[] };
-    const saved = json.history.filter((h) => h.date === r.date);
+    expect(page).not.toContain("Daily history");
+    expect(page).not.toContain('id="house"');
+    expect(((await (await fetchWorker("/stats?format=json")).json()) as { history: unknown }).history).toBeNull();
+    const { outsideStatsData } = await import("../src/web/stats");
+    const saved = (await outsideStatsData(env)).history.filter((h) => h.date === r.date);
     expect(saved.length).toBe(rows.length);
     expect(saved.find((h) => h.metric === "cli_npm_downloads")?.externalValue).toBe(42);
   });

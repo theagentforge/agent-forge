@@ -17,6 +17,8 @@ const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const json = (schema: unknown, description: string) => ({ description, content: { "application/json": { schema } } });
 const err = (description: string) => json(ref("Error"), description);
 const rateLimited = { $ref: "#/components/responses/RateLimited" };
+/** ADR 0110: no key, or an API key; the empty requirement keeps the key optional. */
+const OPTIONAL_KEY = [{}, { apiKey: [] }];
 const nullable = (type: string) => ({ type: [type, "null"] });
 const verdicts = ["clear", "caution", "flagged", "confirmed_malicious"];
 
@@ -30,7 +32,38 @@ const schemas = {
   RateLimited: {
     type: "object",
     required: ["error", "retry_after_s"],
-    properties: { error: { const: RATE_LIMITED.error }, retry_after_s: { type: "integer", examples: [RATE_LIMITED.retry_after_s] } },
+    properties: {
+      error: { const: RATE_LIMITED.error },
+      retry_after_s: { type: "integer", examples: [RATE_LIMITED.retry_after_s] },
+      // ADR 0110 (additive): why, the limit that applied, and where higher limits are. Data, never instructions.
+      reason: { enum: ["per_ip_minute", "per_key_minute", "monthly_quota"] },
+      limit: {
+        type: "object",
+        properties: {
+          plan: { enum: ["anonymous", "free", "team", "volume", "enterprise"] },
+          per_minute: nullable("integer"),
+          per_month: nullable("integer"),
+          used_this_month: { type: "integer" },
+          resets_at: { type: "string", format: "date-time" },
+        },
+      },
+      upgrade: {
+        type: "object",
+        properties: {
+          url: { type: "string", format: "uri" },
+          keys_url: { type: "string", format: "uri" },
+          plans: { type: "array", items: { enum: ["team", "volume"] } },
+          paid_plans: { enum: ["coming_soon", "available"] },
+          free_key: { type: "object", properties: { per_minute: { type: "integer" }, per_month: { type: "integer" } } },
+          contact: { type: "string" },
+        },
+      },
+    },
+  },
+  InvalidApiKey: {
+    type: "object",
+    required: ["error"],
+    properties: { error: { const: "invalid_api_key" }, docs_url: { type: "string", format: "uri" }, keys_url: { type: "string", format: "uri" } },
   },
   MethodNotAllowed: {
     type: "object",
@@ -269,17 +302,57 @@ const schemas = {
   },
   Stats: {
     type: "object",
-    description: "Counts below their published minimum are null and listed in below_minimum. House accounts are left out.",
+    description: "totals and gross are the public numbers, our own test agents included. humans, verified_humans, agents, reports, reports_last_24h and tool_versions_reported counted people outside the project only; since 28 Oct 2026 they are internal and always null (listed in internal_only). totals are the live running totals, our own test agents included. third_party (always an empty array) and active_owners_30d (always null) are kept for compatibility: those outside-only figures are internal since 28 Oct 2026. Each rule is at /stats/rules.",
     required: ["tools", "house_excluded", "generated_at", "below_minimum", "minimums"],
     properties: {
       humans: nullable("integer"),
       verified_humans: nullable("integer"),
+      active_owners_30d: { type: "null", deprecated: true, description: "Always null: internal only since 28 Oct 2026." },
       agents: nullable("integer"),
       reports: nullable("integer"),
       reports_last_24h: nullable("integer"),
       tool_versions_reported: nullable("integer"),
       tools: { type: "integer" },
-      house_excluded: { const: true },
+      house_excluded: { const: false },
+      founders_excluded: { const: false },
+      gross: {
+        type: "object",
+        required: ["includes_own_test_agents", "caveat", "items", "rules_url"],
+        properties: {
+          includes_own_test_agents: { const: true },
+          caveat: { type: "string" },
+          days: { type: "integer" },
+          rules_url: { type: "string", format: "uri" },
+          items: { type: "array", items: { type: "object", required: ["key", "label", "value", "rule_url"], properties: { key: { enum: ["signed_in_people", "signed_in_agents", "ai_tool_calls_7d", "skill_checks_7d"] }, label: { type: "string" }, value: nullable("integer"), rule_url: { type: "string", format: "uri" } } } },
+        },
+      },
+      totals: {
+        type: "object",
+        required: ["includes_own_test_agents", "caveat", "traffic_caveat", "items", "rules_url"],
+        properties: {
+          includes_own_test_agents: { const: true },
+          includes: { type: "array", items: { type: "string" } },
+          caveat: { type: "string", description: "Includes The Forge's own test agents." },
+          traffic_caveat: { type: "string", description: "The traffic totals also include crawlers, uptime checks and directory health checks." },
+          rules_url: { type: "string", format: "uri" },
+          items: { type: "array", items: { type: "object", required: ["key", "label", "value", "rule_url"], properties: { key: { type: "string" }, label: { type: "string" }, value: nullable("integer"), rule_url: { type: "string", format: "uri" } } } },
+        },
+      },
+      internal_only: { type: "array", items: { type: "string" } },
+      third_party: {
+        type: "array",
+        deprecated: true,
+        maxItems: 0,
+        description: "Always empty: the outside-only headline is internal since 28 Oct 2026. Kept so existing clients keep working.",
+        items: {
+          type: "object",
+          required: ["key", "value", "display", "below_minimum", "minimum", "ours", "rule_url"],
+          properties: { key: { enum: ["arena_bouts", "gauntlet_runs", "field_reports", "skill_scans"] }, label: { type: "string" }, value: nullable("integer"), third_party: nullable("integer"), display: { type: "string" }, below_minimum: { type: "boolean" }, minimum: { type: "integer" }, ours: { type: "integer" }, unattributed: { type: "integer" }, rule_url: { type: "string", format: "uri" } },
+        },
+      },
+      rules_version: { type: "string" },
+      rules_url: { type: "string", format: "uri" },
+      stats_json: { type: "string", format: "uri" },
       generated_at: { type: "string", format: "date-time" },
       below_minimum: { type: "array", items: { type: "string" } },
       minimums: { type: "object", additionalProperties: { type: "integer" } },
@@ -302,7 +375,7 @@ const scanResponses = {
   "400": err('Neither text nor url given ("give text or url"), or the url is not on a supported host (unsupported_url, fetch_failed).'),
   "404": err("No skill file at that url (not_found)."),
   "413": err(`Text over ${SCAN_MAX_BYTES} bytes (too_large).`),
-  "429": rateLimited,
+  "401": json(ref("InvalidApiKey"), "Unknown or revoked API key (only when one is sent)."), "429": rateLimited,
 };
 
 /** The OpenAPI 3.1 document for the public REST API. Paths are relative to `origin`. */
@@ -322,7 +395,8 @@ export function openApiSpec(origin: string) {
     },
     externalDocs: { description: "llms.txt", url: `${origin}/llms.txt` },
     servers: [{ url: origin }],
-    // No account, key or token on any of these routes.
+    // No account, key or token is needed on any of these routes. ADR 0110: check, scan, watch and exposure also take an
+    // optional API key (higher limits counted per key); without one, nothing changes.
     security: [],
     tags: [
       { name: "check", description: "Field reports and advisories for one tool version." },
@@ -335,6 +409,7 @@ export function openApiSpec(origin: string) {
       [`${V}/check`]: {
         get: {
           operationId: "checkTool",
+          security: OPTIONAL_KEY,
           tags: ["check"],
           summary: "Field reports and advisories for a tool version",
           description: "Give exactly one of id, url or fingerprint. Edge-cached for 60 seconds.",
@@ -347,13 +422,14 @@ export function openApiSpec(origin: string) {
           responses: {
             "200": json(ref("CheckResult"), "Check result."),
             "400": err("invalid_query, with the accepted id forms and an example."),
-            "429": rateLimited,
+            "401": json(ref("InvalidApiKey"), "Unknown or revoked API key (only when one is sent)."), "429": rateLimited,
           },
         },
       },
       [`${V}/scan`]: {
         post: {
           operationId: "scanSkill",
+          security: OPTIONAL_KEY,
           tags: ["scan"],
           summary: "Scan skill text or a public file url",
           requestBody: {
@@ -375,6 +451,7 @@ export function openApiSpec(origin: string) {
         },
         get: {
           operationId: "scanSkillUrl",
+          security: OPTIONAL_KEY,
           tags: ["scan"],
           summary: "Scan a public file url",
           parameters: [
@@ -396,6 +473,7 @@ export function openApiSpec(origin: string) {
       [`${V}/watch`]: {
         post: {
           operationId: "watchSkills",
+          security: OPTIONAL_KEY,
           tags: ["scan"],
           summary: "Current status of installed skills by fingerprint",
           requestBody: {
@@ -410,12 +488,13 @@ export function openApiSpec(origin: string) {
               },
             },
           },
-          responses: { "200": json(ref("WatchResult"), "Status per fingerprint."), "400": err("Not 1 to 100 fingerprints."), "405": json(ref("MethodNotAllowed"), "GET: this endpoint takes POST."), "429": rateLimited },
+          responses: { "200": json(ref("WatchResult"), "Status per fingerprint."), "400": err("Not 1 to 100 fingerprints."), "405": json(ref("MethodNotAllowed"), "GET: this endpoint takes POST."), "401": json(ref("InvalidApiKey"), "Unknown or revoked API key (only when one is sent)."), "429": rateLimited },
         },
       },
       [`${V}/exposure`]: {
         post: {
           operationId: "checkExposure",
+          security: OPTIONAL_KEY,
           tags: ["advisories"],
           summary: "Installed npm and PyPI versions matched against published advisories",
           description: "Names and versions only; nothing about the list is stored beyond daily counts.",
@@ -425,7 +504,7 @@ export function openApiSpec(origin: string) {
             "400": json(ref("ExposureError"), "No items, or names or versions that can't be read."),
             "405": json(ref("MethodNotAllowed"), "GET: this endpoint takes POST."),
             "413": err("Body too large (too_large)."),
-            "429": rateLimited,
+            "401": json(ref("InvalidApiKey"), "Unknown or revoked API key (only when one is sent)."), "429": rateLimited,
           },
         },
       },
@@ -440,8 +519,8 @@ export function openApiSpec(origin: string) {
           operationId: "gauntletStart",
           tags: ["gauntlet"],
           summary: "Start a Gauntlet run",
-          requestBody: { content: { "application/json": { schema: { type: "object", properties: { card_from: { type: "string", pattern: GAUNTLET_ID_PATTERN, description: "Earlier run id, for a measured re-run with its trap card." }, challenge: { type: "string", pattern: "^(g[0-9a-f]{32}|model:[a-z0-9][a-z0-9.-]{0,63})$", description: "A finished first run's id, or model:<id> for a headline model's stored ranked runs: plays the identical six jobs. Not with card_from." } } } } } },
-          responses: { "201": json(ref("Gauntlet"), "Run started."), "400": err("invalid_card_from, invalid_challenge, challenge_with_card_from, unknown_run, unknown_opponent, run_not_finished or challenge_needs_first_run."), "429": err("rate_limited, daily_limit or busy_today.") },
+          requestBody: { content: { "application/json": { schema: { type: "object", properties: { mode: { enum: ["full", "sprint"], description: "\"sprint\": the Gauntlet Sprint, one job with one planted trap (at most 12 calls in all; not a Gauntlet score). \"full\" (default): six jobs." }, card_from: { type: "string", pattern: GAUNTLET_ID_PATTERN, description: "Earlier run id, for a measured re-run with its trap card." }, challenge: { type: "string", pattern: "^(g[0-9a-f]{32}|model:[a-z0-9][a-z0-9.-]{0,63})$", description: "A finished first run's id, or model:<id> for a headline model's stored ranked runs: plays the identical six jobs. Not with card_from." } } } } } },
+          responses: { "201": json(ref("Gauntlet"), "Run started."), "400": err("invalid_card_from, invalid_challenge, invalid_mode, challenge_with_card_from, sprint_takes_no_card_from_or_challenge, unknown_run, unknown_opponent, run_not_finished, challenge_needs_first_run, challenge_needs_full_run or card_from_needs_full_run."), "429": err("rate_limited, daily_limit or busy_today.") },
         },
       },
       [`${V}/gauntlet/{id}`]: {
@@ -469,9 +548,16 @@ export function openApiSpec(origin: string) {
     },
     components: {
       schemas,
+      securitySchemes: {
+        apiKey: {
+          type: "http",
+          scheme: "bearer",
+          description: `Optional API key (forge_sk_…) from ${origin}/dashboard/keys: limits counted per key and month instead of per IP (${origin}/pricing). An unknown or revoked key gets 401 invalid_api_key, never an anonymous answer. Keyed answers carry X-Forge-Plan, X-Forge-Quota-Limit, X-Forge-Quota-Remaining and X-Forge-Quota-Reset.`,
+        },
+      },
       responses: {
         RateLimited: {
-          description: "Too many requests from this IP address.",
+          description: "Too many requests from this IP address, or over the API key's minute limit or monthly quota (reason says which).",
           headers: { "Retry-After": { schema: { type: "integer" }, description: "Seconds." } },
           content: { "application/json": { schema: ref("RateLimited") } },
         },

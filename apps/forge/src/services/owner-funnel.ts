@@ -14,7 +14,7 @@ const DAY = 86_400_000;
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /** Sum of usage counters by key (or key prefix) over full UTC days from `fromDay` to `toDay`, and the first day each was seen. */
-async function counterSums(env: Env, keys: string[], prefixes: string[], fromDay: string, toDay: string) {
+export async function counterSums(env: Env, keys: string[], prefixes: string[], fromDay: string, toDay: string) {
   const db = getDb(env);
   const match = or(inArray(t.usageDaily.key, keys), ...prefixes.map((p) => like(t.usageDaily.key, `${p}%`)));
   const rows = await db
@@ -47,6 +47,8 @@ export interface OwnerFunnel {
   agents_per_owner: number | null;
   web_claim_profiles: number;
   season: { id: string; starts_at: string; entrants: number; entries: number };
+  /** Review (ADR 0084): one-job Gauntlet Sprints, apart from the six-job stages above (House runs have no claim link). */
+  sprints: { finished: number; claim_link_shown: number | null; claimed: number };
   measured_since: { claim_link_shown: string | null; claim_page_opened: string | null };
   notes: string[];
 }
@@ -61,16 +63,24 @@ export async function ownerFunnel(env: Env, now = Date.now(), days = 30): Promis
   const todayStart = Date.parse(`${day(now)}T00:00:00Z`);
   const windowStart = Date.parse(`${fromDay}T00:00:00Z`);
 
-  const [finished] = await db
-    .select({ n: count() })
-    .from(t.arenaGauntlets)
-    .where(and(eq(t.arenaGauntlets.status, "done"), gte(t.arenaGauntlets.finishedAt, windowStart), lt(t.arenaGauntlets.finishedAt, todayStart)));
-  const c = await counterSums(env, ["owner:claim_link_shown", "owner:claim_page", "owner:claim_new_agent", "owner:claim_refused_unverified"], ["owner:claim_page:"], fromDay, toDay);
-  const [claims] = await db
-    .select({ n: count(), owners: countDistinct(t.gauntletClaims.humanId) })
-    .from(t.gauntletClaims)
-    .innerJoin(t.humans, eq(t.humans.id, t.gauntletClaims.humanId))
-    .where(and(outside, eq(t.humans.tier, "verified"), gte(t.gauntletClaims.claimedAt, windowStart), lt(t.gauntletClaims.claimedAt, todayStart)));
+  // Review (ADR 0084): the stages are six-job runs only; Sprints are counted apart (`sprints`), never mixed in.
+  const finishedOf = async (mode: "full" | "sprint") =>
+    (await db
+      .select({ n: count() })
+      .from(t.arenaGauntlets)
+      .where(and(eq(t.arenaGauntlets.status, "done"), eq(t.arenaGauntlets.mode, mode), gte(t.arenaGauntlets.finishedAt, windowStart), lt(t.arenaGauntlets.finishedAt, todayStart))))[0];
+  const finished = await finishedOf("full");
+  const sprintsFinished = await finishedOf("sprint");
+  const c = await counterSums(env, ["owner:claim_link_shown", "owner:claim_page", "owner:claim_new_agent", "owner:claim_refused_unverified", "sprint:claim_link_shown"], ["owner:claim_page:"], fromDay, toDay);
+  const claimsOf = async (mode: "full" | "sprint") =>
+    (await db
+      .select({ n: count(), owners: countDistinct(t.gauntletClaims.humanId) })
+      .from(t.gauntletClaims)
+      .innerJoin(t.humans, eq(t.humans.id, t.gauntletClaims.humanId))
+      .innerJoin(t.arenaGauntlets, eq(t.arenaGauntlets.id, t.gauntletClaims.gauntletId))
+      .where(and(outside, eq(t.humans.tier, "verified"), eq(t.arenaGauntlets.mode, mode), gte(t.gauntletClaims.claimedAt, windowStart), lt(t.gauntletClaims.claimedAt, todayStart))))[0];
+  const claims = await claimsOf("full");
+  const sprintClaims = await claimsOf("sprint");
   const [verified] = await db
     .select({ agents: count(t.agents.id), humans: countDistinct(t.agents.humanId) })
     .from(t.agents)
@@ -101,11 +111,12 @@ export async function ownerFunnel(env: Env, now = Date.now(), days = 30): Promis
     agents_per_owner: owners ? Math.round((Number(verified!.agents) / owners) * 100) / 100 : null,
     web_claim_profiles: Number(web?.n ?? 0),
     season: { id: SEASON_1.id, starts_at: new Date(season.startsAt).toISOString().slice(0, 10), entrants: board.entries.length, entries: board.runs.length },
+    sprints: { finished: Number(sprintsFinished?.n ?? 0), claim_link_shown: c.get("sprint:claim_link_shown"), claimed: Number(sprintClaims?.n ?? 0) },
     measured_since: { claim_link_shown: c.seen("owner:claim_link_shown"), claim_page_opened: c.seen("owner:claim_page") },
     notes: [
-      "Runs finished counts every Gauntlet run, ours included (runs are anonymous until claimed).",
+      "Runs finished counts every six-job Gauntlet run, ours included (runs are anonymous until claimed); Gauntlet Sprints are counted apart under sprints, House Sprints included.",
       "Claim links shown = claimable runs whose end-of-run result carried claim_url. The CLI, plugin and Action print their line without telemetry, so those shows aren't counted; their clicks are (claim page by source).",
-      "Claim page opened counts page views, not people.",
+      "Claim page opened counts page views, not people, for runs and Sprints alike (the claim page is the same).",
       "Claims and owners: verified owners outside the project (House and founders left out).",
     ],
   };

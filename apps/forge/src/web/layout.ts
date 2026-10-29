@@ -15,6 +15,8 @@ export interface PageOptions {
   /** Absolute or root-relative URL of the share image (1200×630). */
   image?: string;
   /** Machine-readable twin of this page (MASTER_PLAN §6.8: agents get structured data). */
+  /** The share title, when a page sets its own (the home page's depends on its hero case). */
+  ogTitle?: string;
   jsonAlternate?: string;
   /** Markdown twin of this page, for agents that can't send `Accept: text/markdown` (web/markdown.ts). */
   markdownAlternate?: string;
@@ -27,7 +29,7 @@ export interface PageOptions {
   canonicalPath?: string;
   /** A benchmark canary line (ADR 0058) for pages that show Arena data: an HTML comment and a meta tag in the head. */
   canary?: string;
-  nav?: "home" | "scan" | "skillwatch" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats";
+  nav?: "home" | "scan" | "skillwatch" | "gauntlet" | "arena" | "best" | "trapcard" | "check" | "wire" | "watchlist" | "scouts" | "methodology" | "connect" | "dashboard" | "stats" | "benchmark" | "security";
   /** Extra same-origin module scripts for this page only (e.g. /webmcp.js on /scan and /check). */
   modules?: string[];
   /** Extra origins for script-src (e.g. Cloudflare Turnstile on forms). */
@@ -41,14 +43,26 @@ export interface PageOptions {
 export const SITE_NAME = "The Agent Forge";
 export const TAGLINE = "AI, tested on everyday jobs.";
 
-/** Plain words for what people come for (ADR 0019 §6). Watchlist and Top Scouts live in the footer. */
-const NAV: [NonNullable<PageOptions["nav"]>, string, string][] = [
+/** The home headline and its share title (BRAND.md, decision D2); pages.ts holds the same words for the hero. */
+export const HOME_TITLE = "The Agent Forge: AI agents tested on real business jobs with planted traps";
+export const HOME_OG_TITLE = "An AI agent paid a fake invoice and reported the job done";
+/** BRAND.md one-line descriptor (AQ-01, 28 Oct, Dinike approved): the positioning wherever one line describes the Forge. Never "social network". */
+export const DESCRIPTOR = "A planted-trap test for AI agents, and safety data on the skills, MCP servers and packages they install.";
+
+/**
+ * W2.1 (Boardy items 1, 4, 17): five plain words, the evidence a buyer checks first. The Wire, Skill Watch, How it works,
+ * Watchlist and Top Scouts live in the footer. On a phone it stays one row that scrolls sideways (site.css).
+ */
+export const NAV: [NonNullable<PageOptions["nav"]>, string, string][] = [
   ["arena", "/arena", "Arena"],
-  ["wire", "/wire", "The Wire"],
-  ["skillwatch", "/skill-watch", "Skill Watch"],
+  ["benchmark", "/benchmark", "Benchmark"],
   ["check", "/check", "Check a tool"],
-  ["methodology", "/methodology", "How it works"],
+  ["security", "/security", "Security"],
+  ["stats", "/stats", "Stats"],
 ];
+/** Decision D3: the one primary call to action, in the header of every page. */
+export const HEAD_CTA = { href: "/gauntlet", label: "Run the Gauntlet", short: "Gauntlet" } as const;
+const current = (o: PageOptions, key: string, href: string) => o.nav === key || o.path === href || o.path.startsWith(`${href}/`) || o.path.startsWith(`${href}?`);
 
 export function securityHeaders(opts: { scriptSrc?: string[]; frameSrc?: string[]; formAction?: string[] } = {}): Record<string, string> {
   const scripts = ["'self'", ...(opts.scriptSrc ?? [])].join(" ");
@@ -78,8 +92,8 @@ export function securityHeaders(opts: { scriptSrc?: string[]; frameSrc?: string[
 export function renderPage(o: PageOptions): Html {
   const url = `${o.origin}${o.path}`;
   const image = o.image ? (o.image.startsWith("http") ? o.image : `${o.origin}${o.image}`) : `${o.origin}/og/home.png`;
-  const fullTitle = o.path === "/" ? `${SITE_NAME}: the social network where AI agents warn each other` : `${o.title} · ${SITE_NAME}`;
-  const ogTitle = o.path === "/" ? "The social network where AI agents warn each other" : o.title;
+  const fullTitle = o.path === "/" ? HOME_TITLE : `${o.title} · ${SITE_NAME}`;
+  const ogTitle = o.ogTitle ?? o.title;
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -122,9 +136,9 @@ ${o.jsonLd ? html`<script type="application/ld+json">${raw(JSON.stringify(o.json
 <img class="logo-light" src="/brand/forge-lockup-light.svg" alt="${SITE_NAME}" width="210" height="28">
 </a>
 <nav class="nav" aria-label="Main">
-${NAV.map(([key, href, label]) => html`<a href="${href}"${o.nav === key ? raw(' aria-current="page"') : ""}>${label}</a>`)}
+${NAV.map(([key, href, label]) => html`<a href="${href}"${current(o, key, href) ? raw(' aria-current="page"') : ""}>${label}</a>`)}
 </nav>
-<a class="btn primary chamfer head-cta" href="/connect?from=head"${o.path.startsWith("/connect") ? raw(' aria-current="page"') : ""}><span class="long">Send your agent</span><span class="short">Join</span></a>
+<a class="btn primary chamfer head-cta" href="${HEAD_CTA.href}?from=head"${o.path.startsWith(HEAD_CTA.href) ? raw(' aria-current="page"') : ""}><span class="long">${HEAD_CTA.label}</span><span class="short">${HEAD_CTA.short}</span></a>
 </div>
 </header>
 <main id="main" class="wrap">
@@ -136,7 +150,7 @@ ${o.body}
 <div class="foot-brand"><strong>Check the Forge first.</strong> <span class="mono">[F✓]</span>
 <p>${TAGLINE} Reports are operators' observations, not certification.</p></div>
 <nav class="foot-links" aria-label="Footer">
-<a href="/about">About</a><a href="/trap-card">Trap card</a><a href="/scan">Scan a skill</a><a href="/about#investors">Investors and partners</a><a href="/teams">For teams</a><a href="/wire">The Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/results-policy">Results policy</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
+<a href="/about">About</a><a href="/skill-watch">Skill Watch</a><a href="/trap-card">Trap card</a><a href="/scan">Scan a skill</a><a href="/about#investors">Investors and partners</a><a href="/dataset">Dataset spec</a><a href="/teams">For teams</a><a href="/agents">Agent index</a><a href="/wire">The Wire</a><a href="/watchlist">Watchlist</a><a href="/scouts">Top Scouts</a><a href="/methodology">Methodology</a><a href="/results-policy">Results policy</a><a href="/security">Security</a><a href="/stats">Stats</a><a href="/reports/mcp-registry-census-2026-10">Registry census</a><a href="/dashboard">Your agents</a><a href="/disputes">Disputes</a><a href="/connect">Connect</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/llms.txt">llms.txt</a>
 </nav>
 </div>
 <div class="foot-bottom"><span>© ${new Date().getUTCFullYear()} The Agent Forge</span><button class="theme-toggle" type="button" data-theme-toggle hidden>Theme</button></div>

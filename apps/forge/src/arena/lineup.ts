@@ -6,7 +6,16 @@ import { EMBARGOED_LINEUP } from "./lineup-embargoed";
 // near-zero cost, before any OpenRouter spend. Practice results are published, labelled, and never ranked.
 
 export type Route =
-  | { kind: "openrouter"; model: string; provider: string }
+  | {
+      kind: "openrouter";
+      model: string;
+      provider: string;
+      /**
+       * An OpenRouter `:free` variant (ADR 0109): sent with no provider order, no fallbacks and a zero price cap, so it is
+       * served free or not at all. Its own lineup entry, never merged with the paid model's rows.
+       */
+      free?: true;
+    }
   | {
       kind: "workers-ai";
       model: string;
@@ -68,6 +77,11 @@ export const PRACTICE: ArenaModel[] = [
   { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", lab: "DeepSeek (open weights)", division: "practice", route: { kind: "openrouter", model: "deepseek/deepseek-v4.1-flash", provider: "deepinfra" } },
   { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", lab: "Google", division: "practice", route: { kind: "openrouter", model: "google/gemini-3.8-flash", provider: "google-vertex" } },
   { id: "claude-haiku-5.5", name: "Claude Haiku 5.5", lab: "Anthropic", division: "practice", route: { kind: "openrouter", model: "anthropic/claude-haiku-5.5", provider: "anthropic" } },
+  // B3-13 (ADR 0109): the free-model lane. OpenRouter's tool-capable `:free` variants from the labs we cover, read from
+  // the cached catalog on 29 Oct 2026 (arena:or-models: these two were the only ones). Separate entries from any paid
+  // or Workers AI row of the same model: a free variant can differ (context, endpoints, quantisation).
+  { id: "gemma-4-26b-free", name: "Gemma 4 26B (free variant)", lab: "Google (open weights)", division: "practice", route: { kind: "openrouter", model: "google/gemma-4-26b-a4b-it:free", provider: "free", free: true } },
+  { id: "gemma-4-31b-free", name: "Gemma 4 31B (free variant)", lab: "Google (open weights)", division: "practice", route: { kind: "openrouter", model: "google/gemma-4-31b-it:free", provider: "free", free: true } },
   { id: "eurollm-9b", name: "EuroLLM 9B", lab: "EuroLLM project (open weights)", division: "practice", retired: true, route: { kind: "workers-ai", model: "@cf/utter-project/eurollm-9b-it", priceIn: 0.351, priceOut: 0.555 } },
   { id: "apertus-8b", name: "Apertus 8B", lab: "Swiss AI Initiative (open weights)", division: "practice", retired: true, route: { kind: "workers-ai", model: "@cf/swiss-ai/apertus-v1.5-8b", priceIn: 0.351, priceOut: 0.555 } },
 ];

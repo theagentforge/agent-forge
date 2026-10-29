@@ -135,6 +135,10 @@ shown there.
   below.
 
 ## Changelog
+- **1.1, note (28 Oct 2026):** two maintainers of anonymised repositories replied to their notices. One fixed the
+  flagged file, and the other had already changed it after our 19 Oct scan. We re-scanned both current files: no
+  pattern matched. The headline counts don't change, because they describe the commits we scanned. From 2 November each
+  entry shows the result at the scanned commit, the maintainer's response and our rescan.
 - **1.1 (19 Oct 2026):** severity definitions, hand review of all 30 flags, small repositories anonymised pending
   notice (their rows held back from the dataset until 2 Nov), limits and conflict-of-interest sections.
 - **1.0 (19 Oct 2026):** first draft.
