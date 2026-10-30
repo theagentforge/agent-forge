@@ -40,9 +40,20 @@ describe("the one box", () => {
 describe("/connect", () => {
   it("opens with the Claude Code plugin, which checks every install by itself", async () => {
     const html = await (await fetchWorker("/connect", { headers: { Accept: "text/html" } })).text();
-    const plugin = html.indexOf("/plugin install forge@theagentforge");
+    const plugin = html.indexOf("/plugin install theagentforge@theagentforge");
     expect(plugin).toBeGreaterThan(0);
     expect(plugin).toBeLessThan(html.indexOf("Any AI app or agent"));
+  });
+
+  it("names the plugin theagentforge everywhere, with an upgrade note for forge@theagentforge installs (ADR 0121)", async () => {
+    const html = await (await fetchWorker("/connect", { headers: { Accept: "text/html" } })).text();
+    expect(html).not.toContain("/plugin install forge@theagentforge");
+    expect(html).not.toMatch(/[^a-z]\/forge:(sprint|gauntlet)/);
+    expect(html).toContain("/theagentforge:sprint");
+    expect(html).toContain("/theagentforge:gauntlet");
+    const note = html.slice(html.indexOf('id="plugin-renamed"'));
+    expect(note).toContain("/plugin uninstall forge@theagentforge");
+    expect(note).toContain("/plugin marketplace update theagentforge");
   });
 
   it("gives Codex, Gemini CLI and Copilot CLI the install hook from the published CLI", async () => {

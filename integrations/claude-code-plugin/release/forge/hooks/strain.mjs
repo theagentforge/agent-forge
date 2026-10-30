@@ -196,11 +196,17 @@ var safeSessionId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.t
 var MIN_CALLS = 3;
 var REDRAFT_AFTER_MS = 3 * 864e5;
 var MAX_DRAFTS = 3;
+var PLUGIN_SERVERS = ["forge", "forge-reports", "forge-gauntlet"];
+var PLUGIN_NAMES = ["theagentforge", "forge"];
+function isForgeServer(server) {
+  const s = server.toLowerCase();
+  return PLUGIN_SERVERS.some((name) => s === name || PLUGIN_NAMES.some((p) => s === `plugin_${p}_${name}`));
+}
 function serverOf(tool) {
   const m = /^mcp__(.+?)__/.exec(tool);
   if (!m) return null;
   const server = m[1];
-  if (/(^|_)forge$/i.test(server)) return null;
+  if (isForgeServer(server) || /(^|_)forge$/i.test(server)) return null;
   return server;
 }
 function mergeCounts(list) {
@@ -315,7 +321,7 @@ function parseLinkState(text) {
 }
 var AUTH_PSEUDO_TOOLS = /* @__PURE__ */ new Set(["authenticate", "complete_authentication"]);
 function isSignedInForgeTool(toolName) {
-  const m = /^mcp__(?:plugin_forge_)?forge-reports__([a-z_]+)$/i.exec(toolName);
+  const m = /^mcp__(?:plugin_(?:theagentforge|forge)_)?forge-reports__([a-z_]+)$/i.exec(toolName);
   return !!m && !AUTH_PSEUDO_TOOLS.has(m[1].toLowerCase());
 }
 var markLinked = (state, now) => state.linked_at !== void 0 ? state : { ...state, linked_at: now };

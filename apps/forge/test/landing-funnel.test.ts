@@ -38,7 +38,7 @@ describe("/connect: one first step, then the Gauntlet", () => {
     expect(first).toBeGreaterThan(0);
     expect(worked).toBeGreaterThan(first);
     expect(gauntlet).toBeGreaterThan(worked);
-    expect(gauntlet).toBeLessThan(body.indexOf("/plugin install forge@theagentforge"));
+    expect(gauntlet).toBeLessThan(body.indexOf("/plugin install theagentforge@theagentforge"));
     expect(gauntlet).toBeLessThan(body.indexOf("Any AI app or agent"));
     const step1 = body.slice(first, worked);
     expect(step1).toContain(`<code id="first-cc">claude mcp add --scope user --transport http forge ${pub}</code>`);
@@ -52,7 +52,7 @@ describe("/connect: one first step, then the Gauntlet", () => {
     // One action, not a menu of buttons.
     expect((step1.match(/class="btn primary/g) ?? []).length).toBe(0);
     const step3 = body.slice(gauntlet, body.indexOf("</section>", gauntlet));
-    expect(step3).toContain("/forge:gauntlet");
+    expect(step3).toContain("/theagentforge:gauntlet");
     expect(step3).toContain("trap card");
     expect(step3).toContain("claim");
     expect(step3).toContain("/gauntlet/season-1");

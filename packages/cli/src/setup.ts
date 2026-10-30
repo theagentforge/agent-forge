@@ -47,7 +47,24 @@ import { hookConfig, type HookClient } from "./hook";
 
 export const SETUP_MANIFEST = "setup-manifest.json";
 export const SERVER_NAME = "forge";
-const PLUGIN_ID = "forge@theagentforge";
+/** The Claude Code plugin's id. Renamed from `forge@theagentforge` in plugin 0.8.0 (ADR 0121). */
+export const PLUGIN_ID = "theagentforge@theagentforge";
+/** Ids that count as the plugin being installed: the current one and the name before the rename. */
+export const PLUGIN_IDS = [PLUGIN_ID, "forge@theagentforge"] as const;
+
+/** Which of PLUGIN_IDS Claude Code's installed_plugins.json lists, if any (the current id first). */
+export function installedPluginId(pluginList: string | null): string | null {
+  if (!pluginList) return null;
+  let keys: string[];
+  try {
+    const plugins = (JSON.parse(pluginList) as { plugins?: unknown }).plugins;
+    keys = plugins && typeof plugins === "object" ? Object.keys(plugins) : [];
+  } catch {
+    // Not JSON we can read: fall back to the exact quoted key.
+    return PLUGIN_IDS.find((id) => pluginList.includes(`"${id}"`)) ?? null;
+  }
+  return PLUGIN_IDS.find((id) => keys.includes(id)) ?? null;
+}
 
 type Json = Record<string, unknown>;
 type Format = "json" | "jsonc" | "toml";
@@ -416,7 +433,7 @@ export interface Planned {
   def: ClientDef;
   items: { item: FileItem; original: string | null; edit: Edit }[];
   /** Claude Code: whether the Forge is already there (its user config or the plugin). */
-  command?: { present: string | null; plugin: boolean; stateError: string | null };
+  command?: { present: string | null; plugin: boolean; pluginId: string | null; stateError: string | null };
 }
 
 /** Which clients are installed here, and what each item would change. Reads files only. */
@@ -437,7 +454,8 @@ export async function plan(c: SetupContext): Promise<Planned[]> {
     }
     if (def.command) {
       const plugins = await readText(def.command.pluginList).catch(() => null);
-      const plugin = !!plugins && plugins.includes(`"${PLUGIN_ID}`);
+      const pluginId = installedPluginId(plugins);
+      const plugin = pluginId !== null;
       let present: string | null = null;
       let stateError: string | null = null;
       const state = await readText(def.command.state).catch(() => null);
@@ -454,7 +472,7 @@ export async function plan(c: SetupContext): Promise<Planned[]> {
         }
       }
       if (!present && plugin) present = "already there through the Forge plugin";
-      p.command = { present, plugin, stateError };
+      p.command = { present, plugin, pluginId, stateError };
     }
     out.push(p);
   }
@@ -729,6 +747,11 @@ export async function runSetup(o: SetupOpts, c: SetupContext, io: SetupIo): Prom
         const steps = `/plugin marketplace add ${c.origin}/marketplace.json, then /plugin install ${PLUGIN_ID}`;
         r.items.push({ kind: "plugin", status: "suggested", command: steps });
         say(`  Install check for Claude Code: the Forge plugin. Setup doesn't edit plugin files; in Claude Code, type ${steps}`);
+      } else if (p.command.pluginId !== PLUGIN_ID) {
+        // Installed under the name before the rename (ADR 0121): it still works, but gets no more updates.
+        const steps = `/plugin marketplace update theagentforge, then /plugin uninstall ${p.command.pluginId}, then /plugin install ${PLUGIN_ID}`;
+        r.items.push({ kind: "plugin", status: "present", reason: `the Forge plugin is installed under its old name ${p.command.pluginId}`, command: steps });
+        say(`  Install check for Claude Code: the Forge plugin is installed under its old name ${p.command.pluginId}. To move to its new name, in Claude Code type ${steps}`);
       } else r.items.push({ kind: "plugin", status: "present", reason: "the Forge plugin is installed" });
     }
 

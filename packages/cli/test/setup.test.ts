@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EXIT, run, type Io } from "../src/run";
-import { SETUP_MANIFEST, codexTomlEdit } from "../src/setup";
+import { PLUGIN_IDS, SETUP_MANIFEST, codexTomlEdit, installedPluginId } from "../src/setup";
 
 // `forge setup` (ADR 0119): every test runs against a temporary home folder with fake client configs, and a fake
 // settings folder for the undo manifest. Setup must never touch the network.
@@ -194,7 +194,8 @@ describe("forge setup: writing", () => {
     const text = r.out.join("\n");
     expect(text).toContain("Settings → Connectors → Add custom connector");
     expect(text).toContain("Goose keeps its settings in YAML");
-    expect(text).toContain("/plugin install forge@theagentforge");
+    expect(text).toContain("/plugin install theagentforge@theagentforge");
+    expect(text).not.toContain("/plugin install forge@theagentforge");
     expect(text).toContain("forge telemetry disable");
     expect(text).toContain("privacy#install-id");
   });
@@ -218,7 +219,7 @@ describe("forge setup: writing", () => {
   it("treats the Forge under another name, or the Claude Code plugin, as already there", async () => {
     const h = await home({
       ".cursor/mcp.json": JSON.stringify({ mcpServers: { "agent-forge": { url: "https://theagentforge.io/mcp" } } }),
-      ".claude/plugins/installed_plugins.json": JSON.stringify({ plugins: { "forge@theagentforge": [{}] } }),
+      ".claude/plugins/installed_plugins.json": JSON.stringify({ plugins: { "theagentforge@theagentforge": [{}] } }),
     });
     const before = await snapshot(h);
     const r = await forge(h, ["setup", "--yes", "--json"], { exec: async () => { throw new Error("not called"); } });
@@ -229,6 +230,33 @@ describe("forge setup: writing", () => {
       { kind: "plugin", status: "present", reason: "the Forge plugin is installed" },
     ]);
     expect(c[1].items[0]).toMatchObject({ status: "present", reason: 'already set up as "agent-forge"' });
+  });
+
+  it("recognises the plugin under its old name forge@theagentforge too, and gives the steps to move to the new name (ADR 0121)", async () => {
+    const h = await home({ ".claude/plugins/installed_plugins.json": JSON.stringify({ version: 2, plugins: { "forge@theagentforge": [{}] } }) });
+    const r = await forge(h, ["setup", "--yes", "--json"], { exec: async () => { throw new Error("not called"); } });
+    const c = JSON.parse(r.out.join("\n")).clients;
+    expect(c[0].items).toEqual([
+      { kind: "mcp", status: "present", reason: "already there through the Forge plugin" },
+      {
+        kind: "plugin",
+        status: "present",
+        reason: "the Forge plugin is installed under its old name forge@theagentforge",
+        command: "/plugin marketplace update theagentforge, then /plugin uninstall forge@theagentforge, then /plugin install theagentforge@theagentforge",
+      },
+    ]);
+  });
+
+  it("finds the plugin id only as a whole key: both names, the new one first, and no look-alikes", () => {
+    expect(installedPluginId(null)).toBeNull();
+    expect(installedPluginId(JSON.stringify({ plugins: { "theagentforge@theagentforge": [] } }))).toBe("theagentforge@theagentforge");
+    expect(installedPluginId(JSON.stringify({ plugins: { "forge@theagentforge": [] } }))).toBe("forge@theagentforge");
+    expect(installedPluginId(JSON.stringify({ plugins: { "forge@theagentforge": [], "theagentforge@theagentforge": [] } }))).toBe("theagentforge@theagentforge");
+    for (const other of ["forge@claude-community", "xforge@theagentforge", "forge@theagentforge-fork", "theagentforge@elsewhere"]) {
+      expect(installedPluginId(JSON.stringify({ plugins: { [other]: [] } })), other).toBeNull();
+    }
+    expect(installedPluginId('{"plugins": {"forge@theagentforge": [')).toBe("forge@theagentforge"); // unreadable JSON
+    expect(PLUGIN_IDS).toEqual(["theagentforge@theagentforge", "forge@theagentforge"]);
   });
 
   it("asks y/N per item and changes nothing on a no, or without a terminal and --yes", async () => {

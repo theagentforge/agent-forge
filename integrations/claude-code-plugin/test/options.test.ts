@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,5 +46,46 @@ describe("plugin.json directory links", () => {
       documentationUrl: "https://theagentforge.io/connect",
       author: { name: "The Agent Forge", email: "hello@theagentforge.io" },
     });
+  });
+});
+
+// ADR 0121 (29 Oct): renamed from `forge` (a different community plugin has that name). The identity changes; the
+// analytics labels don't.
+describe("plugin identity (ADR 0121 rename)", () => {
+  it("is named theagentforge, shown as The Agent Forge, from 0.8.0", () => {
+    expect(manifest.name).toBe("theagentforge");
+    expect(manifest.displayName).toBe("The Agent Forge");
+    const [major, minor] = String(manifest.version).split(".").map(Number);
+    expect(major! > 0 || minor! >= 8).toBe(true);
+    expect(manifest.description).toContain("/theagentforge:sprint");
+    expect(manifest.description).toContain("/theagentforge:gauntlet");
+    expect(manifest.description).not.toMatch(/\/forge:/);
+  });
+
+  it("keeps the User-Agent the Worker counts as the plugin client, in the source and the built hooks", () => {
+    for (const f of ["src/hooks/pre-install.ts", "src/hooks/session-start.ts", "release/forge/hooks/pre-install.mjs", "release/forge/hooks/session-start.mjs"]) {
+      expect(readFileSync(join(root, f), "utf8"), f).toContain('"theagentforge-claude-plugin"');
+    }
+  });
+
+  it("the README tells existing forge@theagentforge users how to move to the new name", () => {
+    const readme = readFileSync(join(root, "plugin", "README.md"), "utf8");
+    expect(readme).toContain("/plugin install theagentforge@theagentforge");
+    expect(readme).toContain("/plugin uninstall forge@theagentforge");
+    expect(readme).not.toMatch(/(^|[^a-z])\/forge:/m);
+  });
+});
+
+describe("old forge zips (ADR 0121)", () => {
+  it("stay published byte for byte next to the new ones, listed under legacy in the manifest", () => {
+    const dir = join(root, "..", "..", "apps", "forge", "public", "plugins");
+    const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+    expect(m.name).toBe("theagentforge");
+    for (const env of ["staging", "production"]) expect(m.files[env].file).toMatch(new RegExp(`^theagentforge-${env}-`));
+    const old = m.legacy.forge;
+    expect(Object.keys(old.files).sort()).toEqual(["production", "staging"]);
+    for (const { file, sha256 } of Object.values(old.files) as { file: string; sha256: string }[]) {
+      expect(createHash("sha256").update(readFileSync(join(dir, file))).digest("hex"), file).toBe(sha256);
+    }
   });
 });

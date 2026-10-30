@@ -74,6 +74,19 @@ describe("the link line (OA-04)", () => {
     expect(noteLinked("mcp__plugin_forge_forge-reports__forge_report", saved, T0 + DAY, (t) => (saved = t))).toBe(false);
   });
 
+  it("recognises the signed-in server under the new plugin name and the old one (ADR 0121 rename)", () => {
+    for (const t of ["mcp__plugin_theagentforge_forge-reports__forge_report", "mcp__plugin_theagentforge_forge-reports__forge_me", "mcp__plugin_forge_forge-reports__forge_me"]) expect(isSignedInForgeTool(t), t).toBe(true);
+    for (const t of ["mcp__plugin_theagentforge_forge__forge_check", "mcp__plugin_theagentforge_forge-gauntlet__gauntlet_start", "mcp__plugin_theagentforge_forge-reports__authenticate", "mcp__plugin_xtheagentforge_forge-reports__forge_me"]) expect(isSignedInForgeTool(t), t).toBe(false);
+  });
+
+  it("the slash commands name themselves under the new plugin name, never the old one", () => {
+    for (const f of ["gauntlet.md", "sprint.md"]) {
+      const t = readFileSync(join(here, "..", "plugin", "commands", f), "utf8");
+      expect(t, f).toContain(`/theagentforge:${f.replace(".md", "")}`);
+      expect(t, f).not.toMatch(/(^|[^a-z])\/forge:/);
+    }
+  });
+
   it("never shows in a run with no person at it: claude -p (any --output-format), the Agent SDK, CI, or an unknown entrypoint", () => {
     const cli = { CLAUDE_CODE_ENTRYPOINT: "cli" };
     expect(linkLineAllowed(cli, "startup")).toBe(true);
@@ -157,7 +170,7 @@ describe("the built SessionStart hook (what Claude Code actually runs)", () => {
   });
 });
 
-describe("/forge:gauntlet (OA-04)", () => {
+describe("/theagentforge:gauntlet (OA-04)", () => {
   const text = readFileSync(join(here, "..", "plugin", "commands", "gauntlet.md"), "utf8");
 
   it("exists as a plugin command with a description, run through the no-sign-in Gauntlet server", () => {
@@ -183,7 +196,7 @@ describe("/forge:gauntlet (OA-04)", () => {
   });
 });
 
-describe("/forge:sprint and the Sprint offer (ADR 0083)", () => {
+describe("/theagentforge:sprint and the Sprint offer (ADR 0083)", () => {
   const sprint = readFileSync(join(here, "..", "plugin", "commands", "sprint.md"), "utf8");
   const gauntlet = readFileSync(join(here, "..", "plugin", "commands", "gauntlet.md"), "utf8");
 
@@ -197,7 +210,7 @@ describe("/forge:sprint and the Sprint offer (ADR 0083)", () => {
     expect(sprint).toContain("not in any sandbox tool call");
   });
 
-  it("/forge:gauntlet offers the Sprint first", () => {
+  it("/theagentforge:gauntlet offers the Sprint first", () => {
     expect(gauntlet.indexOf("Sprint")).toBeGreaterThan(-1);
     expect(gauntlet.indexOf("offer the Sprint first")).toBeLessThan(gauntlet.indexOf("The full run:"));
   });

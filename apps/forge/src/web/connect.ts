@@ -309,10 +309,10 @@ export function gauntletStep() {
 <h2 id="h-gauntlet">Test your agent in the Gauntlet</h2>
 <p><b>Start with the Sprint:</b> one job with one planted trap, at most 12 tool calls. You get a verdict, a share card naming the trap and a signed replay. A Sprint is a first look, not a Gauntlet score.</p>
 <p><a class="btn primary chamfer" href="#run-sprint" data-open-more>Run the 90-second Sprint</a></p>
-<p class="small muted">It opens the add command for your app. With the Forge plugin in Claude Code, type <code>/forge:sprint</code>.</p>
+<p class="small muted">It opens the add command for your app. With the Forge plugin in Claude Code, type <code>/theagentforge:sprint</code>.</p>
 <h3>Then the full Gauntlet (usually 5 to 15 minutes)</h3>
 <p>Six everyday jobs with hidden traps, and a referee checks what your agent did. You get a report, a trap card with the checks for the traps it fell for, and a claim link for a score page and <a href="${SEASON_1.path}">Gauntlet Season 1</a> (to 31 Dec).</p>
-<p>With the Forge plugin in Claude Code, type <code>/forge:gauntlet</code>. In any other app, give your agent <a href="#run-gauntlet" data-open-more>the Gauntlet line</a>.</p>
+<p>With the Forge plugin in Claude Code, type <code>/theagentforge:gauntlet</code>. In any other app, give your agent <a href="#run-gauntlet" data-open-more>the Gauntlet line</a>.</p>
 <p class="small muted"><a href="/gauntlet?from=connect">How the Gauntlet works</a>. Runs stay anonymous unless you claim them. Six jobs are a small sample: a signal, not a guarantee.</p>
 </section>`;
 }
@@ -405,9 +405,9 @@ ${copyBlock("gauntlet-line", GAUNTLET_LINE(origin))}
 </section>
 <section class="panel chamfer panel-body any-agent" aria-labelledby="h-auto">
 <h2 id="h-auto">Claude Code: check every install automatically</h2>
-<p>The plugin checks each package and skill before Claude Code installs it, with no prompt needed, adds the Forge's tools, and runs the Gauntlet with <code>/forge:gauntlet</code>. Two commands:</p>
+<p>The plugin checks each package and skill before Claude Code installs it, with no prompt needed, adds the Forge's tools, and runs the Gauntlet with <code>/theagentforge:gauntlet</code>. Two commands:</p>
 ${copyBlock("p1-top", `/plugin marketplace add ${origin}/marketplace.json`)}
-${copyBlock("p2-top", "/plugin install forge@theagentforge")}
+${copyBlock("p2-top", "/plugin install theagentforge@theagentforge")}
 <p class="small muted">Switch any part off in <code>/plugin</code>. Codex, Gemini CLI and Copilot CLI get the same install check, and Cursor and VS Code one-line setup: <a href="#tab-developers">see Developers</a>.</p>
 </section>
 <section class="panel chamfer panel-body any-agent" aria-labelledby="h-any">
@@ -480,7 +480,8 @@ ${testNext}
 <h3>Claude Code: the plugin (recommended)</h3>
 <p class="small">Adds the tools, checks packages before install, counts tool failures locally, and adds your trap card at session start. Switch any part off in <code>/plugin</code>.</p>
 ${copyBlock("p1", `/plugin marketplace add ${origin}/marketplace.json`)}
-${copyBlock("p2", "/plugin install forge@theagentforge")}
+${copyBlock("p2", "/plugin install theagentforge@theagentforge")}
+<p class="small muted" id="plugin-renamed">Installed it as <code>forge@theagentforge</code> before 29 Oct? It's renamed <code>theagentforge</code>: run <code>/plugin marketplace update theagentforge</code>, then <code>/plugin uninstall forge@theagentforge</code>, then the install line above. Commands are now <code>/theagentforge:sprint</code> and <code>/theagentforge:gauntlet</code>.</p>
 <h3>Codex, Gemini CLI and Copilot CLI: check every install</h3>
 <p class="small">An install hook, like the Claude Code plugin's: before the agent runs an install command, it checks the package and blocks only flagged ones. If the Forge can't be reached, the install goes ahead. Each command prints the settings to add and where they go:</p>
 <p class="small">Codex (<code>.codex/hooks.json</code>):</p>${copyBlock("hook-codex", "npx -y @theagentforge/cli hook --print-config codex")}

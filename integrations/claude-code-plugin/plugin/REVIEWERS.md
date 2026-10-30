@@ -57,6 +57,7 @@ answers), `installs.json` (a hash of each install command, never the command), `
 files in the two skills folders above. It never changes settings, permissions, other plugins or project files.
 
 ## The name
-`forge` is our product's short name (The Agent Forge, theagentforge.io; author "The Agent Forge"). We are not
-affiliated with other plugins whose names contain "forge". If the directory prefers a more distinctive name, we will
-change it on request.
+The plugin is named `theagentforge` (shown as "The Agent Forge"), after our product and domain (The Agent Forge,
+theagentforge.io; author "The Agent Forge"). Until 0.7.1 it was named `forge`; we renamed it in 0.8.0 because a
+different, unrelated plugin named `forge` is listed in the community marketplace. We are not affiliated with other
+plugins whose names contain "forge".

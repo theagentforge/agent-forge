@@ -8,8 +8,28 @@ files; and the Arena's trap card. This plugin brings it into Claude Code.
 In Claude Code:
 ```
 /plugin marketplace add https://theagentforge.io/marketplace.json
-/plugin install forge@theagentforge
+/plugin install theagentforge@theagentforge
 ```
+
+### Upgrading from `forge@theagentforge` (0.7.x and earlier)
+On 29 Oct 2026 the plugin's name changed from `forge` to `theagentforge` (version 0.8.0), because a different plugin
+named `forge` is listed in Anthropic's community marketplace. The marketplace keeps its name, so you don't add it again.
+In Claude Code:
+```
+/plugin marketplace update theagentforge
+/plugin uninstall forge@theagentforge
+/plugin install theagentforge@theagentforge
+```
+- On Claude Code 2.1.193 or later, the update step may already have moved `forge` to its new name (Claude Code says
+  `Renamed to "theagentforge"`); if the uninstall says it isn't installed, that's fine, and the install still applies.
+- The commands are now `/theagentforge:sprint` and `/theagentforge:gauntlet`.
+- The plugin's tools are now named `mcp__plugin_theagentforge_…`. If you allowed `mcp__plugin_forge_…` tools in your
+  permission settings, allow the new names.
+- If you uninstalled the old name, your settings switches (below) start at their defaults again; set them in
+  `/plugin` if you had changed any. Uninstalling also deletes the old name's local state (failure counts,
+  last-checked versions, the random install ID), so the new name starts fresh.
+- Until you update the marketplace, the old plugin keeps working as it is but gets no more updates. After the
+  update, run the install line: Claude Code may report the plugin as not cached until you do.
 
 ## What it does
 - **Before an install runs:** for `npm`, `pnpm`, `yarn`, `bun`, `npx`, `pip`, `uv`, `uvx`, `pipx` and `git clone`
@@ -35,10 +55,10 @@ In Claude Code:
   week apart, only when you start a new interactive session (never in `claude -p`, the Agent SDK or CI, where no
   person reads it), and stops for good once a signed-in Forge tool call has worked on this machine. Turn it off with
   `link_prompt` in the plugin's settings, or `FORGE_LINK_PROMPT=false`.
-- **`/forge:sprint`:** when you type it, Claude asks you to confirm, then runs The Forge Gauntlet Sprint (one sandbox
+- **`/theagentforge:sprint`:** when you type it, Claude asks you to confirm, then runs The Forge Gauntlet Sprint (one sandbox
   job with one planted trap, at most 12 tool calls) and gives you the verdict, a share card and a private claim link.
   A Sprint result is not a Gauntlet score.
-- **`/forge:gauntlet`:** when you type it, Claude asks you to confirm, then offers the Sprint first, or runs The Forge Gauntlet (six sandbox jobs
+- **`/theagentforge:gauntlet`:** when you type it, Claude asks you to confirm, then offers the Sprint first, or runs The Forge Gauntlet (six sandbox jobs
   with planted traps, 5 to 15 minutes of your tokens) and gives you the results and a private claim link.
 - **The `forge` skill** explains how to read a verdict and file a report.
 
@@ -51,7 +71,7 @@ You can turn off each of these in the plugin's settings: `check_installs`, `trap
 - `forge-reports`: the signed-in address, `https://theagentforge.io/mcp`, for filing field reports (`forge_report`,
   including the end-of-session drafts). It asks you to sign in with GitHub the first time it's used, and does nothing
   until then.
-- `forge-gauntlet`: the Gauntlet's address, `https://theagentforge.io/mcp/gauntlet`, used by `/forge:gauntlet`. No
+- `forge-gauntlet`: the Gauntlet's address, `https://theagentforge.io/mcp/gauntlet`, used by `/theagentforge:gauntlet`. No
   sign-in; everything in it is an invented sandbox.
 
 ## What it sends, and what it doesn't

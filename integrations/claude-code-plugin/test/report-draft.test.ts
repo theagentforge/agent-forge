@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { draftMessage, drafts, MIN_CALLS, REDRAFT_AFTER_MS, serverOf } from "../src/report-draft";
+import { draftMessage, drafts, isForgeServer, MIN_CALLS, PLUGIN_NAMES, PLUGIN_SERVERS, REDRAFT_AFTER_MS, serverOf } from "../src/report-draft";
 import { emptyState, NUDGE_TEXT, recordFailure, recordSuccess } from "../src/strain-state";
 import { AGENT_DIRECTED } from "../../../apps/forge/test/wording";
 
 const NOW = 1_800_000_000_000;
+const here = dirname(fileURLToPath(import.meta.url));
 
 function session() {
   const s = emptyState();
@@ -22,6 +26,43 @@ describe("report drafts", () => {
     expect(serverOf("Bash")).toBeNull();
     expect(serverOf("mcp__forge__forge_check")).toBeNull();
     expect(serverOf("mcp__plugin_forge_forge__forge_report")).toBeNull();
+  });
+
+  it("skips every server the plugin ships, under the new and the old plugin name (ADR 0121)", () => {
+    for (const p of ["theagentforge", "forge"]) {
+      expect(serverOf(`mcp__plugin_${p}_forge__forge_check`)).toBeNull();
+      expect(serverOf(`mcp__plugin_${p}_forge-reports__forge_report`)).toBeNull();
+      expect(serverOf(`mcp__plugin_${p}_forge-reports__forge_me`)).toBeNull();
+      expect(serverOf(`mcp__plugin_${p}_forge-gauntlet__gauntlet_start`)).toBeNull();
+      expect(serverOf(`mcp__PLUGIN_${p.toUpperCase()}_FORGE-REPORTS__forge_me`)).toBeNull();
+    }
+    // The same servers added by hand under their plain names.
+    expect(serverOf("mcp__forge-reports__forge_report")).toBeNull();
+    expect(serverOf("mcp__forge-gauntlet__gauntlet_start")).toBeNull();
+    // Other plugins' and other people's servers are still drafted.
+    expect(serverOf("mcp__plugin_other_forge-reports__x")).toBe("plugin_other_forge-reports");
+    expect(serverOf("mcp__plugin_theagentforge_github__x")).toBe("plugin_theagentforge_github");
+    expect(serverOf("mcp__forge-reportsx__x")).toBe("forge-reportsx");
+    expect(serverOf("mcp__my-forge-gauntlet__x")).toBe("my-forge-gauntlet");
+  });
+
+  it("skips exactly the servers build.mjs ships in the plugin's .mcp.json", () => {
+    const shipped = Object.keys(JSON.parse(readFileSync(join(here, "..", "release", "forge", ".mcp.json"), "utf8")).mcpServers);
+    expect([...shipped].sort()).toEqual([...PLUGIN_SERVERS].sort());
+    for (const server of shipped) {
+      expect(isForgeServer(server), server).toBe(true);
+      for (const p of PLUGIN_NAMES) expect(serverOf(`mcp__plugin_${p}_${server}__any_tool`), `${p} ${server}`).toBeNull();
+    }
+  });
+
+  it("leaves the plugin's own servers out of the end-of-session drafts", () => {
+    const s = session();
+    for (const p of PLUGIN_NAMES) {
+      for (let i = 0; i < 5; i++) recordSuccess(s, `mcp__plugin_${p}_forge-reports__forge_report`, NOW);
+      for (let i = 0; i < 5; i++) recordFailure(s, `mcp__plugin_${p}_forge-gauntlet__gauntlet_act`, "g", NOW);
+      for (let i = 0; i < 5; i++) recordSuccess(s, `mcp__plugin_${p}_forge__forge_check`, NOW);
+    }
+    expect(drafts(s, {}, NOW).map((x) => x.server)).toEqual(["github"]);
   });
 
   it(`drafts only servers with at least ${MIN_CALLS} calls, with merged strain counts`, () => {

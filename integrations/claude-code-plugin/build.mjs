@@ -18,6 +18,21 @@ const ENVS = { staging: "https://staging.theagentforge.io", production: "https:/
 // Local-time midnight on purpose: zip stores times in local DOS fields (fflate reads getFullYear/getHours), so a UTC
 // instant gave different bytes in Colombo and on CI (29 Oct). Local midnight writes the same fields in every time zone.
 const MTIME = new Date(2026, 0, 1, 0, 0, 0);
+// The plugin's id in Claude Code (`<NAME>@theagentforge`), the zips' file prefix and their top folder. Renamed from
+// `forge` in 0.8.0 (ADR 0121): Anthropic's community marketplace already lists a different plugin named `forge`.
+const NAME = "theagentforge";
+// Zips built under the old name. Kept byte for byte, never rebuilt or deleted: a URL an existing install or a cached
+// marketplace.json points at keeps working. The manifest lists them under `legacy`; --check verifies each sha256.
+const LEGACY = {
+  forge: {
+    version: "0.7.1",
+    files: {
+      staging: { file: "forge-staging-0.7.1-4a223275058f.zip", sha256: "4a223275058fd180a502996776d71edb7e75ed306c0144e60a08dc10d8a938ce" },
+      production: { file: "forge-production-0.7.1-2832ac15b8ca.zip", sha256: "2832ac15b8cae8cc4d943272200986edf57bb12843ab9e8a01e90a01e8e2d7e9" },
+    },
+  },
+};
+const legacyFiles = Object.values(LEGACY).flatMap((l) => Object.values(l.files));
 
 // What each hook does, printed at the top of its built file for the directory's reviewers (REVIEWERS.md).
 const HOOK_HEADERS = {
@@ -66,7 +81,7 @@ const base = walk(join(here, "plugin"));
 const { version, description } = JSON.parse(base[".claude-plugin/plugin.json"].toString());
 
 // The description too, so /marketplace.json says what this version does (it lists the plugin before install).
-const manifest = { version, description, files: {} };
+const manifest = { name: NAME, version, description, files: {}, legacy: LEGACY };
 const outputs = {};
 for (const [env, origin] of Object.entries(ENVS)) {
   const files = {
@@ -75,17 +90,17 @@ for (const [env, origin] of Object.entries(ENVS)) {
     "forge.json": Buffer.from(JSON.stringify({ origin }) + "\n"),
     // The anonymous read-only address first, so the tools work straight after install with no sign-in (as /connect
     // says); the signed-in address alongside, for filing the field reports the Stop hook drafts. It asks for GitHub
-    // sign-in only when it's first used. The Gauntlet's no-sign-in server is for /forge:gauntlet (OA-04).
+    // sign-in only when it's first used. The Gauntlet's no-sign-in server is for /theagentforge:gauntlet (OA-04).
     ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` }, "forge-gauntlet": { type: "http", url: `${origin}/mcp/gauntlet` } } }, null, 2) + "\n"),
   };
   const entries = Object.fromEntries(
     Object.keys(files)
       .sort()
-      .map((k) => [`forge/${k}`, [new Uint8Array(files[k]), { mtime: MTIME, level: 9 }]]),
+      .map((k) => [`${NAME}/${k}`, [new Uint8Array(files[k]), { mtime: MTIME, level: 9 }]]),
   );
   const zip = zipSync(entries);
   const sha256 = createHash("sha256").update(zip).digest("hex");
-  const file = `forge-${env}-${version}-${sha256.slice(0, 12)}.zip`;
+  const file = `${NAME}-${env}-${version}-${sha256.slice(0, 12)}.zip`;
   manifest.files[env] = { file, sha256 };
   if (env === "production") outputs.__dist = files;
   outputs[file] = zip;
@@ -116,6 +131,13 @@ if (check) {
       return true;
     }
   });
+  for (const { file, sha256 } of legacyFiles) {
+    try {
+      if (createHash("sha256").update(readFileSync(join(outDir, file))).digest("hex") !== sha256) stale.push(`${file} (changed)`);
+    } catch {
+      stale.push(`${file} (missing)`);
+    }
+  }
   const have = readTree(distDir);
   const distStale = Object.keys(dist).length !== Object.keys(have).length || Object.entries(dist).some(([k, v]) => !have[k] || !Buffer.from(v).equals(have[k]));
   if (distStale) stale.push("release/forge");
@@ -125,8 +147,10 @@ if (check) {
   }
   console.log("Plugin build is up to date.");
 } else {
-  rmSync(outDir, { recursive: true, force: true });
+  // Clear everything but the legacy zips, which are never rebuilt (see LEGACY).
   mkdirSync(outDir, { recursive: true });
+  const keep = new Set(legacyFiles.map((l) => l.file));
+  for (const f of readdirSync(outDir)) if (!keep.has(f)) rmSync(join(outDir, f), { recursive: true, force: true });
   for (const [f, b] of Object.entries(outputs)) writeFileSync(join(outDir, f), b);
   rmSync(distDir, { recursive: true, force: true });
   for (const [f, b] of Object.entries(dist)) {

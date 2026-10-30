@@ -180,7 +180,27 @@ describe("Claude Code plugin marketplace", () => {
     const src = m.plugins[0]!.source;
     expect(src.source).toBe("archive");
     expect(src.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(src.url).toMatch(/\/plugins\/forge-(staging|production)-[0-9.]+-[0-9a-f]{12}\.zip$/);
+    expect(src.url).toMatch(/\/plugins\/theagentforge-(staging|production)-[0-9.]+-[0-9a-f]{12}\.zip$/);
+  });
+
+  it("lists the plugin as theagentforge, and renames forge to it so existing installs move over (ADR 0121)", async () => {
+    const m = (await (await fetchWorker("/marketplace.json")).json()) as { name: string; plugins: { name: string; displayName: string }[]; renames: Record<string, string | null> };
+    expect(m.name).toBe("theagentforge");
+    expect(m.plugins.map((p) => p.name)).toEqual(["theagentforge"]);
+    expect(m.plugins[0]!.displayName).toBe("The Agent Forge");
+    expect(m.renames).toEqual({ forge: "theagentforge" });
+    // Every rename resolves to a listed plugin (Claude Code rejects a chain that doesn't).
+    for (const to of Object.values(m.renames)) expect(to === null || m.plugins.some((p) => p.name === to)).toBe(true);
+  });
+
+  it("still serves the old forge 0.7.1 zips byte for byte, for installs and cached catalogs that point at them", async () => {
+    const plugin = (await import("../public/plugins/manifest.json")).default as unknown as { legacy: Record<string, { version: string; files: Record<string, { file: string; sha256: string }> }> };
+    const old = plugin.legacy.forge!;
+    expect(old.version).toBe("0.7.1");
+    for (const env of ["staging", "production"]) {
+      const { file, sha256 } = old.files[env]!;
+      expect(file).toMatch(new RegExp(`^forge-${env}-0\\.7\\.1-${sha256.slice(0, 12)}\\.zip$`));
+    }
   });
 
   it("lists the plugin with the same version and description as its build (from its plugin.json; CI checks the build)", async () => {
@@ -188,6 +208,6 @@ describe("Claude Code plugin marketplace", () => {
     const plugin = (await import("../public/plugins/manifest.json")).default as { version: string; description: string };
     expect(m.plugins[0]).toMatchObject({ version: plugin.version, description: plugin.description });
     expect(m.plugins[0]!.source.url).toContain(`-${plugin.version}-`);
-    expect(m.plugins[0]!.description).toContain("/forge:gauntlet");
+    expect(m.plugins[0]!.description).toContain("/theagentforge:gauntlet");
   });
 });

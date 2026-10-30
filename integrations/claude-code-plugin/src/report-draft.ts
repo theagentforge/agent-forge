@@ -17,13 +17,28 @@ export interface Draft {
   strain: Strain;
 }
 
-/** `mcp__github__create_issue` → `github`. Built-in tools and the Forge's own server are skipped. */
+/** The MCP servers this plugin ships (build.mjs writes them into .mcp.json; a test keeps the two lists in step). */
+export const PLUGIN_SERVERS = ["forge", "forge-reports", "forge-gauntlet"] as const;
+/** This plugin's names in Claude Code: the current one and the one before the 0.8.0 rename (ADR 0121). */
+export const PLUGIN_NAMES = ["theagentforge", "forge"] as const;
+
+/**
+ * Whether an MCP server name is one of the Forge's own: a server this plugin ships, as Claude Code names it
+ * (`plugin_<plugin>_<server>`, under either plugin name), or the same server added by hand under its plain name.
+ */
+export function isForgeServer(server: string): boolean {
+  const s = server.toLowerCase();
+  return PLUGIN_SERVERS.some((name) => s === name || PLUGIN_NAMES.some((p) => s === `plugin_${p}_${name}`));
+}
+
+/** `mcp__github__create_issue` → `github`. Built-in tools and the Forge's own servers are skipped. */
 export function serverOf(tool: string): string | null {
   const m = /^mcp__(.+?)__/.exec(tool);
   if (!m) return null;
   const server = m[1]!;
-  // Plugin-provided servers are named plugin_<plugin>_<server>; the Forge itself is never reported on.
-  if (/(^|_)forge$/i.test(server)) return null;
+  // The Forge itself is never reported on: the plugin's own servers, and a server whose name ends in `forge`
+  // (such as a claude.ai connector named "…_Forge").
+  if (isForgeServer(server) || /(^|_)forge$/i.test(server)) return null;
   return server;
 }
 

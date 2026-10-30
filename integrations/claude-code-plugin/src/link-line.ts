@@ -80,13 +80,14 @@ const AUTH_PSEUDO_TOOLS = new Set(["authenticate", "complete_authentication"]);
 
 /**
  * A tool on the signed-in Forge server (`forge-reports`, the address `/mcp`). Claude Code names MCP tools
- * `mcp__<server>__<tool>`, and this plugin's servers `mcp__plugin_forge_<server>__<tool>`. That server lists no tools
+ * `mcp__<server>__<tool>`, and this plugin's servers `mcp__plugin_theagentforge_<server>__<tool>`
+ * (`mcp__plugin_forge_<server>__<tool>` before the 0.8.0 rename, ADR 0121; both are still recognised). That server lists no tools
  * until the person has signed in, so a successful call to one means this agent is linked; except Claude Code's own
  * `authenticate` / `complete_authentication` pseudo-tools, which it offers on a server that still needs sign-in
  * (`authenticate` only returns a sign-in link).
  */
 export function isSignedInForgeTool(toolName: string): boolean {
-  const m = /^mcp__(?:plugin_forge_)?forge-reports__([a-z_]+)$/i.exec(toolName);
+  const m = /^mcp__(?:plugin_(?:theagentforge|forge)_)?forge-reports__([a-z_]+)$/i.exec(toolName);
   return !!m && !AUTH_PSEUDO_TOOLS.has(m[1]!.toLowerCase());
 }
 

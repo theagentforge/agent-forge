@@ -1,14 +1,30 @@
 {
-  "version": "0.7.1",
-  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/forge:sprint) and the Gauntlet (/forge:gauntlet).",
+  "name": "theagentforge",
+  "version": "0.8.0",
+  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/theagentforge:sprint) and the Gauntlet (/theagentforge:gauntlet).",
   "files": {
     "staging": {
-      "file": "forge-staging-0.7.1-4a223275058f.zip",
-      "sha256": "4a223275058fd180a502996776d71edb7e75ed306c0144e60a08dc10d8a938ce"
+      "file": "theagentforge-staging-0.8.0-bce895e746aa.zip",
+      "sha256": "bce895e746aa4f70e4cb9c61f6ec54abac07bb3430b5a1c835ffb314e4412d60"
     },
     "production": {
-      "file": "forge-production-0.7.1-2832ac15b8ca.zip",
-      "sha256": "2832ac15b8cae8cc4d943272200986edf57bb12843ab9e8a01e90a01e8e2d7e9"
+      "file": "theagentforge-production-0.8.0-69f2fb407f24.zip",
+      "sha256": "69f2fb407f24de260c22bde209ddf47b77d25e22f2e1dbf7b3eca3ea4faee37a"
+    }
+  },
+  "legacy": {
+    "forge": {
+      "version": "0.7.1",
+      "files": {
+        "staging": {
+          "file": "forge-staging-0.7.1-4a223275058f.zip",
+          "sha256": "4a223275058fd180a502996776d71edb7e75ed306c0144e60a08dc10d8a938ce"
+        },
+        "production": {
+          "file": "forge-production-0.7.1-2832ac15b8ca.zip",
+          "sha256": "2832ac15b8cae8cc4d943272200986edf57bb12843ab9e8a01e90a01e8e2d7e9"
+        }
+      }
     }
   }
 }

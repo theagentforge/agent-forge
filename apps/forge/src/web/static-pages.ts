@@ -138,7 +138,14 @@ ${sweepLine(sweepDays)}
   });
 });
 
-/** Claude Code plugin marketplace (one plugin). The zip is content-addressed, so the sha256 pins exactly what installs. */
+/**
+ * Claude Code plugin marketplace (one plugin). The zip is content-addressed, so the sha256 pins exactly what installs.
+ * The marketplace keeps its name `theagentforge`, so nobody re-adds it. The plugin was renamed `forge` →
+ * `theagentforge` in 0.8.0 (ADR 0121); `renames` lets Claude Code (2.1.193+) move existing `forge@theagentforge`
+ * installs and their settings to the new name instead of reporting "not found in marketplace". Append-only.
+ */
+export const PLUGIN_RENAMES: Record<string, string | null> = { forge: "theagentforge" };
+
 site.get("/marketplace.json", (c) => {
   const env = c.env.ENVIRONMENT === "production" ? "production" : "staging";
   const build = pluginBuild.files[env];
@@ -149,7 +156,8 @@ site.get("/marketplace.json", (c) => {
     metadata: { description: DESCRIPTOR },
     plugins: [
       {
-        name: "forge",
+        name: pluginBuild.name,
+        displayName: "The Agent Forge",
         version: pluginBuild.version,
         description: pluginBuild.description,
         homepage: `${c.env.PUBLIC_ORIGIN}/connect`,
@@ -157,6 +165,7 @@ site.get("/marketplace.json", (c) => {
         source: { source: "archive", url: `${c.env.PUBLIC_ORIGIN}/plugins/${build.file}`, sha256: build.sha256 },
       },
     ],
+    renames: PLUGIN_RENAMES,
   });
 });
 

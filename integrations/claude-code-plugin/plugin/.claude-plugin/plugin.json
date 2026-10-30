@@ -1,7 +1,8 @@
 {
-  "name": "forge",
-  "version": "0.7.1",
-  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/forge:sprint) and the Gauntlet (/forge:gauntlet).",
+  "name": "theagentforge",
+  "displayName": "The Agent Forge",
+  "version": "0.8.0",
+  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/theagentforge:sprint) and the Gauntlet (/theagentforge:gauntlet).",
   "author": { "name": "The Agent Forge", "email": "hello@theagentforge.io", "url": "https://theagentforge.io" },
   "homepage": "https://theagentforge.io/connect",
   "documentationUrl": "https://theagentforge.io/connect",
