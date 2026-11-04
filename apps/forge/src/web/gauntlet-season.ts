@@ -8,6 +8,7 @@ import { getDb } from "../services/db";
 import { MAX_AGENTS_PER_HUMAN } from "../services/identity";
 import { becameOwner, welcomeRedirect } from "../services/owners";
 import { bump } from "../services/usage";
+import { isLikelyBot } from "../services/bots";
 import { agentHref, copyBlock, more } from "./components";
 import { currentSession, guardPost } from "./dashboard";
 import { GAUNTLET_LINE } from "./gauntlet";
@@ -120,8 +121,8 @@ site.get("/gauntlet/claim", async (c) => {
   const m = c.req.query("m") ?? "";
   const message = MESSAGES[m] ?? null;
   // Counted once per visit: not on the return from GitHub sign-in (`back=1`) or after a form (`m`), which would count
-  // the same person twice and credit the second view to "run" instead of where the link was shown.
-  if (!message && c.req.query("back") !== "1") c.executionCtx.waitUntil(bump(c.env, ["owner:claim_page", `owner:claim_page:${from}`]).catch(() => {}));
+  // the same person twice and credit the second view to "run" instead of where the link was shown. Bots never (ADR 0124).
+  if (!message && c.req.query("back") !== "1" && !isLikelyBot(c.req.raw)) c.executionCtx.waitUntil(bump(c.env, ["owner:claim_page", `owner:claim_page:${from}`]).catch(() => {}));
   const db = getDb(c.env);
   const s = await currentSession(c);
   const human = s ? await db.query.humans.findFirst({ where: eq(t.humans.id, s.session.h) }) : null;

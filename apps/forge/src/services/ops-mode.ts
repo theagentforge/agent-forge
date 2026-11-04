@@ -1,8 +1,9 @@
-// The cost guard's switch (ADR 0027). "lean" turns off everything that writes on a visitor's behalf (usage counters,
-// check sources, trap card counts, stored scans, new Gauntlet runs) and serves the site-wide share image instead of
-// drawing new ones, so a traffic spike costs requests only. The site, checks and scans keep working. The switch is the
-// KV key `ops:mode`, set by the daily usage check (docs/runbooks/cost-guard.md) or by hand; each isolate reads it at
-// most once a minute, so the switch itself adds almost no KV reads.
+// The cost guard's switch (ADR 0027). "lean" turns off the costly work done on a visitor's behalf (stored scans, new
+// Gauntlet runs, bulk scans, seeding and House runs) and serves the site-wide share image instead of drawing new ones,
+// so a traffic spike costs little CPU. The site, checks and scans keep working. It never stops a metric write (usage
+// counters, check sources, install IDs, badge, click and trap card counts; ADR 0124): the KPIs stay whole. The switch
+// is the KV key `ops:mode`, set by the daily usage check (docs/runbooks/cost-guard.md) or by hand; each isolate reads it
+// at most once a minute, so the switch itself adds almost no KV reads.
 
 export type OpsMode = "normal" | "lean";
 export const OPS_MODE_KEY = "ops:mode";

@@ -4,7 +4,8 @@ import { getDb } from "../services/db";
 import { scanByFingerprint, scanPath } from "../services/scans";
 import { bump } from "../services/usage";
 import { badgeSvg, type Badge } from "./badge";
-import { send, site } from "./pages";
+import { isLikelyBot } from "../services/bots";
+import { LONG_EDGE_CACHE, send, site } from "./pages";
 
 // Forge receipt pages (services/receipts.ts): /r/<token> shows what the Forge answered and when, with the signature
 // checked on every view; /r/<token>/badge.svg is the same as a small image. JSON for agents with ?format=json or an
@@ -55,8 +56,9 @@ const wantsJson = (accept: string | undefined, format: string | undefined) => fo
 site.get("/r/:token{[A-Za-z0-9_-]+\\.[0-9a-f]{64}}/badge.svg", async (c) => {
   const p = await readReceipt(c.env.REPORT_SIGNING_KEY, c.req.param("token"));
   if (!p) return c.text("Not a valid Forge receipt.", 404);
-  c.executionCtx.waitUntil(bump(c.env, ["receipt:badge"]).catch(() => {}));
-  return c.body(badgeSvg(receiptBadge(p)), 200, { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400, immutable", "X-Content-Type-Options": "nosniff" });
+  // Counted in the site middleware (web/pages.ts), before the edge cache, people only (ADR 0124). A receipt never
+  // changes, so the badge is immutable; the edge keeps it a week.
+  return c.body(badgeSvg(receiptBadge(p)), 200, { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": `${LONG_EDGE_CACHE}, immutable`, "X-Content-Type-Options": "nosniff" });
 });
 
 site.get("/r/:token{[A-Za-z0-9_-]+\\.[0-9a-f]{64}}", async (c) => {
@@ -65,7 +67,8 @@ site.get("/r/:token{[A-Za-z0-9_-]+\\.[0-9a-f]{64}}", async (c) => {
   if (!p) return c.text("Not a valid Forge receipt: the link is incomplete or was changed.", 404);
   const origin = c.env.PUBLIC_ORIGIN;
   const json = wantsJson(c.req.header("Accept"), c.req.query("format"));
-  c.executionCtx.waitUntil(bump(c.env, [json ? "receipt:json" : "receipt:view"]).catch(() => {}));
+  // ADR 0124: bots aren't counted (the JSON twin with the agents' rule, the page with the people's).
+  if (!isLikelyBot(c.req.raw, json ? "api" : "page")) c.executionCtx.waitUntil(bump(c.env, [json ? "receipt:json" : "receipt:view"]).catch(() => {}));
   if (json)
     return c.json({ data_kind: "forge_receipt", valid: true, receipt: p, live_url: livePath(p) ? `${origin}${livePath(p)}` : null, receipt_url: `${origin}${receiptPath(token)}` }, 200, { "Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff" });
   const what = WHAT[p.kind];

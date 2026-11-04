@@ -92,7 +92,7 @@ describe("the counters our callers add", () => {
     const req = (path: string, headers: Record<string, string>, method = "GET") => ({ method, url: `${env.PUBLIC_ORIGIN}${path}`, headers: h(headers) });
     const tag = { "X-Forge-Internal": "screens", "User-Agent": "Mozilla/5.0 (iPhone) Safari/604.1 theagentforge-internal/screens" };
     expect(visitCounters(req("/arena?from=screens", tag), env.PUBLIC_ORIGIN)).toEqual(["visit:all"]);
-    expect(visitCounters(req("/arena?from=x", { "User-Agent": "Mozilla/5.0 Safari/604.1" }), env.PUBLIC_ORIGIN)).toContain("visit:arrivals");
+    expect(visitCounters(req("/arena?from=x", { "User-Agent": "Mozilla/5.0 Safari/604.1", "Sec-Fetch-Mode": "navigate" }), env.PUBLIC_ORIGIN)).toContain("visit:arrivals");
     expect(aiAgentCounters(req("/", { ...tag, "User-Agent": "claude-code/2 theagentforge-internal/scout" }))).toEqual([]);
     expect(discoveryCounters(req("/.well-known/agent-card.json", { "User-Agent": "theagentforge-internal/scout" }))).toEqual(["internal:scout:fetches"]);
     expect(discoveryCounters(req("/.well-known/agent-card.json", {}))).toEqual(["disc:agent-card"]);

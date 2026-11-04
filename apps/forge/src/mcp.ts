@@ -5,7 +5,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import { CLAIM_NOTICE, PENDING_NOTICE, claimResult, claimRun, setClaimHidden } from "./arena/gauntlet-claims";
 import { act, startChallenge } from "./arena/proving";
-import { trapsData } from "./arena/traps";
+import { defaultTrapsFilter, trapsData } from "./arena/traps";
 import { serverInfo } from "./server-info";
 import { checkInput, checkInputNeeded, parseCheck, PUBLIC_MCP_ROUTE, PUBLIC_TOOLS, REPORT_PROMPT, reportPromptText, trapsInput } from "./mcp-public";
 import { agentCheckAnswer, trapsAnswer } from "./services/compact";
@@ -184,7 +184,12 @@ export function createForgeServer(env: Env, props: AgentProps, internal: Interna
       inputSchema: trapsInput,
       annotations: { title: PUBLIC_TOOLS.forge_traps.title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ task, model, tier }) => json(await trapsAnswer(env, await trapsData(getDb(env), { task, model, tier }), { task })),
+    // ADR 0123: no arguments at all answers with the latest ranked Hard event, summary first (as on /mcp/public).
+    async ({ task, model, tier }) => {
+      const db = getDb(env);
+      const none = task === undefined && model === undefined && tier === undefined;
+      return json(await trapsAnswer(env, await trapsData(db, none ? await defaultTrapsFilter(env, db) : { task, model, tier }, env.PUBLIC_ORIGIN), { task }));
+    },
   );
 
   server.registerTool(

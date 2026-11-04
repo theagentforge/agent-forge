@@ -3,13 +3,17 @@ import skillScanReport from "../../../../docs/reports/2026-10-skill-scan.md";
 import lab4Output from "../../../../lab/004-trap-card-frontier/analysis-output.md";
 import { LAUNCH_SCAN } from "../reports/skill-scan-facts";
 import { cachedToolScans } from "../services/house-tools";
+import { getDb } from "../services/db";
 import { scanPath } from "../services/scans";
+import * as t from "../db/schema";
+import { inArray, and, eq } from "drizzle-orm";
 import { EXPERIMENTS, pText } from "./experiments";
 import { responsesShowing, type MaintainerResponse } from "./maintainer-response";
 import { notFound, send, site } from "./pages";
 import { FROZEN } from "./reliability-report";
 import { REPORT_FACTS, securityJson } from "./security";
 import { statsData } from "./stats";
+import type { FallSummary } from "../arena/results";
 
 // The research release of 2 Nov 2026 (docs/launch/research-release-2026-11.md §1, §4 and §5; Dinike, 1 Nov). One page,
 // /press/2026-11, for reporters: Lab #4's null result, the launch skill scan, what maintainers did, and the Arena rates.
@@ -29,6 +33,30 @@ import { statsData } from "./stats";
 
 export const PRESS_PATH = "/press/2026-11";
 export const PRESS_LIVE_FROM = Date.UTC(2026, 10, 2);
+/** The day the 17 maintainer notices were filed (STATUS, 28 Oct 2026). A fix dated before it wasn't a response to it. */
+export const NOTICES_SENT = "2026-10-28";
+
+/**
+ * The launch-scan report names every notified repository from version 1.2 (the 2 Nov disclosure task, step 3); before
+ * that it was anonymised. Read from the report's own byline, the same file the report page renders.
+ */
+export function reportNamesRepositories(md: string = skillScanReport) {
+  const m = /Report version (\d+)\.(\d+)/.exec(md);
+  return !!m && (Number(m[1]) > 1 || (Number(m[1]) === 1 && Number(m[2]) >= 2));
+}
+
+/** "The current text describes how the third-party … handles ~/.env.", from the response's own note; null if absent. */
+export function currentTextClause(note: string | undefined) {
+  const m = /description of how (the third-party [^:]+?) handles ~\/\.env/.exec(note ?? "");
+  return m ? `The current text describes how ${m[1]} handles ~/.env.` : null;
+}
+
+/** The fingerprints among these whose scan row is public in D1, so their /scan page exists. */
+async function publicFingerprints(env: Env, fps: string[]) {
+  if (!fps.length) return new Set<string>();
+  const rows = await getDb(env).select({ fp: t.skillScans.fingerprint }).from(t.skillScans).where(and(inArray(t.skillScans.fingerprint, fps), eq(t.skillScans.public, true)));
+  return new Set(rows.map((r) => r.fp));
+}
 
 const num = (n: number) => n.toLocaleString("en-GB");
 const pct0 = (x: number) => `${Math.round(x * 100)}%`;
@@ -77,7 +105,12 @@ export async function pressData(env: Env, now = Date.now()) {
   const habits = reportHabits();
   const work = stats?.blended.work ?? null;
   const td = tools?.summary ?? null;
+  const shown = now >= PRESS_LIVE_FROM ? responsesShowing(now) : [];
+  const listed = (await read(() => publicFingerprints(env, shown.map((e) => e.fingerprint)))) ?? new Set<string>();
   return {
+    // ADR 0123: the latest ranked Hard event (the home line's event, the same summary arena_results gives with no
+    // arguments), first in §1, so the release never opens on the few attempts under the newest rules alone.
+    latest_hard: (a?.latest_ranked_hard ?? null) as FallSummary | null,
     arena:
       a && overall && overall.shown && overall.break_rate !== null && overall.ci_95 && a.since && a.as_of
         ? {
@@ -123,7 +156,10 @@ export async function pressData(env: Env, now = Date.now()) {
           ...habits,
         }
       : null,
-    maintainers: now >= PRESS_LIVE_FROM ? responsesShowing(now) : [],
+    // A row shows only once its scan row is public in D1 (its /scan page exists); until then, none of them names anyone.
+    maintainers: shown.filter((e) => listed.has(e.fingerprint)),
+    maintainers_pending: shown.length > 0 && shown.some((e) => !listed.has(e.fingerprint)),
+    report_names_repositories: reportNamesRepositories(),
     tool_descriptions: td && td.servers > 0 && td.since && td.last ? { servers: td.servers, tools: td.tools, flagged: td.verdicts.flagged, since: td.since, last: td.last } : null,
     edition_frozen: FROZEN.frozen,
   };
@@ -131,27 +167,36 @@ export async function pressData(env: Env, now = Date.now()) {
 
 const src = (href: string, label: string) => html`<a href="${href}">${label}</a>`;
 
-function maintainersBlock(rows: MaintainerResponse[]) {
-  if (!rows.length) return "";
+function maintainersBlock(rows: MaintainerResponse[], pending: boolean, reportNamed: boolean) {
+  if (!rows.length && !pending) return "";
   const resp = (e: MaintainerResponse) => {
     const r = e.response;
+    const thread = html`<a href="${r.thread_url}" rel="nofollow">thread</a>`;
+    // A change dated before our notices wasn't a response to them: say so, not "fixed after our notice".
+    if (r.fix_date < NOTICES_SENT)
+      return html`Already changed on ${dayShort(r.fix_date)} (<a href="${r.fix_url}" rel="nofollow">${r.fix_label}</a>), after our ${dayShort(REPORT_FACTS.skill_scan.date)} scan and before our notice; replied ${dayShort(r.date)} (${thread})`;
     const fixed = e.rescan.verdict === "clear";
-    return html`${fixed ? "Fixed" : "Changed the file"} in <a href="${r.fix_url}" rel="nofollow">${r.fix_label}</a> (${dayShort(r.fix_date)}); replied ${dayShort(r.date)} (<a href="${r.thread_url}" rel="nofollow">thread</a>)`;
+    const clause = fixed ? null : currentTextClause(r.note);
+    return html`${fixed ? "Fixed" : "Changed the file"} in <a href="${r.fix_url}" rel="nofollow">${r.fix_label}</a> (${dayShort(r.fix_date)}); replied ${dayShort(r.date)} (${thread})${clause ? html`. ${clause}` : ""}`;
   };
   const rescan = (e: MaintainerResponse) =>
     e.rescan.verdict === "clear"
       ? html`Clear, no known pattern matched (${dayShort(e.rescan.date)}). <a href="${scanPath(e.fingerprint)}">Entry</a>`
       : html`Still matches a pattern (${dayShort(e.rescan.date)}). We record the match and make no claim either way. <a href="${scanPath(e.fingerprint)}">Entry</a>`;
-  return html`<h2 id="maintainers">5. What maintainers did after our notice</h2>
+  if (!rows.length)
+    return html`<h2 id="maintainers">5. Maintainer responses</h2>
+<p data-k="maintainers-pending">Named repositories and maintainer responses are added here once the notice window has closed.</p>`;
+  return html`<h2 id="maintainers">5. Maintainer responses</h2>
 <p>We told each repository's maintainer before naming it. Each entry shows the result at the commit we scanned, the response, and our rescan.</p>
 <div class="table-scroll"><table class="table stack"><thead><tr><th scope="col">Repository and file</th><th scope="col">Response</th><th scope="col">Our rescan</th></tr></thead><tbody>
 ${rows.map((e) => html`<tr data-repo="${e.repo}"><td class="wide">${e.repo}, <code>${e.path}</code></td><td data-label="Response">${resp(e)}</td><td data-label="Our rescan">${rescan(e)}</td></tr>`)}
 </tbody></table></div>
-<p class="small">Headline counts don't change after a fix: they describe the commits we scanned. Other notified repositories are listed on ${src("/reports/skill-scan-2026-10", "the report")} with "no response yet" where that's true. Matches are also in our ${src("/feeds/osv", "OSV feed")}, so security tools can ingest them.</p>`;
+<p class="small">Headline counts don't change after a fix: they describe the commits we scanned.${reportNamed ? html` <span data-k="maintainers-others">Every notified repository is named on ${src("/reports/skill-scan-2026-10", "the report")}, with its maintainer's response beside the entry where there is one.</span>` : ""} Matches are also in our ${src("/feeds/osv", "OSV feed")}, so security tools can ingest them.</p>`;
 }
 
 export function pressBody(d: Awaited<ReturnType<typeof pressData>>) {
   const a = d.arena;
+  const h = d.latest_hard?.event && d.latest_hard.attempts ? d.latest_hard : null;
   const l = d.lab4;
   const s = d.skill_scan;
   const td = d.tool_descriptions;
@@ -171,14 +216,15 @@ export function pressBody(d: Awaited<ReturnType<typeof pressData>>) {
 <li>Every number below links to the public file it came from.</li>
 </ul>
 
-${a
+${a || h
   ? html`<h2 id="ranked">1. Ranked bouts: how often a model fell for at least one trap</h2>
 <ul>
-<li data-k="arena-overall">${pct0(a.rate)} of ${num(a.attempts)} ranked attempts fell for at least one trap, 95% interval ${range(a.ci_95)}, ${day(a.since)} to ${day(a.as_of)}${a.rules_version ? `, rules ${a.rules_version}` : ""}. Source: ${src("/security#arena", "/security#arena")} (${src("/security?format=json", "JSON")}, pointers <code>/arena/overall</code>, <code>/arena/attempts</code>).</li>
-${a.highest && a.lowest
+${h ? html`<li data-k="arena-latest-hard">In ${h.event_name}, the latest ranked Hard event: ${h.fell} of ${num(h.attempts)} attempts (${pct0(h.fell_rate ?? 0)}) fell for a planted trap${h.ci_95 ? `, 95% interval ${range(h.ci_95)}` : ""}, ${h.models} models${h.since && h.as_of ? `, ${day(h.since)} to ${day(h.as_of)}` : ""}${h.rules_versions.length ? `, ${h.rules_versions.join(", ")}` : ""}.${h.worst_model ? ` Highest: ${h.worst_model.name}, ${h.worst_model.fell} of ${h.worst_model.attempts}.` : ""} Source: ${src(`/arena/event/${h.event}/falls`, `/arena/event/${h.event}/falls`)} (${src("/security?format=json", "JSON")}, pointer <code>/arena/latest_ranked_hard</code>).</li>` : ""}
+${a ? html`<li data-k="arena-overall">${h ? "Every ranked event scored under the current rules alone: " : ""}${pct0(a.rate)} of ${num(a.attempts)} ranked attempts fell for at least one trap, 95% interval ${range(a.ci_95)}, ${day(a.since)} to ${day(a.as_of)}${a.rules_version ? `, ${/^rules\b/i.test(a.rules_version) ? a.rules_version : `rules ${a.rules_version}`}` : ""}. Source: ${src("/security#arena", "/security#arena")} (${src("/security?format=json", "JSON")}, pointers <code>/arena/overall</code>, <code>/arena/attempts</code>).</li>` : ""}
+${a?.highest && a.lowest
   ? html`<li data-k="arena-groups">By kind of job, highest: ${a.highest.name}, ${a.highest.policy_breaks} of ${a.highest.attempts} (${range(a.highest.ci_95!)}). Lowest: ${a.lowest.name}, ${a.lowest.policy_breaks} of ${a.lowest.attempts} (${range(a.lowest.ci_95!)}).${overlap ? " The two intervals overlap: not a clear difference." : ""} Source: ${src("/security#jobs", "/security#jobs")}.</li>`
   : ""}
-${a.fall_replay ? html`<li data-k="arena-replay">One refereed replay of a fall: ${src(a.fall_replay, a.fall_replay)}.</li>` : ""}
+${a?.fall_replay ? html`<li data-k="arena-replay">One refereed replay of a fall: ${src(a.fall_replay, a.fall_replay)}.</li>` : ""}
 </ul>
 <p class="small">Ranked only. Includes the Forge's own test agents. ${src("/stats", "How we count")}</p>`
   : ""}
@@ -211,7 +257,7 @@ ${s.pipe !== null && s.key_file !== null ? html`<li data-k="scan-habits">The two
 <p class="small">Source: ${src("/reports/skill-scan-2026-10", "/reports/skill-scan-2026-10")} (${src("/data/skill-scan-2026-10-19.json", "data")}). The scanner matches text only. A clear result is not a guarantee.</p>`
   : ""}
 
-${maintainersBlock(d.maintainers)}
+${maintainersBlock(d.maintainers, d.maintainers_pending, d.report_names_repositories)}
 
 <h2 id="full-scan">6. The full public skill scan</h2>
 <p data-k="bulk-placeholder">A scan of every public skill file we can lawfully reach is under way. We'll publish its pass when it's measured.</p>
@@ -263,4 +309,11 @@ site.get(PRESS_PATH, async (c) => {
   );
   res.headers.set("X-Robots-Tag", "noindex");
   return res;
+});
+
+// The trailing-slash form: a 301 to the page once it's live, and the same uncached 404 before, so it never leaks that
+// the page exists.
+site.get(`${PRESS_PATH}/`, (c) => {
+  if (Date.now() < PRESS_LIVE_FROM) return notFound(c, "Page not found", "That page doesn't exist.");
+  return new Response(null, { status: 301, headers: { Location: PRESS_PATH, "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
 });

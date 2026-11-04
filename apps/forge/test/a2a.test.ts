@@ -14,7 +14,7 @@ const send = (parts: unknown[], method = "SendMessage") =>
   rpc({ jsonrpc: "2.0", id: 7, method, params: { message: { messageId: "m1", role: method === "SendMessage" ? "ROLE_USER" : "user", parts } } });
 
 describe("the Agent Card", () => {
-  it("is public JSON naming one JSON-RPC endpoint for v1.0 and v0.3, and the three skills", async () => {
+  it("is public JSON naming one JSON-RPC endpoint for v1.0 and v0.3, and its skills", async () => {
     const res = await fetchWorker("/.well-known/agent-card.json");
     expect(res.status).toBe(200);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
@@ -34,7 +34,8 @@ describe("the Agent Card", () => {
     for (const i of card.supportedInterfaces) expect(i.url.endsWith("/a2a")).toBe(true);
     expect(card.url.endsWith("/a2a")).toBe(true);
     expect(card.capabilities.streaming).toBe(false);
-    expect(card.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
+    // ADR 0123 added check-exposure, watch-skills and run-gauntlet.
+    expect(card.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results", "check-exposure", "watch-skills", "run-gauntlet"]);
     for (const s of card.skills) expect(s.tags.length).toBeGreaterThan(0);
     expect(await (await fetchWorker("/.well-known/agent.json")).json()).toEqual(card);
   });
@@ -123,7 +124,7 @@ describe("POST /a2a", () => {
     expect(["flagged", "caution", "clear"]).toContain(scan.result.message.parts[0]!.data.result.verdict);
     const help = (await (await send([{ text: "hello" }])).json()) as { result: { message: { parts: { data: { error: string; skills: { id: string }[] } }[] } } };
     expect(help.result.message.parts[0]!.data.error).toBe("unrecognized_request");
-    expect(help.result.message.parts[0]!.data.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
+    expect(help.result.message.parts[0]!.data.skills.map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results", "check-exposure", "watch-skills", "run-gauntlet"]);
   });
 
   it("answers the rest with the A2A error codes", async () => {

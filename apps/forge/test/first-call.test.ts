@@ -140,7 +140,9 @@ describe("empty and wrong first calls on /mcp/public", () => {
     await expectExamplesWork("forge_exposure", bad.examples);
   });
 
-  it("forge_traps: no input is still the Normal card; an unknown task or model is input_needed, and each example works", async () => {
+  // ADR 0123: no input gives the latest ranked Hard event once one has 30 public bouts (test/arena-first-call.test.ts);
+  // this file has none, so it falls back to the Normal card.
+  it("forge_traps: no input with no ranked Hard event is the Normal card; an unknown task or model is input_needed, and each example works", async () => {
     for (const args of [undefined, {}]) {
       const r = await pub("forge_traps", args);
       expect(r.isError).toBe(false);
@@ -156,7 +158,7 @@ describe("empty and wrong first calls on /mcp/public", () => {
     await expectExamplesWork("forge_traps", model.examples);
   });
 
-  it("arena_results: no input is still the Normal headline; an unknown task or event is input_needed, and each example works", async () => {
+  it("arena_results: no input with no ranked Hard event is the Normal headline; an unknown task or event is input_needed, and each example works", async () => {
     for (const args of [undefined, {}]) expect((await pub("arena_results", args)).isError).toBe(false);
     const task = expectInputNeeded(await pub("arena_results", { task: "bogus", tier: 3 }), "arena_results");
     await expectExamplesWork("arena_results", task.examples);
@@ -219,10 +221,20 @@ describe("empty and wrong first calls over A2A", () => {
     for (const parts of [[], [{ text: "" }], [{ data: {} }], [{ data: { skill: "nope" } }], [{ text: "litellm" }]]) {
       const d = expectA2A(await send(parts), "a2a");
       expect(d.error).toBe("unrecognized_request");
-      expect((d.skills as { id: string }[]).map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results"]);
+      expect((d.skills as { id: string }[]).map((s) => s.id)).toEqual(["check-tool", "scan-skill", "trap-card", "arena-results", "check-exposure", "watch-skills", "run-gauntlet"]);
     }
     stubSkillFetch();
     await works(expectA2A(await send([]), "a2a").examples);
+  });
+
+  it("check-exposure and watch-skills (ADR 0123) with nothing to work on are input_needed, and every new skill's example works", async () => {
+    const exposure = expectA2A(await send([{ data: { skill: "check-exposure" } }]), "check-exposure");
+    expect(exposure).toMatchObject({ skill: "check-exposure", error: "no_items" });
+    await works(exposure.examples);
+    const watch = expectA2A(await send([{ data: { skill: "watch-skills" } }]), "watch-skills");
+    expect(watch.detail).toBeNull();
+    await works(watch.examples);
+    await works(A2A_EXAMPLES["run-gauntlet"]);
   });
 
   it("check-tool and scan-skill with nothing to work on are input_needed, and each example works", async () => {

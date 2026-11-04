@@ -23,7 +23,7 @@ import "../src/index";
 // first step that gives value at once, and the maintainer right of reply on scan and answer pages after the hold.
 
 const page = async (path: string, headers: Record<string, string> = {}) => (await fetchWorker(path, { headers: { Accept: "text/html", ...headers } })).text();
-const BROWSER = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15" };
+const BROWSER = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15", "Sec-Fetch-Mode": "navigate" };
 const counter = async (key: string) =>
   (await getDb(env).select().from(t.usageDaily).where(eq(t.usageDaily.key, key))).reduce((a, r) => a + r.n, 0);
 

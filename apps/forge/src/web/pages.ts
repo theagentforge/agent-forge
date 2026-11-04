@@ -49,6 +49,7 @@ import { cardLift } from "../arena/lift";
 import { aiAgentCounters, bump, discoveryCounters, humanCounters, skillFileCounters, visitCounters } from "../services/usage";
 import { recordBadgeServe, recordHomeClick, recordTrapCard } from "../services/growth";
 import { internalCaller } from "../services/internal";
+import { isLikelyBot } from "../services/bots";
 import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
@@ -76,6 +77,24 @@ type Ctx = Context<{ Bindings: Env }>;
 export const PAGE_CACHE_SECONDS = 60;
 export const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
 
+/**
+ * ADR 0124: a scan or Arena page link whose only parameter is a share tag (`?from=share`, `share-x`, `share-li`...). It
+ * is counted, then sent to the bare address with a 301.
+ */
+export function shareOnlyLink(url: URL) {
+  const keys = [...url.searchParams.keys()];
+  return keys.length === 1 && keys[0] === "from" && /^share/i.test(url.searchParams.get("from") ?? "") && /^\/(scan|arena)(\/[^.]*)?$/.test(url.pathname);
+}
+
+/** A receipt's badge image, /r/<token>/badge.svg. */
+export const RECEIPT_BADGE_PATH = /^\/r\/[^/]+\/badge\.svg$/;
+/**
+ * ADR 0124: share images and receipt badges change rarely and cost a render, so browsers keep them a day and the edge
+ * (caches.default) a week, serving a stale copy while it fetches a new one.
+ */
+export const LONG_EDGE_CACHE = "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400";
+export const isLongCached = (path: string) => path.startsWith("/og/") || RECEIPT_BADGE_PATH.test(path);
+
 export const site = new Hono<{ Bindings: Env }>();
 
 // ADR 0016 §8: count clicks from the home hero into a bout, the Task Guide or "Call it" (daily total only). W2.1 review
@@ -84,7 +103,7 @@ export const site = new Hono<{ Bindings: Env }>();
 // action's clicks were counted nowhere.
 export const HOME_CLICK_FROM = /^home(-hero|-source)?$/;
 site.use("*", async (c, next) => {
-  if (c.req.method === "GET" && HOME_CLICK_FROM.test(c.req.query("from") ?? "") && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$|gauntlet$)/.test(c.req.path)) {
+  if (c.req.method === "GET" && HOME_CLICK_FROM.test(c.req.query("from") ?? "") && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$|gauntlet$)/.test(c.req.path) && !isLikelyBot(c.req.raw)) {
     c.executionCtx.waitUntil(recordHomeClick(c.env).catch(() => {}));
   }
   await next();
@@ -152,13 +171,24 @@ site.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   // Our own probes (services/internal.ts: screens, Scout) are counted apart, as internal:<component>:*.
   const ours = internalCaller(c.req.raw.headers);
+  // ADR 0124: bots (services/bots.ts) see every page as usual but add nothing to the people and agent KPIs.
+  const bot = isLikelyBot(c.req.raw);
+  // Scraper relief (ADR 0124): a share link (`?from=share`, `share-x`, `share-li`...) to a scan or Arena page counts its
+  // link tag here, then moves to the bare address, which counts the visit and its source as usual (browsers keep the
+  // Referer across a redirect), so nothing is counted twice and crawlers see one address per page.
+  if (shareOnlyLink(url)) {
+    const tags = visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN).filter((k) => k.startsWith("visit:tag:"));
+    if (tags.length) c.executionCtx.waitUntil(bump(c.env, tags).catch(() => {}));
+    return new Response(null, { status: 301, headers: { Location: url.pathname, "Cache-Control": "no-store" } });
+  }
   if (c.req.path === "/check" && url.searchParams.get("q")) {
-    c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown", { internal: ours }));
+    if (!bot) c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown", { internal: ours }));
     // The /connect test code typed into the check form ticks that page too, counted apart (services/connect-test.ts).
     c.executionCtx.waitUntil(markConnectTest(c.env, { id: url.searchParams.get("q")! }, "web").catch(() => false));
   }
-  // Trap card downloads are counted before the cache, so cached copies count too.
-  if (c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json")
+  // Trap card downloads are counted before the cache, so cached copies count too. Agents download it with scripts, so
+  // only crawlers and fake browsers are left out (the "api" rule).
+  if ((c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json") && !isLikelyBot(c.req.raw, "api"))
     c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
   // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
   if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
@@ -176,14 +206,20 @@ site.use("*", async (c, next) => {
   // Link tags are counted above and never change the page, so they don't split the cache (24 Oct check: the home
   // page missed the cache for every ?from= variant and took 2.7 s at the median).
   for (const k of [...url.searchParams.keys()]) if (TRACKING_PARAM.test(k)) url.searchParams.delete(k);
+  // Share images and receipt badges (ADR 0124): only `?v=` changes an image, so any other parameter a scraper adds
+  // can't make it draw the same image again.
+  if (isLongCached(c.req.path)) for (const k of [...url.searchParams.keys()]) if (k !== "v") url.searchParams.delete(k);
   const key = new Request(url.toString(), { method: "GET" });
-  // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404).
+  // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404). Bots never count.
   // ADR 0069: Gauntlet score badges are counted apart (badge:score_serve), so the maintainer badge KPI stays tools-only.
-  const scoreBadge = !ours && c.req.path.startsWith("/badge/score/");
-  const badge = !ours && c.req.path.startsWith("/badge/") && !scoreBadge;
+  // ADR 0124: receipt badges are counted here too, so a long edge cache doesn't hide their serves.
+  const scoreBadge = !ours && !bot && c.req.path.startsWith("/badge/score/");
+  const badge = !ours && !bot && c.req.path.startsWith("/badge/") && !scoreBadge;
+  const receiptBadge = !ours && !bot && RECEIPT_BADGE_PATH.test(c.req.path);
   const countBadge = (status: number) => {
     if (badge && status === 200) c.executionCtx.waitUntil(recordBadgeServe(c.env, c.req.header("Referer")).catch(() => {}));
     if (scoreBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["badge:score_serve"]).catch(() => {}));
+    if (receiptBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["receipt:badge"]).catch(() => {}));
   };
   const hit = await caches.default.match(key);
   if (hit) {

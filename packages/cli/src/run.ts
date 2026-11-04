@@ -53,7 +53,7 @@ import { DRAFTS_FILE, MEMORY_FILE, noteTools, parseNoted, type NotedTool } from 
 
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
 export const EXIT = { ok: 0, error: 1, usage: 2, blocked: 3 } as const;
-export const VERSION = "0.7.0";
+export const VERSION = "0.7.1";
 
 const HELP = `Usage: forge setup [--dry-run] [--yes] [--json] [--origin <url>]
        forge setup --undo [--dry-run] [--yes] [--json]

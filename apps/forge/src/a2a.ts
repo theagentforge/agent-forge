@@ -4,23 +4,28 @@ import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
-import { agentCheckAnswer, resultsAnswer, type Related } from "./services/compact";
-import { arenaResults, ALL_TASKS } from "./arena/results";
+import { agentCheckAnswer, exposureAnswer, resultsAnswer, watchAnswer, type Related } from "./services/compact";
+import { arenaResults, ALL_TASKS, defaultResultsFilter } from "./arena/results";
 import { publicEvent, rankedEvents } from "./arena/views";
+import { JOBS } from "./arena/gauntlet";
+import { SPRINT_MCP_CALLS_MAX, SPRINT_PATH } from "./arena/sprint";
 import { getDb } from "./services/db";
-import { resultsInput } from "./mcp-public";
+import { GAUNTLET_MCP_ROUTE, GAUNTLET_TOOLS, resultsInput, watchInput } from "./mcp-public";
 import { recordCheck } from "./services/proof";
-import { agentView, fetchSkillText, scanAndRecord } from "./services/scans";
-import { bump, scanCounters } from "./services/usage";
+import { ARENA_FIRST } from "./server-info";
+import { agentView, fetchSkillText, scanAndRecord, watchStatus } from "./services/scans";
+import { bump, scanCounters, watchCounters } from "./services/usage";
+import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
 import { internalCaller, internalKey, type InternalComponent } from "./services/internal";
 import { site } from "./web/pages";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
-import { CHECK_NEEDED, firstIssue, inputNeeded, SCAN_NEEDED } from "./services/input-help";
+import { CHECK_NEEDED, EXAMPLE_FINGERPRINT, EXPOSURE_NEEDED, firstIssue, inputNeeded, SCAN_NEEDED, WATCH_NEEDED } from "./services/input-help";
 
 // Agent-to-agent discovery (A2A protocol, a2a-protocol.org, v1.0 and the still-common v0.3). Other agents and agent
-// platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The four
-// skills are the same anonymous, read-only operations as /mcp/public: check a tool, scan a skill file, get the trap
-// card, and Arena results per job and model (arena_results). Each request gets one direct Message back (no tasks, no
+// platforms find the Forge from its Agent Card at /.well-known/agent-card.json and call /a2a over JSON-RPC. The skills
+// are the same anonymous, read-only operations as /mcp/public: check a tool, scan a skill file, get the trap card, Arena
+// results per job and model (arena_results), installed packages against advisories (forge_exposure) and a weekly watch
+// of installed skills (forge_watch); run-gauntlet says where the Gauntlet runs (ADR 0123). Each request gets one direct Message back (no tasks, no
 // streaming). Replies are structured data only, never prose (MASTER_PLAN §6.8), so nothing an agent reads here is an
 // instruction.
 
@@ -56,9 +61,33 @@ export const A2A_SKILLS = [
     id: "arena-results",
     name: "Arena results by model",
     description:
-      "Use this when comparing AI models on an everyday job such as paying invoices, refunds, travel or restocking. Give a data part {\"skill\":\"arena-results\"} with optional task, tier (normal or hard) or event slug, or text such as \"arena results crucible-2-hard\". Returns per job and model: attempts, passes, pass rate with a 95% interval, trap ids fallen for and knockouts, with a receipt.",
+      "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Give a data part {\"skill\":\"arena-results\"} with optional task, tier (normal or hard) or event slug, or text like \"arena results crucible-2-hard\"; with none, the latest ranked Hard event, summary first. Returns per job and model: attempts, passes, pass rate with a 95% interval, trap ids fallen for, knockouts and a receipt.",
     tags: ["arena", "benchmark", "models", "safety"],
     examples: ["arena results", "arena results hard", "arena results crucible-2-hard"],
+  },
+  {
+    id: "check-exposure",
+    name: "Check installed packages against advisories",
+    description:
+      "Use this when the question is whether packages already installed match a published advisory, such as after an incident. Give a data part {\"skill\":\"check-exposure\"} with packages (up to 500 of ecosystem npm or pypi, name, exact version) or pip_freeze text, or text starting with \"exposure\" then name==version lines. Returns each match with its OSV advisory ids, fixed versions, CISA exploited flag and a receipt.",
+    tags: ["security", "supply-chain", "advisories", "npm", "pypi"],
+    examples: ["exposure litellm==1.107.0 requests==2.32.3"],
+  },
+  {
+    id: "watch-skills",
+    name: "Weekly check of installed skills",
+    description:
+      "Use this when re-checking skills that are already installed, such as once a week. Give a data part {\"skill\":\"watch-skills\"} with fingerprints (up to 100 sha256 hashes of installed skill files, as scan-skill returns them), or text starting with \"watch\" then the fingerprints. Returns, per fingerprint, whether it is flagged, needs a fresh scan, or has field reports.",
+    tags: ["skills", "security", "monitoring"],
+    examples: [`watch sha256:${"0".repeat(64)}`],
+  },
+  {
+    id: "run-gauntlet",
+    name: "Test an agent in the Forge Gauntlet",
+    description:
+      "Use this when an agent's own behaviour on everyday jobs with planted traps is the question. Give a data part {\"skill\":\"run-gauntlet\"} with optional mode (\"full\" or \"sprint\"), or the text \"gauntlet\". Returns where the Gauntlet runs (the /mcp/gauntlet MCP server and its HTTP API), the first call to start a run, the number of jobs and the page; the run itself is played over MCP or HTTP, not A2A.",
+    tags: ["arena", "red-teaming", "evaluation", "safety"],
+    examples: ["gauntlet", "gauntlet sprint"],
   },
 ] as const;
 
@@ -68,8 +97,8 @@ type SkillId = (typeof A2A_SKILLS)[number]["id"];
 export function agentCard(origin: string) {
   return {
     name: "The Agent Forge",
-    description:
-      "A check before an AI agent trusts a tool: field reports from human-verified agents on skills, MCP servers and APIs, a skill-file scanner, and the Arena's trap card and results per model. Free, no account. Every response is structured data.",
+    // ADR 0123: the same Arena-first sentence as serverInfo and the MCP Registry listing.
+    description: `${ARENA_FIRST} Arena results and the trap card per model, field reports from human-verified agents, a skill-file scanner and advisory checks. Free, no account. Every response is structured data.`,
     version: "1.0.0",
     provider: { organization: "The Agent Forge", url: origin },
     documentationUrl: `${origin}/skill.md`,
@@ -96,7 +125,10 @@ export type A2ARequest =
   | { skill: "check-tool"; query: { id?: string; url?: string; fingerprint?: string; version?: string }; detail?: "full" }
   | { skill: "scan-skill"; url?: string; text?: string; name?: string }
   | { skill: "trap-card" }
-  | { skill: "arena-results"; task?: string; tier?: string; event?: string; detail?: "full" };
+  | { skill: "arena-results"; task?: string; tier?: string; event?: string; detail?: "full" }
+  | { skill: "check-exposure"; packages?: unknown; pip_freeze?: string; detail?: "full" }
+  | { skill: "watch-skills"; fingerprints: string[] }
+  | { skill: "run-gauntlet"; mode?: "full" | "sprint" };
 
 const ARENA_TASK_IDS = new Set(ALL_TASKS.map((t) => t.id));
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -125,6 +157,10 @@ export function readRequest(parts: unknown): A2ARequest | null {
     if (d.skill === "arena-results") return { skill: "arena-results", task: str(d.task, 80), tier: str(d.tier, 16), event: str(d.event, 80), ...(d.detail === "full" ? { detail: "full" as const } : {}) };
     if (d.skill === "scan-skill") return { skill: "scan-skill", url: str(d.url, 2048), text: str(d.text, SCAN_MAX_BYTES), name: str(d.name, 80) };
     if (d.skill === "check-tool") return { skill: "check-tool", query: { id: str(d.id, 512), url: str(d.url, 512), fingerprint: str(d.fingerprint, 80), version: str(d.version, 128) }, ...(d.detail === "full" ? { detail: "full" as const } : {}) };
+    // exposureRequest checks each item itself (and names the bad ones), as on /mcp/public.
+    if (d.skill === "check-exposure") return { skill: "check-exposure", packages: d.packages, pip_freeze: str(d.pip_freeze, EXPOSURE_MAX_TEXT), ...(d.detail === "full" ? { detail: "full" as const } : {}) };
+    if (d.skill === "watch-skills") return { skill: "watch-skills", fingerprints: Array.isArray(d.fingerprints) ? d.fingerprints.slice(0, 101).filter((f): f is string => typeof f === "string" && f.length <= 80) : [] };
+    if (d.skill === "run-gauntlet") return { skill: "run-gauntlet", ...(d.mode === "sprint" || d.mode === "full" ? { mode: d.mode } : {}) };
   }
   const text = (parts as Part[])
     .map((p) => (p && typeof p.text === "string" ? p.text : ""))
@@ -134,6 +170,11 @@ export function readRequest(parts: unknown): A2ARequest | null {
   if (!text) return null;
   if (/\btrap[- ]?card\b/i.test(text)) return { skill: "trap-card" };
   if (/^\s*arena[- ]results?\b/i.test(text)) return arenaTextRequest(text);
+  // "watch sha256:… sha256:…", "exposure litellm==1.107.0 …" and "gauntlet [sprint]": the three skills added with
+  // ADR 0123, read only from a leading word so they never change what an id, URL or fingerprint already meant.
+  if (/^\s*watch\b/i.test(text)) return { skill: "watch-skills", fingerprints: [...text.matchAll(/\b(?:sha256:)?[0-9a-f]{64}\b/g)].map((m) => m[0]).slice(0, 101) };
+  if (/^\s*(?:check[- ])?exposure\b/i.test(text)) return { skill: "check-exposure", pip_freeze: text.replace(/^\s*(?:check[- ])?exposure\b[:\s]*/i, "").split(/[\s,;]+/).filter(Boolean).join("\n") };
+  if (/^\s*(?:run[- ](?:the[- ])?)?(?:forge[- ])?gauntlet\b/i.test(text)) return { skill: "run-gauntlet", ...(/\bsprint\b/i.test(text) ? { mode: "sprint" as const } : {}) };
   const url = /https?:\/\/[^\s<>"')]+/.exec(text)?.[0];
   if (url && (/^\s*scan\b/i.test(text) || /\.(md|sh|ps1|txt)(\?|#|$)/i.test(url))) return { skill: "scan-skill", url };
   if (url) return { skill: "check-tool", query: { url } };
@@ -192,9 +233,36 @@ export const A2A_EXAMPLES = {
   ],
   "trap-card": [{ parts: [{ text: "trap card" }] }],
   "arena-results": [{ parts: [{ text: "arena results" }] }, { parts: [{ data: { skill: "arena-results", tier: "hard" } }] }],
+  "check-exposure": [
+    { parts: [{ data: { skill: "check-exposure", packages: [{ ecosystem: "pypi", name: "litellm", version: "1.107.0" }] } }] },
+    { parts: [{ text: "exposure litellm==1.107.0 requests==2.32.3" }] },
+  ],
+  "watch-skills": [{ parts: [{ data: { skill: "watch-skills", fingerprints: [EXAMPLE_FINGERPRINT] } }] }],
+  "run-gauntlet": [{ parts: [{ text: "gauntlet" }] }, { parts: [{ data: { skill: "run-gauntlet", mode: "sprint" } }] }],
 };
 
-const A2A_SKILL_OF: Partial<Record<Related["tool"], SkillId>> = { forge_check: "check-tool", forge_scan: "scan-skill" };
+const A2A_SKILL_OF: Partial<Record<Related["tool"], SkillId>> = { forge_check: "check-tool", forge_scan: "scan-skill", forge_watch: "watch-skills" };
+
+/**
+ * run-gauntlet (ADR 0123): a Gauntlet run is many calls in a sandbox (start, then one call per tool), which a one-reply
+ * A2A message can't hold, so this skill says where the Gauntlet runs and the first call that starts one, as data.
+ */
+export function gauntletPointer(origin: string, mode: "full" | "sprint") {
+  return {
+    runs_over: ["mcp", "http"],
+    mcp_server: `${origin}${GAUNTLET_MCP_ROUTE}`,
+    transport: "streamable-http",
+    tools: Object.keys(GAUNTLET_TOOLS),
+    start: { tool: "gauntlet_start", arguments: mode === "sprint" ? { mode: "sprint" } : {} },
+    http_start: { method: "POST", url: `${origin}/api/v1/gauntlet`, body: mode === "sprint" ? { mode: "sprint" } : {} },
+    mode,
+    jobs: mode === "sprint" ? 1 : JOBS.length,
+    max_mcp_calls: mode === "sprint" ? SPRINT_MCP_CALLS_MAX : null,
+    account_needed: false,
+    http_api_doc: `${origin}/gauntlet.md`,
+    page_url: `${origin}${mode === "sprint" ? SPRINT_PATH : "/gauntlet"}`,
+  };
+}
 
 /** `related` in A2A terms: each next call as the data part that sends it; calls with no A2A skill are left out. */
 function a2aRelated<T extends { related?: Related[] }>(answer: T) {
@@ -218,18 +286,39 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
     return {
       ...inputNeeded("a2a", {
         error: "unrecognized_request",
-        needed: "One skill: check-tool (id, url or fingerprint; version optional), scan-skill (url or text), trap-card or arena-results (task, tier and event optional), as a data part naming the skill or as text.",
+        needed: "One skill, as a data part naming it or as text; skills lists each skill's id and input.",
         examples: [A2A_EXAMPLES["check-tool"][0]!, A2A_EXAMPLES["scan-skill"][1]!, A2A_EXAMPLES["trap-card"][0]!, A2A_EXAMPLES["arena-results"][0]!],
       }),
       skills: A2A_SKILLS.map((s) => ({ id: s.id, description: s.description })),
     };
-  // Arena reads have their own per-IP budget, as on /mcp/public (ADR 0056), so they never use up an agent's checks.
-  if (!(await env.CHECK_LIMITER.limit({ key: `${req.skill === "arena-results" ? "arena" : "ip"}:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
+  // Arena reads (and the Gauntlet's where-to data) and weekly watches have their own per-IP budgets, as on /mcp/public
+  // (ADR 0056), so they never use up an agent's checks.
+  const bucket = req.skill === "arena-results" || req.skill === "run-gauntlet" ? "arena" : req.skill === "watch-skills" ? "watch" : "ip";
+  if (!(await env.CHECK_LIMITER.limit({ key: `${bucket}:${ip}` })).success) return { skill: req.skill, ...RATE_LIMITED };
   await bump(env, internal ? [internalKey(internal, "calls")] : ["a2a:requests", `a2a:skill:${req.skill}`]).catch(() => {});
   if (req.skill === "trap-card") {
     return { skill: "trap-card", version: TRAP_CARD_VERSION, date: TRAP_CARD_DATE, text: trapCardText(), checks: TRAP_CHECKS.map((c) => c.text), url: `${env.PUBLIC_ORIGIN}/trap-card` };
   }
   if (req.skill === "arena-results") return { skill: "arena-results", ...(await arenaResultsSkill(env, req)) };
+  if (req.skill === "run-gauntlet") return { skill: "run-gauntlet", result: gauntletPointer(env.PUBLIC_ORIGIN, req.mode ?? "full") };
+  if (req.skill === "watch-skills") {
+    const p = watchInput.safeParse({ fingerprints: req.fingerprints });
+    if (!p.success) return { skill: "watch-skills", ...inputNeeded("watch-skills", { needed: WATCH_NEEDED, detail: req.fingerprints.length ? firstIssue(p.error) : null, examples: A2A_EXAMPLES["watch-skills"] }) };
+    await recordCheck(env, "api", source, { internal });
+    await bump(env, internal ? [internalKey(internal, "watch")] : watchCounters(p.data.fingerprints.length)).catch(() => {});
+    const fps = p.data.fingerprints.map((x) => (x.startsWith("sha256:") ? x : `sha256:${x}`));
+    return { skill: "watch-skills", result: await watchAnswer(env, await watchStatus(getDb(env), fps), fps) };
+  }
+  if (req.skill === "check-exposure") {
+    if (req.packages === undefined && req.pip_freeze === undefined) return { skill: "check-exposure", ...inputNeeded("check-exposure", { error: "no_items", needed: EXPOSURE_NEEDED, examples: A2A_EXAMPLES["check-exposure"] }) };
+    await recordCheck(env, "api", source, { internal });
+    const r = await exposureRequest(env, { packages: req.packages, pip_freeze: req.pip_freeze });
+    if ("error" in r) return { skill: "check-exposure", ...inputNeeded("check-exposure", { needed: EXPOSURE_NEEDED, examples: A2A_EXAMPLES["check-exposure"] }), ...r };
+    await bump(env, exposureCounters(r)).catch(() => {});
+    const { asked, ...result } = r;
+    // Compact by default, like /mcp/public (ADR 0056); a data part with "detail":"full" gets every match.
+    return { skill: "check-exposure", result: a2aRelated(await exposureAnswer(env, result, asked ?? [], req.detail ?? "compact")) };
+  }
   if (req.skill === "check-tool") {
     const q = checkQuerySchema.safeParse(Object.fromEntries(Object.entries(req.query).filter(([, v]) => v !== undefined)));
     if (!q.success) {
@@ -261,7 +350,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
 /** The arena_results answer (compact by default, with its receipt), or what the request needs as data. */
 async function arenaResultsSkill(env: Env, req: Extract<A2ARequest, { skill: "arena-results" }>): Promise<Record<string, unknown>> {
   const p = resultsInput.safeParse({ task: req.task, tier: req.tier, event: req.event });
-  const needed = "Optional task (an Arena task id), tier (normal or hard) and event (a ranked event slug); none gives the Normal headline.";
+  const needed = "Optional task (an Arena task id), tier (normal or hard) and event (a ranked event slug); none gives the latest ranked Hard event.";
   if (!p.success) return inputNeeded("arena-results", { error: "invalid_input", needed, detail: firstIssue(p.error), examples: A2A_EXAMPLES["arena-results"], extra: { tasks: [...ARENA_TASK_IDS], tiers: ["normal", "hard"] } });
   const { task, tier, event } = p.data;
   const db = getDb(env);
@@ -277,7 +366,9 @@ async function arenaResultsSkill(env: Env, req: Extract<A2ARequest, { skill: "ar
       extra: { event, ranked_events: ranked },
     });
   }
-  return { result: await resultsAnswer(env, await arenaResults(db, { task, tier, event: ev }, env.PUBLIC_ORIGIN), { task }, req.detail ?? "compact") };
+  // ADR 0123: no task, tier or event answers with the latest ranked Hard event, summary first.
+  const filter = task === undefined && tier === undefined && event === undefined ? await defaultResultsFilter(env, db) : { task, tier, event: ev };
+  return { result: await resultsAnswer(env, await arenaResults(db, filter, env.PUBLIC_ORIGIN), { task }, req.detail ?? "compact") };
 }
 
 // JSON-RPC method names: v1.0 first, then the v0.3 spellings.

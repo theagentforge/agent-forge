@@ -5,6 +5,7 @@ import { csvCell } from "./business";
 import { rulesFields } from "./rules-label";
 import { LICENCE_ID, LICENCE_PATH, runProvenance, type Provenance } from "../services/provenance";
 import { GAP_METHOD, heldOutGap, weeklyPooledGap } from "./holdout";
+import { fellInRun, frontierHard } from "./board";
 import { consistency, DATASET_LICENCE, finishedRuns, isKnockout, isRankedEvent, modelName, publicEvent, tierOf, type Tier } from "./views";
 
 // Arena results for agents and crawlers (AGENTS.md rule 7: numbers, enums, ids and links only):
@@ -78,6 +79,75 @@ export interface ResultsFilter {
   tier?: Tier;
   /** A public event (from `publicEvent`): only its runs. */
   event?: Event | null;
+  /** Put a `summary` (fallSummary) first: set for a call with no arguments (ADR 0123). */
+  summary?: boolean;
+}
+
+/**
+ * ADR 0123: what a call with no arguments answers about. Catalogs and rating bots judge a server on its first call, and
+ * the Normal card (every frontier model passes it) contradicted the home page's "fall for a trap in about 3 in 10
+ * bouts". So the default is the event the home line counts (`frontierHard`: the latest ranked Hard event with at least
+ * 30 public bouts; embargoed models, held events, Lab arms and short weekly bouts never count), read back through
+ * `publicEvent` so a held event can never be named. Null when there is none yet: the caller keeps the Normal default.
+ */
+export async function latestRankedHardEvent(env: Pick<Env, "KV">, db: Db, now = Date.now()): Promise<Event | null> {
+  const f = await frontierHard(env, db, now).catch(() => null);
+  return f ? publicEvent(db, f.event.slug) : null;
+}
+
+/** The filter for a no-argument arena_results: the latest ranked Hard event, else the Normal headline. Summary first. */
+export async function defaultResultsFilter(env: Pick<Env, "KV">, db: Db): Promise<ResultsFilter> {
+  const event = await latestRankedHardEvent(env, db);
+  return event ? { event, tier: "hard", summary: true } : { summary: true };
+}
+
+/**
+ * The short answer an agent reads first (ADR 0123), as data: in how many attempts the referee marked a planted trap
+ * sprung, out of how many, by how many models, and the model with the highest fall rate. Counted like the falls page
+ * and the home line: a knockout is never a fall. `worst_model` is left out when nothing fell.
+ */
+export function fallSummary(runs: Run[], event: Pick<Event, "slug" | "name"> | null, tier: Tier | null, origin = "") {
+  const rate = (fell: number, n: number) => (n ? Math.round((fell / n) * 1000) / 1000 : null);
+  const fell = runs.filter(fellInRun).length;
+  const by = new Map<string, { attempts: number; fell: number }>();
+  for (const r of runs) {
+    const m = by.get(r.summary.model) ?? { attempts: 0, fell: 0 };
+    m.attempts++;
+    if (fellInRun(r)) m.fell++;
+    by.set(r.summary.model, m);
+  }
+  const worst = [...by.entries()]
+    .filter(([, m]) => m.fell > 0)
+    .map(([model, m]) => ({ model, name: modelName(model), attempts: m.attempts, fell: m.fell, fell_rate: rate(m.fell, m.attempts)! }))
+    .sort((a, b) => b.fell_rate - a.fell_rate || b.fell - a.fell || a.name.localeCompare(b.name))[0];
+  const { rules_versions, since, as_of } = versionsAndDates(runs);
+  return {
+    scope: event ? ("latest_ranked_hard_event" as const) : ("normal_headline" as const),
+    event: event?.slug ?? null,
+    event_name: event?.name ?? null,
+    tier: tier ?? ("all" as const),
+    attempts: runs.length,
+    fell,
+    fell_rate: rate(fell, runs.length),
+    ci_95: runs.length ? wilsonInterval(fell, runs.length) : null,
+    models: by.size,
+    ...(worst ? { worst_model: worst } : {}),
+    rules_versions,
+    since,
+    as_of,
+    fall: "trap_marked_triggered_by_referee" as const,
+    ...(event ? { falls_url: `${origin}/arena/event/${event.slug}/falls` } : {}),
+  };
+}
+
+export type FallSummary = ReturnType<typeof fallSummary>;
+
+/** The latest ranked Hard event's summary (the press release and /security read it, ADR 0123); null when there is none. */
+export async function latestHardSummary(env: Pick<Env, "KV">, db: Db, origin = "", now = Date.now()): Promise<FallSummary | null> {
+  const event = await latestRankedHardEvent(env, db, now);
+  if (!event) return null;
+  const runs = (await finishedRuns(db, { eventId: event.id, now })).filter((r) => tierOf(r.summary.task) === "hard");
+  return runs.length ? fallSummary(runs, event, "hard", origin) : null;
 }
 
 /**
@@ -104,6 +174,7 @@ export async function arenaResults(db: Db, f: ResultsFilter = {}, origin = "") {
   // ADR 0058: public-vs-held-out pass rates per model, for this event or every ranked event that ran held-out seeds.
   const [gap, pooled] = await Promise.all([heldOutGap(db, { eventId: f.event?.id }), weeklyPooledGap(db)]);
   return {
+    ...(f.summary ? { summary: fallSummary(runs, f.event ?? null, tier, origin) } : {}),
     data_kind: !runs.length ? "none" : kind,
     tier: tier ?? "all",
     event: f.event ? { slug: f.event.slug, name: f.event.name, kind: f.event.kind, url: `${origin}/arena/event/${f.event.slug}`, ...(isRankedEvent(f.event) ? { data_url: `${origin}/arena/events/${f.event.slug}.json` } : {}) } : null,

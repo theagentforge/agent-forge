@@ -1,5 +1,5 @@
 import { and, gte, like, sql } from "drizzle-orm";
-import { isLean } from "./ops-mode";
+import { isLikelyBot } from "./bots";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { type InternalComponent, internalCaller, internalClient, internalKey } from "./internal";
@@ -86,8 +86,12 @@ export function mcpCounters(endpoint: McpEndpoint, body: unknown, internal: Inte
   return keys;
 }
 
+/**
+ * Adds one to each daily counter. Never stopped by the cost guard's lean mode (ADR 0124): the counters are the KPIs, and
+ * one upsert per request costs a database write, not the CPU the guard saves.
+ */
 export async function bump(env: Env, keys: string[], now = Date.now()) {
-  if (!keys.length || (await isLean(env))) return;
+  if (!keys.length) return;
   const db = getDb(env);
   const d = day(now);
   const counts = new Map<string, number>();
@@ -156,16 +160,12 @@ const SOURCES: [RegExp, string][] = [
   [/(^|\.)(google|bing|duckduckgo|yahoo|ecosia|brave)\.[a-z.]+$|(^|\.)search\.brave\.com$/, "search"],
   [/(^|\.)(chatgpt\.com|claude\.ai|perplexity\.ai|gemini\.google\.com|copilot\.microsoft\.com)$/, "ai-chat"],
 ];
-// Crawlers that don't say "bot" are listed by name (seen in our Cloudflare logs, 18–22 Oct 2026: GoogleOther,
-// meta-externalagent, Ziwei-Seat), so "visitors" means people again.
-const BOT_UA =
-  /bot|crawl|spider|slurp|preview|facebookexternalhit|externalagent|externalfetcher|googleother|google-extended|google-inspectiontool|embedly|curl|wget|python|go-http|headless|lighthouse|monitor|scrap|fetcher|httpclient|axios|node-fetch|okhttp|java\/|libwww|-seat\/|^$/i;
-
 /**
- * True when a page request looks like a person's browser: not a crawler or script user agent, not one of our own
- * probes. For daily counters bumped on a plain GET (ADR 0065), so crawlers that ignore robots.txt don't inflate them.
+ * True when a page request looks like a person's browser: not a bot (services/bots.ts, ADR 0124: crawler and script
+ * user agents, fake browsers), not one of our own probes. For daily counters bumped on a plain GET (ADR 0065), so
+ * crawlers that ignore robots.txt don't inflate them.
  */
-export const likelyPerson = (headers: Pick<Headers, "get">) => !BOT_UA.test(headers.get("user-agent") ?? "") && !internalCaller(headers);
+export const likelyPerson = (req: { headers: Pick<Headers, "get">; cf?: unknown }) => !isLikelyBot(req) && !internalCaller(req.headers);
 
 /** Source label for a Referer header: "direct" when there is none, "internal" for our own pages, "other" otherwise. */
 export function sourceLabel(referer: string | null | undefined, origin: string) {
@@ -185,11 +185,12 @@ export function sourceLabel(referer: string | null | undefined, origin: string) 
  * to see the full gross large number"), and crawlers also in `visit:crawler`. People arriving from outside the site
  * (not crawlers, not our own internal navigation) also count as `visit:arrivals`, by source and link tag.
  */
-export function visitCounters(req: { method: string; url: string; headers: Headers }, origin: string): string[] {
+export function visitCounters(req: { method: string; url: string; headers: Headers; cf?: unknown }, origin: string): string[] {
   if (req.method !== "GET") return [];
   // Our own probes (services/internal.ts) stay in the gross page views only, like everything else, and nowhere else.
   if (internalCaller(req.headers)) return ["visit:all"];
-  if (BOT_UA.test(req.headers.get("user-agent") ?? "")) return ["visit:all", "visit:crawler"];
+  // ADR 0124: crawlers, scripts and fake browsers (services/bots.ts) count in the gross total only.
+  if (isLikelyBot(req)) return ["visit:all", "visit:crawler"];
   // People opening /connect, from anywhere (our own pages included): the step before an AI connects.
   const connect = new URL(req.url).pathname === "/connect" ? ["visit:connect"] : [];
   const source = sourceLabel(req.headers.get("referer"), origin);
@@ -205,8 +206,8 @@ export function visitCounters(req: { method: string; url: string; headers: Heade
  * `visit:human` and by kind of page. Browsers driven by automation (navigator.webdriver) don't send it; bot user agents
  * and other sites' pages aren't counted. Nothing about the person is kept.
  */
-export function humanCounters(req: { method: string; headers: Headers }, origin: string): string[] {
-  if (req.method !== "POST" || BOT_UA.test(req.headers.get("user-agent") ?? "") || internalCaller(req.headers)) return [];
+export function humanCounters(req: { method: string; headers: Headers; cf?: unknown }, origin: string): string[] {
+  if (req.method !== "POST" || isLikelyBot(req) || internalCaller(req.headers)) return [];
   const site = req.headers.get("sec-fetch-site");
   const from = req.headers.get("origin") ?? req.headers.get("referer") ?? "";
   if (site ? site !== "same-origin" : !from.startsWith(origin)) return [];
@@ -360,6 +361,6 @@ export async function skillStats(env: Env, now = Date.now(), days = 7) {
     skill_file_browser_views: get("skillmd:browser"),
     /** Requests from other agents over A2A (/a2a), and how many asked for each skill. */
     a2a_requests: get("a2a:requests"),
-    a2a_by_skill: { check_tool: get("a2a:skill:check-tool"), scan_skill: get("a2a:skill:scan-skill"), trap_card: get("a2a:skill:trap-card"), arena_results: get("a2a:skill:arena-results") },
+    a2a_by_skill: { check_tool: get("a2a:skill:check-tool"), scan_skill: get("a2a:skill:scan-skill"), trap_card: get("a2a:skill:trap-card"), arena_results: get("a2a:skill:arena-results"), check_exposure: get("a2a:skill:check-exposure"), watch_skills: get("a2a:skill:watch-skills"), run_gauntlet: get("a2a:skill:run-gauntlet") },
   };
 }

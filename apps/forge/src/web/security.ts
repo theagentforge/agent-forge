@@ -7,6 +7,7 @@ import { JOBS } from "../arena/gauntlet";
 import { formatSlot, nextHeadlineSlot } from "../arena/headline-slot";
 import { EXPERIMENTS, intervalText, pText, type Experiment } from "./experiments";
 import { heldOutGap, weeklyPooledGap } from "../arena/holdout";
+import { latestHardSummary, type FallSummary } from "../arena/results";
 import { getDb } from "../services/db";
 import { REPLAY_V2_FROM } from "../services/replay-keys";
 import { DATASET_LICENCE, LICENCE_ID, LICENCE_PATH } from "../services/provenance";
@@ -131,12 +132,17 @@ export function rescoredData(r: BusinessBoard | null) {
   };
 }
 
-export function securityData(origin: string, b: BusinessBoard, gap: SecurityGap, audit: string, now = Date.now(), rescored: BusinessBoard | null = null) {
+export function securityData(origin: string, b: BusinessBoard, gap: SecurityGap, audit: string, now = Date.now(), rescored: BusinessBoard | null = null, hard: FallSummary | null = null) {
   const next = nextHeadlineSlot(now);
   return {
     name: `${PUBLIC_NAME} security overview`,
     url: `${origin}${SECURITY_PATH}`,
     arena: {
+      /**
+       * ADR 0123: the latest ranked Hard event on its own (the home line's event, the same figure arena_results gives
+       * with no arguments), first, so the overview never opens on the few attempts under the newest rules alone.
+       */
+      latest_ranked_hard: hard,
       unit: "attempt",
       event_kinds: ["card", "guest"],
       rules_version: b.rules,
@@ -270,21 +276,36 @@ export function modelsLine(rows: { name: string; cell: BizCell }[]) {
 
 async function securityInputs(env: Env) {
   const db = getDb(env);
-  const [b, gap, audit] = await Promise.all([businessBoard(db, "all", { rules: RULES_VERSION }), gapStatus(db), refereeAudit(db).then((a) => a.status)]);
+  const [b, gap, audit, hard] = await Promise.all([
+    businessBoard(db, "all", { rules: RULES_VERSION }),
+    gapStatus(db),
+    refereeAudit(db).then((a) => a.status),
+    latestHardSummary(env, db, env.PUBLIC_ORIGIN).catch(() => null),
+  ]);
   const group = rescoredGroup(RULES_VERSION);
   const rescored = b.rulesVersions.some((v) => v.version === group) ? await businessBoard(db, "all", { rules: group }) : null;
-  return { b, gap, audit, rescored };
+  return { b, gap, audit, rescored, hard };
 }
 
 /** The /security?format=json object (the State of Agent Reliability report reads the same numbers). */
 export async function securityJson(env: Env) {
-  const { b, gap, audit, rescored } = await securityInputs(env);
-  return securityData(env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored);
+  const { b, gap, audit, rescored, hard } = await securityInputs(env);
+  return securityData(env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard);
+}
+
+/**
+ * ADR 0123: the latest ranked Hard event's line, read from the same summary arena_results gives with no arguments:
+ * "In Crucible 2: Hard, the latest ranked Hard event, 17 of 108 attempts (16%) fell for a planted trap…".
+ */
+export function latestHardLine(h: FallSummary | null) {
+  if (!h || !h.event || !h.attempts) return "";
+  const w = h.worst_model;
+  return html`<p data-latest-hard><b>In ${h.event_name}, the latest ranked Hard event, ${h.fell} of ${num(h.attempts)} attempts (${pct(h.fell_rate ?? 0)}) fell for a planted trap</b>${h.ci_95 ? ` (95% interval ${pctRange(h.ci_95)})` : ""}, across ${h.models} ${h.models === 1 ? "model" : "models"}${h.since && h.as_of ? `, ${fmtDay(h.since)} to ${fmtDay(h.as_of)}` : ""}.${w ? html` Highest: <b>${w.name}</b>, ${w.fell} of ${w.attempts}.` : ""} <a href="/arena/event/${h.event}/falls">See the falls</a>.</p>`;
 }
 
 site.get(SECURITY_PATH, async (c) => {
-  const { b, gap, audit, rescored } = await securityInputs(c.env);
-  if (wantsJson(c)) return sendJson(c, securityData(c.env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored));
+  const { b, gap, audit, rescored, hard } = await securityInputs(c.env);
+  if (wantsJson(c)) return sendJson(c, securityData(c.env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard));
   const older = b.rulesVersions.filter((v) => v.version !== b.rules && !isRescoredGroup(v.version));
   const rs = rescoredData(rescored);
   const olderN = older.reduce((n, v) => n + v.attempts, 0);
@@ -314,6 +335,7 @@ ${more(
 
 <h2 id="arena">What the Arena measures</h2>
 <p>The Arena gives AI models everyday business jobs (refunds, supplier invoices, bookings, stock, records) in a sandbox with planted traps. ${TRAP_CATALOG.length} public traps, each with a stable ID and the real-world pattern it's based on (<a href="/arena/methodology#catalog">trap catalogue</a>; as a versioned, citable benchmark: <a href="/benchmark">The Forge Trap Set</a>).</p>
+${latestHardLine(hard)}
 <p>The numbers below count only attempts scored under the current referee rules (<code>${RULES_VERSION}</code>), because a rules change can change how a trap is scored.${olderN ? html` ${num(olderN)} more ranked attempts were scored under older rules (${older.map((v, i) => html`${i ? ", " : ""}${v.version}: ${num(v.attempts)}`)}) and aren't pooled with them; their per-model rows are on <a href="/benchmark#results">the Trap Set results</a>.` : ""}</p>
 ${b.attempts
   ? html`<p><b>${b.overall.shown ? html`${pct(b.overall.rate!)} of ${b.attempts}` : html`${b.attempts}`} ranked attempts</b>${b.overall.shown ? html` fell for at least one planted trap (95% interval ${pctRange(b.overall.ci!)})` : ""}, across ${b.models.length} models${b.since && b.asOf ? `, ${fmtDay(b.since)} to ${fmtDay(b.asOf)}` : ""}. ${b.knockouts} more attempts ran out of time, tokens or turns and aren't counted either way.</p>

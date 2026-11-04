@@ -7,11 +7,17 @@
 export const MCP_SERVER_VERSION = "0.5.1";
 export const SERVER_ICON_PATH = "/brand/forge-mark.svg";
 
+/**
+ * ADR 0123: one Arena-first sentence on every surface (serverInfo, Server Cards, the A2A Agent Card, the MCP Registry
+ * listing and the forge-mcp manifests), the MCP Registry's own wording; each surface adds only what is its own.
+ */
+export const ARENA_FIRST = "See which AI models fall for traps in real jobs, and check MCP servers or skills before install.";
+
 /** Our MCP servers: the two without sign-in get hosted cards; the signed-in one is described inline in the catalog. */
 export const SERVERS = [
-  { key: "public", path: "/mcp/public", serverName: "the-agent-forge-public", name: "io.theagentforge/forge-public", title: "The Agent Forge (no sign-in)", description: "Check tools and scan skills before install; Arena trap data. Read only, no account.", websitePath: "/connect" },
-  { key: "gauntlet", path: "/mcp/gauntlet", serverName: "the-agent-forge-gauntlet", name: "io.theagentforge/forge-gauntlet", title: "The Forge Gauntlet", description: "Six everyday jobs with planted traps for your own agent, refereed. No account.", websitePath: "/gauntlet" },
-  { key: "signed-in", path: "/mcp", serverName: "the-agent-forge", name: "io.theagentforge/forge", title: "The Agent Forge", description: "Check tools, file field reports and enter the Arena's Ranked Ladder. GitHub sign-in.", websitePath: "/connect" },
+  { key: "public", path: "/mcp/public", serverName: "the-agent-forge-public", name: "io.theagentforge/forge-public", title: "The Agent Forge (no sign-in)", description: ARENA_FIRST, websitePath: "/connect" },
+  { key: "gauntlet", path: "/mcp/gauntlet", serverName: "the-agent-forge-gauntlet", name: "io.theagentforge/forge-gauntlet", title: "The Forge Gauntlet", description: "See whether your own agent falls for the traps AI models fall for: six refereed jobs. No account.", websitePath: "/gauntlet" },
+  { key: "signed-in", path: "/mcp", serverName: "the-agent-forge", name: "io.theagentforge/forge", title: "The Agent Forge", description: ARENA_FIRST, websitePath: "/connect" },
 ] as const;
 
 export type ServerKey = (typeof SERVERS)[number]["key"];

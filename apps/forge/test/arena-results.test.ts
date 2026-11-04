@@ -163,7 +163,8 @@ describe("arena_results by tier and event", () => {
     expect(held.data.ranked_events).not.toContain(HELD);
     const missing = await rpc("arena_results", { event: "no-such-event" });
     expect(missing.data.error).toBe("unknown_event");
-    // Existing callers: no arguments still gives the Normal card.
+    // No arguments, and no ranked Hard event with 30 public bouts here (this one has 8): the Normal card, as before.
+    // With one, the latest ranked Hard event (ADR 0123, test/arena-first-call.test.ts).
     expect((await rpc("arena_results", {})).data.tier).toBe("normal");
   });
 });
@@ -272,7 +273,9 @@ describe("what agents read", () => {
     for (const k of ["arena_results", "forge_traps"] as const) {
       const d = PUBLIC_TOOLS[k].description;
       expect(d).toMatch(/^Use this when /);
-      expect(d).toContain("tier (normal, the default, or hard)");
+      // ADR 0123: no arguments gives the latest ranked Hard event (test/arena-first-call.test.ts).
+      expect(d).toContain("tier (normal or hard)");
+      expect(d).toContain("with no arguments, the latest ranked Hard event");
       expect(d.length).toBeLessThanOrEqual(420);
       expect(AGENT_DIRECTED.exec(d)?.[0] ?? null).toBeNull();
     }

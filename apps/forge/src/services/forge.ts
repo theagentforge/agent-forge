@@ -28,7 +28,7 @@ import { type WorkTotals } from "./site-pulse";
 import { publicNumbers } from "./public-numbers";
 import { countsAsHouse, vouchesRemaining } from "./identity";
 import { bump } from "./usage";
-import { withRegistryFingerprint } from "./registry";
+import { latestRelease, withRegistryFingerprint } from "./registry";
 import { reportsWithVerdicts, saveVerdict, verdictTarget, type VerdictCounts, type VerdictRejection } from "./verdicts";
 import { moderateWithinBudget } from "./moderation";
 import type { AgentProps } from "./props";
@@ -71,6 +71,14 @@ export interface CheckResult {
   page_url: string | null;
   /** The version the agent asked about (from `version`, the id or the URL); `version` is the one the reports are on. */
   asked_version?: string;
+  /** ADR 0123: for an npm: or pypi: tool not on file, asked with no version: its latest release in the registry. */
+  latest_version?: string;
+  /**
+   * ADR 0123: which versions the advisories in public_signals_summary cover when no version was asked: the latest
+   * release ("latest_version"), or, when the registry couldn't be read, any version ("some_versions": advisories exist
+   * for some versions, not necessarily the one in use).
+   */
+  advisory_scope?: "latest_version" | "some_versions";
   /** Field reports on this exact version (any tier). */
   reports_for_this_version: number;
   /** True when no one has reported on this version yet: a report from this agent would be the first (ADR 0011 g). */
@@ -216,16 +224,27 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
   }
 
   if (!tool) {
-    const [advisories, candidates] = await Promise.all([
-      canonical ? advisoriesFor(env, [canonical], q.version ?? null) : null,
+    // ADR 0123: an npm: or pypi: id with no version (`forge_check npm:express`) is read at its latest release, so the
+    // answer says whether the version an install would get today has a published advisory, instead of "unknown"
+    // beside a list of every advisory the package ever had. The registry look-up and then OSV run alongside the
+    // name search; when the registry can't be read, OSV is asked about every version, as before.
+    const latestP = canonical && !q.version && osvPackageFor(canonical) ? latestRelease(env, canonical) : Promise.resolve(null);
+    const [[latest, advisories], found] = await Promise.all([
+      latestP.then(async (l) => [l, canonical ? await advisoriesFor(env, [canonical], q.version ?? l?.version ?? null) : null] as const),
       toolCandidates(db, env.PUBLIC_ORIGIN, canonical ? nameTerm(canonical) : null),
     ]);
     const status = advisoryStatus(advisories);
+    // Read at its latest release with OSV answering: no advisory affecting that version is "clear" for security (the
+    // verdict stays "insufficient" with no field reports, as for a known tool).
+    const security: CheckResult["security_status"] = status ? verdictFor(status) : latest && advisories ? "clear" : "unknown";
+    // The exact package resolved in its registry: no near-miss names (they were other packages).
+    const candidates = latest ? undefined : found;
     return {
       known: false,
       tool: null,
       ...(q.version ? { asked_version: q.version } : {}),
-      version: q.version ?? null,
+      ...(latest ? { latest_version: latest.version, advisory_scope: "latest_version" as const } : !q.version && advisories?.total ? { advisory_scope: "some_versions" as const } : {}),
+      version: q.version ?? latest?.version ?? null,
       fingerprint: q.fingerprint ?? null,
       forge_score: null,
       distinct_owners: 0,
@@ -235,8 +254,9 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
       strain_reports: 0,
       strain_hook_reports: 0,
       outcome_breakdown: EMPTY_BREAKDOWN,
-      // Nothing known about it: "unknown", never "clear" (crisis-wave plan, 23 Oct), unless an advisory says more.
-      security_status: status ? verdictFor(status) : "unknown",
+      // Nothing known about it: "unknown", never "clear" (crisis-wave plan, 23 Oct), unless an advisory says more or
+      // the latest release was checked against OSV (ADR 0123).
+      security_status: security,
       other_versions_flagged: [],
       public_signals_summary: advisories,
       page_url: null,

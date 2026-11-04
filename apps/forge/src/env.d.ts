@@ -36,6 +36,12 @@ interface ForgeSecrets {
   POLAR_SERVER?: string;
   /** ADR 0120: "on" turns on the claim verifier's LLM pass for prose claims (Workers AI, 500 neurons a day). Off by default. Not a secret. */
   CLAIMS_LLM?: string;
+  /**
+   * ADR 0124: the founders' own install IDs (the plugin's or CLI's `forge-install-id`), comma-separated. Optional, empty
+   * by default. A check carrying one counts as House traffic (internal:house:*), never as an outside source. Not
+   * sensitive, but set as a secret so a deploy doesn't clear it.
+   */
+  HOUSE_INSTALL_IDS?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

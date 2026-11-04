@@ -4,7 +4,6 @@ import { ourPeople } from "./public-stats";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { dataInventory, dataSnapshotValues, growthKpis, kpiSnapshotValues } from "./kpis";
-import { isLean } from "./ops-mode";
 import { type InternalComponent, internalKey } from "./internal";
 import { bump } from "./usage";
 import { ownerActivity } from "./owners";
@@ -33,11 +32,11 @@ export function checkKind(userAgent: string | undefined, fallback: CheckKind = "
 /**
  * Records that a source ran a check today. Raw IPs are never stored. Errors never affect the check itself. Our own
  * callers (`internal`, services/internal.ts) are never a check source: they add `internal:<component>:checks` instead.
+ * Written in lean mode too (ADR 0124): check sources are the agent-days KPI, and one row a source a day is cheap.
  */
 export async function recordCheck(env: Env, kind: CheckKind, raw: string, opts: { house?: boolean; hashed?: boolean; now?: number; internal?: InternalComponent | null } = {}) {
   try {
     if (opts.internal) return await bump(env, [internalKey(opts.internal, "checks")], opts.now);
-    if (await isLean(env)) return;
     const d = day(opts.now ?? Date.now());
     const source = opts.hashed === false ? raw : await sourceHash(env.SESSION_SECRET, d, raw);
     await getDb(env)

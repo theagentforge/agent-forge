@@ -49,6 +49,8 @@ describe("Close on /admin/kpis open disputes", () => {
     expect(row).toContain(`name="id" value="${id}"`);
     expect(row).toMatch(/<input name="reason" required/);
     expect([...row.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1])).toEqual(["resolved", "rejected"]);
+    // The default is "rejected" (coordinator, review fix 6): the common case is "not a dispute".
+    expect([...row.matchAll(/<option value="([^"]+)" selected>/g)].map((m) => m[1])).toEqual(["rejected"]);
     expect(page).not.toContain("Resolve in D1");
   });
 

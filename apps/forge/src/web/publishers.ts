@@ -111,7 +111,7 @@ site.get("/disputes", async (c) => {
   const scan = scanHex(c.req.query("scan"));
   const path = tool ? `/disputes?tool=${encodeURIComponent(tool)}${scan ? `&scan=${scan}` : ""}` : "/disputes";
   // Maintainers arriving from a scan or answer page: a daily count only.
-  if (c.req.query("from") === "maintainer" && !sent && likelyPerson(c.req.raw.headers)) c.executionCtx.waitUntil(bump(c.env, ["maintainer:reply_page"]).catch(() => {}));
+  if (c.req.query("from") === "maintainer" && !sent && likelyPerson(c.req.raw)) c.executionCtx.waitUntil(bump(c.env, ["maintainer:reply_page"]).catch(() => {}));
   const csrf = s ? await csrfToken(c.env.SESSION_SECRET, s.token) : "";
   return send(
     c,

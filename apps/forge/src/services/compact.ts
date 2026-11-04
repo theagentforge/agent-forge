@@ -112,6 +112,8 @@ export interface CheckSummary {
   forge_score?: number;
   /** False when there was no npm or PyPI package to ask OSV about, or OSV couldn't be reached ("not checked"). */
   advisories_checked: boolean;
+  /** ADR 0123: with no version asked, whether the advisories are for the latest release or for some versions. */
+  advisory_scope?: "latest_version" | "some_versions";
   advisories?: number;
   malicious?: number;
   exploited_in_wild?: number;
@@ -137,6 +139,7 @@ export function checkSummary(r: CheckResult, q: CheckQuery): CheckSummary {
     verified_people: r.verified_owners,
     ...(r.forge_score != null ? { forge_score: r.forge_score } : {}),
     advisories_checked: !!ps,
+    ...(ps && r.advisory_scope ? { advisory_scope: r.advisory_scope } : {}),
     ...(ps
       ? {
           advisories: ps.total,
@@ -259,7 +262,7 @@ export async function exposureAnswer(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBL
 }
 
 /** The Arena answers' shapes, as far as a receipt needs them (arena/traps.ts trapsData, arena/results.ts arenaResults). */
-type TrapsLike = { tier: string; data_kind: string; as_of: string | null; model: { id: string } | null; tasks: { traps: { attempts: number }[] }[] };
+type TrapsLike = { tier: string; data_kind: string; as_of: string | null; model: { id: string } | null; event?: { slug: string }; tasks: { traps: { attempts: number }[] }[] };
 type ResultsLike = { tier: string; data_kind: string; as_of: string | null; event: { slug: string } | null; tasks: { models: { runs: number }[] }[] };
 
 /**
@@ -271,7 +274,8 @@ export async function trapsAnswer<T extends TrapsLike>(env: Pick<Env, "REPORT_SI
   if (d.model && d.data_kind === "none") return d;
   // Attempts on each job: its most-listed trap's count (every trap of a job is listed in every attempt of it).
   const attempts = d.tasks.reduce((n, x) => n + Math.max(0, ...x.traps.map((tr) => tr.attempts)), 0);
-  return { ...d, share: await arenaShare(env, "traps", { tier: d.tier, task: q.task, model: d.model?.id }, { data_kind: d.data_kind, as_of: d.as_of, attempts }) };
+  // One event's trap data (the no-argument default, ADR 0123) names the event, so the receipt links its page.
+  return { ...d, share: await arenaShare(env, "traps", { tier: d.tier, task: q.task, event: d.event?.slug, model: d.model?.id }, { data_kind: d.data_kind, as_of: d.as_of, attempts }) };
 }
 
 /**

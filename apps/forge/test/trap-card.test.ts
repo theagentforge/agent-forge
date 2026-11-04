@@ -134,7 +134,9 @@ describe("/mcp/public (ADR 0017 §3)", () => {
     // knockouts and replays; forge_traps takes tier. Both read only.
     // 25 Oct 2026: Glama's tool-quality review: each description gives parameter formats and names the sibling tool for
     // the neighbouring question (as data, "File text: forge_scan"); forge_watch drops "Reads only" (readOnlyHint says it).
-    expect(digest).toBe("50966df4f146004e01cc4c00161909863fec47482afeb693ec40c4d4c4bde870");
+    // 4 Nov 2026 (ADR 0123): arena_results and forge_traps say that no arguments gives the latest ranked Hard event,
+    // summary first; both trimmed to stay within 420 characters.
+    expect(digest).toBe("3d7edea4185d43494b0068707e23c2286036b692e925f3258694020511952e29");
   });
 });
 

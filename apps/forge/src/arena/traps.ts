@@ -1,6 +1,8 @@
 import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, trapEntry, type AttemptResult } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
+import type * as schema from "../db/schema";
 import type { Db } from "../services/db";
+import { latestRankedHardEvent, fallSummary, type FallSummary } from "./results";
 import { finishedRuns, modelName, tierOf, type Tier } from "./views";
 
 // Data behind `forge_traps` (ADR 0017 §2): how often models fell for each Arena trap, with n, date and the trap card
@@ -29,12 +31,34 @@ export interface TrapStat {
 }
 
 export interface TrapsData {
+  /** ADR 0123: only on a call with no arguments, first: the event's falls in one object. */
+  summary?: FallSummary;
   card_version: string;
   tier: Tier;
   data_kind: "headline" | "practice" | "none";
   as_of: string | null;
   model: { id: string; name: string } | null;
+  /** Set when the data is one event's (the no-argument default, ADR 0123); otherwise every ranked event pooled. */
+  event?: { slug: string; name: string; url: string };
   tasks: { task: string; title: string; traps: TrapStat[] }[];
+}
+
+type ArenaEvent = typeof schema.arenaEvents.$inferSelect;
+
+export interface TrapsFilter {
+  task?: string;
+  model?: string;
+  tier?: Tier;
+  /** One public event's runs only (from `publicEvent`). */
+  event?: ArenaEvent | null;
+  /** Put a `summary` first (ADR 0123). */
+  summary?: boolean;
+}
+
+/** The filter for a no-argument forge_traps (ADR 0123): the latest ranked Hard event, else the Normal card. */
+export async function defaultTrapsFilter(env: Pick<Env, "KV">, db: Db): Promise<TrapsFilter> {
+  const event = await latestRankedHardEvent(env, db);
+  return event ? { event, tier: "hard", summary: true } : { summary: true };
 }
 
 /**
@@ -42,11 +66,13 @@ export interface TrapsData {
  * is "hard" or the task is a Hard one. The Normal card lists its six jobs even with no runs; Hard lists jobs with runs
  * (v2, v3 and v3.2 are separate jobs with their own traps).
  */
-export async function trapsData(db: Db, f: { task?: string; model?: string; tier?: Tier } = {}): Promise<TrapsData> {
+export async function trapsData(db: Db, f: TrapsFilter = {}, origin = ""): Promise<TrapsData> {
   const tier: Tier = f.task ? tierOf(f.task) : (f.tier ?? "normal");
   const q = { task: f.task, ...(tier === "hard" ? { tier: "hard" as const } : {}) };
-  const headline = (await finishedRuns(db, { kinds: ["card", "guest"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
-  const runs = headline.length ? headline : (await finishedRuns(db, { kinds: ["practice"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
+  // One event: its own runs of the tier, headline unless it is a practice event.
+  const ev = f.event ? (await finishedRuns(db, { eventId: f.event.id, task: f.task })).filter((r) => tierOf(r.summary.task) === tier) : null;
+  const headline = ev ? (f.event!.kind === "practice" ? [] : ev) : (await finishedRuns(db, { kinds: ["card", "guest"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
+  const runs = ev ?? (headline.length ? headline : (await finishedRuns(db, { kinds: ["practice"], ...q })).filter((r) => tierOf(r.summary.task) === tier));
   const mine = f.model ? runs.filter((r) => r.summary.model === f.model) : runs;
   const pool = tier === "hard" ? [...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].filter((t) => mine.some((r) => r.summary.task === t.id)) : TASKS;
   const tasks = pool.filter((t) => !f.task || t.id === f.task).map((task) => {
@@ -73,11 +99,13 @@ export async function trapsData(db: Db, f: { task?: string; model?: string; tier
   });
   const latest = mine.reduce((m, r) => Math.max(m, r.summary.finishedAt), 0);
   return {
+    ...(f.summary ? { summary: fallSummary(mine, f.event ?? null, tier, origin) } : {}),
     card_version: TRAP_CARD_VERSION,
     tier,
     data_kind: !mine.length ? "none" : headline.length ? "headline" : "practice",
     as_of: latest ? new Date(latest).toISOString().slice(0, 10) : null,
     model: f.model ? { id: f.model, name: modelName(f.model) } : null,
+    ...(f.event ? { event: { slug: f.event.slug, name: f.event.name, url: `${origin}/arena/event/${f.event.slug}` } } : {}),
     tasks,
   };
 }

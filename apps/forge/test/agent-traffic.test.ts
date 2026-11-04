@@ -6,7 +6,7 @@ import "../src/index";
 
 // agent-channels §4.5: AI agents counted apart from people, by group, agent and kind of page; citation detection.
 
-const req = (ua: string, path = "/tools/github.com/o/r") => ({ method: "GET", url: `https://theagentforge.io${path}`, headers: new Headers({ "user-agent": ua }) });
+const req = (ua: string, path = "/tools/github.com/o/r") => ({ method: "GET", url: `https://theagentforge.io${path}`, headers: new Headers({ "user-agent": ua, "sec-fetch-mode": "navigate" }) });
 
 describe("AI agent counters", () => {
   it("sorts indexers, live fetches and coding agents, with the kind of page", () => {
@@ -33,7 +33,7 @@ describe("AI agent counters", () => {
     ])
       expect(visitCounters(req(ua), "https://theagentforge.io"), ua).toEqual(["visit:all", "visit:crawler"]);
     // Our own internal navigation counts in the gross total only.
-    expect(visitCounters({ ...req("Mozilla/5.0 (Macintosh) Safari/605"), headers: new Headers({ "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", referer: "https://theagentforge.io/arena" }) }, "https://theagentforge.io")).toEqual(["visit:all"]);
+    expect(visitCounters({ ...req("Mozilla/5.0 (Macintosh) Safari/605"), headers: new Headers({ "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", "sec-fetch-mode": "navigate", referer: "https://theagentforge.io/arena" }) }, "https://theagentforge.io")).toEqual(["visit:all"]);
   });
 });
 

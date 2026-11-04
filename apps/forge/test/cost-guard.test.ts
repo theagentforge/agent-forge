@@ -9,7 +9,8 @@ import { fetchWorker } from "./helpers";
 import "../src/index";
 import { eq } from "drizzle-orm";
 
-// ADR 0027: in lean mode nothing writes on a visitor's behalf, so a traffic spike costs requests only.
+// ADR 0027: in lean mode the costly work done on a visitor's behalf stops, so a traffic spike costs little CPU. ADR 0124:
+// the metric writes (usage counters, check sources) never stop.
 
 afterEach(async () => {
   await env.KV.delete(OPS_MODE_KEY);
@@ -25,12 +26,12 @@ describe("the cost guard's lean mode", () => {
     expect(await opsMode(env)).toBe("lean");
   });
 
-  it("skips usage counters, refuses new Gauntlet runs and serves the static share image", async () => {
+  it("keeps usage counters, refuses new Gauntlet runs and serves the static share image", async () => {
     await env.KV.put(OPS_MODE_KEY, "lean");
     resetOpsModeCache();
     await bump(env, ["test:lean-counter"]);
     const rows = await getDb(env).select().from(t.usageDaily).where(eq(t.usageDaily.key, "test:lean-counter"));
-    expect(rows).toHaveLength(0);
+    expect(rows).toHaveLength(1);
     expect(await startGauntlet(env, "198.51.100.99")).toMatchObject({ error: "busy_today" });
     const og = await fetchWorker("/og/trap-card.png", { redirect: "manual" });
     expect(og.status).toBe(302);

@@ -238,7 +238,7 @@ export function disputesPanel(d: Awaited<ReturnType<typeof openDisputes>>, now =
 ${d.rows.length
   ? html`<table class="kpi-table"><thead><tr><th>Opened</th><th>By</th><th>About</th><th>Reason</th><th>Close</th></tr></thead><tbody>${d.rows.map(
       (r) => html`<tr data-dispute="${r.id}"><td>${new Date(r.createdAt).toISOString().slice(0, 10)}${age(r.createdAt) >= 5 ? html` <b>(${age(r.createdAt)} days)</b>` : ""}</td><td>${r.login ?? "–"}</td><td>${r.tool ?? "–"}${r.report ? html`<br><small>report ${r.report}</small>` : ""}</td><td><small>${r.reason}</small></td><td>${csrf
-        ? html`<form method="post" action="${DISPUTE_CLOSE_PATH}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="id" value="${r.id}"><select name="state" aria-label="Close as">${DISPUTE_CLOSE_STATES.map((st) => html`<option value="${st}">${st}</option>`)}</select> <input name="reason" required minlength="3" maxlength="${DISPUTE_REASON_MAX}" placeholder="Short reason, e.g. not a dispute: no tool named" aria-label="Reason"> <button class="btn chamfer" type="submit">Close</button></form>`
+        ? html`<form method="post" action="${DISPUTE_CLOSE_PATH}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="id" value="${r.id}"><select name="state" aria-label="Close as">${DISPUTE_CLOSE_STATES.map((st) => html`<option value="${st}"${st === "rejected" ? html` selected` : ""}>${st}</option>`)}</select> <input name="reason" required minlength="3" maxlength="${DISPUTE_REASON_MAX}" placeholder="Short reason, e.g. not a dispute: no tool named" aria-label="Reason"> <button class="btn chamfer" type="submit">Close</button></form>`
         : ""}</td></tr>`,
     )}</tbody></table>`
   : html`<p>None open.</p>`}`;

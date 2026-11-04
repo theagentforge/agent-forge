@@ -40,6 +40,18 @@ export async function installIdHash(secret: string, id: string): Promise<string>
   return hex(await crypto.subtle.sign("HMAC", key, enc.encode(id))).slice(0, 32);
 }
 
+/**
+ * ADR 0124: "house" when the request's install ID is one of ours (HOUSE_INSTALL_IDS), null otherwise. The check is then
+ * counted like our other tagged traffic: internal:house:checks, no tool-check count, its install-ID row marked ours.
+ * Like the X-Forge-Internal tag, it only ever leaves traffic out of the counts.
+ */
+export function houseInstall(env: Pick<Env, "HOUSE_INSTALL_IDS">, rawId: string | undefined): InternalComponent | null {
+  const id = (rawId ?? "").trim().toLowerCase();
+  if (!isInstallId(id)) return null;
+  const ours = (env.HOUSE_INSTALL_IDS ?? "").split(",").map((s) => s.trim().toLowerCase());
+  return ours.includes(id) ? "house" : null;
+}
+
 /** Records one install-time check's install ID (first and last day). Ignores anything that isn't a UUID v4. Never throws. */
 export async function recordInstallId(env: Env, rawId: string | undefined, userAgent: string | undefined, internal: InternalComponent | null, now = Date.now()) {
   try {

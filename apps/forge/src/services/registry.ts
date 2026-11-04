@@ -32,6 +32,26 @@ export async function lookupFingerprint(env: Pick<Env, "KV">, id: string, versio
   return r;
 }
 
+/** How long a package's "latest" answer is kept: short, since a release moves it (ADR 0123). */
+export const LATEST_CACHE_SECONDS = 3600;
+
+/**
+ * ADR 0123: the latest published version (and its fingerprint) of an npm: or pypi: package, for a check that names no
+ * version, so its advisories can be read for the version an install would get today. Kept in KV for an hour; null
+ * when the registry can't be read or has no such package. Never throws.
+ */
+export async function latestRelease(env: Pick<Env, "KV">, id: string): Promise<{ version: string; fingerprint: string } | null> {
+  if (!registryId(id)) return null;
+  const key = `reglatest:${canonicalToolId(id)}`;
+  try {
+    const hit = await env.KV.get<{ version: string; fingerprint: string }>(key, "json");
+    if (hit) return hit;
+  } catch {}
+  const r = await lookupFingerprint(env, id, undefined);
+  if (r) await env.KV.put(key, JSON.stringify(r), { expirationTtl: LATEST_CACHE_SECONDS }).catch(() => {});
+  return r;
+}
+
 /**
  * A report body with the fingerprint filled in from the registry, when the id is npm: or pypi:, a version is given and
  * the fingerprint isn't. Anything else is returned as it came, for the schema to judge.

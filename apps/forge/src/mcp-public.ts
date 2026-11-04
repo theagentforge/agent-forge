@@ -3,11 +3,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from "./arena/gauntlet";
-import { trapModels, trapsData } from "./arena/traps";
+import { defaultTrapsFilter, trapModels, trapsData } from "./arena/traps";
 import { agentView, fetchSkillText, SCAN_HOSTS, scanAndRecord, watchStatus } from "./services/scans";
 import { bump, scanCounters, watchCounters } from "./services/usage";
 import { SCAN_MAX_BYTES } from "@forge/shared";
-import { ALL_TASKS, arenaResults } from "./arena/results";
+import { ALL_TASKS, arenaResults, defaultResultsFilter } from "./arena/results";
 import { publicEvent, rankedEvents } from "./arena/views";
 import { getDb } from "./services/db";
 import { recordToolCheck } from "./services/feedback";
@@ -66,13 +66,13 @@ const tierEnum = z.enum(["normal", "hard"]);
 export const trapsInput = z.object({
   task: taskEnum.optional().describe("One Arena task; all tasks of the tier if omitted"),
   model: z.string().max(64).optional().describe("One model id; all models if omitted"),
-  tier: tierEnum.optional().describe("normal (default) or hard; a task id sets its own tier"),
+  tier: tierEnum.optional().describe("normal or hard (normal when only a model is given); a task id sets its own tier; no arguments at all gives the latest ranked Hard event"),
 });
 
 export const resultsInput = z.object({
   task: taskEnum.optional().describe("One Arena task; all tasks if omitted"),
-  tier: tierEnum.optional().describe("normal (default) or hard; with an event and no tier, every tier of that event; a task id sets its own tier"),
-  event: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/).optional().describe("An event slug, e.g. crucible-2-hard; ranked results across events if omitted"),
+  tier: tierEnum.optional().describe("normal or hard; with an event and no tier, every tier of that event; a task id sets its own tier; no arguments at all gives the latest ranked Hard event"),
+  event: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/).optional().describe("An event slug, e.g. crucible-2-hard; with a task or tier and no event, ranked results across events"),
 });
 
 export const scanInput = z.object({
@@ -134,7 +134,7 @@ export const PUBLIC_TOOLS = {
   forge_traps: {
     title: "Arena trap data",
     description:
-      "Use this when the question is how often AI models fell for each planted trap in everyday jobs (fake invoices, refunds over policy, duplicate orders). Give an optional task id, model id or tier (normal, the default, or hard). Returns per trap: public trap id, attempts, falls and fall rate (falls divided by attempts), with the data date and trap card version. Pass rates per model and job: arena_results.",
+      "Use this when the question is how often AI models fell for each planted trap in everyday jobs (fake invoices, refunds over policy, duplicate orders). Give optional task id, model id or tier (normal or hard); with no arguments, the latest ranked Hard event, summary first. Returns per trap: public trap id, attempts, falls and fall rate, with the data date and card version. Pass rates per model and job: arena_results.",
   },
   forge_scan: {
     title: "Scan a skill before installing it",
@@ -149,7 +149,7 @@ export const PUBLIC_TOOLS = {
   arena_results: {
     title: "Arena results by task",
     description:
-      "Use this when comparing AI models on an everyday job such as paying invoices, refunds, travel or restocking. Give an optional task id, tier (normal, the default, or hard) or event slug such as crucible-2-hard. Returns per job and model: attempts, passes, pass rate with a 95% interval, 3-of-3 consistency, trap ids fallen for, knockouts, cost per pass and replays. Per-trap fall rates: forge_traps.",
+      "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Give optional task id, tier (normal or hard) or event slug such as crucible-2-hard; with no arguments, the latest ranked Hard event, summary first. Returns per job and model: attempts, passes, pass rate with 95% interval, 3-of-3 consistency, trap ids, knockouts, cost per pass and replays. Per-trap fall rates: forge_traps.",
   },
 } as const;
 
@@ -285,8 +285,8 @@ const arenaInputNeeded = (tool: "forge_traps" | "arena_results", detail: string 
     error: "invalid_input",
     needed:
       tool === "forge_traps"
-        ? "Optional task (an Arena task id), model (a model id) and tier (normal or hard); none gives the Normal card."
-        : "Optional task (an Arena task id), tier (normal or hard) and event (a ranked event slug); none gives the Normal headline.",
+        ? "Optional task (an Arena task id), model (a model id) and tier (normal or hard); none gives the latest ranked Hard event."
+        : "Optional task (an Arena task id), tier (normal or hard) and event (a ranked event slug); none gives the latest ranked Hard event.",
     detail,
     examples: [{}, { task: TASK_IDS[0] }, { tier: "hard" }],
     extra: { tasks: TASK_IDS, tiers: ["normal", "hard"] },
@@ -417,7 +417,9 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       const lim = await limited("arena");
       if (lim) return json(lim, true);
       const db = getDb(env);
-      const data = await trapsData(db, { task, model, tier });
+      // ADR 0123: no arguments at all answers with the latest ranked Hard event, summary first.
+      const none = task === undefined && model === undefined && tier === undefined;
+      const data = await trapsData(db, none ? await defaultTrapsFilter(env, db) : { task, model, tier }, env.PUBLIC_ORIGIN);
       // A model with no runs where others have some: the model ids with data, rather than a page of zeros.
       if (model && data.data_kind === "none") {
         const models = await trapModels(db, data.tier);
@@ -479,7 +481,9 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
           true,
         );
       }
-      return json(await resultsAnswer(env, await arenaResults(db, { task, tier, event: ev }, env.PUBLIC_ORIGIN), { task }));
+      // ADR 0123: no arguments at all answers with the latest ranked Hard event, summary first.
+      const filter = task === undefined && tier === undefined && event === undefined ? await defaultResultsFilter(env, db) : { task, tier, event: ev };
+      return json(await resultsAnswer(env, await arenaResults(db, filter, env.PUBLIC_ORIGIN), { task }));
     },
   );
 

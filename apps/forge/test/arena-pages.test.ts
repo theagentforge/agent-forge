@@ -95,16 +95,19 @@ describe("home page Arena hero (ADR 0016)", () => {
   it("counts click-ins from the home page (daily total only)", async () => {
     const { growthStats } = await import("../src/services/growth");
     const before = (await growthStats(env)).home_clickins_7d;
-    await fetchWorker("/best?from=home", { headers: { Accept: "text/html" } });
-    await fetchWorker("/arena/call-it?from=home", { headers: { Accept: "text/html" } });
-    await fetchWorker("/best", { headers: { Accept: "text/html" } });
-    await fetchWorker("/methodology?from=home", { headers: { Accept: "text/html" } });
+    // ADR 0124: a person's browser; bots aren't counted.
+    const headers = { Accept: "text/html", "User-Agent": "Mozilla/5.0 (Macintosh) Safari/605", "Sec-Fetch-Mode": "navigate" };
+    await fetchWorker("/best?from=home", { headers });
+    await fetchWorker("/arena/call-it?from=home", { headers });
+    await fetchWorker("/best", { headers });
+    await fetchWorker("/methodology?from=home", { headers });
+    await fetchWorker("/best?from=home", { headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0 (compatible; AhrefsBot/7.0)" } });
     expect((await growthStats(env)).home_clickins_7d).toBe(before + 2);
     // W2.1: the hero's own tags count too, the primary call to action (/gauntlet) included; other tags don't.
-    await fetchWorker("/gauntlet?from=home-hero", { headers: { Accept: "text/html" } });
-    await fetchWorker("/connect?from=home-hero", { headers: { Accept: "text/html" } });
-    await fetchWorker("/gauntlet?from=head", { headers: { Accept: "text/html" } });
-    await fetchWorker("/gauntlet?from=homepage", { headers: { Accept: "text/html" } });
+    await fetchWorker("/gauntlet?from=home-hero", { headers });
+    await fetchWorker("/connect?from=home-hero", { headers });
+    await fetchWorker("/gauntlet?from=head", { headers });
+    await fetchWorker("/gauntlet?from=homepage", { headers });
     expect((await growthStats(env)).home_clickins_7d).toBe(before + 4);
   });
 });

@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { protectedApi, publicApi } from "./api";
 import { auth } from "./auth";
 import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
+import { acceptingBoth, asPlainJson, wantsJsonOnly } from "./mcp-json";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { type InternalComponent, internalOf } from "./services/internal";
 import { identifyKey } from "./services/api-keys";
@@ -375,14 +376,14 @@ export default {
     }
     // Clients that send no Accept, or */*, on an MCP POST were refused with 406 (24 Oct check); the answer is the same
     // JSON-RPC either way, so they get the pair the MCP handler expects.
+    // ADR 0123: a client that accepts JSON but not event streams gets one plain JSON body (`plainJson` below).
+    let jsonOnly = false;
     if (request.method === "POST" && (url.pathname === PUBLIC_MCP_ROUTE || url.pathname === GAUNTLET_MCP_ROUTE)) {
       const accept = request.headers.get("accept") ?? "";
-      if (!accept.trim() || accept.trim() === "*/*") {
-        const headers = new Headers(request.headers);
-        headers.set("Accept", "application/json, text/event-stream");
-        request = new Request(request, { headers });
-      }
+      jsonOnly = wantsJsonOnly(accept);
+      if (!accept.trim() || accept.trim() === "*/*" || jsonOnly) request = acceptingBoth(request);
     }
+    const plainJson = (res: Promise<Response>) => (jsonOnly ? res.then(asPlainJson) : res);
     const path = url.pathname;
     // Usage counts (services/usage.ts): read from a copy of the body, counted only when the endpoint accepted it.
     const counted = (endpoint: McpEndpoint, res: Response | Promise<Response>, copy: Request | null, internal: InternalComponent | null = null) =>
@@ -415,13 +416,13 @@ export default {
       return identifyKey(env, request.headers).then((id) => {
         if (id.kind === "refused") return new Response(JSON.stringify(id.body), { status: id.status, headers: { "Content-Type": "application/json", ...id.headers } });
         const keyed = id.kind === "key" ? { key: id.key, ctx } : null;
-        return internalOf(request).then((internal) => counted("public", publicMcpHandler(env, ip, internal, keyed)(request, env, ctx), copy, internal));
+        return internalOf(request).then((internal) => plainJson(counted("public", publicMcpHandler(env, ip, internal, keyed)(request, env, ctx), copy, internal)));
       });
     }
     if (path === GAUNTLET_MCP_ROUTE || path.startsWith(`${GAUNTLET_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return internalOf(request).then((internal) => counted("gauntlet", gauntletMcpHandler(env, ip, internal)(request, env, ctx), copy, internal));
+      return internalOf(request).then((internal) => plainJson(counted("gauntlet", gauntletMcpHandler(env, ip, internal)(request, env, ctx), copy, internal)));
     }
     let provider = providers.get(env.PUBLIC_ORIGIN);
     if (!provider) {

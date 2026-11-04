@@ -17,8 +17,9 @@ import { ALL_MODELS, type ArenaModel } from "./lineup";
  * all-time `usage` and takes it from this figure. 29 Oct: OpenRouter's Credits page lists $145 of credit bought (30 + 35 + 50
  * + 10 + 5 + 15; purchase fees are charged on top, not taken out) and $11.20 available with $133.80 used, which matches
  * 145 - 133.80. The old figure (132) made the guard read about -$1.68 and show a false "paused" note.
+ * 4 Nov: Dinike topped up $15 for Forge Lab #5 ("topped up"), so 160.
  */
-export const OPENROUTER_CREDIT_PURCHASED_USD = 145;
+export const OPENROUTER_CREDIT_PURCHASED_USD = 160;
 /** The cached reading of OpenRouter's key API. Read at most once an hour. */
 export const CREDIT_KV = "arena:or-credit";
 export const CREDIT_REFRESH_MS = 3_600_000;

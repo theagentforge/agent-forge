@@ -14,6 +14,8 @@ import { connectAgent, fetchWorker, profile } from "./helpers";
 import { AGENT_DIRECTED } from "./wording";
 import "../src/index";
 
+/** A person's browser (ADR 0124: page counters skip bots, scripts and browsers without Sec-Fetch headers). */
+const BROWSER = { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) Safari/605.1.15", "Sec-Fetch-Mode": "navigate" };
 /** OA-08 (ADR 0078): a claim that first makes someone an owner goes by /welcome?next=<claim page>; read through it. */
 const unwelcome = (loc: string | null) => (loc?.startsWith("/welcome?next=") ? decodeURIComponent(loc.slice("/welcome?next=".length)) : loc);
 
@@ -48,7 +50,7 @@ const json = async (path: string) => (await fetchWorker(path, { headers: { Accep
 async function webOwner(over = {}) {
   const human = await upsertHuman(getDb(env), profile(over), Date.now());
   const cookie = `${SESSION_COOKIE}=${await newSession(env.SESSION_SECRET, human.id)}`;
-  const get = (path: string) => fetchWorker(path, { headers: { Cookie: cookie, Accept: "text/html" } });
+  const get = (path: string) => fetchWorker(path, { headers: { Cookie: cookie, Accept: "text/html", ...BROWSER } });
   const csrfFor = async (path: string) => /name="csrf" value="([^"]+)"/.exec(await (await get(path)).text())?.[1] ?? "";
   const post = async (path: string, fields: Record<string, string>, csrfPage = "/dashboard") =>
     fetchWorker(path, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ csrf: await csrfFor(csrfPage), ...fields }), redirect: "manual" });
@@ -83,7 +85,7 @@ describe("claim links at the end of a run (ADR 0055)", () => {
 describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
   it("signed out: shows the run, both notices and sign-in links that come back here; never the key", async () => {
     const { id, key } = await finishedRun();
-    const res = await fetchWorker(`/gauntlet/claim?run=${id}`, { headers: { Accept: "text/html" } });
+    const res = await fetchWorker(`/gauntlet/claim?run=${id}`, { headers: { Accept: "text/html", ...BROWSER } });
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const html = await res.text();
     expect(html).toContain(`data-claim-run="${id}"`);
@@ -163,7 +165,7 @@ describe("the claim page: one GitHub sign-in (ADR 0055)", () => {
   });
 
   it("from a check (CLI, plugin, Action): a profile page with one sign-in link and the two ways to fill it", async () => {
-    const html = await (await fetchWorker("/gauntlet/claim?from=cli", { headers: { Accept: "text/html" } })).text();
+    const html = await (await fetchWorker("/gauntlet/claim?from=cli", { headers: { Accept: "text/html", ...BROWSER } })).text();
     expect(html).toContain("Claim your agent&#39;s profile");
     expect(html).toContain(`/auth/login?next=${encodeURIComponent("/gauntlet/claim?from=cli&back=1")}`);
     expect(html).toContain("/connect");
@@ -205,7 +207,7 @@ describe("Gauntlet Season 1 (ADR 0055)", () => {
     const badges = (await json(`/a/${aAgent!.handle}`)).season;
     expect(badges.badges.map((x: any) => x.id)).toEqual(["season-1-entrant", "season-1-rank", "season-1-clean-sweep"]);
     // The page: rules in plain English, the board, "Take this challenge" links, no prizes.
-    const html = await (await fetchWorker(SEASON_1.path, { headers: { Accept: "text/html" } })).text();
+    const html = await (await fetchWorker(SEASON_1.path, { headers: { Accept: "text/html", ...BROWSER } })).text();
     expect(html).toContain("The rules, in plain English");
     expect(html).toContain(`/gauntlet/challenge/${a2}`);
     expect(html).toContain("No prizes and no money");
@@ -274,7 +276,7 @@ describe("review fixes (ADR 0055)", () => {
     const stored = JSON.stringify([b!.calls, b!.log, b!.result]);
     expect(stored).not.toContain(key);
     expect(stored).toContain("gck_[redacted]");
-    const replay = await (await fetchWorker(`/gauntlet/r/${start.gauntlet_id}/1`, { headers: { Accept: "text/html" } })).text();
+    const replay = await (await fetchWorker(`/gauntlet/r/${start.gauntlet_id}/1`, { headers: { Accept: "text/html", ...BROWSER } })).text();
     expect(replay).not.toContain(key);
     // The key still claims the run (only the copies in the log are blanked).
     await finish(start.gauntlet_id, ip);
@@ -290,11 +292,11 @@ describe("review fixes (ADR 0055)", () => {
       return rows.reduce((n, r) => n + r.n, 0);
     };
     const before = await read();
-    const page = await (await fetchWorker("/gauntlet/claim?from=action", { headers: { Accept: "text/html" } })).text();
+    const page = await (await fetchWorker("/gauntlet/claim?from=action", { headers: { Accept: "text/html", ...BROWSER } })).text();
     await vi.waitFor(async () => expect(await read()).toBe(before + 1));
     const next = decodeURIComponent(/\/auth\/login\?next=([^"]+)"/.exec(page)![1]!.replace(/&amp;/g, "&"));
     expect(next).toBe("/gauntlet/claim?from=action&back=1");
-    await fetchWorker(next, { headers: { Accept: "text/html" } });
+    await fetchWorker(next, { headers: { Accept: "text/html", ...BROWSER } });
     await new Promise((r) => setTimeout(r, 50));
     expect(await read()).toBe(before + 1);
   });

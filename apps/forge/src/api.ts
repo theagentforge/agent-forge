@@ -26,7 +26,8 @@ import { connectTestSeen } from "./services/connect-test";
 import { storeRun, storeSweep } from "./services/house-report";
 import { storeToolLists } from "./services/house-tools";
 import { checkKind, recordCheck } from "./services/proof";
-import { INSTALL_ID_HEADER, recordInstallId } from "./services/install-ids";
+import { houseInstall, INSTALL_ID_HEADER, recordInstallId } from "./services/install-ids";
+import { isLikelyBot } from "./services/bots";
 import { installClient, installCounters, isSkillScanOutcome, parseAnswer, recordInstallCheck, SKILL_SCAN_OUTCOMES } from "./services/install-metrics";
 import { internalCaller, internalKey, internalOf } from "./services/internal";
 import type { AgentProps } from "./services/props";
@@ -63,10 +64,14 @@ publicApi.get("/api/v1/check", async (c) => {
 
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
   // Counted before the cache, so cached answers still count toward "checks from distinct sources" (§7.5). Our own
-  // probes (services/internal.ts) are counted apart; the tag changes nothing else (same limits, same answer).
-  const internal = internalCaller(c.req.raw.headers);
-  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal }));
-  c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent"), internal, channel: "api" }));
+  // probes (services/internal.ts) and our own install IDs (HOUSE_INSTALL_IDS) are counted apart; the tag changes nothing
+  // else (same limits, same answer). ADR 0124: crawlers and fake browsers (services/bots.ts, the agents' rule: scripts
+  // and agent clients still count) get the same answer but add no check source and no tool check.
+  const internal = internalCaller(c.req.raw.headers) ?? houseInstall(c.env, c.req.header(INSTALL_ID_HEADER));
+  if (!isLikelyBot(c.req.raw, "api")) {
+    c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal }));
+    c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent"), internal, channel: "api" }));
+  }
 
   const cache = caches.default;
   const cacheKey = new Request(url.toString(), { method: "GET" });

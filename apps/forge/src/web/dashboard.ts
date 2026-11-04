@@ -112,7 +112,7 @@ site.get("/auth/login", async (c) => {
   const state = `${WEB_STATE_PREFIX}${crypto.randomUUID()}`;
   const next = safeNext(c.req.query("next"));
   // The owner funnel (conversion review, 26 Oct): a GitHub sign-in started from the Gauntlet claim page. Daily count only.
-  if (fromClaim(next) && likelyPerson(c.req.raw.headers)) c.executionCtx.waitUntil(bump(c.env, ["owner:signin_start"]).catch(() => {}));
+  if (fromClaim(next) && likelyPerson(c.req.raw)) c.executionCtx.waitUntil(bump(c.env, ["owner:signin_start"]).catch(() => {}));
   // ADR 0073 (OA-01): the fixed `from` tag of this sign-in (its own, or the one in the page it returns to), first touch.
   const from = signInFrom(c.req.query("from"), next) ?? undefined;
   const login = await sign(c.env.SESSION_SECRET, { state, verifier, next, from, exp: Math.floor(Date.now() / 1000) + 600 });

@@ -75,16 +75,16 @@ describe("where visitors come from (daily totals only)", () => {
     expect(sourceLabel("https://www.google.com/", origin)).toBe("search");
     expect(sourceLabel("https://theagentforge.io/arena", origin)).toBe("internal");
     expect(sourceLabel("https://someblog.example/post", origin)).toBe("other");
-    expect(visitCounters(req(`${origin}/arena?from=X-Launch!`, { referer: "https://t.co/x", "user-agent": "Mozilla/5.0" }), origin)).toEqual(["visit:all", "visit:arrivals", "visit:src:x", "visit:tag:x-launch"]);
-    expect(visitCounters(req(`${origin}/connect`, { "user-agent": "Mozilla/5.0", referer: `${origin}/` }), origin)).toEqual(["visit:all", "visit:connect"]);
+    expect(visitCounters(req(`${origin}/arena?from=X-Launch!`, { referer: "https://t.co/x", "user-agent": "Mozilla/5.0", "sec-fetch-mode": "navigate" }), origin)).toEqual(["visit:all", "visit:arrivals", "visit:src:x", "visit:tag:x-launch"]);
+    expect(visitCounters(req(`${origin}/connect`, { "user-agent": "Mozilla/5.0", "sec-fetch-mode": "navigate", referer: `${origin}/` }), origin)).toEqual(["visit:all", "visit:connect"]);
   });
   it("doesn't count bots, link previews or moving between our own pages", () => {
     expect(visitCounters(req(`${origin}/`, { "user-agent": "Twitterbot/1.0" }), origin)).toEqual(["visit:all", "visit:crawler"]);
-    expect(visitCounters(req(`${origin}/`, { "user-agent": "Mozilla/5.0", referer: `${origin}/arena` }), origin)).toEqual(["visit:all"]);
+    expect(visitCounters(req(`${origin}/`, { "user-agent": "Mozilla/5.0", "sec-fetch-mode": "navigate", referer: `${origin}/arena` }), origin)).toEqual(["visit:all"]);
     expect(visitCounters({ ...req(`${origin}/`), method: "POST" }, origin)).toEqual([]);
   });
   it("a page view is counted (cached or not) and shows in /api/v1/growth", async () => {
-    const headers = { "user-agent": "Mozilla/5.0", referer: "https://news.ycombinator.com/" };
+    const headers = { "user-agent": "Mozilla/5.0", "sec-fetch-mode": "navigate", referer: "https://news.ycombinator.com/" };
     await fetchWorker("/about?from=hn-launch", { headers });
     await fetchWorker("/about?from=hn-launch", { headers });
     await fetchWorker("/about", { headers: { "user-agent": "Mozilla/5.0 (compatible; GoogleOther)" } });

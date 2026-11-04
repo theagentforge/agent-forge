@@ -7,7 +7,7 @@ import { getDb } from "../services/db";
 import { findTool } from "../services/forge";
 import { cardVersion, toolCardFields } from "./og-data";
 import { agentDetail } from "./queries";
-import { PAGE_CACHE_SECONDS, site } from "./pages";
+import { LONG_EDGE_CACHE, PAGE_CACHE_SECONDS, site } from "./pages";
 import { homeHero } from "../arena/hero-proof";
 import { parseWeights, rankModels, summaryLines, taskById, TRAP_FAMILIES, type AttemptResult, type Duel } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
@@ -119,7 +119,11 @@ function loadFonts(env: Env) {
   return fonts;
 }
 
-/** Content-addressed cards are immutable; the page links to the current version with ?v=<hash>. */
+/**
+ * Content-addressed cards are immutable; the page links to the current version with ?v=<hash>. Other cards are kept a
+ * day by browsers and a week at the edge (LONG_EDGE_CACHE, ADR 0124): the site middleware stores each in
+ * caches.default, so a repeat fetch is never drawn again.
+ */
 async function respond(c: Ctx, node: Node, size: { width: number; height: number } = { width: 1200, height: 630 }) {
   // Cost guard (ADR 0027): in lean mode, no new drawing; the site-wide card is a static file.
   if (await isLean(c.env)) return c.redirect("/og/site.png", 302);
@@ -127,7 +131,7 @@ async function respond(c: Ctx, node: Node, size: { width: number; height: number
   const res = await ImageResponse.async(node as never, { width: size.width, height: size.height, fonts: loadFonts(c.env) });
   const headers = new Headers(res.headers);
   headers.set("Content-Type", "image/png");
-  headers.set("Cache-Control", c.req.query("v") ? "public, max-age=31536000, immutable" : "public, max-age=3600");
+  headers.set("Cache-Control", c.req.query("v") ? "public, max-age=31536000, immutable" : LONG_EDGE_CACHE);
   headers.set("X-Content-Type-Options", "nosniff");
   return new Response(res.body, { status: 200, headers });
 }

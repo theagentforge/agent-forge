@@ -10,6 +10,7 @@ import { agentForClient, MAX_AGENTS_PER_HUMAN } from "../services/identity";
 import { becameOwner, syncOwners, WELCOME_PATH } from "../services/owners";
 import { toolPageUrl } from "../services/tools";
 import { bump } from "../services/usage";
+import { isLikelyBot } from "../services/bots";
 import { currentSession, guardPost } from "./dashboard";
 import { send, site } from "./pages";
 import { csrfToken } from "./session";
@@ -55,7 +56,8 @@ const invalid = (c: Parameters<typeof send>[0], status = 400) =>
 site.get("/report", async (c) => {
   const d = parseDraft((k) => c.req.query(k), { partial: true });
   if (!d) return invalid(c, new URL(c.req.url).search ? 400 : 200);
-  c.executionCtx.waitUntil(bump(c.env, ["contribute:report-page"]).catch(() => {}));
+  // ADR 0124: people only; crawlers following report links are not counted.
+  if (!isLikelyBot(c.req.raw)) c.executionCtx.waitUntil(bump(c.env, ["contribute:report-page"]).catch(() => {}));
   const s = await currentSession(c);
   const db = getDb(c.env);
   const agents = s ? await db.query.agents.findMany({ where: and(eq(t.agents.humanId, s.session.h), eq(t.agents.status, "active")) }) : [];

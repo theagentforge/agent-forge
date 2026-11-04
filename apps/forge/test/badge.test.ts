@@ -64,9 +64,12 @@ describe("README badge", () => {
   it("counts badge embeds (served badges only) and click-ins tagged from=badge", async () => {
     const { badgeStats } = await import("../src/services/growth");
     const before = await badgeStats(env);
-    await fetchWorker("/badge/npm%3Abadge-me.svg", { headers: { Referer: "https://github.com/acme/tool" } });
-    await fetchWorker("/badge/npm%3Anever-reported.svg");
-    await fetchWorker("/t/npm%3Abadge-me?from=badge", { headers: { Accept: "text/html", Referer: "https://github.com/acme/tool", "User-Agent": "Mozilla/5.0" } });
+    // GitHub's image proxy fetches README badges (ADR 0124: a crawler's fetch isn't counted).
+    const camo = { "User-Agent": "github-camo (876de43e)" };
+    await fetchWorker("/badge/npm%3Abadge-me.svg", { headers: { ...camo, Referer: "https://github.com/acme/tool" } });
+    await fetchWorker("/badge/npm%3Abadge-me.svg", { headers: { "User-Agent": "Mozilla/5.0 (compatible; AhrefsBot/7.0)" } });
+    await fetchWorker("/badge/npm%3Anever-reported.svg", { headers: camo });
+    await fetchWorker("/t/npm%3Abadge-me?from=badge", { headers: { Accept: "text/html", Referer: "https://github.com/acme/tool", "User-Agent": "Mozilla/5.0", "Sec-Fetch-Mode": "navigate" } });
     await new Promise((r) => setTimeout(r, 100));
     const after = await badgeStats(env);
     expect(after.serves - before.serves).toBe(1);
