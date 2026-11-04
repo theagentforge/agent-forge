@@ -4,7 +4,6 @@ import { datasetRow, finishedRuns } from "../arena/views";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { DATASET_LICENCE, datasetWithProvenance, LICENCE_ID, LICENCE_PATH, provenance } from "./provenance";
-import { heldScan } from "./skill-seed";
 
 // AQ-03 (acquisition audit, 28 Oct; ADR 0095): the pseudonymised bulk export a buyer takes delivery of. JSONL and CSV
 // of the public Arena runs, readable field reports and public skill scans, with a SHA-256 per file, a manifest and a
@@ -13,7 +12,7 @@ import { heldScan } from "./skill-seed";
 //   handle or email is exported, emails are removed from free text, and members' GitHub logins are removed from what
 //   members write (report notes and issues). Tool ids and scan source links stay: they name public tools and repositories, not members.
 // - Never in it: embargoed models, private job families, held-out seeds, lab arms, held events (all left out by the
-//   same filter as /arena/dataset.json), held scans (the launch-scan hold), held or rejected reports.
+//   same filter as /arena/dataset.json), unlisted scans, held or rejected reports.
 // - Stored in Workers KV (already bound, no new cost; R2 isn't bound and enabling it is a billing decision): written
 //   once a week by the hourly cron and on demand from /admin/data-room. Files expire after EXPORT_TTL_DAYS.
 
@@ -199,13 +198,12 @@ export async function exportRows(env: Env, now = Date.now(), runPage = RUN_PAGE)
       provenance: provenance("field_report", r.createdAt),
     });
 
-  // Scans: public rows only, and never a held one (the launch-scan hold), read in pages.
+  // Scans: public rows only, read in pages.
   const scans: Record<string, unknown>[] = [];
   let after = "";
   for (;;) {
     const page = await db.select().from(t.skillScans).where(and(eq(t.skillScans.public, true), gt(t.skillScans.fingerprint, after))).orderBy(t.skillScans.fingerprint).limit(1000);
     for (const s of page) {
-      if (heldScan(s.fingerprint, s.sourceUrl, now)) continue;
       scans.push({
         fingerprint: s.fingerprint,
         name: s.name === null ? null : noEmail.text(s.name),
@@ -233,7 +231,7 @@ export const EXCLUDED = [
   "GitHub logins, agent handles and emails (people and report ids are salted pseudonyms; emails, members' logins and agent handles removed from free text)",
   "Report notes not approved by moderation (pending or unmoderated notes are never public, so never exported)",
   "Runs of embargoed models, private job families, held-out seeds, lab arms and held events (the /arena/dataset.json filter)",
-  "Held scans (the launch-scan disclosure hold) and unlisted scans",
+  "Unlisted scans (pasted text, and bulk-scan files that matched a pattern)",
   "Held and rejected field reports",
   "Run logs (each run row links its public signed log)",
 ];

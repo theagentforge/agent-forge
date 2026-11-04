@@ -4,14 +4,13 @@ import * as t from "../db/schema";
 import { getDb } from "./db";
 import { internalKey } from "./internal";
 import { isLean } from "./ops-mode";
-import { heldScan } from "./skill-seed";
 import { bump } from "./usage";
 
 // B3-11, every skill scanned (ADR 0107; since ADR 0112 run by the Worker's own hourly cron, services/bulk-scan-cron.ts,
 // not GitHub Actions). Every public SKILL.md we can lawfully reach (ClawHub's public read API and public GitHub skill
 // repositories) is read as text, never run, and scanned here with the same rules as /scan.
 //
-// What gets a page: only files with no matched pattern (and not held). A file that matched a pattern is counted in the
+// What gets a page: only files with no matched pattern. A file that matched a pattern is counted in the
 // totals and in the rates, but stays unlisted: no page, no Skill Watch entry, no OSV record, no notice. A person
 // decides what happens next, through the existing notice process (at most 3 new maintainer notices a week). Nothing
 // here ever says "malicious", and nothing is marked Confirmed malicious (Dinike only).
@@ -106,7 +105,6 @@ export async function ingestBatch(env: Env, body: unknown, now = Date.now()): Pr
     // Rules over text: the file is read, never run.
     const r = await scanSkill(text);
     if (rows.has(r.fingerprint)) continue;
-    const held = heldScan(r.fingerprint, url, now);
     rows.set(r.fingerprint, {
       fingerprint: r.fingerprint,
       name: cleanName(it.name),
@@ -116,7 +114,7 @@ export async function ingestBatch(env: Env, body: unknown, now = Date.now()): Pr
       counts: r.counts,
       rulesVersion: r.rules_version,
       bytes: r.bytes,
-      public: !held && r.verdict === "clear",
+      public: r.verdict === "clear",
       scans: 1,
       firstSeen: now,
       lastSeen: now,

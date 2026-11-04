@@ -28,7 +28,10 @@
     "ACCESS_MODE": "open",
     // ADR 0110: "off" | "keys" | "paid". keys = free API keys and /pricing with paid plans "coming soon"; paid = Polar
     // checkout links (only after Dinike's needs-dinike approval and his Polar account; docs/runbooks/pricing.md).
-    "PRICING_MODE": "keys"
+    "PRICING_MODE": "keys",
+    // ADR 0122: inbound business mail (hello@, partners@, press@, disputes@, ops@) is forwarded to each of these
+    // verified destinations. Not a secret. Not set for staging, so the email handler forwards nothing there.
+    "MAIL_FORWARD_TO": "owner-b@example.com,owner-a@example.org"
   },
   // Secrets (set in the Cloudflare dashboard, never in git): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REPORT_SIGNING_KEY.
   "d1_databases": [

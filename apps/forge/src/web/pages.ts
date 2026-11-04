@@ -59,6 +59,7 @@ import { badgeCounts, badgeFor, badgeMarkdown } from "./badge-core";
 import { EMPTY_BOARD, frontierHard, gullibilityBoard } from "../arena/board";
 import { clipUrlFor } from "../arena/clips";
 import { duelPlayer } from "./duel";
+import { launchScanHeadline } from "../reports/skill-scan-facts";
 import { DESCRIPTOR, HEAD_CTA, HOME_OG_TITLE, HOME_TITLE, renderPage, securityHeaders, type PageOptions } from "./layout";
 import { cardVersion, toolCardFields } from "./og-data";
 import { FIELD_REPORTS_BAND_LABEL, FIELD_REPORTS_BAND_NOTE, HOUSE_METHOD_PATH, TOOLS_TRACKED_BAND_NOTE, TOOLS_TRACKED_RULE_PATH, WORK_LABELS, WORK_RECENCY, type WorkTotals } from "../services/site-pulse";
@@ -73,7 +74,7 @@ import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts"
 
 type Ctx = Context<{ Bindings: Env }>;
 export const PAGE_CACHE_SECONDS = 60;
-const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
+export const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
 
 export const site = new Hono<{ Bindings: Env }>();
 
@@ -417,7 +418,7 @@ ${labBand(frontier)}
 <h2 id="home-check">Check before you install</h2>
 <p class="small muted">Paste a skill link, MCP server or package. Free, no account.</p>
 <form class="scan-quick hero-go" method="post" action="/go"><input type="hidden" name="from" value="home-box"><label class="sr-only" for="home-go">A skill link, MCP server or package</label><input id="home-go" name="q" type="text" autocomplete="off" spellcheck="false" placeholder="clawhub.ai/…, npm:… or pypi:…" maxlength="2048" required><button class="btn primary chamfer" type="submit">Check it</button></form>
-<p class="small">Launch scan, 19 Oct 2026: 30 of 9,014 ordinary public skills flagged (0.33%), mostly vendors' own installers; no malware found by this method. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>
+${launchScanHeadline() ? html`<p class="small">${launchScanHeadline()}, mostly vendors' own installers; no malware found by this method. <a href="/reports/skill-scan-2026-10?from=home">Read the report</a></p>` : ""}
 </section>
 ${wireHero(posts, now)}
 </section>

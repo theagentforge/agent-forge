@@ -129,9 +129,11 @@ describe("the launch scan dataset (ADR 0026)", () => {
     // (2026-10-23.1 adds FS-IMP-001, publisher look-alikes) apply to new scans, and forge_watch marks older ones for a rescan.
     expect(file.meta.rules_version).toBe("2026-10-19.3");
     expect(SCAN_RULES_VERSION).not.toBe("");
-    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
-    // The public mirror ships an empty held file until 2 Nov.
-    expect(file.rows.length + (held.rows.length || file.meta.held)).toBe(file.meta.files);
+    // Every file scanned is in it since the disclosure window ended (2 Nov 2026), and the held fields are gone.
+    expect(file.rows.length).toBe(file.meta.files);
+    expect(file.meta.files).toBe(9930);
+    expect(new Set(file.rows.map((r: any) => r[2])).size).toBe(file.rows.length);
+    for (const k of ["held", "held_until", "held_why"]) expect(file.meta[k], k).toBeUndefined();
     const first = await importSkillSeed(env, 20);
     expect(first).toMatchObject({ loaded: 20, next: 20 });
     const again = await importSkillSeed(env, 20);
@@ -155,37 +157,56 @@ describe("the Privacy Policy covers scans and Gauntlet runs (issue #108, approve
   });
 });
 
-describe("disclosure for the launch scan (report v1.1)", () => {
-  it("holds flagged and caution results back from the dataset and the site, except the four named vendors", async () => {
-    const { seedRow, NAMED_AT_LAUNCH } = await import("../src/services/skill-seed");
-    const file = (await (await env.ASSETS.fetch(new Request("https://assets.local/data/skill-scan-2026-10-19.json"))).json()) as any;
-    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
-    let vendor = 0;
-    for (const r of file.rows) {
-      const row = seedRow(file, r);
-      expect(row.public).toBe(true);
-      if (row.verdict !== "clear") { expect(NAMED_AT_LAUNCH.has(file.repos[r[0]][0])).toBe(true); vendor++; }
-    }
-    expect(vendor).toBeGreaterThan(0);
-    for (const r of held.rows) expect(seedRow(held, r).public).toBe(false);
-    expect(file.meta.held_until).toBe("2026-11-02");
+describe("disclosure for the launch scan (report v1.2, after the window ended on 2 Nov)", () => {
+  // The four vendors named at launch; every other flagged or caution file was held back until 2 Nov 2026.
+  const VENDORS = new Set(["google/skills", "NVIDIA/skills", "anthropics/claude-agent-sdk-python", "trailofbits/skills"]);
+  const dataset = async () => (await (await env.ASSETS.fetch(new Request("https://assets.local/data/skill-scan-2026-10-19.json"))).json()) as any;
+  const wasHeld = (file: any, r: any) => !VENDORS.has(file.repos[r[0]][0]) && (r[5] ?? []).some((f: any) => f[1] === "h" || f[1] === "m");
+
+  it("publishes every result, the 241 once held included, and the report names and links each flagged file", async () => {
+    const { seedRow } = await import("../src/services/skill-seed");
+    const file = await dataset();
+    for (const r of file.rows) expect(seedRow(file, r).public).toBe(true);
+    const held = file.rows.filter((r: any) => wasHeld(file, r));
+    expect(held.length).toBe(241);
+    expect(new Set(held.map((r: any) => file.repos[r[0]][0])).size).toBe(61);
     const report = await (await fetchWorker("/reports/skill-scan-2026-10", { headers: { Accept: "text/html" } })).text();
-    expect(report).toContain("What 9,930 public agent skills tell your agent to do");
+    expect(report).toContain("<h1 class=\"page-title\">What public agent skills tell your agent to do: launch scan, 19 Oct 2026</h1>");
+    expect(report).toContain("<title>What public agent skills tell your agent to do: launch scan, 19 Oct 2026");
+    expect(report).not.toContain("What 9,930");
+    // The table and the method keep both counts (Dinike, 1 Nov: only the title loses its number).
+    expect(report).toMatch(/<td>Files<\/td>\s*<td>9,014<\/td>\s*<td>916<\/td>/);
+    expect(report).toContain("9,930 unique SKILL.md files");
     expect(report).toContain("Conflict of interest");
-    // Repositories may be named as part of what we scanned, but no held file is linked or named.
-    for (const r of held.rows) {
-      expect(report).not.toContain(r[2]);
-      expect(report).not.toContain(`${held.repos[r[0]][0]}/${r[1]}`);
+    expect(report).toContain("Report version 1.2");
+    expect(report).not.toMatch(/Repository [A-Q]\b|unlisted until 2 Nov/);
+    // All 30 flagged ordinary files are named with their repository and linked to their result page.
+    const flagged = file.rows.filter((r: any) => r[4] === 0 && (r[5] ?? []).some((f: any) => f[1] === "h"));
+    expect(flagged.length).toBe(30);
+    for (const r of flagged) {
+      const at = report.indexOf(`/scan/${r[2]}`);
+      expect(at, r[1]).toBeGreaterThan(0);
+      const row = report.slice(report.lastIndexOf("<tr", at), report.indexOf("</tr>", at));
+      expect(row, r[1]).toContain(file.repos[r[0]][0]);
+      expect(row, r[1]).toContain(r[1]);
     }
+    // The maintainers' responses sit in the Hand review cell of their rows.
+    expect(report).toContain("https://github.com/aeonfun/aeon/pull/1286");
+    expect(report).toContain("https://github.com/squirrelscan/skills/pull/25");
+    expect(report).toContain("https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/482");
+    expect(report).toContain("https://github.com/Tencent/AI-Infra-Guard/issues/730");
   });
 
-  it("a held result has no public page even after it's loaded", async () => {
+  it("a result held until 2 Nov has its public page once it's loaded", async () => {
     const { importSkillSeed } = await import("../src/services/skill-seed");
-    const held = (await import("../src/seed/skill-scan-held.json")).default as any;
-    if (!held.rows.length) return;
+    const file = await dataset();
+    const r = file.rows.find((x: any) => wasHeld(file, x) && file.repos[x[0]][0] === "aeonfun/aeon");
+    expect(r).toBeTruthy();
     await importSkillSeed(env, 20_000);
-    expect((await fetchWorker(`/scan/${held.rows[0][2]}`, { headers: { Accept: "text/html" } })).status).toBe(404);
-    expect((await fetchWorker(`/api/v1/scan/${held.rows[0][2]}`)).status).toBe(404);
+    const page = await fetchWorker(`/scan/${r[2]}`, { headers: { Accept: "text/html" } });
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("aeonfun/aeon");
+    expect((await fetchWorker(`/api/v1/scan/${r[2]}`)).status).toBe(200);
   });
 });
 

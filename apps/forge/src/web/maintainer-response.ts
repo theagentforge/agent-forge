@@ -30,6 +30,13 @@ export function useResponsesFile(file: ResponsesFile | null) {
 }
 export const bundledResponses = () => responsesFile as unknown as ResponsesFile;
 
+/** Every response that may show at `now` (its public_from passed), in file order: the research release's table. */
+export const responsesShowing = (now = Date.now()) =>
+  source.entries.filter((e) => {
+    const from = Date.parse(e.public_from);
+    return Number.isFinite(from) && now >= from;
+  });
+
 /** The response for this scan, if one may show at `now`. */
 export function responseFor(scan: { fingerprint: string; public: boolean }, now = Date.now()): MaintainerResponse | null {
   if (!scan.public) return null;

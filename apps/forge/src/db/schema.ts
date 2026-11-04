@@ -1065,7 +1065,7 @@ export const claimChecks = sqliteTable(
     via: text("via").notNull(),
     httpStatus: integer("http_status"),
     responseSha256: text("response_sha256"),
-    /** SUPPORTED | CONTRADICTED | NOT_PRESENT | UNREACHABLE */
+    /** SUPPORTED | STALE | CONTRADICTED | NOT_PRESENT | UNREACHABLE (STALE added 30 Oct; text column, no migration) */
     verdict: text("verdict").notNull(),
     reason: text("reason").notNull(),
     quote: text("quote"),

@@ -9,14 +9,13 @@ import { asciiText, pdfDisplay } from "../src/reports/reliability-pdf";
 import { getDb } from "../src/services/db";
 import { signReport } from "../src/services/signing";
 import { currentEdition, FROZEN, liveSources, pdfFor } from "../src/web/reliability-report";
-import held from "../src/seed/skill-scan-held.json";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 import { EMBARGOED, SHOWS_EMBARGOED } from "./fixtures/embargoed";
 
 // W5.1 / AQ-11 (ADR 0079): The State of Agent Reliability, Edition 1. Every number on the page links to a public JSON
 // file and a pointer, and must equal the value there; the PDF carries the same numbers, the citation and the canary;
-// ranked and practice stay apart; nothing embargoed, private or held appears.
+// ranked and practice stay apart; nothing embargoed or private appears.
 
 let n = 0;
 const get = (path: string, accept = "text/html") => fetchWorker(`${path}${path.includes("?") ? "&" : "?"}n=rel${++n}`, { headers: { Accept: accept } });
@@ -220,14 +219,13 @@ describe("The State of Agent Reliability, Edition 1", () => {
     for (const s of parts) if (typeof s === "string") expect(s.replace(allowed, ""), s).not.toMatch(/\d/);
   });
 
-  it("shows nothing embargoed, private or held", async () => {
+  it("shows nothing embargoed or private", async () => {
     // The served surfaces, and (once frozen) what the builder makes of this seed, which holds an embargoed model's runs.
     const surfaces = [page, JSON.stringify(await json(EDITION.json)), asciiTextOf(await (await get(EDITION.pdf, "application/pdf")).arrayBuffer()), JSON.stringify(live), asciiTextOf(pdfFor(live, env.PUBLIC_ORIGIN).buffer)];
     for (const s of surfaces) {
       if (isEmbargoed(EMBARGOED.id)) expect(s).not.toMatch(SHOWS_EMBARGOED);
       expect(s).not.toMatch(/FA-[A-Z]+-1\d\d/);
       expect(s).not.toMatch(/held[-_ ]?out (seed|panel) [a-z0-9]/i);
-      for (const [repo] of (held as unknown as { repos: string[][] }).repos.slice(0, 50)) expect(s).not.toContain(repo);
     }
   });
 

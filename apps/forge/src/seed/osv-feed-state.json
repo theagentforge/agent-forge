@@ -1,1 +1,292 @@
-{"note": "Held back until 2 Nov 2026 while maintainers hear from us.", "held_until": "2026-11-02T00:00:00Z", "held_repos": [], "fixtures": [], "maintainers": {}}
+{
+ "note": "OSV feed state (ADR 0097). Public since 2 Nov 2026, when the launch scan's disclosure window ended. fixtures: launch-scan fingerprints marked \"security course, scanner test fixture or example\", never in the feed. held_repos: repositories whose launch-scan rows were held until held_until (records for them are dated from it). maintainers: the notice per repository, from docs/ops/notices-ledger.json. Maintainer fixes come from maintainer-responses.json.",
+ "held_until": "2026-11-02T00:00:00Z",
+ "held_repos": [
+  "acedatacloud/skills",
+  "aeonfun/aeon",
+  "agricidaniel/claude-seo",
+  "alinaqi/maggy",
+  "amirkiarafiei/subagent-cli-skills",
+  "asklokesh/claudeskill-loki-mode",
+  "awrshift/claude-memory-kit",
+  "behisecc/vibesec-skill",
+  "brianrwagner/ai-marketing-claude-code-skills",
+  "browser-act/skills",
+  "chrono-meta/forge-harness",
+  "composiohq/awesome-claude-skills",
+  "deanpeters/product-manager-skills",
+  "degausai/wonda",
+  "drogers0/gh-image",
+  "eatmoreduck/boss-zhipin-scraper",
+  "expo/skills",
+  "foryourhealth111-pixel/vibe-skills",
+  "fujibee/agmsg",
+  "gooseworks-ai/goose-skills",
+  "heshamfs/materials-simulation-skills",
+  "huangchihhungleo/claude-real-video",
+  "infrasity-labs/dev-gtm-claude-skills",
+  "jimmysadek/youtube-fetcher-to-markdown",
+  "k-dense-ai/claude-scientific-skills",
+  "kensaurus/skills",
+  "kevin7qi/codex-collab",
+  "khazp/vibe-coding-prompt-template",
+  "khendzel/skills-janitor",
+  "komal-skynet/claude-skill-homeassistant",
+  "lawve-ai/awesome-legal-skills",
+  "makenotion/notion-cookbook",
+  "mattpocock/skills",
+  "metalbear-co/skills",
+  "mukul975/anthropic-cybersecurity-skills",
+  "mvanhorn/last30days-skill",
+  "neolabhq/context-engineering-kit",
+  "obra/superpowers",
+  "onewave-ai/claude-skills",
+  "op7418/nanobanana-ppt-skills",
+  "openaccountants/openaccountants",
+  "openclaw/openclaw",
+  "orchestra-research/ai-research-skills",
+  "plasma-ai/fractal",
+  "prompt-security/clawsec",
+  "rainmanjam/poka-yoke",
+  "resciencelab/opc-skills",
+  "sametbrr/llm-wiki-manager",
+  "scarletkc/agents",
+  "snyk/agent-scan",
+  "squirrelscan/skills",
+  "stjbrown/agent-knowledge",
+  "tencent/ai-infra-guard",
+  "thedotmack/claude-mem",
+  "vercel-labs/agent-skills",
+  "vodailocz/kilo-kit-mcp",
+  "wanshuiyin/auto-claude-code-research-in-sleep",
+  "wendylabsinc/claude-skills",
+  "wrsmith108/linear-claude-skill",
+  "wrsmith108/varlock-claude-skill",
+  "zxkane/aws-skills"
+ ],
+ "fixtures": [
+  "sha256:009d5873c6729e4b705921fed2511a80c01887cc5f57789c3f0b01ac80241441",
+  "sha256:02be5a584da3690a15d11ebcb21a4e4b41e927c7e1995569217d2d6cc5b422b7",
+  "sha256:104efd62ffd71f802d6ee52acc0555ddf73c67d6e7fd266b78abb5e6140f69f5",
+  "sha256:1121a34f7daff9e2eb82ea53f528a5b4a2b84b7f05cf29f6d2a3009312e3d966",
+  "sha256:1d631c528d15c299be4e6446b31e0901484c2a89bbdcb95fd545e5e438db8259",
+  "sha256:20267e84d6ecfae09fed866f2cab7fd96718ad071d48b7d248bc501fa19b7af8",
+  "sha256:23eb97a3eb3173701ff55ed4e3d6d875baf6cee055c61d5d7628e2ab4403be4b",
+  "sha256:2a1b299850c069234806eae7f7a11263c489ffe5c8a3eba02b9cd3da4ebc1f10",
+  "sha256:2db3b9f69f3f4bd6559a554012a3375087d5c482ebc68dad8ed206e18a3f0133",
+  "sha256:365810ecfee63a5fcf05415c55716f531a5842da5ee3db6fc8e349e5616ace39",
+  "sha256:3a0cab84786d7c14c8d26a62a96e68aeef662ef0c33a7aba4202cbf55a260036",
+  "sha256:425f34d310b04d775551121d917edb99e521a0de4b48113ee7b2f2893660a6fb",
+  "sha256:459222ccf7115347ed79fe424d16499c31c8b82fa25ea8be5463f3adcf4a1467",
+  "sha256:56de5bc8ffbf473a6bf023a80ef4ce3e658503841f4c8a82885b37bdd3ed86e6",
+  "sha256:6070347d5ea6691909918dda79571e3f15c3010b9463be525542c4a1ca09e074",
+  "sha256:69d0e4c55310acca292fedfec514d40cee564574e8aa03db74cd49b103e9ab28",
+  "sha256:6e8d44dc4f4a5c60084f25a95552fbdd387f4b2830383cd1f6a3ce6f9021bf48",
+  "sha256:72f03655f31f242947bb82d5fc3396cf2e85fe84c8c96dff4f8ceb09b54704e4",
+  "sha256:742ba124a9dd9d5109654fcf566cbec63e0d87f941cbd480ecbaeab596d38e22",
+  "sha256:7729404de2b3714cc0415a75327c114870c0491249d4cd8f2b0947f671b6776b",
+  "sha256:780b4456c00b8d31bfacea48cbaee0c0a174de2a87ff02362c7943acec6752c8",
+  "sha256:78196ffb70b3ec8f72ff1a9b8ea77dd3e242759ebeb0734a8df827167d1c450d",
+  "sha256:7eb75bc6499dab8d1aea8e52d00dd8760acd53fafc4942b185fbba7f2bec6b4b",
+  "sha256:7f581d7da0bb79eed97b224619afeb3e543e27b5a39b018c3138250778a97c5b",
+  "sha256:8888a4856cdebb6ce48a65be6dae0874bd7cd4eca9fc0f6286a9a16181e29bcb",
+  "sha256:8943bc59598cf98cbb8e406e64aba4b3e23a6cc2f6edd1950d83806fa79882f1",
+  "sha256:91478d919212791e38629117928269803ec605801a59aa3c356a753364aef71c",
+  "sha256:9a79a873c014dc192c7cc627591a7273e7a5efcaae3263e0d9357ee41455226e",
+  "sha256:a19ce2a1725033274a5d7cd3defa2d8f0ac1ba706c1968720debef073c50ff62",
+  "sha256:a2c2a2e6afddd62e01dff8592253d8385fdd7f659a681307aae71ba420ba2fd6",
+  "sha256:a378f61cbf38eff15580308606299b2e98beead60f5c0c98cf8821ae5b6ad1a6",
+  "sha256:aa3f24a64078600844c3ee120d6665c69dee4c61f9e2af485d518651dcfebe42",
+  "sha256:aafe742fca6245cdaaf75366e6a1f3a2062ecc70727150661efe324bf952a641",
+  "sha256:b24e8ea7c2be4020292066b234756ae661426612ae09345a0f4599f9610a693c",
+  "sha256:b734234bf4eeba2baaa5a703d4d919216809afebab1891520f312f512ee3cfbf",
+  "sha256:c17140c5a7e1108f0cf127aa03fade7b28b74dd39df20229b38d45fb890ec800",
+  "sha256:c6f5b97dad86055e3d19247cc4acf69d61e299b8ec547e2ccd7091c6d87393e7",
+  "sha256:d0daafa02e4cf698e94fef901fcca93be2fa84090352ebc695b9450849a21179",
+  "sha256:d0deea298ac6eb95a27ca3ffdfc438c3198b6a87ee663e164368c161ab924cd2",
+  "sha256:d2501aefc63508db7732a4adaf251d8f0beff93decab5b466754a5f8744e2994",
+  "sha256:d778a2fb6ec2a8edf07118da5a560832f6930634ce2678e702529804648d1bc6",
+  "sha256:d81dd05b6e62039f603c6522d9fcedf29c4583c5edd1c428e01be5b36ec55bbc",
+  "sha256:dd59678446b2bcdd0655512bd4bc0650753d60958a0fa2d7fcb07bf7ce184121",
+  "sha256:de6a43482cb67c970a2096b393b5cf0541b5104cd2bbece2ff51b5a4ea13572d",
+  "sha256:e836d42f10ea144f32cf5975936a071848edcc93e66f8cfa6328a24c2b091015",
+  "sha256:e8c20dc5742cc9118624303b4f13a317499df9c9630ee4811821ff3edc885cd6",
+  "sha256:fb3dde4ddaab4f448c30cdeed671bb29d2632bf41bd7c7b30b847dffe41d8965"
+ ],
+ "maintainers": {
+  "acedatacloud/skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/AceDataCloud/Skills/issues/1266",
+    "rule_ids": [
+     "FS-SEC-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "behisecc/vibesec-skill": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/BehiSecc/VibeSec-Skill/issues/9",
+    "rule_ids": [
+     "FS-DES-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "brianrwagner/ai-marketing-claude-code-skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/BrianRWagner/ai-marketing-claude-code-skills/issues/5",
+    "rule_ids": [
+     "FS-SEC-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "resciencelab/opc-skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/ReScienceLab/opc-skills/issues/99",
+    "rule_ids": [
+     "FS-EXE-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "tencent/ai-infra-guard": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/Tencent/AI-Infra-Guard/issues/730",
+    "rule_ids": [
+     "FS-EXE-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "vodailocz/kilo-kit-mcp": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/VoDaiLocz/kilo-kit-mcp/issues/8",
+    "rule_ids": [
+     "FS-EXE-001",
+     "FS-SEC-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "aeonfun/aeon": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/aeonfun/aeon/issues/1284",
+    "rule_ids": [
+     "FS-EXE-005"
+    ]
+   },
+   "opted_out": false
+  },
+  "amirkiarafiei/subagent-cli-skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/amirkiarafiei/subagent-cli-skills/issues/1",
+    "rule_ids": [
+     "FS-DES-001",
+     "FS-EXE-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "lawve-ai/awesome-legal-skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/lawve-ai/awesome-legal-skills/issues/42",
+    "rule_ids": [
+     "FS-EXF-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "metalbear-co/skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/metalbear-co/skills/issues/114",
+    "rule_ids": [
+     "FS-SEC-002"
+    ]
+   },
+   "opted_out": false
+  },
+  "rainmanjam/poka-yoke": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/rainmanjam/poka-yoke/issues/23",
+    "rule_ids": [
+     "FS-DES-001"
+    ]
+   },
+   "opted_out": false
+  },
+  "squirrelscan/skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/squirrelscan/skills/issues/32",
+    "rule_ids": [
+     "FS-EXE-001",
+     "FS-EXE-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "thedotmack/claude-mem": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/thedotmack/claude-mem/issues/5135",
+    "rule_ids": [
+     "FS-EXE-001",
+     "FS-SEC-002"
+    ]
+   },
+   "opted_out": false
+  },
+  "wanshuiyin/auto-claude-code-research-in-sleep": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/481",
+    "rule_ids": [
+     "FS-SEC-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "wendylabsinc/claude-skills": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/wendylabsinc/claude-skills/issues/19",
+    "rule_ids": [
+     "FS-EXE-002"
+    ]
+   },
+   "opted_out": false
+  },
+  "wrsmith108/linear-claude-skill": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/wrsmith108/linear-claude-skill/issues/26",
+    "rule_ids": [
+     "FS-SEC-003"
+    ]
+   },
+   "opted_out": false
+  },
+  "wrsmith108/varlock-claude-skill": {
+   "notice": {
+    "date": "2026-10-28",
+    "url": "https://github.com/wrsmith108/varlock-claude-skill/issues/1",
+    "rule_ids": [
+     "FS-EXE-001"
+    ]
+   },
+   "opted_out": false
+  }
+ }
+}

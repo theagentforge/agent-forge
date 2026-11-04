@@ -225,13 +225,21 @@ export async function openDisputes(env: Env, limit = 20) {
   return { open: Number(n?.n ?? 0), rows };
 }
 
-export function disputesPanel(d: Awaited<ReturnType<typeof openDisputes>>, now = Date.now()) {
+/** The states a closed dispute can take: the schema's own (disputes.state), so no migration. */
+export const DISPUTE_CLOSE_STATES = ["resolved", "rejected"] as const;
+export const DISPUTE_CLOSE_PATH = "/admin/kpis/dispute/close";
+/** The closing reason: required, short (it goes in the audit log, not on any public page). */
+export const DISPUTE_REASON_MAX = 200;
+
+export function disputesPanel(d: Awaited<ReturnType<typeof openDisputes>>, now = Date.now(), csrf = "") {
   const age = (ms: number) => Math.floor((now - ms) / 86_400_000);
   return html`<h2 id="disputes">Open disputes (${d.open})</h2>
-<p><small>Answer within 7 days (the dispute page and the maintainer line on scan pages say so). Oldest first; anything open 5 days or more is marked. Resolve in D1 by setting <code>state</code>.</small></p>
+<p><small>Answer within 7 days (the dispute page and the maintainer line on scan pages say so). Oldest first; anything open 5 days or more is marked. Close one with its row's form: "resolved" when it's answered, "rejected" when it isn't a dispute; the reason is kept in the audit log.</small></p>
 ${d.rows.length
-  ? html`<table class="kpi-table"><thead><tr><th>Opened</th><th>By</th><th>About</th><th>Reason</th></tr></thead><tbody>${d.rows.map(
-      (r) => html`<tr><td>${new Date(r.createdAt).toISOString().slice(0, 10)}${age(r.createdAt) >= 5 ? html` <b>(${age(r.createdAt)} days)</b>` : ""}</td><td>${r.login ?? "–"}</td><td>${r.tool ?? "–"}${r.report ? html`<br><small>report ${r.report}</small>` : ""}</td><td><small>${r.reason}</small></td></tr>`,
+  ? html`<table class="kpi-table"><thead><tr><th>Opened</th><th>By</th><th>About</th><th>Reason</th><th>Close</th></tr></thead><tbody>${d.rows.map(
+      (r) => html`<tr data-dispute="${r.id}"><td>${new Date(r.createdAt).toISOString().slice(0, 10)}${age(r.createdAt) >= 5 ? html` <b>(${age(r.createdAt)} days)</b>` : ""}</td><td>${r.login ?? "–"}</td><td>${r.tool ?? "–"}${r.report ? html`<br><small>report ${r.report}</small>` : ""}</td><td><small>${r.reason}</small></td><td>${csrf
+        ? html`<form method="post" action="${DISPUTE_CLOSE_PATH}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="id" value="${r.id}"><select name="state" aria-label="Close as">${DISPUTE_CLOSE_STATES.map((st) => html`<option value="${st}">${st}</option>`)}</select> <input name="reason" required minlength="3" maxlength="${DISPUTE_REASON_MAX}" placeholder="Short reason, e.g. not a dispute: no tool named" aria-label="Reason"> <button class="btn chamfer" type="submit">Close</button></form>`
+        : ""}</td></tr>`,
     )}</tbody></table>`
   : html`<p>None open.</p>`}`;
 }
@@ -294,7 +302,7 @@ site.get("/admin/kpis", async (c) => {
       )}</tbody></table>
 ${credit && byok ? creditPanel(credit, byok) : html`<h2 id="credit">Arena credit (ADR 0064)</h2><p>Couldn't be worked out just now (see the Worker log). The runner pauses new practice and panel bouts on credit-spending models while that's so.</p>`}
 ${landingFunnelPanel(funnel)}
-${disputesPanel(disputes)}
+${disputesPanel(disputes, Date.now(), csrf)}
 ${third ? thirdPartyPanel(third) : ""}
 ${third ? installPanel(third.install, third.stats_page?.now ?? null) : ""}
 ${small ? smallRowsPanel(small) : ""}
@@ -362,6 +370,26 @@ site.get("/api/v1/ops/internal-stats", async (c) => {
   const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, internalStatsCaller))) return c.json({ error: "unauthorized" }, 401, headers);
   return c.json(await internalStatsData(c.env), 200, headers);
+});
+
+// Close an open dispute (founder admins only; Dinike, 1 Nov: the 28 Oct junk dispute is closed this way after release,
+// since production D1 writes from a session are blocked). Same guards as /admin/claims/check: the session's CSRF token
+// and the admin list; anything else is 403. Only an open dispute changes; the reason goes in audit_log.detail.
+site.post(DISPUTE_CLOSE_PATH, async (c) => {
+  const g = await guardPost(c);
+  if (!g) return c.text("forbidden", 403, { "Cache-Control": "no-store" });
+  const me = await admin(c, g.session.h);
+  if (!me) return c.text("forbidden", 403, { "Cache-Control": "no-store" });
+  const id = String(g.form.get("id") ?? "").trim().slice(0, 100);
+  const state = String(g.form.get("state") ?? "") as (typeof DISPUTE_CLOSE_STATES)[number];
+  const reason = String(g.form.get("reason") ?? "").replace(/\s+/g, " ").trim();
+  if (!id || !DISPUTE_CLOSE_STATES.includes(state) || reason.length < 3 || reason.length > DISPUTE_REASON_MAX) return c.text("A dispute id, a state (resolved or rejected) and a short reason (3 to 200 characters) are required.", 400, { "Cache-Control": "no-store" });
+  const db = getDb(c.env);
+  const now = Date.now();
+  const done = await db.update(t.disputes).set({ state, resolvedAt: now }).where(and(eq(t.disputes.id, id), eq(t.disputes.state, "open"))).returning({ id: t.disputes.id });
+  if (!done.length) return c.text("No open dispute with that id.", 404, { "Cache-Control": "no-store" });
+  await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${me.id}`, action: "dispute_closed", target: `dispute:${id}`, detail: { state, reason }, createdAt: now });
+  return new Response(null, { status: 303, headers: { Location: "/admin/kpis#disputes", "Cache-Control": "no-store" } });
 });
 
 site.post("/admin/kpis/citation", async (c) => {

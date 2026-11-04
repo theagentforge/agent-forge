@@ -147,7 +147,7 @@ site.post("/scan", async (c) => {
   return scanResultPage(c, body, url);
 });
 
-/** The result page for a scan that has no public page to send people to (POST /scan, and /go for a held file). */
+/** The result page for a scan that has no public page to send people to (POST /scan, and /go when nothing was stored). */
 const scanResultPage = (c: Parameters<typeof send>[0], body: unknown, url: string) =>
   send(
     c,
@@ -195,8 +195,8 @@ site.get("/scan/:hex{[0-9a-f]{64}}", async (c) => {
   const db = getDb(c.env);
   const row = await scanByFingerprint(db, `sha256:${c.req.param("hex")}`);
   // One answer for unknown and private fingerprints alike, so the page never reveals that a private scan exists. Not
-  // 410: nothing public was deleted. Pasted-text results never get a page, and results held during a disclosure window
-  // (services/skill-seed.ts) are not public yet (ADR 0060).
+  // 410: nothing public was deleted. Pasted-text results never get a page, and bulk-scan results that matched a pattern
+  // stay unlisted until a person decides (ADR 0060, ADR 0107).
   if (!row || !row.public)
     return notFound(c, "No public scan at this address", "There is no public scan page for this fingerprint. Most scans of pasted text stay private, and some results are held back for a while as their maintainers hear from us. Scan the file yourself to see today's result.");
   // A clear result for a GitHub skill says the same as the skill's answer page (ADR 0060): the newest one points search
@@ -357,7 +357,7 @@ site.post("/go", async (c) => {
       const { result, isPublic } = await scanAndRecord(c.env, got.text, { sourceUrl: got.url });
       c.executionCtx.waitUntil(bump(c.env, webScanKeys(c.req.raw.headers, result.verdict, [`scan:from:${from}`])).catch(() => {}));
       if (isPublic) return c.redirect(`${scanPath(result.fingerprint)}?from=${from}`, 303);
-      // A file held during a disclosure window has no page yet: show the asker the result here.
+      // No page to send the asker to (lean mode, or the record couldn't be stored): show the result here.
       return scanResultPage(c, resultBlock(result, ""), q);
     }
   }

@@ -509,6 +509,14 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(new Set(json.rules.map((r) => r.key)).size).toBe(json.rules.length);
   });
 
+  it("/stats/rules says tools_tracked can fall when the hourly census merges a tool listed in two places (ADR 0108)", async () => {
+    const line = "The count can fall when the hourly census merges a tool listed in two places into one page (ADR 0108).";
+    const json = (await (await fetchWorker("/stats/rules?format=json")).json()) as { rules: { key: string; counts: string }[] };
+    expect(json.rules.find((r) => r.key === "tools_tracked")!.counts).toContain(line);
+    const page = await (await fetchWorker("/stats/rules", { headers: { Accept: "text/html" } })).text();
+    expect(page.slice(page.indexOf('id="tools_tracked"'))).toContain(line);
+  });
+
   it("llms.txt and /methodology document /stats.json, /scores/recent.json and the live /benchmark/v1.json", async () => {
     const llms = await (await fetchWorker("/llms.txt")).text();
     const meth = await (await fetchWorker("/methodology")).text();

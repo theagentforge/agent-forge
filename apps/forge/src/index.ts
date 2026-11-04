@@ -24,7 +24,7 @@ import { sweepGauntletLogs } from "./arena/gauntlet";
 import { sweepInstallIds } from "./services/install-ids";
 import { houseSprint } from "./arena/sprint-house";
 import { writeSeasonSnapshot } from "./arena/season";
-import { importSkillSeed, releaseHeldScans } from "./services/skill-seed";
+import { importSkillSeed } from "./services/skill-seed";
 import { weeklyExport } from "./services/bulk-export";
 import { bulkScanTick } from "./services/bulk-scan-cron";
 import { weeklyR2Backup } from "./services/backup";
@@ -40,6 +40,7 @@ import "./web/about";
 import "./web/teams";
 import "./web/legal";
 import "./web/publications";
+import "./web/press-release";
 import "./web/admin-moltbook";
 import "./web/admin-kpis";
 import "./web/admin-data-room";
@@ -99,6 +100,7 @@ import "./web/admin-usage";
 import "./web/admin-claims";
 import { CLAIMS_NIGHTLY_HOUR, registerClaimsInProcess, runClaimChecks } from "./services/claims";
 import { CARD_PATHS } from "./web/discovery";
+import { forwardBusinessMail } from "./services/mail-forward";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
 
@@ -192,7 +194,7 @@ export default {
     const claimsRun =
       new Date(controller.scheduledTime).getUTCHours() === CLAIMS_NIGHTLY_HOUR
         ? runClaimChecks(env, ctx, { trigger: "nightly", now: controller.scheduledTime }).then(
-            (r) => console.log("claims_nightly", JSON.stringify({ run_id: r.run_id, claims: r.claims, counts: r.counts })),
+            (r) => console.log("claims_nightly", JSON.stringify({ run_id: r.run_id, claims: r.claims, needs_attention: r.needs_attention, refresh: r.refresh, counts: r.counts })),
             (e) => console.error("claims_nightly_failed", String(e).slice(0, 200)),
           )
         : null;
@@ -282,12 +284,6 @@ export default {
       ),
     );
     ctx.waitUntil(
-      releaseHeldScans(env, controller.scheduledTime).then(
-        (r) => console.log("skill_seed_release", JSON.stringify(r)),
-        (e) => console.error("skill_seed_release_failed", String(e)),
-      ),
-    );
-    ctx.waitUntil(
       sweepGauntletLogs(env, controller.scheduledTime).then(
         (r) => console.log("gauntlet_sweep", JSON.stringify(r)),
         (e) => console.error("gauntlet_sweep_failed", String(e)),
@@ -363,6 +359,10 @@ export default {
     } finally {
       await bulkScan;
     }
+  },
+  /** Inbound mail to the five business addresses: one copy per MAIL_FORWARD_TO destination (ADR 0122). */
+  async email(message, env) {
+    await forwardBusinessMail(message, env);
   },
   fetch(request, env, ctx) {
     // The anonymous, read-only MCP endpoint (ADR 0017 §3) is answered before the OAuth provider, which would

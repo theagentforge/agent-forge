@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { Attempt, taskById, type AttemptResult } from "@forge/arena";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import * as t from "../src/db/schema";
 import { finishedRuns } from "../src/arena/views";
 import { buildExport, chunkRows, exportRows, EXPORT_INDEX_KEY, exportIndex, isoWeek, MAX_FILE_BYTES, readManifest, scrubber, sha256Hex, weeklyExport, writeExport } from "../src/services/bulk-export";
@@ -9,19 +9,17 @@ import { BUYER_COOKIE, createLink, SHARE_PREFIX } from "../src/services/data-roo
 import { getDb } from "../src/services/db";
 import { upsertHuman } from "../src/services/identity";
 import { DATA_CONTROLS } from "../src/services/kpis";
-import { NOTICE_ENDS, useHeldFile } from "../src/services/skill-seed";
 import { newSession, SESSION_COOKIE } from "../src/web/session";
 import { EMBARGOED } from "./fixtures/embargoed";
 import { fetchWorker, profile } from "./helpers";
 import "../src/index";
 
 // AQ-03 (ADR 0095): the pseudonymised weekly bulk export. No GitHub login or email in any row, a SHA-256 per file and a
-// manifest, exports_pseudonymised true, and nothing private: no embargoed model, held-out seed, lab arm or held scan.
+// manifest, exports_pseudonymised true, and nothing private: no embargoed model, held-out seed, lab arm or unlisted scan.
 
-const NOW = NOTICE_ENDS - 86_400_000; // inside the launch-scan hold, so a held scan exists
+const NOW = Date.UTC(2026, 10, 1);
 const LOGIN = "zq-export-member";
 const EMAIL = "someone.private@example.org";
-const HELD_HEX = "c".repeat(64);
 const ids: Record<string, string> = {};
 let adminCookie = "";
 
@@ -62,13 +60,11 @@ beforeAll(async () => {
   ids.heldReport = held.id;
   ids.pending = pending.id;
   await db.insert(t.reports).values([shown, held, pending, unmoderated]);
-  await db.insert(t.skillScans).values([scan("sha256:" + "d".repeat(64), "https://github.com/open/skills"), scan("sha256:" + HELD_HEX, null), scan("sha256:" + "e".repeat(64), null, false)]);
-  useHeldFile({ meta: { rules_version: "1", files: 1 }, repos: [["heldco/skills", "main"]], rows: [[0, "weather/SKILL.md", HELD_HEX, 0, 0]] });
+  await db.insert(t.skillScans).values([scan("sha256:" + "d".repeat(64), "https://github.com/open/skills"), scan("sha256:" + "e".repeat(64), null, false)]);
   ids.public = await run("claude-sonnet-5.5", false);
   ids.heldOut = await run("claude-sonnet-5.5", true);
   ids.embargoed = await run(EMBARGOED.id, false);
 });
-afterAll(() => useHeldFile(null));
 
 describe("the bulk export (AQ-03)", () => {
   it("has no GitHub login, handle or email in any row, and pseudonyms instead of people", async () => {
@@ -100,14 +96,13 @@ describe("the bulk export (AQ-03)", () => {
     expect(DATA_CONTROLS.exports_pseudonymised).toBe(true);
   });
 
-  it("leaves out embargoed models, held-out seeds, held scans and unlisted scans", async () => {
+  it("leaves out embargoed models, held-out seeds and unlisted scans", async () => {
     const { files, manifest } = await buildExport(env, NOW);
     const all = [...files.values()].join("\n");
     expect(all).toContain(ids.public);
     expect(all).not.toContain(ids.heldOut);
     expect(all).not.toContain(ids.embargoed);
     expect(all).not.toContain(EMBARGOED.id);
-    expect(all).not.toContain(HELD_HEX);
     expect(all).not.toContain("e".repeat(64));
     expect(all).toContain("d".repeat(64));
     expect(all).not.toMatch(/FA-[A-Z]+-1\d\d/);

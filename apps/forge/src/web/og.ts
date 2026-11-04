@@ -256,11 +256,11 @@ site.get("/og/reports/skill-scan-2026-10.png", (c) =>
       [
         el("div", { display: "flex", alignItems: "center", justifyContent: "space-between" }, [
           el("div", { display: "flex", flexDirection: "column", width: "780px" }, [
-            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 26, color: C.caution, marginBottom: "18px" }, "SKILL WATCH · REPORT · OCT 2026"),
-            headline("We scanned 9,930 public AI agent skills.", 50),
+            el("div", { display: "flex", fontFamily: "JetBrains Mono", fontSize: 26, color: C.caution, marginBottom: "18px" }, "SKILL WATCH · LAUNCH SCAN · 19 OCT 2026"),
+            headline("What public agent skills tell your agent to do.", 50),
             line("14 pipe a download straight into a shell.", 28, C.text),
             line("8 read the agent's whole key file.", 28, C.text),
-            line("No confirmed malware. The dataset is public.", 26),
+            line("No malware found by this method. The data is public.", 26),
           ]),
           robotTile("alert", C.caution),
         ]),

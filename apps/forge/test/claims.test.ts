@@ -13,6 +13,8 @@ import {
   parseNumber,
   readPath,
   rowHash,
+  standing,
+  VERDICTS,
   verifyChain,
 } from "../src/services/claims-core";
 import {
@@ -36,7 +38,7 @@ import { newSession, SESSION_COOKIE } from "../src/web/session";
 import { fetchWorker, ORIGIN, profile } from "./helpers";
 import "../src/index";
 
-// ADR 0120: the claim verifier. Four verdicts; fail-closed on errors and timeouts; the append-only, hash-chained log;
+// ADR 0120: the claim verifier. Five verdicts (STALE added 30 Oct); fail-closed on errors and timeouts; the append-only, hash-chained log;
 // the LLM quote-match rule; the tolerance rules for live counters.
 
 const ctx = createExecutionContext();
@@ -82,9 +84,9 @@ describe("tolerance rules and paths (core)", () => {
     expect(readPath(d, "dl[day=x].n").values).toEqual([1]);
     expect(readPath(d, "a.c").found).toBe(false);
   });
-  it("eq on a counter: a higher live value is stale, a lower one is a mismatch", () => {
+  it("eq on a counter: a higher live value is stale, a lower one went down (counter_decreased)", () => {
     expect(compareValue({ kind: "json", expected: "9946", comparator: "eq", counter: true }, 10633)).toEqual({ ok: false, reason: "stale_value" });
-    expect(compareValue({ kind: "json", expected: "9946", comparator: "eq", counter: true }, 9000)).toEqual({ ok: false, reason: "value_mismatch" });
+    expect(compareValue({ kind: "json", expected: "9946", comparator: "eq", counter: true }, 9000)).toEqual({ ok: false, reason: "counter_decreased" });
     expect(compareValue({ kind: "json", expected: "9946", comparator: "eq", counter: false }, 10633)).toEqual({ ok: false, reason: "value_mismatch" });
   });
   it("'at least N' passes as the counter grows; 'about N' allows 5% unless told otherwise", () => {
@@ -147,6 +149,66 @@ describe("the four verdicts", () => {
   it("a short text page is empty (UNREACHABLE), not NOT_PRESENT", async () => {
     serve(200, "<html><script>app()</script></html>");
     expect((await checkClaim(env, ctx, claim({ anchor_kind: "text", expected: "anything" })))[0]).toMatchObject({ verdict: "UNREACHABLE", reason: "empty_page" });
+  });
+});
+
+describe("counter_decreased (ADR 0120 amendment, 1 Nov): a public counter that goes DOWN is CONTRADICTED", () => {
+  const stats = (n: number) => JSON.stringify({ blended: { work: { tools_tracked: n } }, as_of: "2026-11-01T01:00:00Z" });
+  const tools = { kind: "json" as const, path: "blended.work.tools_tracked", expected: "48627", counter: true };
+  it("under eq, gte and approx alike, with the live value quoted, and it needs attention", () => {
+    for (const comparator of ["eq", "gte", "approx"] as const) {
+      const o = checkBody({ ...tools, comparator, tolerance: comparator === "approx" ? 0.01 : null }, 200, stats(40_000));
+      expect(o, comparator).toMatchObject({ verdict: "CONTRADICTED", reason: "counter_decreased", observed_value: "40000", quote: '"tools_tracked":40000' });
+      expect(standing(o), comparator).toBe("attention");
+    }
+  });
+  it("only a counter, and only down: not-a-counter stays value_mismatch; up stays STALE or passes; within tolerance passes", () => {
+    expect(checkBody({ ...tools, comparator: "eq", counter: false }, 200, stats(40_000))).toMatchObject({ verdict: "CONTRADICTED", reason: "value_mismatch" });
+    expect(checkBody({ ...tools, comparator: "gte", counter: false }, 200, stats(40_000))).toMatchObject({ verdict: "CONTRADICTED", reason: "value_mismatch" });
+    expect(checkBody({ ...tools, comparator: "eq" }, 200, stats(50_000))).toMatchObject({ verdict: "STALE", reason: "stale_value" });
+    expect(checkBody({ ...tools, comparator: "gte" }, 200, stats(50_000))).toMatchObject({ verdict: "SUPPORTED", reason: "at_least" });
+    expect(checkBody({ ...tools, comparator: "approx", tolerance: 0.05 }, 200, stats(48_000))).toMatchObject({ verdict: "SUPPORTED", reason: "within_tolerance" });
+    expect(checkBody({ ...tools, comparator: "eq", tolerance: 0.02 }, 200, stats(48_000))).toMatchObject({ verdict: "SUPPORTED", reason: "within_tolerance" });
+    // "At most N" on a counter keeps its own rule: lower is what it claims.
+    expect(checkBody({ ...tools, comparator: "lte" }, 200, stats(40_000))).toMatchObject({ verdict: "SUPPORTED", reason: "at_most" });
+  });
+});
+
+describe("STALE (ADR 0120 amendment, 30 Oct): a running total that grew is a refresh, not a contradiction", () => {
+  const stats = (n: number) => JSON.stringify({ blended: { work: { skills_scanned: n } }, as_of: "2026-10-30T01:00:00Z" });
+  const counter = { kind: "json" as const, path: "blended.work.skills_scanned", expected: "9946", comparator: "eq", counter: true };
+  it("five verdicts, STALE among them", () => {
+    expect(VERDICTS).toEqual(["SUPPORTED", "STALE", "CONTRADICTED", "NOT_PRESENT", "UNREACHABLE"]);
+  });
+  it("a counter that went up is STALE (reason stale_value) with the live value; down, or not a counter, is CONTRADICTED", () => {
+    expect(checkBody(counter, 200, stats(10633))).toMatchObject({ verdict: "STALE", reason: "stale_value", observed_value: "10633", quote: '"skills_scanned":10633' });
+    expect(checkBody(counter, 200, stats(9000))).toMatchObject({ verdict: "CONTRADICTED", reason: "counter_decreased", observed_value: "9000" });
+    expect(checkBody({ ...counter, counter: false }, 200, stats(10633))).toMatchObject({ verdict: "CONTRADICTED", reason: "value_mismatch" });
+    expect(checkBody(counter, 200, stats(9946))).toMatchObject({ verdict: "SUPPORTED", reason: "exact" });
+  });
+  it("only CONTRADICTED, NOT_PRESENT and UNREACHABLE need attention; STALE and old stale_value rows are 'refresh'", () => {
+    expect(standing({ verdict: "SUPPORTED", reason: "exact" })).toBe("ok");
+    expect(standing({ verdict: "STALE", reason: "stale_value" })).toBe("refresh");
+    // Rows logged before STALE existed stay as written (append-only) and read as refresh.
+    expect(standing({ verdict: "CONTRADICTED", reason: "stale_value" })).toBe("refresh");
+    for (const v of ["CONTRADICTED", "NOT_PRESENT", "UNREACHABLE"]) expect(standing({ verdict: v, reason: "value_mismatch" }), v).toBe("attention");
+  });
+  it("a run counts STALE apart from needs-attention", async () => {
+    serve(200, stats(10633));
+    await env.DB.prepare("INSERT OR IGNORE INTO claims (id, text, url, anchor_kind, anchor_path, expected, comparator, counter, author, appears_in, made_at) VALUES ('STALE1', 'x', 'https://api.example.test/stats', 'json', 'blended.work.skills_scanned', '9946', 'eq', 1, 'claude', 'test', 0)").run();
+    const r = await runClaimChecks(env, ctx, { trigger: "api", ids: ["STALE1"] });
+    expect(r.counts).toMatchObject({ STALE: 1, CONTRADICTED: 0 });
+    expect(r).toMatchObject({ needs_attention: 0, refresh: 1, all_supported: false });
+    expect((await chainStatus(env)).ok).toBe(true);
+  });
+  it("the log stays compatible: an old CONTRADICTED/stale_value row and a new STALE row chain and verify together", async () => {
+    const row = { claim_id: "LOG4", run_id: "r", trigger: "api", checked_at: 6, fetched_url: "u", via: "network", http_status: 200, response_sha256: null, reason: "stale_value", quote: null, quote_offset: null, observed_value: "10633", observed_as_of: null, checker: "det" };
+    const a = await appendCheck(env, { ...row, verdict: "CONTRADICTED" });
+    const b = await appendCheck(env, { ...row, checked_at: 7, verdict: "STALE" });
+    expect(b.prev_hash).toBe(a.row_hash);
+    expect(Object.keys(b).sort()).toEqual(Object.keys(a).sort());
+    const c = await chainStatus(env);
+    expect(c).toMatchObject({ ok: true, head: b.row_hash });
   });
 });
 
@@ -273,6 +335,22 @@ describe("the brief gate's extraction", () => {
 });
 
 describe("/admin/claims: founder-only, no-store", () => {
+  it("shows STALE claims as 'refresh', apart from the needs-attention count", async () => {
+    const db = getDb(env);
+    const founder = await upsertHuman(db, profile({ id: Number(env.ADMIN_GITHUB_IDS) }), Date.now());
+    const cookie = `${SESSION_COOKIE}=${await newSession(env.SESSION_SECRET, founder.id)}`;
+    serve(200, JSON.stringify({ n: 12 }));
+    await env.DB.prepare("INSERT OR IGNORE INTO claims (id, text, url, anchor_kind, anchor_path, expected, comparator, counter, author, appears_in, made_at) VALUES ('STALE2', 'a running total', 'https://api.example.test/n', 'json', 'n', '10', 'eq', 1, 'claude', 'test', 0)").run();
+    await runClaimChecks(env, ctx, { trigger: "api", ids: ["STALE2"] });
+    const d = (await (await fetchWorker(CLAIMS_JSON_PATH, { headers: { Cookie: cookie } })).json()) as { claims: { id: string; latest: { verdict: string } | null }[]; needs_attention: number; refresh: number };
+    expect(d.claims.find((x) => x.id === "STALE2")?.latest?.verdict).toBe("STALE");
+    expect(d.refresh).toBeGreaterThanOrEqual(1);
+    const page = await (await fetchWorker(CLAIMS_PATH, { headers: { Cookie: cookie, Accept: "text/html" } })).text();
+    expect(page).toContain("Five verdicts: SUPPORTED, STALE, CONTRADICTED, NOT PRESENT, UNREACHABLE");
+    expect(page).toMatch(/<tr data-k="attention"><td>Live claims that need attention \(CONTRADICTED, NOT PRESENT or UNREACHABLE/);
+    expect(page).toMatch(new RegExp(`<tr data-k="refresh"><td>[^<]*</td><td>${d.refresh}</td>`));
+    expect(page).toMatch(/<tr data-claim="STALE2"[^]*?data-verdict="STALE" data-standing="refresh"><b>STALE<\/b> \(refresh\)/);
+  });
   let adminCookie = "";
   let userCookie = "";
   const csrfOf = (page: string) => /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? "";
@@ -308,8 +386,10 @@ describe("/admin/claims: founder-only, no-store", () => {
     expect(after.rows).toBeGreaterThan(before);
     const j = await fetchWorker(CLAIMS_JSON_PATH, { headers: { Cookie: adminCookie } });
     expect(j.headers.get("Cache-Control")).toBe(PRIVATE_HEADERS["Cache-Control"]);
-    const d = (await j.json()) as { chain: { ok: boolean }; llm_pass: string; log: unknown[] };
+    const d = (await j.json()) as { chain: { ok: boolean }; llm_pass: string; log: unknown[]; needs_attention: number; refresh: number; unchecked: number };
     expect(d.chain.ok).toBe(true);
+    expect(typeof d.needs_attention).toBe("number");
+    expect(typeof d.refresh).toBe("number");
     expect(d.llm_pass).toBe("off");
     expect(d.log.length).toBeGreaterThan(0);
   });

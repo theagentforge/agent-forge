@@ -31,7 +31,7 @@ export const FACTS = [
   {
     id: "skill-scan",
     match: /\b(skill|skills|skill\.md|clawhub|skills\.sh|plugin|plugins)\b/i,
-    text: "We scanned 9,930 public agent skills for instructions a virus scanner can't see. No malware by our rules, but 14 pipe a download straight into a shell and 8 read the agent's whole key file.",
+    text: "Our 19 Oct launch scan of 9,014 ordinary public agent skills: 30 (0.33%) matched a high-risk pattern. No malware found by this method; 14 pipe a download into a shell, 8 read the whole key file.",
     link: "https://theagentforge.io/reports/skill-scan-2026-10?from=x-reply",
   },
   {

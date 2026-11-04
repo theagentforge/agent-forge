@@ -1,12 +1,26 @@
 // ADR 0120: the claim verifier's pure core. No imports, only erasable TypeScript, so the Worker (services/claims.ts)
 // and the brief gate (scripts/check-claims.mjs, under Node's type stripping) run the very same rules.
 //
-// Four verdicts, never more: SUPPORTED, CONTRADICTED, NOT_PRESENT, UNREACHABLE. A reason code says why. The checker
-// never edits a claim and fails closed: anything it can't read is UNREACHABLE, anything it can't find is NOT_PRESENT;
-// only a value or phrase read from the source makes SUPPORTED.
+// Five verdicts, never more: SUPPORTED, STALE, CONTRADICTED, NOT_PRESENT, UNREACHABLE. A reason code says why. The
+// checker never edits a claim and fails closed: anything it can't read is UNREACHABLE, anything it can't find is
+// NOT_PRESENT; only a value or phrase read from the source makes SUPPORTED. STALE (amendment 30 Oct) is a running total
+// (`counter`) that has grown past its claim: true when made, out of date now. It asks for a refresh, not attention.
+// A counter read BELOW its claim (amendment 1 Nov) is CONTRADICTED with reason counter_decreased: it needs attention.
 
-export type Verdict = "SUPPORTED" | "CONTRADICTED" | "NOT_PRESENT" | "UNREACHABLE";
-export const VERDICTS: readonly Verdict[] = ["SUPPORTED", "CONTRADICTED", "NOT_PRESENT", "UNREACHABLE"];
+export type Verdict = "SUPPORTED" | "STALE" | "CONTRADICTED" | "NOT_PRESENT" | "UNREACHABLE";
+export const VERDICTS: readonly Verdict[] = ["SUPPORTED", "STALE", "CONTRADICTED", "NOT_PRESENT", "UNREACHABLE"];
+/** The verdicts that need someone to look ("needs attention"); STALE only needs the claim refreshed. */
+export const ATTENTION_VERDICTS: readonly Verdict[] = ["CONTRADICTED", "NOT_PRESENT", "UNREACHABLE"];
+/**
+ * Where a check row sits on /admin/claims: "attention" (CONTRADICTED, NOT_PRESENT, UNREACHABLE), "refresh" (STALE, and
+ * rows logged before STALE existed as CONTRADICTED with reason stale_value; those rows stay as written), or "ok".
+ */
+export function standing(row: { verdict: string; reason: string }): "ok" | "refresh" | "attention" {
+  if (row.verdict === "STALE" || (row.verdict === "CONTRADICTED" && row.reason === "stale_value")) return "refresh";
+  return (ATTENTION_VERDICTS as readonly string[]).includes(row.verdict) ? "attention" : "ok";
+}
+/** The verdict for a failed comparison: a counter that has grown is STALE, a non-number NOT_PRESENT, else CONTRADICTED. */
+export const failedVerdict = (reason: string): Verdict => (reason === "stale_value" ? "STALE" : reason === "not_a_number" ? "NOT_PRESENT" : "CONTRADICTED");
 export type Comparator = "eq" | "gte" | "lte" | "approx" | "contains" | "all_eq";
 export const COMPARATORS: readonly Comparator[] = ["eq", "gte", "lte", "approx", "contains", "all_eq"];
 
@@ -118,17 +132,22 @@ export function compareValue(a: Anchor, observed: unknown): { ok: boolean; reaso
     if (cmp === "eq" || cmp === "all_eq") return show(observed) === expected ? { ok: true, reason: "exact" } : { ok: false, reason: "value_mismatch" };
     return { ok: false, reason: "not_a_number" };
   }
-  if (cmp === "gte") return o >= e ? { ok: true, reason: "at_least" } : { ok: false, reason: "value_mismatch" };
+  // A running total (`counter`) is only meant to grow: one read below its claim went DOWN, whatever the comparator
+  // (amendment 1 Nov, ADR 0120). CONTRADICTED with its own reason, so a fall (a merge, a deletion, a bug) is never
+  // mistaken for a typo in the claim. "At most N" claims on a counter keep their own rule.
+  const fail = (reason: string) => ({ ok: false, reason: a.counter && cmp !== "lte" && o < e ? "counter_decreased" : reason });
+  if (cmp === "gte") return o >= e ? { ok: true, reason: "at_least" } : fail("value_mismatch");
   if (cmp === "lte") return o <= e ? { ok: true, reason: "at_most" } : { ok: false, reason: "value_mismatch" };
   if (cmp === "approx") {
     const tol = a.tolerance ?? DEFAULT_APPROX;
-    return Math.abs(o - e) <= Math.abs(e) * tol ? { ok: true, reason: "within_tolerance" } : { ok: false, reason: "value_mismatch" };
+    return Math.abs(o - e) <= Math.abs(e) * tol ? { ok: true, reason: "within_tolerance" } : fail("value_mismatch");
   }
   if (o === e) return { ok: true, reason: "exact" };
   if (a.tolerance && Math.abs(o - e) <= Math.abs(e) * a.tolerance) return { ok: true, reason: "within_tolerance" };
-  // A running total that has grown past the claim: true when made, stale now (eval 29 Oct §5.2: not a lie).
+  // A running total that has grown past the claim: true when made, stale now (eval 29 Oct §5.2: not a lie). Only up:
+  // a counter that went down is CONTRADICTED, reason counter_decreased.
   if (a.counter && o > e) return { ok: false, reason: "stale_value" };
-  return { ok: false, reason: "value_mismatch" };
+  return fail("value_mismatch");
 }
 
 /** Where `"key":value` sits in the body text (compact or pretty JSON), so the quote is the source's own bytes. */
@@ -164,7 +183,7 @@ export function checkJson(a: Anchor, body: string): Outcome {
     const c = compareValue(a, v);
     if (!c.ok) {
       const l = locate(body, r.lastKey, v);
-      return out(c.reason === "not_a_number" ? "NOT_PRESENT" : "CONTRADICTED", c.reason, l.quote, l.offset, show(v));
+      return out(failedVerdict(c.reason), c.reason, l.quote, l.offset, show(v));
     }
   }
   const first = values[0];

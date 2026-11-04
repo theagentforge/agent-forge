@@ -15,7 +15,7 @@ import { readSampleMeta } from "../arena/sample";
 import { countNeurons, neuronRates, neuronsFor, waiRoom } from "../arena/free-lane";
 import { datasetSpecData } from "../web/dataset-spec";
 import { statsData } from "../web/stats";
-import { acceptLlmAnswer, type Anchor, checkBody, GENESIS, type Outcome, pageText, plainClaim, rowHash, sha256Hex, verifyChain, type Verdict, VERDICTS } from "./claims-core";
+import { acceptLlmAnswer, type Anchor, checkBody, GENESIS, type Outcome, pageText, plainClaim, rowHash, sha256Hex, standing, verifyChain, type Verdict, VERDICTS } from "./claims-core";
 import { CLAIM_SEED } from "./claims-seed";
 import { INTERNAL_HEADER } from "./internal";
 
@@ -276,7 +276,19 @@ export async function runClaimChecks(env: Env, ctx: ExecutionContext, o: { trigg
       if (r.checker === "det") counts[r.verdict]++;
     }
   }
-  return { run_id, trigger: o.trigger, claims: rows.filter((r) => r.checker === "det").length, counts, all_supported: rows.length > 0 && rows.every((r) => r.verdict === "SUPPORTED"), rows };
+  const det = rows.filter((r) => r.checker === "det");
+  return {
+    run_id,
+    trigger: o.trigger,
+    claims: det.length,
+    counts,
+    /** CONTRADICTED, NOT_PRESENT or UNREACHABLE: someone should look. */
+    needs_attention: det.filter((r) => standing(r) === "attention").length,
+    /** STALE: a running total has grown past its claim; refresh the claim. */
+    refresh: det.filter((r) => standing(r) === "refresh").length,
+    all_supported: rows.length > 0 && rows.every((r) => r.verdict === "SUPPORTED"),
+    rows,
+  };
 }
 
 const LOG_COLUMNS = `claim_id, run_id, "trigger", checked_at, fetched_url, via, http_status, response_sha256, verdict, reason, quote, quote_offset, observed_value, observed_as_of, checker, prev_hash, row_hash`;
@@ -303,8 +315,15 @@ export async function claimsOverview(env: Env) {
   ).all<CheckRow>();
   const by = new Map<string, CheckRow[]>();
   for (const r of latest) by.set(r.claim_id, [...(by.get(r.claim_id) ?? []), r]);
+  const claims = all.map((c) => ({ ...c, counter: !!c.counter, latest: by.get(c.id)?.find((r) => r.checker === "det") ?? null, latest_llm: by.get(c.id)?.find((r) => r.checker.startsWith("llm:")) ?? null }));
+  const live = claims.filter((c) => !c.retired_at);
   return {
-    claims: all.map((c) => ({ ...c, counter: !!c.counter, latest: by.get(c.id)?.find((r) => r.checker === "det") ?? null, latest_llm: by.get(c.id)?.find((r) => r.checker.startsWith("llm:")) ?? null })),
+    claims,
+    /** Live claims whose latest deterministic check is CONTRADICTED, NOT_PRESENT or UNREACHABLE. */
+    needs_attention: live.filter((c) => c.latest && standing(c.latest) === "attention").length,
+    /** Live claims whose latest check is STALE (a counter that grew; or logged as stale_value before STALE existed). */
+    refresh: live.filter((c) => c.latest && standing(c.latest) === "refresh").length,
+    unchecked: live.filter((c) => !c.latest).length,
     log,
     chain,
     llm_pass: (env as Env & { CLAIMS_LLM?: string }).CLAIMS_LLM === "on" ? "on" : "off",

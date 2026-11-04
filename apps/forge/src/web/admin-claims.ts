@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { html } from "hono/html";
 import * as t from "../db/schema";
 import { CLAIMS_JSON_PATH, CLAIMS_PATH, claimsOverview, runClaimChecks } from "../services/claims";
+import { standing } from "../services/claims-core";
 import { PRIVATE_HEADERS } from "../services/data-room";
 import { getDb } from "../services/db";
 import { isAdmin } from "../services/identity";
@@ -36,8 +37,6 @@ site.get(CLAIMS_PATH, async (c) => {
   const d = await claimsOverview(c.env);
   const csrf = await csrfToken(c.env.SESSION_SECRET, a.s.token);
   const ran = c.req.query("ran");
-  const failing = d.claims.filter((x) => !x.retired_at && x.latest && x.latest.verdict !== "SUPPORTED").length;
-  const unchecked = d.claims.filter((x) => !x.retired_at && !x.latest).length;
   const res = await send(
     c,
     {
@@ -46,10 +45,11 @@ site.get(CLAIMS_PATH, async (c) => {
       path: CLAIMS_PATH,
       noindex: true,
       body: html`<h1 class="page-title">Claims (private)</h1>
-<p>Founder admins only. Each claim we make in a brief, on a page or in an ops email, checked against its source. Four verdicts: SUPPORTED, CONTRADICTED, NOT PRESENT, UNREACHABLE. The checker never edits a claim; anything it can't read is UNREACHABLE. Runs nightly (about 01:17 UTC) and when you press the button. Decision record: ADR 0120.</p>
+<p>Founder admins only. Each claim we make in a brief, on a page or in an ops email, checked against its source. Five verdicts: SUPPORTED, STALE, CONTRADICTED, NOT PRESENT, UNREACHABLE. STALE is a running total that has grown past its claim: true when made, out of date now, so refresh the claim; it doesn't need attention. The checker never edits a claim; anything it can't read is UNREACHABLE. Runs nightly (about 01:17 UTC) and when you press the button. Decision record: ADR 0120.</p>
 ${ran ? html`<p data-k="ran"><b>Checked now</b> (run <code>${ran}</code>).</p>` : ""}
 <table class="kpi-table"><tbody>
-<tr data-k="failing"><td>Live claims not SUPPORTED at their last check</td><td><b>${failing}</b>${unchecked ? html` · ${unchecked} not yet checked` : ""}</td></tr>
+<tr data-k="attention"><td>Live claims that need attention (CONTRADICTED, NOT PRESENT or UNREACHABLE at their last check)</td><td><b>${d.needs_attention}</b>${d.unchecked ? html` · ${d.unchecked} not yet checked` : ""}</td></tr>
+<tr data-k="refresh"><td>Live claims to refresh (STALE: a running total has grown past the claim)</td><td>${d.refresh}</td></tr>
 <tr data-k="chain"><td>Log hash chain</td><td>${d.chain.ok ? html`holds · ${d.chain.rows} rows` : html`<b>broken at row ${(d.chain.broken_at ?? 0) + 1}</b>`}</td></tr>
 <tr data-k="llm"><td>LLM pass for prose claims</td><td>${d.llm_pass}</td></tr>
 </tbody></table>
@@ -57,7 +57,7 @@ ${ran ? html`<p data-k="ran"><b>Checked now</b> (run <code>${ran}</code>).</p>` 
 <h2>Claims</h2>
 <table class="table stack"><thead><tr><th scope="col">Claim</th><th scope="col">Verdict</th><th scope="col">Read from the source</th><th scope="col">Checked</th></tr></thead><tbody>
 ${d.claims.map(
-  (x) => html`<tr data-claim="${x.id}"${x.retired_at ? html` class="muted"` : ""}><td><b>${x.id}</b> ${x.text}<br><span class="small muted">${x.appears_in} · ${x.author}${x.author_model ? ` (${x.author_model})` : ""} · <code>${x.url}</code>${x.anchor_path ? html` <code>${x.anchor_path}</code> ${x.comparator} ${x.expected}` : x.expected ? html` phrase` : ""}${x.retired_at ? html` · retired ${when(x.retired_at)}` : ""}</span></td><td data-verdict="${x.latest?.verdict ?? ""}">${x.latest ? html`<b>${x.latest.verdict.replace("_", " ")}</b><br><span class="small">${x.latest.reason}</span>` : "not yet checked"}${x.latest_llm ? html`<br><span class="small">LLM: ${x.latest_llm.verdict.replace("_", " ")} (${x.latest_llm.reason})</span>` : ""}</td><td>${x.latest?.quote ? html`<code>${x.latest.quote}</code>` : ""}${x.latest?.observed_as_of ? html`<br><span class="small muted">as of ${x.latest.observed_as_of}</span>` : ""}</td><td class="small">${when(x.latest?.checked_at)}</td></tr>`,
+  (x) => html`<tr data-claim="${x.id}"${x.retired_at ? html` class="muted"` : ""}><td><b>${x.id}</b> ${x.text}<br><span class="small muted">${x.appears_in} · ${x.author}${x.author_model ? ` (${x.author_model})` : ""} · <code>${x.url}</code>${x.anchor_path ? html` <code>${x.anchor_path}</code> ${x.comparator} ${x.expected}` : x.expected ? html` phrase` : ""}${x.retired_at ? html` · retired ${when(x.retired_at)}` : ""}</span></td><td data-verdict="${x.latest?.verdict ?? ""}" data-standing="${x.latest ? standing(x.latest) : ""}">${x.latest ? html`<b>${x.latest.verdict.replace("_", " ")}</b>${standing(x.latest) === "refresh" ? html` (refresh)` : ""}<br><span class="small">${x.latest.reason}</span>` : "not yet checked"}${x.latest_llm ? html`<br><span class="small">LLM: ${x.latest_llm.verdict.replace("_", " ")} (${x.latest_llm.reason})</span>` : ""}</td><td>${x.latest?.quote ? html`<code>${x.latest.quote}</code>` : ""}${x.latest?.observed_as_of ? html`<br><span class="small muted">as of ${x.latest.observed_as_of}</span>` : ""}</td><td class="small">${when(x.latest?.checked_at)}</td></tr>`,
 )}
 </tbody></table>
 <h2>Log (newest 200)</h2>

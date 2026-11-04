@@ -1,1 +1,143 @@
-{"note": "Held back until 2 Nov 2026 with the launch-scan entries they belong to.", "entries": []}
+{
+  "note": "Maintainer responses to launch-scan entries (report v1.1), shown on each entry's scan page from public_from. Private until 2 Nov 2026: the public mirror gets an empty stub (scripts/public-export.mjs). Every rescan was run by us with packages/shared/src/skill-scan.ts on the file fetched from raw.githubusercontent.com at the commit named.",
+  "entries": [
+    {
+      "repo": "aeonfun/aeon",
+      "path": "skills/vuln-scanner/SKILL.md",
+      "fingerprint": "sha256:2f4f8e71b719d7fc0adae62afdd6aeef0446ff0c60bc4da0b1e8d11e68cd31a4",
+      "scanned_commit": "8884b68d0da62c071851efc7e09e9b00169a65c6",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-28",
+        "thread_url": "https://github.com/aeonfun/aeon/issues/1284",
+        "fix_label": "#1286",
+        "fix_url": "https://github.com/aeonfun/aeon/pull/1286",
+        "fix_commit": "d2c7d9c4cd723df6d18baa3dc5e34a02c78cc7f8",
+        "fix_date": "2026-10-28",
+        "note": "The in-run download is gone; osv-scanner and trufflehog are staged before the run, pinned to a version and checked against a sha256 digest."
+      },
+      "rescan": {
+        "date": "2026-10-28",
+        "commit": "e6058e3accb3a74228f393aaeabeaa26ae8ad759",
+        "fingerprint": "sha256:d3d8173c1fb39d8ec4b04100a5a252316c533a3de276af17e151f1206bb669ea",
+        "verdict": "clear",
+        "rules_version": "2026-10-23.1"
+      }
+    },
+    {
+      "repo": "squirrelscan/skills",
+      "path": "skills/squirrelscan/SKILL.md",
+      "fingerprint": "sha256:5401edd6eaae333ff7afa9e8f267811b72ab01db5aa2dc5b017c88f1601e0f0c",
+      "scanned_commit": "4595577541fd21c43ab8127ed0816ae98c75ba88",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-28",
+        "thread_url": "https://github.com/squirrelscan/skills/issues/32",
+        "fix_label": "#25",
+        "fix_url": "https://github.com/squirrelscan/skills/pull/25",
+        "fix_commit": "29f6fadaa761e82051fa4c7ae4b240bedc45b8d9",
+        "fix_date": "2026-10-24",
+        "note": "The two install lines were replaced with Homebrew and the download page. The fix landed on 24 Oct, after our scan of 19 Oct."
+      },
+      "rescan": {
+        "date": "2026-10-28",
+        "commit": "8ce7e12d51e0a3df4a353f037e33fb53be23db7e",
+        "fingerprint": "sha256:31e53ef3a05376029324187c011975bbc4a8832dfd806eaf2f454a6cdadfd925",
+        "verdict": "clear",
+        "rules_version": "2026-10-23.1"
+      }
+    },
+    {
+      "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+      "path": "skills/gemini-search/SKILL.md",
+      "fingerprint": "sha256:a8778e4e1dacae68691d13342a9a33200ade427beb777a4defbbb91dfcb030e3",
+      "scanned_commit": "43a5daf6f8a2db7b87b48cb51d45c6ddb3c9a6d3",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-29",
+        "thread_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/481",
+        "fix_label": "#482",
+        "fix_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/482",
+        "fix_commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fix_date": "2026-10-29",
+        "note": "The .claude/.env setup was replaced with exporting GEMINI_API_KEY in the shell before starting Claude Code. The fix landed on 29 Oct, the day after our notice."
+      },
+      "rescan": {
+        "date": "2026-10-29",
+        "commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fingerprint": "sha256:bbb17bca28a0db85f3a26fe9b4109bcaae5709843f4e58df985e257eb1c8d5f3",
+        "verdict": "clear",
+        "rules_version": "2026-10-23.1"
+      }
+    },
+    {
+      "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+      "path": "skills/openalex/SKILL.md",
+      "fingerprint": "sha256:4c853b646987c4472a8360e044ad232aa9731dcfb60c7183073e8e5f3e6ac9c1",
+      "scanned_commit": "43a5daf6f8a2db7b87b48cb51d45c6ddb3c9a6d3",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-29",
+        "thread_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/481",
+        "fix_label": "#482",
+        "fix_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/482",
+        "fix_commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fix_date": "2026-10-29",
+        "note": "The .claude/.env setup was replaced with exporting OPENALEX_API_KEY and OPENALEX_EMAIL in the shell before starting Claude Code. The fix landed on 29 Oct, the day after our notice."
+      },
+      "rescan": {
+        "date": "2026-10-29",
+        "commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fingerprint": "sha256:6911236401c787abf43df44f95baf35185137e7e9bad362f0142630af8e736ff",
+        "verdict": "clear",
+        "rules_version": "2026-10-23.1"
+      }
+    },
+    {
+      "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+      "path": "skills/deepxiv/SKILL.md",
+      "fingerprint": "sha256:19d6b9a334f56398be97f68727feaf7689134e5294f7d9507a2d071b1eeed148",
+      "scanned_commit": "43a5daf6f8a2db7b87b48cb51d45c6ddb3c9a6d3",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-29",
+        "thread_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/481",
+        "fix_label": "#482",
+        "fix_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/482",
+        "fix_commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fix_date": "2026-10-29",
+        "note": "#482 replaced the matched line with a description of how the third-party deepxiv-sdk CLI (version 1.2.2) handles ~/.env: it saves an auto-registered token there and loads ~/.env and the project's .env at startup. It adds that this skill does not need to read those files or display tokens. Our rescan still matches FS-SEC-003 (a path to a home-folder .env file) twice on line 54, in that description. We record the match; we make no claim either way about the file's safety."
+      },
+      "rescan": {
+        "date": "2026-10-29",
+        "commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fingerprint": "sha256:48a6b4cc7a5ba9e77b5287607c25e15094475dd238c625660c854e81405b115e",
+        "verdict": "flagged",
+        "rules_version": "2026-10-23.1"
+      }
+    },
+    {
+      "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+      "path": "skills/skills-codex/deepxiv/SKILL.md",
+      "fingerprint": "sha256:a249c058513dfda7424e601edff1a19adaa27192124b152f8c45eed8c7ab64a1",
+      "scanned_commit": "43a5daf6f8a2db7b87b48cb51d45c6ddb3c9a6d3",
+      "public_from": "2026-11-02T00:00:00Z",
+      "response": {
+        "date": "2026-10-29",
+        "thread_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/issues/481",
+        "fix_label": "#482",
+        "fix_url": "https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep/pull/482",
+        "fix_commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fix_date": "2026-10-29",
+        "note": "#482 replaced the matched line with a description of how the third-party deepxiv-sdk CLI (version 1.2.2) handles ~/.env: it saves an auto-registered token there and loads ~/.env and the project's .env at startup. It adds that this skill does not need to read those files or display tokens. Our rescan still matches FS-SEC-003 (a path to a home-folder .env file) twice on line 51, in that description. We record the match; we make no claim either way about the file's safety."
+      },
+      "rescan": {
+        "date": "2026-10-29",
+        "commit": "a3a847b421c6c54d067752080a6331eba192ece3",
+        "fingerprint": "sha256:5d26b1218723304ef6d6d0e0421fa8e1d11d33aab33d2b17fbbc7f4a6c314e91",
+        "verdict": "flagged",
+        "rules_version": "2026-10-23.1"
+      }
+    }
+  ]
+}
