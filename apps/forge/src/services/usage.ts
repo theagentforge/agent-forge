@@ -272,7 +272,7 @@ const AI_AGENTS: [RegExp, "indexer" | "live" | "coding", string][] = [
 
 /** The kind of page an AI agent fetched, for the counters. */
 export const aiPageKind = (path: string) =>
-  path.startsWith("/tools/") ? "tools" : path === "/llms.txt" ? "llms" : path === "/skill.md" || path.startsWith("/.well-known/agent-skills/") || path.startsWith("/.well-known/skills/") ? "skills" : path.startsWith("/scan/") ? "scan" : path.startsWith("/.well-known/") ? "discovery" : "other";
+  path.startsWith("/tools/") ? "tools" : path === "/llms.txt" || path === "/llms-full.txt" ? "llms" : path === "/skill.md" || path.startsWith("/.well-known/agent-skills/") || path.startsWith("/.well-known/skills/") ? "skills" : path.startsWith("/scan/") ? "scan" : path.startsWith("/.well-known/") ? "discovery" : "other";
 
 export function aiAgentCounters(req: { method: string; url: string; headers: Headers }): string[] {
   if (req.method !== "GET" || internalCaller(req.headers)) return [];
@@ -304,6 +304,7 @@ export function discoveryCounters(req: { method: string; url: string; headers: H
   const file = /^\/\.well-known\/(agent-skills|skills)\/([a-z0-9-]+)\/SKILL\.md$/.exec(path);
   if (file) return [`skills:file:${file[2]}`];
   if (path === "/llms.txt" && !/text\/html/.test(req.headers.get("accept") ?? "")) return ["disc:llms-txt"];
+  if (path === "/llms-full.txt") return ["disc:llms-full"];
   return [];
 }
 

@@ -25,6 +25,7 @@ import { asOfText, publicNumbers, secondsLeftOf } from "../services/public-numbe
 import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_RULES, installJson, installTotals } from "../services/install-metrics";
 import { countsAsHouse } from "../services/identity";
 import { skillStats, usageStats } from "../services/usage";
+import { outsideMetrics, publicMetricsOn, type OutsideMetric, type OutsideMetrics } from "../services/outside-metrics";
 import { reportPath, type GauntletSummary } from "../arena/gauntlet";
 import { scorePath } from "../arena/score";
 import { agentHref, disclosure, fieldReportsLabel } from "./components";
@@ -113,11 +114,13 @@ export async function outsideStatsData(env: Env) {
  */
 export async function statsData(env: Env, o: RowOptions = {}) {
   // ADR 0116: the running totals come from the one snapshot /dataset, the home band and /about read too.
-  const [numbers, ourArena, gross, install] = await Promise.all([
+  const [numbers, ourArena, gross, install, outside] = await Promise.all([
     publicNumbers(env),
     proofStrip(env).catch(() => null),
     grossNumbers(env).catch(() => null),
     installTotals(env).catch(() => null),
+    // ADR 0126: the outside-use block, only while PUBLIC_METRICS is "on" (off by default: F-02, ADR 0082).
+    publicMetricsOn(env) ? outsideMetrics(env).catch((e) => (console.error("outside_metrics_failed", String(e)), null)) : Promise.resolve(null),
   ]);
   const { work, live } = numbers;
   return {
@@ -125,6 +128,11 @@ export async function statsData(env: Env, o: RowOptions = {}) {
     rules_url: `${env.PUBLIC_ORIGIN}/stats/rules`,
     /** ADR 0116: when the running totals were counted; every page and twin showing them reads this same snapshot. */
     as_of: numbers.as_of,
+    /**
+     * ADR 0126: outside tool calls, returning clients and verified owners, our own traffic and likely bots left out,
+     * each with its definition and window. The key is absent while PUBLIC_METRICS is off (the default).
+     */
+    ...(outside ? { outside_use: outside } : {}),
     /**
      * ADR 0067 Amendment 1: the outside-only headline is internal now (/admin/kpis). Always an empty array, kept so
      * existing readers don't break; the public numbers are `totals`.
@@ -204,6 +212,28 @@ async function gauntletRunsFinished(env: Env, mode: "full" | "sprint" = "full") 
 
 const n = (v: number) => v.toLocaleString("en-US");
 
+const windowText = (x: OutsideMetric) =>
+  x.window ? `${x.window.from} to ${x.window.to} (UTC)${x.since ? `, data since ${x.since}` : ""}` : x.as_of ? `as of ${x.as_of.slice(0, 16).replace("T", " ")} UTC` : "";
+
+/**
+ * ADR 0126: the outside-use block. Every number exactly (0 shows as 0), with its window, definition, what it leaves out
+ * and its limits. /stats shows it while PUBLIC_METRICS is on; /admin/kpis shows it as a preview.
+ */
+export function outsideUseBlock(m: OutsideMetrics, preview = false) {
+  return html`<section class="outside-use" id="outside-use" aria-labelledby="h-outside-use">
+<h2 class="page-title" id="h-outside-use">${m.label}${preview ? " (preview, not public)" : ""}</h2>
+<p class="small">These numbers leave out our own tests and probes, House and founder accounts, our own install IDs, and directory, catalogue and monitor clients. Each is shown exactly, however small. Built ${m.generated_at.slice(0, 16).replace("T", " ")} UTC.</p>
+<div class="scroll-x spaced"><table class="table">
+<thead><tr><th scope="col">Measure</th><th scope="col" class="num">Number</th><th scope="col">Window</th></tr></thead>
+<tbody>${m.items.map(
+    (x) => html`<tr data-k="${x.key}"><td>${x.label}${x.detail?.active_30d !== undefined ? html`<br><span class="small muted">${n(x.detail.active_30d)} active in the last 30 days</span>` : ""}${x.previous ? html`<br><span class="small muted">The 7 days before (${x.previous.window.from} to ${x.previous.window.to}): ${n(x.previous.value)}</span>` : ""}</td><td class="num">${n(x.value)}</td><td class="small">${windowText(x)}</td></tr>`,
+  )}</tbody></table></div>
+<dl class="small outside-use-rules">${m.items.map(
+    (x) => html`<dt id="rule-${x.key}">${x.label}</dt><dd>${x.definition} Left out: ${x.excludes.join("; ")}. ${x.limits.join(" ")}${[...(x.gaps ?? []), ...(x.previous?.gaps ?? [])].length ? html` <b>Gap:</b> ${[...new Set([...(x.gaps ?? []), ...(x.previous?.gaps ?? [])])].join(" ")}` : ""}</dd>`,
+  )}${m.not_measured.map((x) => html`<dt>Not shown: ${x.key.replaceAll("_", " ")}</dt><dd>${x.why}</dd>`)}</dl>
+</section>`;
+}
+
 const INSTALL_ROW_TEXT = { checked: "Install checks run", blocked: "Installs our answer would block", advisory: "Install checks with a published advisory (not blocked)" } as const;
 
 site.get("/stats", async (c) => {
@@ -233,7 +263,8 @@ site.get("/stats", async (c) => {
     nav: "stats",
     jsonAlternate: "/stats.json",
     body: html`<h1 class="page-title">Stats</h1>
-${disclosure(html`${TOTALS_NOTE} Every number counts everything, founder accounts and our tests too; traffic numbers also include crawlers and uptime checks. <span data-as-of="${d.as_of}">${asOfText(d)}</span> <a href="/stats/rules">Counting rules v${d.rules_version}</a> · <a href="/stats.json">stats.json</a>`)}
+${disclosure(html`${TOTALS_NOTE} ${d.outside_use ? "Apart from the outside-use block, every" : "Every"} number counts everything, founder accounts and our tests too; traffic numbers also include crawlers and uptime checks. <span data-as-of="${d.as_of}">${asOfText(d)}</span> <a href="/stats/rules">Counting rules v${d.rules_version}</a> · <a href="/stats.json">stats.json</a>`)}
+${d.outside_use ? outsideUseBlock(d.outside_use) : ""}
 <h2 class="page-title" id="blended">Totals</h2>
 <div class="scroll-x spaced"><table class="table">
 <thead><tr><th scope="col">Total</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>

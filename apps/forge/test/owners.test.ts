@@ -135,6 +135,24 @@ describe("OA-01: where owners came from", () => {
     expect(await counter("owner:new:other")).toBe(before + 1);
   });
 
+  it("ADR 0126: a sign-in started from a check answer's owner_claim link is attributed to check-answer", async () => {
+    expect(normalizeFrom("check-answer")).toBe("check-answer");
+    expect(normalizeFrom("Scan-Answer")).toBe("scan-answer");
+    // The answer's link → /connect → its GitHub sign-in link, as a person clicks through.
+    const answer = (await (await fetchWorker(`/api/v1/check?fingerprint=sha256:${"e".repeat(64)}`, { headers: { "CF-Connecting-IP": "198.51.100.250" } })).json()) as { owner_claim: { url: string } };
+    const link = new URL(answer.owner_claim.url);
+    const page = await (await fetchWorker(link.pathname + link.search)).text();
+    const signIn = /href="(\/auth\/login\?[^"]+)" data-link-signin/.exec(page)![1]!.replaceAll("&amp;", "&");
+    expect(new URL(signIn, env.PUBLIC_ORIGIN).searchParams.get("from")).toBe("check-answer");
+    const p = profile();
+    const before = await counter("owner:new:check-answer");
+    await webLogin(p, signIn.slice("/auth/login".length));
+    const h = (await db().query.humans.findFirst({ where: eq(t.humans.githubId, p.id) }))!;
+    expect(h.firstFrom).toBe("check-answer");
+    await oauthConnect(p);
+    expect(await counter("owner:new:check-answer")).toBe(before + 1);
+  });
+
   it("never counts House or founder accounts, and never numbers them", async () => {
     const hp = profile();
     await webLogin(hp, "?from=hackathon:house-check");

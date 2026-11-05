@@ -4,7 +4,7 @@ import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
-import { agentCheckAnswer, exposureAnswer, resultsAnswer, watchAnswer, type Related } from "./services/compact";
+import { agentCheckAnswer, exposureAnswer, ownerClaim, resultsAnswer, watchAnswer, type Related } from "./services/compact";
 import { arenaResults, ALL_TASKS, defaultResultsFilter } from "./arena/results";
 import { publicEvent, rankedEvents } from "./arena/views";
 import { JOBS } from "./arena/gauntlet";
@@ -328,7 +328,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
     const [, , r] = await Promise.all([recordCheck(env, "api", source, { internal }), recordToolCheck(env, q.data, Date.now(), { internal, channel: "a2a" }), checkTool(env, q.data)]);
     const share = await checkShare(env, r, q.data.id ?? q.data.url ?? q.data.fingerprint ?? "");
     // Compact by default, like /mcp/public (ADR 0056); a data part with "detail":"full" gets every field.
-    return { skill: "check-tool", result: a2aRelated(agentCheckAnswer({ ...r, share }, q.data, req.detail ?? "compact")) };
+    return { skill: "check-tool", result: a2aRelated(agentCheckAnswer({ ...r, share }, q.data, req.detail ?? "compact", { ownerClaim: ownerClaim(env.PUBLIC_ORIGIN, "check") })) };
   }
   let body = req.text ?? "";
   let sourceUrl: string | null = null;
@@ -344,7 +344,7 @@ export async function runSkill(env: Env, ip: string, req: A2ARequest | null, sou
   if (!body) return { skill: "scan-skill", ...inputNeeded("scan-skill", { needed: SCAN_NEEDED, examples: A2A_EXAMPLES["scan-skill"] }) };
   const { result, isPublic } = await scanAndRecord(env, body, { name: req.name, sourceUrl });
   await bump(env, internal ? [internalKey(internal, "scans")] : scanCounters("a2a", result.verdict)).catch(() => {});
-  return { skill: "scan-skill", result: { ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), share: await scanShare(env, result, { isPublic, sourceUrl }) } };
+  return { skill: "scan-skill", result: { ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), share: await scanShare(env, result, { isPublic, sourceUrl }), owner_claim: ownerClaim(env.PUBLIC_ORIGIN, "scan") } };
 }
 
 /** The arena_results answer (compact by default, with its receipt), or what the request needs as data. */

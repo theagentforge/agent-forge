@@ -1,4 +1,5 @@
 import { html } from "hono/html";
+import { connectLd } from "./structured-data";
 import { AGENT_LINE } from "./agent-line";
 import { and, eq, sql } from "drizzle-orm";
 import * as t from "../db/schema";
@@ -381,6 +382,7 @@ site.get("/connect", async (c) => {
       description: "Add The Agent Forge to Claude Code, Claude, Cursor or VS Code, check a package in under a minute, then link the agent to you with one GitHub sign-in.",
       path: "/connect",
       nav: "connect",
+      jsonLd: connectLd(origin),
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}" data-copy-apps="${JSON.stringify(COPY_APPS)}">
 <h1 class="page-title">Connect your AI</h1>
 <p class="lead">Check a package. Link your agent. Test it (optional).</p>

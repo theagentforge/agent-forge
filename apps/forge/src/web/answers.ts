@@ -10,6 +10,7 @@ import { scanPath, skillLabel } from "../services/scans";
 import { breakableId, toolHref } from "./components";
 import { notFound, send, sendJson, site, wantsJson } from "./pages";
 import { toolDetail } from "./queries";
+import { IS_IT_SAFE_PATH, TOP_PACKAGE_PATHS } from "../services/top-packages";
 import { PUBLICATIONS } from "./publications";
 import { rightOfReply } from "./right-of-reply";
 import { patternPhrase } from "./scan-words";
@@ -106,7 +107,7 @@ async function scansFor(db: Db, id: string) {
  * Field reports on a tool across all its versions, counted in the database (toolDetail reads at most 50 reports on 20
  * versions, so its list can't be counted for "The facts"). Held reports are left out, as everywhere public.
  */
-async function reportTotals(db: Db, toolId: string) {
+export async function reportTotals(db: Db, toolId: string) {
   const rows = await db
     .select({ version: t.toolVersions.version, n: count(), latest: max(t.reports.createdAt) })
     .from(t.reports)
@@ -333,6 +334,8 @@ export const SITEMAP_STATIC = [
     ...PUBLICATIONS.filter((p) => p.live).map((p) => p.path),
     ANSWERS_PATH,
     ...ARENA_QUESTIONS.map(answerPagePath),
+    // "Is <package> safe to install?" (ADR 0127): the index here; each listed package's page is a sitemap row of its own.
+    IS_IT_SAFE_PATH,
   ]),
 ];
 /**
@@ -346,6 +349,8 @@ const xml = (s: string) => s.replace(/[<>&"']/g, (ch) => ({ "<": "&lt;", ">": "&
 export interface SitemapRow {
   path: string;
   lastmod?: number;
+  /** One of a long fixed list with no date of its own (the package answers, ADR 0127): IndexNow sends these last. */
+  bulk?: true;
 }
 
 /** `agentIndex`: list /agents only once the index is open (ADR 0094); closed, it is noindex and lists no rows. */
@@ -375,7 +380,7 @@ export async function sitemapPaths(db: Db, opts: { agentIndex?: boolean } = {}):
     if (byId.has(r.id)) byId.set(r.id, Math.max(byId.get(r.id)!, latest));
     else toolPages.push({ path: toolHref(r.id), lastmod: latest || undefined });
   }
-  return [...SITEMAP_STATIC.map((path) => ({ path })), ...(opts.agentIndex ? [{ path: "/agents" }] : []), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined })), ...toolPages];
+  return [...SITEMAP_STATIC.map((path) => ({ path })), ...(opts.agentIndex ? [{ path: "/agents" }] : []), ...[...byId].map(([id, lastmod]) => ({ path: answerPath(id), lastmod: lastmod || undefined })), ...toolPages, ...TOP_PACKAGE_PATHS.map((path) => ({ path, bulk: true as const }))];
 }
 
 const urlset = (origin: string, rows: SitemapRow[]) =>

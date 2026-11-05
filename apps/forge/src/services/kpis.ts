@@ -455,7 +455,7 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       first: 25,
       second: 100,
       definition:
-        "People who became owners for the first time in the last 30 full UTC days, by the first `from` tag they arrived with (founding, connect, plugin, cli, action, clawhub, skills-sh, maintainer, badge, score, hackathon:<slug>; anything else or none is \"other\"). Daily counters owner:new:<from>, written once per person. House and founder accounts never count. A rough guide: one person may see several links before signing in.",
+        "People who became owners for the first time in the last 30 full UTC days, by the first `from` tag they arrived with (founding, connect, plugin, cli, action, clawhub, skills-sh, maintainer, badge, score, welcome, check-answer, scan-answer, hackathon:<slug>; anything else or none is \"other\"). Daily counters owner:new:<from>, written once per person. House and founder accounts never count. A rough guide: one person may see several links before signing in.",
       detail: sources as unknown as Record<string, unknown>,
     }),
     kpi({

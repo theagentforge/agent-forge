@@ -9,7 +9,8 @@ import { send, site } from "./pages";
 import { csrfToken } from "./session";
 import type { OwnerFunnel } from "../services/owner-funnel";
 import { ownerActivity, type OwnerActivity, type ownersBySource } from "../services/owners";
-import { ACTIVE_OWNERS_RULE, outsideStatsData, smallRows } from "./stats";
+import { ACTIVE_OWNERS_RULE, outsideStatsData, outsideUseBlock, smallRows } from "./stats";
+import { outsideMetrics, publicMetricsOn } from "../services/outside-metrics";
 import { connectChecksToday } from "./connect";
 import { gateHeadline, HEADLINE_RULES, headlineSplits, STATS_RULES_VERSION, type HeadlineKey, type Split } from "../services/public-stats";
 import { BYOK_EXPIRES, byokSpendThisMonth, creditGuard, FILLER_MODELS, OPENROUTER_CREDIT_PURCHASED_USD, type CreditGuard } from "../arena/credit";
@@ -89,7 +90,7 @@ export function ownersPanel(active: Kpi | undefined, sources: Kpi | undefined) {
  * here (admins only), next to what a public headline would have shown under the old ADR 0067 minimum.
  */
 export async function thirdPartyData(env: Env, now = Date.now()) {
-  const [splits, owners, page, checksToday, install, returns] = await Promise.all([headlineSplits(env), ownerActivity(env, now, 30, false), outsideStatsData(env).catch(() => null), connectChecksToday(env, now).catch(() => null), installTotals(env, now).catch(() => null), installReturnsData(env, now).catch(() => null)]);
+  const [splits, owners, page, checksToday, install, returns, outsideUse] = await Promise.all([headlineSplits(env), ownerActivity(env, now, 30, false), outsideStatsData(env).catch(() => null), connectChecksToday(env, now).catch(() => null), installTotals(env, now).catch(() => null), installReturnsData(env, now).catch(() => null), outsideMetrics(env, now).catch(() => null)]);
   return {
     internal_only: true as const,
     rules_version: STATS_RULES_VERSION,
@@ -105,6 +106,8 @@ export async function thirdPartyData(env: Env, now = Date.now()) {
     install: install ? { ...install, outside: installOutside(install) } : null,
     /** B3-09 (ADR 0103): return cohorts from the anonymous install IDs, outside-only with ours apart. Never public. */
     install_returns: returns,
+    /** ADR 0126: the outside-use block exactly as /stats shows it once PUBLIC_METRICS is on, and whether it is on. */
+    public_metrics: { on: publicMetricsOn(env), preview: outsideUse },
     generated_at: new Date(now).toISOString(),
   };
 }
@@ -303,6 +306,7 @@ site.get("/admin/kpis", async (c) => {
 ${credit && byok ? creditPanel(credit, byok) : html`<h2 id="credit">Arena credit (ADR 0064)</h2><p>Couldn't be worked out just now (see the Worker log). The runner pauses new practice and panel bouts on credit-spending models while that's so.</p>`}
 ${landingFunnelPanel(funnel)}
 ${disputesPanel(disputes, Date.now(), csrf)}
+${third?.public_metrics.preview ? html`${outsideUseBlock(third.public_metrics.preview, !third.public_metrics.on)}<p><small>ADR 0126: ${third.public_metrics.on ? "public on /stats and /stats.json (PUBLIC_METRICS is on)." : "not public: PUBLIC_METRICS is off (F-02, Dinike 28 Oct). Setting it to \"on\" in the Worker settings shows this block on /stats."}</small></p>` : ""}
 ${third ? thirdPartyPanel(third) : ""}
 ${third ? installPanel(third.install, third.stats_page?.now ?? null) : ""}
 ${small ? smallRowsPanel(small) : ""}

@@ -43,8 +43,8 @@ export async function pingIndexNow(env: Env, now = Date.now(), fetcher: typeof f
     await env.KV.put(TRIED, String(now));
     const origin = env.PUBLIC_ORIGIN;
     const rows = await sitemapPaths(getDb(env), { agentIndex: await agentIndexOpen(env) });
-    // Static pages (no date) first, then the newest.
-    const at = (r: { lastmod?: number }) => r.lastmod ?? Number.MAX_SAFE_INTEGER;
+    // Static pages (no date) first, then the newest; the long undated lists (package answers, ADR 0127) last.
+    const at = (r: { lastmod?: number; bulk?: true }) => (r.bulk ? 0 : (r.lastmod ?? Number.MAX_SAFE_INTEGER));
     const newest = (a: { lastmod?: number }, b: { lastmod?: number }) => at(b) - at(a);
     const pick = last ? rows.filter((r) => (r.lastmod ?? 0) > last) : rows;
     const urls = [...pick].sort(newest).slice(0, last ? INDEXNOW_MAX : INDEXNOW_FIRST).map((r) => origin + r.path);

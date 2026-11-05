@@ -135,6 +135,7 @@ export const PREFLIGHT_PATHS = [
   ...WELL_KNOWN_MCP,
   "/openapi.json",
   "/llms.txt",
+  "/llms-full.txt",
   "/skill.md",
   "/trap-card.json",
   "/trap-card.txt",

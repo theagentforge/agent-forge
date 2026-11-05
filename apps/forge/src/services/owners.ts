@@ -15,8 +15,11 @@ import { agentHref } from "../web/components";
 // - OA-06: claims by people who aren't verified yet wait in pending_claims and count only once they are verified.
 // - OA-07: owner numbers (1, 2, 3… by the date someone first became an owner) behind the Founding Owners list.
 
-/** The fixed `from` tags (OA-01). `hackathon:<slug>` is allowed too; anything else is counted as "other". */
-export const OWNER_FROM = ["founding", "connect", "plugin", "cli", "action", "clawhub", "skills-sh", "maintainer", "badge", "score", "welcome", "other"] as const;
+/**
+ * The fixed `from` tags (OA-01). `hackathon:<slug>` is allowed too; anything else is counted as "other".
+ * ADR 0126: `check-answer` and `scan-answer` are the `owner_claim.url` links inside anonymous check and scan answers.
+ */
+export const OWNER_FROM = ["founding", "connect", "plugin", "cli", "action", "clawhub", "skills-sh", "maintainer", "badge", "score", "welcome", "check-answer", "scan-answer", "other"] as const;
 const HACKATHON = /^hackathon:[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** A tag from a link, as stored: one of OWNER_FROM, `hackathon:<slug>`, "other" for anything unknown, or null when absent. */

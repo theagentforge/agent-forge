@@ -181,6 +181,17 @@ const schemas = {
       candidates: { type: "array", items: { type: "object", properties: { id: { type: "string" }, page_url: { type: "string" } } } },
       related: { type: "array", items: ref("Related") },
       share: ref("Share"),
+      owner_claim: ref("OwnerClaim"),
+    },
+  },
+  OwnerClaim: {
+    type: "object",
+    description: "Where a person links the calling agent to a verified human owner (a web page with one GitHub sign-in). Absent from signed-in answers.",
+    required: ["url", "what", "enables"],
+    properties: {
+      url: { type: "string", format: "uri" },
+      what: { type: "string" },
+      enables: { type: "array", items: { enum: ["forge_report", "agent_page", "per_agent_check_limit"] } },
     },
   },
   ScanFinding: {
@@ -216,6 +227,7 @@ const schemas = {
       scans: { type: "integer" },
       guarantee: { const: false },
       share: ref("Share"),
+      owner_claim: ref("OwnerClaim"),
     },
   },
   WatchResult: {

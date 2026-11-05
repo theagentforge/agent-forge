@@ -13,7 +13,7 @@ import { growthStats, publicGrowth } from "./services/growth";
 import { mcpHandler } from "./mcp";
 import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
-import { exposureAnswer, restCheckAnswer, scanRelated, watchAnswer } from "./services/compact";
+import { exposureAnswer, ownerClaim, restCheckAnswer, scanRelated, watchAnswer } from "./services/compact";
 import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsToken, verifyHouseToken } from "./services/house";
 import { postToMoltbook, validatePost } from "./social/moltbook";
 import { takeReport } from "./social/moltbook-replies";
@@ -102,7 +102,7 @@ publicApi.get("/api/v1/check", async (c) => {
   const checked = await checkTool(c.env, parsed.data);
   const share = await checkShare(c.env, checked, parsed.data.id ?? parsed.data.url ?? parsed.data.fingerprint ?? "");
   // The full shape the plugin, CLI and Action read, with `summary` first and `related` added (ADR 0056).
-  const answer = restCheckAnswer({ ...checked, share }, parsed.data);
+  const answer = restCheckAnswer({ ...checked, share }, parsed.data, c.env.PUBLIC_ORIGIN);
   const res = c.json(answer, 200, {
     "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}`,
   });
@@ -314,7 +314,7 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
   const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
   const internal = internalCaller(c.req.raw.headers);
   c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "scans")] : scanCounters("api", result.verdict)).catch(() => {}));
-  return keyedJson(c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }) }, 200, { "Cache-Control": "no-store" }), g.headers);
+  return keyedJson(c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }), owner_claim: ownerClaim(c.env.PUBLIC_ORIGIN, "scan") }, 200, { "Cache-Control": "no-store" }), g.headers);
 }
 
 publicApi.post("/api/v1/scan", async (c) => {

@@ -28,6 +28,7 @@ import { getDb } from "../services/db";
 import { copyBlock, more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { frozenVersionsBlock } from "./benchmark-versions";
+import { benchmarkDatasetLd } from "./structured-data";
 
 // The Forge Trap Set (ADR 0068): /benchmark (page), /benchmark/v1.json (the data), /benchmark/v1/schema.json (the
 // JSON Schema for one trap record) and /benchmark/v1/CITATION.cff. Every number on the page comes from benchmarkData.
@@ -100,6 +101,7 @@ site.get(BENCHMARK_PATH, async (c) => {
     description: `${TRAP_SET_NAME}: ${d.counts.traps} public traps in everyday business jobs, each with a schema, trigger, safe behaviour, scoring rule and sandbox cost, plus per-model results with intervals. Versioned and citable.`,
     path: BENCHMARK_PATH,
     jsonAlternate: BENCHMARK_JSON_PATH,
+    jsonLd: benchmarkDatasetLd(d, c.env.PUBLIC_ORIGIN),
     canary: CANARY,
     nav: "arena",
     body: html`<div class="prose">

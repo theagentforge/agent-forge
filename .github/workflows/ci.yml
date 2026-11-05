@@ -43,8 +43,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # A normal run takes about 4-7 minutes; a hung one stops here instead of burning minutes.
-    timeout-minutes: 20
+    # A normal run takes about 18-20 minutes since 5 Nov (about 2,600 tests); a hung one stops here instead of
+    # burning minutes. The 20-minute limit cancelled a green run of #321 just after its tests passed.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4

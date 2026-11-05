@@ -53,6 +53,8 @@ import { isLikelyBot } from "../services/bots";
 import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
+import { forStore, isRefresh, readStored, refreshStale, swrFreshSeconds } from "./edge-cache";
+import { readCookie, SESSION_COOKIE } from "./session";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
@@ -165,42 +167,63 @@ export function sendJson(c: Ctx, data: unknown, maxAge = PAGE_CACHE_SECONDS) {
   });
 }
 
-/** Edge cache for anonymous GET pages (keyed by full URL incl. query and Accept type). */
+/**
+ * ADR 0125: a page (not an image or badge) asked for with the session cookie. Pages that read the session send
+ * no-store, but a cached copy must never stand in for, or be made from, a signed-in person's view.
+ */
+export const viewerBound = (path: string, cookieHeader: string | undefined) =>
+  !!readCookie(cookieHeader, SESSION_COOKIE) && !isLongCached(path) && !path.startsWith("/badge/");
+
+/**
+ * Pages whose uncached render costs outside calls or heavy reads (checks, tool and agent pages, share images, and the
+ * package answers at /is-it-safe/<ecosystem>/<name>, which read OSV and the registry): limited per visitor IP.
+ */
+export const LIMITED_PAGE = /^\/(check|t\/|a\/|og\/|is-it-safe\/)/;
+
+/**
+ * Edge cache for anonymous GET pages (keyed by full URL incl. query and Accept type). The slow pages listed in
+ * web/edge-cache.ts are kept past their fresh window and served stale while a new copy renders (ADR 0125).
+ */
 site.use("*", async (c, next) => {
   if (c.req.method !== "GET" || c.req.path.startsWith("/dashboard") || c.req.path.startsWith("/admin") || c.req.path.startsWith("/auth") || c.req.path === "/data-room" || c.req.path.startsWith("/data-room/")) return next();
   const url = new URL(c.req.url);
+  // ADR 0125: the background re-render of a stale page (web/edge-cache.ts) is not a visit. It counts nothing and reads
+  // no cached copy; it only renders the page and stores it.
+  const refresh = isRefresh(c.req.raw);
   // Our own probes (services/internal.ts: screens, Scout) are counted apart, as internal:<component>:*.
   const ours = internalCaller(c.req.raw.headers);
   // ADR 0124: bots (services/bots.ts) see every page as usual but add nothing to the people and agent KPIs.
   const bot = isLikelyBot(c.req.raw);
-  // Scraper relief (ADR 0124): a share link (`?from=share`, `share-x`, `share-li`...) to a scan or Arena page counts its
-  // link tag here, then moves to the bare address, which counts the visit and its source as usual (browsers keep the
-  // Referer across a redirect), so nothing is counted twice and crawlers see one address per page.
-  if (shareOnlyLink(url)) {
-    const tags = visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN).filter((k) => k.startsWith("visit:tag:"));
-    if (tags.length) c.executionCtx.waitUntil(bump(c.env, tags).catch(() => {}));
-    return new Response(null, { status: 301, headers: { Location: url.pathname, "Cache-Control": "no-store" } });
-  }
-  if (c.req.path === "/check" && url.searchParams.get("q")) {
-    if (!bot) c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown", { internal: ours }));
-    // The /connect test code typed into the check form ticks that page too, counted apart (services/connect-test.ts).
-    c.executionCtx.waitUntil(markConnectTest(c.env, { id: url.searchParams.get("q")! }, "web").catch(() => false));
-  }
-  // Trap card downloads are counted before the cache, so cached copies count too. Agents download it with scripts, so
-  // only crawlers and fake browsers are left out (the "api" rule).
-  if ((c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json") && !isLikelyBot(c.req.raw, "api"))
-    c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
-  // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
-  if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
-  // AI agents (agent-channels §4.5): indexers, live fetches and coding agents, counted apart from people.
-  const ai = [...aiAgentCounters(c.req.raw), ...discoveryCounters(c.req.raw)];
-  if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
-  // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML pages only.
-  if (!wantsJson(c) && !/^\/(og|api|feeds)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico|csv|zip)$/.test(c.req.path))
-    c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
   // Markdown for agents (web/markdown.ts): its own cache entry, converted from the HTML page below.
   const markdown = !wantsJson(c) && prefersMarkdown(c.req.header("Accept"));
-  if (markdown && !ours) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
+  if (!refresh) {
+    // Scraper relief (ADR 0124): a share link (`?from=share`, `share-x`, `share-li`...) to a scan or Arena page counts
+    // its link tag here, then moves to the bare address, which counts the visit and its source as usual (browsers keep
+    // the Referer across a redirect), so nothing is counted twice and crawlers see one address per page.
+    if (shareOnlyLink(url)) {
+      const tags = visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN).filter((k) => k.startsWith("visit:tag:"));
+      if (tags.length) c.executionCtx.waitUntil(bump(c.env, tags).catch(() => {}));
+      return new Response(null, { status: 301, headers: { Location: url.pathname, "Cache-Control": "no-store" } });
+    }
+    if (c.req.path === "/check" && url.searchParams.get("q")) {
+      if (!bot) c.executionCtx.waitUntil(recordCheck(c.env, "web", c.req.header("CF-Connecting-IP") ?? "unknown", { internal: ours }));
+      // The /connect test code typed into the check form ticks that page too, counted apart (services/connect-test.ts).
+      c.executionCtx.waitUntil(markConnectTest(c.env, { id: url.searchParams.get("q")! }, "web").catch(() => false));
+    }
+    // Trap card downloads are counted before the cache, so cached copies count too. Agents download it with scripts,
+    // so only crawlers and fake browsers are left out (the "api" rule).
+    if ((c.req.path === "/trap-card.txt" || c.req.path === "/trap-card.json") && !isLikelyBot(c.req.raw, "api"))
+      c.executionCtx.waitUntil(recordTrapCard(c.env, c.req.path.endsWith(".txt") ? "txt" : "json").catch(() => {}));
+    // Fetches of the agent skill file (ADR 0026): agents vs people reading it, counted before the cache.
+    if (c.req.path === "/skill.md") c.executionCtx.waitUntil(bump(c.env, skillFileCounters(c.req.raw)).catch(() => {}));
+    // AI agents (agent-channels §4.5): indexers, live fetches and coding agents, counted apart from people.
+    const ai = [...aiAgentCounters(c.req.raw), ...discoveryCounters(c.req.raw)];
+    if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
+    // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML only.
+    if (!wantsJson(c) && !/^\/(og|api|feeds)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico|csv|zip)$/.test(c.req.path))
+      c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
+    if (markdown && !ours) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
+  }
   if (wantsJson(c)) url.searchParams.set("format", "json");
   else if (markdown) url.searchParams.set("format", "md");
   // Link tags are counted above and never change the page, so they don't split the cache (24 Oct check: the home
@@ -213,21 +236,31 @@ site.use("*", async (c, next) => {
   // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404). Bots never count.
   // ADR 0069: Gauntlet score badges are counted apart (badge:score_serve), so the maintainer badge KPI stays tools-only.
   // ADR 0124: receipt badges are counted here too, so a long edge cache doesn't hide their serves.
-  const scoreBadge = !ours && !bot && c.req.path.startsWith("/badge/score/");
-  const badge = !ours && !bot && c.req.path.startsWith("/badge/") && !scoreBadge;
-  const receiptBadge = !ours && !bot && RECEIPT_BADGE_PATH.test(c.req.path);
+  const counted = !refresh && !ours && !bot;
+  const scoreBadge = counted && c.req.path.startsWith("/badge/score/");
+  const badge = counted && c.req.path.startsWith("/badge/") && !scoreBadge;
+  const receiptBadge = counted && RECEIPT_BADGE_PATH.test(c.req.path);
   const countBadge = (status: number) => {
     if (badge && status === 200) c.executionCtx.waitUntil(recordBadgeServe(c.env, c.req.header("Referer")).catch(() => {}));
     if (scoreBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["badge:score_serve"]).catch(() => {}));
     if (receiptBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["receipt:badge"]).catch(() => {}));
   };
-  const hit = await caches.default.match(key);
+  // ADR 0125: with a session cookie, a page is neither served from the edge cache nor stored in it.
+  const anonymous = !viewerBound(c.req.path, c.req.header("Cookie"));
+  const fresh = anonymous ? swrFreshSeconds(c.req.path) : null;
+  const hit = anonymous && !refresh ? await caches.default.match(key) : undefined;
   if (hit) {
     countBadge(hit.status);
-    return hit;
+    // Pages outside the stale-while-revalidate list, and copies stored before it, are served as they are.
+    const stored = fresh === null ? null : readStored(hit, fresh);
+    if (!stored) return hit;
+    if (stored.state === "stale") c.executionCtx.waitUntil(refreshStale(key, c.req.header("Accept") ?? null, (req) => site.fetch(req, c.env, c.executionCtx)));
+    if (stored.state !== "expired") return stored.res;
+    await stored.res.body?.cancel();
   }
-  // Uncached tool pages, checks and share images query the database (and draw a PNG), so each visitor IP gets a budget.
-  if (/^\/(check|t\/|a\/|og\/)/.test(c.req.path)) {
+  // Uncached tool pages, checks, package answers and share images query the database, OSV and the registries (and
+  // draw a PNG), so each visitor IP gets a budget.
+  if (LIMITED_PAGE.test(c.req.path)) {
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const { success } = await c.env.CHECK_LIMITER.limit({ key: `web:${ip}` });
     if (!success) return c.text("Too many requests. Wait a minute and try again.", 429, { "Retry-After": "60", "Cache-Control": "no-store" });
@@ -235,8 +268,13 @@ site.use("*", async (c, next) => {
   await next();
   countBadge(c.res.status);
   if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
-  if (c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public")) {
-    c.executionCtx.waitUntil(caches.default.put(key, c.res.clone()));
+  if (anonymous && c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public") && !c.res.headers.has("Set-Cookie")) {
+    if (refresh && fresh !== null) {
+      // A background refresh: nobody reads this response, so its body goes straight to the cache, and the refresh
+      // keeps its lock until the new copy is stored.
+      await caches.default.put(key, forStore(c.res, fresh));
+      c.res = new Response(null, { status: 200, headers: c.res.headers });
+    } else c.executionCtx.waitUntil(caches.default.put(key, fresh === null ? c.res.clone() : forStore(c.res.clone(), fresh)));
   }
 });
 

@@ -56,6 +56,9 @@ export const relatedOutput = z.looseObject({
   mcp_server: str.optional(),
 });
 
+/** ADR 0126: the owner step in anonymous check and scan answers (services/compact.ts ownerClaim). Data only. */
+export const ownerClaimOutput = z.looseObject({ url: str, what: str, enables: z.array(str) });
+
 const shareOutput = z.looseObject({ receipt_url: str, page_url: opt(str), badge_markdown: opt(str), receipt_badge_url: str.optional(), receipt_markdown: str.optional() });
 
 const verdict = z.enum(["clear", "caution", "flagged", "confirmed_malicious", "insufficient"]);
@@ -139,6 +142,7 @@ export const checkAnswerOutput = z.looseObject({
   candidates: z.array(z.looseObject({ id: str, page_url: str })).optional(),
   related: z.array(relatedOutput).optional(),
   share: shareOutput,
+  owner_claim: ownerClaimOutput.optional(),
 });
 
 const severityCounts = z.record(str, num);
@@ -156,6 +160,7 @@ export const scanAnswerOutput = z.looseObject({
   guarantee: z.literal(false),
   related: z.array(relatedOutput).optional(),
   share: shareOutput,
+  owner_claim: ownerClaimOutput.optional(),
 });
 
 export const watchAnswerOutput = z.looseObject({

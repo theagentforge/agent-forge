@@ -15,6 +15,26 @@ import type { ExposureMatch, ExposureResult } from "./exposure";
 // `detail: "full"` returns every field as before (plus `summary` and `related`). REST (/api/v1/check), which the
 // plugin, CLI and GitHub Action read, keeps its full shape and gains `summary` and `related`.
 
+/**
+ * ADR 0126 (build list item 11): the owner step inside anonymous check and scan answers, as data. The link opens the
+ * /connect link step with a first-touch tag (services/owners.ts OWNER_FROM), so a sign-in started from an answer is
+ * attributed in the owner funnel (`owner:new:check-answer`, `visit:tag:check-answer`). Signed-in answers (/mcp with a
+ * token) carry none: that agent already has an owner.
+ */
+export const OWNER_CLAIM_FROM = { check: "check-answer", scan: "scan-answer" } as const;
+export interface OwnerClaim {
+  url: string;
+  what: string;
+  /** What a linked agent has that an anonymous one doesn't (stable ids). */
+  enables: ("forge_report" | "agent_page" | "per_agent_check_limit")[];
+}
+export const OWNER_CLAIM_WHAT = "links this agent to a verified human owner (one GitHub sign-in)";
+export const ownerClaim = (origin: string, kind: keyof typeof OWNER_CLAIM_FROM): OwnerClaim => ({
+  url: `${origin}/connect?from=${OWNER_CLAIM_FROM[kind]}#link-step`,
+  what: OWNER_CLAIM_WHAT,
+  enables: ["forge_report", "agent_page", "per_agent_check_limit"],
+});
+
 /** Advisories kept in a compact answer's list; the rest are counted and linked. */
 export const COMPACT_ADVISORIES = 5;
 /** Advisories named in `summary.top_advisories`. */
@@ -197,11 +217,12 @@ const cuts = (r: CheckResult) =>
  * A check answer for an agent channel. Compact by default (ADR 0056); `full` keeps every field of the old answer and
  * adds `summary` and `related`.
  */
-export function agentCheckAnswer(a: CheckAnswer, q: CheckQuery, detail: Detail = "compact", opts: { publicServer?: string } = {}) {
+export function agentCheckAnswer(a: CheckAnswer, q: CheckQuery, detail: Detail = "compact", opts: { publicServer?: string; ownerClaim?: OwnerClaim } = {}) {
   const summary = checkSummary(a, q);
   const truncated = detail === "compact" && cuts(a);
   const related = checkRelated(a, q, { truncated, publicServer: opts.publicServer });
-  if (detail === "full") return { summary, ...a, ...(related.length ? { related } : {}) };
+  const owner = opts.ownerClaim ? { owner_claim: opts.ownerClaim } : {};
+  if (detail === "full") return { summary, ...a, ...(related.length ? { related } : {}), ...owner };
   const { public_signals_summary: ps, share, reports, ...rest } = a;
   return {
     summary,
@@ -210,13 +231,17 @@ export function agentCheckAnswer(a: CheckAnswer, q: CheckQuery, detail: Detail =
     ...(reports.length ? { reports: reports.slice(0, COMPACT_LIST), ...(reports.length > COMPACT_LIST ? { reports_shown: COMPACT_LIST, reports_truncated: true } : {}) } : {}),
     ...(related.length ? { related } : {}),
     share: compactShare(share),
+    ...owner,
   };
 }
 
-/** The REST answer: the full shape every existing client reads, with `summary` first and `related` added. */
-export function restCheckAnswer(a: CheckAnswer, q: CheckQuery) {
+/**
+ * The REST answer: the full shape every existing client reads, with `summary` first and `related` added, and the owner
+ * step (ADR 0126: REST checks are anonymous, and one cached answer serves every caller).
+ */
+export function restCheckAnswer(a: CheckAnswer, q: CheckQuery, origin: string) {
   const related = checkRelated(a, q, { truncated: false });
-  return { summary: checkSummary(a, q), ...a, ...(related.length ? { related } : {}) };
+  return { summary: checkSummary(a, q), ...a, ...(related.length ? { related } : {}), owner_claim: ownerClaim(origin, "check") };
 }
 
 /** After a scan: the file's fingerprint for a later forge_watch. */

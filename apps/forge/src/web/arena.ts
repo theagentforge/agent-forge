@@ -39,6 +39,7 @@ import { runDocument } from "../arena/run-doc";
 import { verifyHowTo } from "./replay-verify";
 import { consistencyBoard, DATASET_LICENCE, datasetRow, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
 import { eventCsv, eventData, eventDatasetLd } from "../arena/results";
+import { arenaDatasetLd } from "./structured-data";
 import { answerPagePath, questionForTask } from "../arena/answers";
 import { channelDuels } from "../arena/featured";
 import { fellInRun } from "../arena/board";
@@ -191,6 +192,7 @@ site.get("/arena", async (c) => {
     description: TAGLINE,
     path: "/arena",
     nav: "arena",
+    jsonLd: arenaDatasetLd(c.env.PUBLIC_ORIGIN),
     body: html`<section class="hero-arena">
 <p class="eyebrow">${SEASON.name}</p>
 <h1 class="page-title">${PUBLIC_NAME}</h1>

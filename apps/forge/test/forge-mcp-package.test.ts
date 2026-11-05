@@ -103,7 +103,8 @@ describe("forge-mcp package", () => {
 
   check("each skill is a valid Agent Skill that names only tools that exist and no hook files", () => {
     const skills = Object.keys(files).filter((f) => /^skills\/[^/]+\/SKILL\.md$/.test(f));
-    expect(skills).toEqual(["skills/forge/SKILL.md"]);
+    // Build list item 9: the two public Agent Skills sit beside `forge` for skills.sh (test/forge-mcp-skills.test.ts).
+    expect(skills.sort()).toEqual(["skills/forge-check-before-install/SKILL.md", "skills/forge-run-the-gauntlet/SKILL.md", "skills/forge/SKILL.md"]);
     const known = new Set([...Object.keys(PUBLIC_TOOLS), ...Object.keys(SIGNED_IN_TOOLS)]);
     for (const f of skills) {
       const text = files[f]!;

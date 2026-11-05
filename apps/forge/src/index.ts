@@ -91,6 +91,7 @@ import "./web/og";
 import "./a2a";
 import "./agentverse";
 import "./web/answers";
+import "./web/is-it-safe";
 import "./web/skills-index";
 import "./web/receipt";
 import "./web/openapi";
@@ -101,6 +102,7 @@ import "./web/admin-usage";
 import "./web/admin-claims";
 import { CLAIMS_NIGHTLY_HOUR, registerClaimsInProcess, runClaimChecks } from "./services/claims";
 import { CARD_PATHS } from "./web/discovery";
+import { LLMS_FULL_PATH, serveLlmsFull } from "./web/llms-full";
 import { forwardBusinessMail } from "./services/mail-forward";
 
 // One Worker: OAuth authorization server, MCP server, REST API (MASTER_PLAN §10.2).
@@ -124,6 +126,9 @@ app.get(`/api/${API_VERSION}/health`, async (c) => {
 
 // ADR 0120: the claim verifier reads pages on this site in-process (no subrequest, no network).
 registerClaimsInProcess((req, env, ctx) => Promise.resolve(app.fetch(req, env, ctx)));
+
+// Build list 4 Nov, item 10: llms.txt plus the Markdown of the core pages, rendered in-process (web/llms-full.ts).
+app.on(["GET", "HEAD"], LLMS_FULL_PATH, (c) => serveLlmsFull(c.env, c.executionCtx, c.req.raw, (req) => Promise.resolve(app.fetch(req, c.env, c.executionCtx as ExecutionContext))));
 
 app.route("/", publicApi);
 app.route("/", auth);

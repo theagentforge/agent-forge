@@ -42,6 +42,12 @@ interface ForgeSecrets {
    * sensitive, but set as a secret so a deploy doesn't clear it.
    */
   HOUSE_INSTALL_IDS?: string;
+  /**
+   * ADR 0126: "on" shows the outside-use block (outside tool calls, returning clients, verified owners) on /stats and
+   * /stats.json. Off by default, because Dinike's 28 Oct ruling (ADR 0082, F-02) keeps outside-only numbers private
+   * until she says otherwise. Not a secret.
+   */
+  PUBLIC_METRICS?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

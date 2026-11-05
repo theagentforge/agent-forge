@@ -15,7 +15,7 @@ import { recordMiss, scanMissLabel } from "./services/misses";
 import { checkTool } from "./services/forge";
 import { serverInfo } from "./server-info";
 import { PUBLIC_OUTPUTS } from "./mcp-output";
-import { agentCheckAnswer, exposureAnswer, resultsAnswer, scanRelated, trapsAnswer, watchAnswer } from "./services/compact";
+import { agentCheckAnswer, exposureAnswer, ownerClaim, resultsAnswer, scanRelated, trapsAnswer, watchAnswer } from "./services/compact";
 import { checkShare, scanShare } from "./services/receipts";
 import { recordCheck } from "./services/proof";
 import { type InternalComponent, internalKey } from "./services/internal";
@@ -323,7 +323,7 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
     if (lim) return json(lim, true);
     // The counters and the check run side by side: none of them depends on another (ADR 0056, speed).
     const [, , r] = await Promise.all([recordCheck(env, "mcp", ip, { internal }), recordToolCheck(env, q, Date.now(), { internal, channel: "mcp" }), checkTool(env, q)]);
-    return json(agentCheckAnswer({ ...r, share: await checkShare(env, r, q.id ?? q.url ?? q.fingerprint ?? "") }, q, p.detail));
+    return json(agentCheckAnswer({ ...r, share: await checkShare(env, r, q.id ?? q.url ?? q.fingerprint ?? "") }, q, p.detail, { ownerClaim: ownerClaim(env.PUBLIC_ORIGIN, "check") }));
   });
 
   server.registerTool(
@@ -355,7 +355,7 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
       if (!body) return json(scanInputNeeded("text: empty"), true);
       const { result, isPublic } = await scanAndRecord(env, body, { name, sourceUrl });
       await bump(env, internal ? [internalKey(internal, "scans")] : scanCounters("mcp", result.verdict)).catch(() => {});
-      return json({ ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(env, result, { isPublic, sourceUrl }) });
+      return json({ ...agentView(result, { isPublic, origin: env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(env, result, { isPublic, sourceUrl }), owner_claim: ownerClaim(env.PUBLIC_ORIGIN, "scan") });
     },
   );
 
