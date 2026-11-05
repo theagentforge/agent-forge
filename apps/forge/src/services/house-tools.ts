@@ -14,6 +14,8 @@ import { canonicalToolId } from "./tools";
 // Honesty rules: a finding says "matches pattern X in tool Y". It is never called malicious, it never changes a tool's
 // security status, and it never sends a notice: notices stay a person's call under the existing OPS-4 gate (at most 3 a
 // week). Write volume: a server's row is written only when its descriptions, version or the scanner's rules change.
+// The public signal is the current reading (one row per server, replaced). Every set ever seen is kept, append-only, in
+// tool_description_history (ADR 0129), so what a description said on an earlier date is never lost.
 
 export const HOUSE_TOOLS_SOURCE = "house-tools";
 /** The same caps as integrations/house/file.mjs TOOL_CAPS, enforced again here. */
@@ -111,6 +113,7 @@ export async function storeToolLists(env: Env, input: unknown, now = Date.now())
   let unchanged = 0;
   let unknown = 0;
   const flagged: string[] = [];
+  const sightings: HistoryRow[] = [];
   for (const s of parsed.data.servers) {
     const tool = await findTool(db, canonicalToolId(s.id));
     if (!tool) {
@@ -118,6 +121,7 @@ export async function storeToolLists(env: Env, input: unknown, now = Date.now())
       continue;
     }
     const payload = await scanToolList(s, now);
+    sightings.push(historyRow(tool.id, tool.canonicalId, payload, now));
     const [prev] = await db
       .select({ payload: t.publicSignals.payload })
       .from(t.publicSignals)
@@ -136,7 +140,68 @@ export async function storeToolLists(env: Env, input: unknown, now = Date.now())
     if (payload.verdict !== "clear") flagged.push(tool.canonicalId);
   }
   if (scanned) await caches.default.delete(cacheKey(env)).catch(() => false);
-  return { ok: true as const, scanned, unchanged, unknown, pattern_matches: flagged.length };
+  const history = await recordSightings(env, sightings);
+  return { ok: true as const, scanned, unchanged, unknown, pattern_matches: flagged.length, history };
+}
+
+// --- History (ADR 0129): append-only, one row per server + version + description-set sha256 -------------------------
+
+type HistoryRow = typeof t.toolDescriptionHistory.$inferInsert;
+
+/** The description set's sha256 (hex): the scanner's fingerprint of the text it read, without the "sha256:" prefix. */
+export const descriptionSha256 = (p: Pick<HouseToolsPayload, "fingerprint">) => p.fingerprint.replace(/^sha256:/, "");
+
+function historyRow(toolId: string, server: string, p: HouseToolsPayload, now: number): HistoryRow {
+  return {
+    id: newId(),
+    toolId,
+    server,
+    version: p.version,
+    descriptionSha256: descriptionSha256(p),
+    toolsCount: p.tools_count,
+    descriptionsCount: p.tools.filter((x) => x.description.length > 0).length,
+    verdict: p.verdict,
+    counts: p.counts,
+    findings: p.findings,
+    rulesVersion: p.rules_version,
+    toolList: p.tools,
+    firstSeen: now,
+    lastSeen: now,
+  };
+}
+
+/**
+ * A new server + version + description set adds a row; a repeat sighting moves only last_seen (never back in time).
+ * Nothing is ever deleted or overwritten. Errors are logged, never thrown: the public signal above is already stored,
+ * and the House tester's night must not fail because of the history (for example before its migration is applied).
+ */
+export async function recordSightings(env: Env, rows: HistoryRow[]) {
+  if (!rows.length) return { sightings: 0 };
+  const db = getDb(env);
+  try {
+    const stmts = rows.map((r) =>
+      db
+        .insert(t.toolDescriptionHistory)
+        .values(r)
+        .onConflictDoUpdate({
+          target: [t.toolDescriptionHistory.toolId, t.toolDescriptionHistory.version, t.toolDescriptionHistory.descriptionSha256],
+          set: { lastSeen: sql`max(${t.toolDescriptionHistory.lastSeen}, excluded.last_seen)` },
+        }),
+    );
+    await db.batch(stmts as [(typeof stmts)[number], ...typeof stmts]);
+    return { sightings: rows.length };
+  } catch (e) {
+    console.error("house_tools_history_failed", String(e).slice(0, 200));
+    return { sightings: 0, error: "history_not_written" };
+  }
+}
+
+/** Every description set a server + version has shown, oldest first (for the census server history). */
+export async function descriptionHistory(env: Env) {
+  return getDb(env)
+    .select({ server: t.toolDescriptionHistory.server, version: t.toolDescriptionHistory.version, sha256: t.toolDescriptionHistory.descriptionSha256, firstSeen: t.toolDescriptionHistory.firstSeen, lastSeen: t.toolDescriptionHistory.lastSeen })
+    .from(t.toolDescriptionHistory)
+    .orderBy(t.toolDescriptionHistory.server, t.toolDescriptionHistory.version, t.toolDescriptionHistory.firstSeen);
 }
 
 const cacheKey = (env: Env) => new Request(`${env.PUBLIC_ORIGIN}/__internal/house-tools-summary`);

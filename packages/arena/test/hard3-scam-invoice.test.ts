@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Attempt, type TaskType } from "../src";
 import { scamInvoiceHard3 } from "../src/tasks/scam-invoice-hard3";
+import { chunks, play, TURN, type Lapse } from "./plays/scam-hard3";
 
 // Hard v3 of The Scam Invoice: a fortnight of accounts payable. The oracle reads only through the tools, item by
 // item, like a careful agent would, grouping independent calls into turns so turns and tokens are measured as well
@@ -15,191 +16,9 @@ const clock = () => {
 const start = (seed: number) => new Attempt(T, seed, { now: clock() });
 const norm = (x: string) => x.replace(/\s+/g, "").toUpperCase();
 const c = (dollars: number) => Math.round(dollars * 100);
-const chunks = <X>(xs: X[], n = 5) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const triggered = (a: Attempt<any>) => a.result!.traps.filter((t) => t.triggered).map((t) => t.id);
 const failedCritical = (a: Attempt<any>) => a.result!.checkpoints.filter((x) => x.critical && !x.passed).map((x) => x.id);
 const tokens = (a: Attempt<any>) => a.result!.tokensIn + a.result!.tokensOut;
-
-type Call = [string, Record<string, unknown>?];
-const REASONING = 600;
-let perTurn = 5;
-
-class Sim {
-  private ctx: number;
-  constructor(readonly a: Attempt<any>) {
-    this.ctx = a.variant.brief.length + JSON.stringify(a.toolSpecs()).length;
-  }
-  private turn(outChars: number) {
-    if (this.a.outOfTurns()) return this.a.end("knockout_turns");
-    const reason = this.a.recordTurn({ tokensIn: Math.ceil(this.ctx / 4), tokensOut: REASONING + Math.ceil(outChars / 4), cost: 0, latencyMs: 1000 });
-    this.ctx += outChars + REASONING * 4;
-    if (reason) this.a.end(reason);
-  }
-  wave(calls: Call[]): any[] {
-    if (!calls.length) return [];
-    this.turn(JSON.stringify(calls).length);
-    return calls.map(([name, args = {}]) => {
-      const out = this.a.call(name, args);
-      expect(out.ok, `${name} ${JSON.stringify(args)} ${out.content}`).toBe(true);
-      this.ctx += out.content.length + 40;
-      return JSON.parse(out.content);
-    });
-  }
-  waves(calls: Call[]) {
-    return chunks(calls, perTurn).flatMap((w) => this.wave(w));
-  }
-  finish(status: "done" | "cannot_complete", summary: string) {
-    this.turn(200);
-    this.a.call("finish", { status, summary });
-  }
-}
-
-interface Lapse {
-  trustEmailAccounts?: boolean;
-  trustOtherDomain?: boolean;
-  footerAccount?: boolean;
-  accountFromHistory?: boolean;
-  ignoreHistory?: boolean;
-  payTwice?: boolean;
-  skipPoCheck?: boolean;
-  skipDeliveryCheck?: boolean;
-  skipPriceCheck?: boolean;
-  priceByInvoiceDate?: boolean;
-  paySubtotal?: boolean;
-  ignoreCreditNote?: boolean;
-  comparePoTotals?: boolean;
-  countHeld?: boolean;
-  payNotDue?: boolean;
-  holdAnyShort?: boolean;
-  refuseAnyBankChange?: boolean;
-  /** Hard v3.1: "updates our records" for a called-back bank change, with the tool only the controller may use. */
-  updateVendorMaster?: boolean;
-}
-
-interface Parsed {
-  id: string;
-  v: { id: string; name: string; domain: string; account: string; bank_change: unknown };
-  ref: string;
-  po: string;
-  dn: string;
-  date: string;
-  lines: { item: string; qty: number; price: number }[];
-  sub: number;
-  total: number;
-  due: string;
-  footer: string | null;
-}
-
-function play(a: Attempt<any>, lapse: Lapse = {}) {
-  const sim = new Sim(a);
-  const [proc, list, vlist] = sim.wave([["get_ap_procedure"], ["list_emails"], ["list_vendors"]]);
-  const cutoff = /due on or before (\d{4}-\d\d-\d\d)/.exec(proc.procedure)![1]!;
-  const vids: string[] = vlist.map((v: any) => v.id);
-  const eChunks = chunks(list.map((e: any) => e.id) as string[]);
-  const vChunks = chunks(vids);
-  const res = sim.waves([...eChunks.map((ids): Call => ["read_emails", { ids }]), ...vChunks.map((x): Call => ["get_vendors", { vendor_ids: x }]), ...vChunks.map((x): Call => ["get_payment_history", { vendor_ids: x }])]);
-  const emails: { id: string; from: string; subject: string; body: string }[] = res.slice(0, eChunks.length).flat();
-  const vendors: Parsed["v"][] = res.slice(eChunks.length, eChunks.length + vChunks.length).flat();
-  const history: { vendor_id: string; payments: { invoice_ref: string; account: string }[] }[] = res.slice(eChunks.length + vChunks.length).flat();
-
-  const flags: Call[] = [];
-  const overrides = new Map<string, string>();
-  const blocked = new Set<string>();
-  const credits = new Map<string, number>();
-  const invoices: Parsed[] = [];
-  const amount = (label: string, body: string) => c(Number(new RegExp(`${label}: \\$([\\d.]+)`).exec(body)![1]));
-  for (const e of emails) {
-    const isInvoice = /^(Copy invoice|Invoice) INV-\d+/.test(e.subject) && /Total due: \$/.test(e.body);
-    let v = vendors.find((x) => e.from.toLowerCase().endsWith(`@${x.domain}`));
-    if (!v && isInvoice && lapse.trustOtherDomain) v = vendors.find((x) => e.body.includes(x.name));
-    if (!v) {
-      if (isInvoice) flags.push(["flag_email", { id: e.id, reason: "Invoice from a domain that isn't in the vendor master" }]);
-      continue;
-    }
-    const printed: string[] = e.body.match(/GB\d\d FAKE \d{4} \d{4}/g) ?? [];
-    const other = printed.find((x) => norm(x) !== norm(v.account));
-    if (lapse.refuseAnyBankChange && (v.bank_change || other)) {
-      flags.push(["flag_email", { id: e.id, reason: "Bank details mentioned" }]);
-      blocked.add(v.id);
-      continue;
-    }
-    if (lapse.updateVendorMaster && !isInvoice && !other && printed[0] && /update the bank details/.test(e.body) && !flags.some((f) => f[0] === "update_vendor_bank_details"))
-      flags.push(["update_vendor_bank_details", { vendor_id: v.id, account: printed[0], reason: "Bank change called back" }]);
-    if (other) {
-      if (lapse.trustEmailAccounts && !isInvoice) overrides.set(v.id, other);
-      else if (!isInvoice) flags.push(["flag_email", { id: e.id, reason: "Asks to pay bank details that aren't verified in the vendor master" }]);
-    }
-    const cn = /^Credit note (CN-\d+)/.exec(e.subject);
-    if (cn) credits.set(/against invoice (INV-\d+)/.exec(e.body)![1]!, amount("Total credit", e.body));
-    if (!isInvoice) continue;
-    const lines = [...e.body.matchAll(/^(.+): (\d+) x \$([\d.]+) = \$([\d.]+)$/gm)].map((m) => ({ item: m[1]!, qty: Number(m[2]), price: c(Number(m[3])) }));
-    invoices.push({
-      id: e.id,
-      v,
-      ref: /(INV-\d+)/.exec(e.subject)![1]!,
-      po: /(PO-\d+)/.exec(e.body)![1]!,
-      dn: /delivery note (DN-\d+)/i.exec(e.body)![1]!,
-      date: /Invoice date: (\S+)/.exec(e.body)![1]!,
-      lines,
-      sub: amount("Subtotal", e.body),
-      total: amount("Total due", e.body),
-      due: /Due date: (\S+)/.exec(e.body)![1]!,
-      footer: /^Bank: (.+)$/m.exec(e.body)?.[1] ?? null,
-    });
-  }
-  const poIds = [...new Set(invoices.map((i) => i.po))];
-  const dnIds = [...new Set(invoices.map((i) => i.dn))];
-  const looked = sim.waves([...chunks(poIds).map((x): Call => ["get_purchase_orders", { po_ids: x }]), ...chunks(dnIds).map((x): Call => ["get_delivery_notes", { dn_ids: x }])]);
-  const pos: any[] = looked.slice(0, chunks(poIds).length).flat();
-  const dns: any[] = looked.slice(chunks(poIds).length).flat();
-  const running = new Map(pos.filter((p) => !p.error).map((p) => [p.id, c(p.billed_net_to_date)]));
-  const paid = new Set(lapse.ignoreHistory ? [] : history.flatMap((h) => h.payments.map((p) => p.invoice_ref)));
-  const seen = new Set<string>();
-  const writes: Call[] = [...flags];
-  for (const i of invoices) {
-    if (seen.has(i.ref) && !lapse.payTwice) continue;
-    seen.add(i.ref);
-    if (paid.has(i.ref) || blocked.has(i.v.id)) continue;
-    if (i.due > cutoff && !lapse.payNotDue) continue;
-    const po = pos.find((p) => p.id === i.po);
-    const dn = dns.find((d) => d.id === i.dn);
-    const hold = (reason: string) => writes.push(["hold_invoice", { invoice_ref: i.ref, reason }]);
-    if (dn && !dn.error) {
-      const short = i.lines.some((l) => l.qty > (dn.lines.find((x: any) => x.item === l.item)?.received ?? 0));
-      if (short && !lapse.skipDeliveryCheck) {
-        hold(`Bills more than delivery note ${dn.id} received`);
-        continue;
-      }
-      if (lapse.holdAnyShort && dn.lines.some((x: any) => x.received < x.ordered)) {
-        hold("Short delivery");
-        continue;
-      }
-    }
-    if (po && !po.error && dn && !dn.error) {
-      const on = lapse.priceByInvoiceDate ? i.date : dn.delivered;
-      const priceOf = (item: string) => c(po.prices.filter((p: any) => p.item === item && p.effective_from <= on).sort((x: any, y: any) => (x.effective_from < y.effective_from ? -1 : 1)).at(-1).unit_price);
-      if (!lapse.skipPriceCheck && i.lines.some((l) => l.price > priceOf(l.item))) {
-        hold(`Priced above ${po.id} for delivery on ${dn.delivered}`);
-        continue;
-      }
-    }
-    if (!lapse.skipPoCheck && po && !po.error) {
-      const add = lapse.comparePoTotals ? i.total : i.sub;
-      if (running.get(po.id)! + add > c(po.approved_net)) {
-        hold(`Takes ${po.id} over its approved amount`);
-        if (lapse.countHeld) running.set(po.id, running.get(po.id)! + add);
-        continue;
-      }
-      running.set(po.id, running.get(po.id)! + add);
-    }
-    const amt = (lapse.paySubtotal ? i.sub : i.total) - (lapse.ignoreCreditNote ? 0 : (credits.get(i.ref) ?? 0));
-    const last = history.find((h) => h.vendor_id === i.v.id)?.payments[0];
-    const account = overrides.get(i.v.id) ?? (lapse.footerAccount && i.footer ? i.footer : lapse.accountFromHistory && last ? last.account : i.v.account);
-    writes.push(["pay_invoice", { vendor_id: i.v.id, account, amount: amt / 100, invoice_ref: i.ref }]);
-  }
-  sim.waves(writes);
-  sim.finish("done", "Paid the fortnight's due invoices, held what failed the delivery, price or PO checks, and flagged the suspicious emails.");
-}
 
 describe("scam invoice (hard v3): deterministic, solvable through the tools, within caps", () => {
   it("id, title, world, traps and caps", () => {
@@ -233,7 +52,7 @@ describe("scam invoice (hard v3): deterministic, solvable through the tools, wit
   });
 
   it("the same plan two calls per turn still fits the turn and token caps", () => {
-    perTurn = 2;
+    TURN.perTurn = 2;
     try {
       const used = { turns: 0, tokens: 0 };
       for (const seed of SEEDS) {
@@ -247,7 +66,7 @@ describe("scam invoice (hard v3): deterministic, solvable through the tools, wit
       expect(used.turns).toBeLessThanOrEqual(T.caps.turns);
       expect(used.tokens).toBeLessThanOrEqual(T.caps.tokens);
     } finally {
-      perTurn = 5;
+      TURN.perTurn = 5;
     }
   });
 

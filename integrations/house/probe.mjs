@@ -202,6 +202,19 @@ export function rankTop(candidates, downloads, count) {
 /** Shard `shard` (0-based) of `of`: every `of`-th entry, so each shard gets a fair mix of busy and quiet servers. */
 export const shardOf = (plan, shard, of) => plan.filter((_, i) => i % of === shard);
 
+/**
+ * ADR 0131 (review 5 Nov): requested servers run on their own runner, the "requests" shard, never beside the sweep's
+ * own servers. A requested package is chosen by an anonymous person, so whatever it does on its runner can reach only
+ * the other requested servers' results; the file job takes requested results only from that shard's file, and sweep
+ * results only from the others.
+ */
+export const REQUESTS_SHARD = "requests";
+export const isRequestEntry = (c) => typeof c?.request_id === "string";
+export function planShard(plan, shard, of) {
+  if (String(shard) === REQUESTS_SHARD) return plan.filter(isRequestEntry);
+  return shardOf(plan.filter((c) => !isRequestEntry(c)), Number(shard), of);
+}
+
 /** The exact published version (resolving "latest") and a fingerprint of its tarball (sha256 of npm's integrity). */
 export async function npmVersion(pkg, version, fetcher = fetch) {
   const res = await fetcher(`https://registry.npmjs.org/${pkg.replace("/", "%2f")}/${version ?? "latest"}`);
@@ -398,6 +411,35 @@ export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [],
   });
 }
 
+/**
+ * ADR 0131: requested servers for this sweep run, from the site's queue (at most REQUEST_CAP, each marked with its
+ * request_id). Re-validated here (the answer is data), and never fatal: an unreachable or older site gives none.
+ */
+export const REQUEST_CAP = 20;
+const REQ_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const REQ_NPM = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+const REQ_VERSION = /^[0-9][A-Za-z0-9.+_!-]{0,63}$/;
+export function requestedCandidates(body) {
+  const out = [];
+  for (const r of Array.isArray(body?.requests) ? body.requests : []) {
+    if (!REQ_ID.test(r?.request_id ?? "") || !REQ_VERSION.test(r?.version ?? "")) continue;
+    if (r.registry === "npm" && REQ_NPM.test(r.pkg ?? "")) out.push({ registryName: null, pkg: r.pkg, version: r.version, request_id: r.request_id });
+    else if (r.registry === "pypi" && PYPI_NAME.test(r.pkg ?? "") && pep503(r.pkg) === r.pkg) out.push({ registry: "pypi", registryName: null, pkg: r.pkg, version: r.version, request_id: r.request_id });
+    if (out.length >= REQUEST_CAP) break;
+  }
+  return out;
+}
+
+/** This run's requests from the site's public, read-only queue (no token: the plan job holds no credentials). */
+export async function fetchRequested(origin, { fetcher = fetch } = {}) {
+  try {
+    const res = await fetcher(`${origin}/api/v1/house/requests/queue`, { headers: { Accept: "application/json", "User-Agent": "theagentforge-internal/house (theagentforge-house-tester)", "X-Forge-Internal": "house" } });
+    return res.ok ? requestedCandidates(await res.json()) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function pool(items, size, fn) {
   const out = [];
   let i = 0;
@@ -455,15 +497,17 @@ async function main() {
   if (mode === "sweep-plan") {
     const day = rest[0] !== undefined && rest[0] !== "" ? Number(rest[0]) % SWEEP_DAYS : sweepDayFor(Date.now());
     const candidates = await allCandidates(fetch, 450, { pypi: true });
-    const plan = sweepSlice(candidates, day);
+    // ADR 0131: requested servers ride along as their own entries (request_id set), kept out of the sweep's figures.
+    const requested = await fetchRequested(process.env.FORGE_ORIGIN || "https://theagentforge.io");
+    const plan = [...sweepSlice(candidates, day), ...requested];
     writeFileSync("plan.json", JSON.stringify(plan, null, 2));
     const py = plan.filter((c) => c.registry === "pypi").length;
-    console.log(`Sweep day ${day}: planned ${plan.length} (${plan.length - py} npm, ${py} PyPI) of ${candidates.length} candidates`);
+    console.log(`Sweep day ${day}: planned ${plan.length} (${plan.length - py} npm, ${py} PyPI, ${requested.length} requested) of ${candidates.length} candidates`);
     return;
   }
   if (mode === "run") {
     const plan = JSON.parse(readFileSync(rest[0], "utf8"));
-    const shard = shardOf(plan, Number(rest[1] ?? 0), Number(rest[2] ?? 1));
+    const shard = planShard(plan, rest[1] ?? "0", Number(rest[2] ?? 1));
     console.log(`Probing ${shard.length} servers`);
     writeResults(await probeAll(shard));
     return;

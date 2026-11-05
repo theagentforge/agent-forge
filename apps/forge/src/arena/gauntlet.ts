@@ -185,10 +185,10 @@ async function bump(env: Env, key: string) {
   return n;
 }
 
-export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string; challenge?: string; mode?: GauntletMode } = {}, now = Date.now()) {
+export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: string; challenge?: string; mode?: GauntletMode; ours?: boolean } = {}, now = Date.now()) {
   if (opts.mode === "sprint") {
     if (opts.cardFrom || opts.challenge) return { error: "sprint_takes_no_card_from_or_challenge" as const };
-    return startSprint(env, ip, {}, now);
+    return startSprint(env, ip, { ours: opts.ours }, now);
   }
   const db = getDb(env);
   if (opts.cardFrom && opts.challenge) return { error: "challenge_with_card_from" as const };
@@ -261,7 +261,7 @@ export async function startGauntlet(env: Env, ip: string, opts: { cardFrom?: str
  * claim key as a Gauntlet job; stored with mode "sprint" so it is never counted or shown as a Gauntlet run.
  * `house` marks a run by The Forge's own house agent (the model it ran on); visitors' runs never set it.
  */
-export async function startSprint(env: Env, ip: string, opts: { house?: string } = {}, now = Date.now()) {
+export async function startSprint(env: Env, ip: string, opts: { house?: string; ours?: boolean } = {}, now = Date.now()) {
   const db = getDb(env);
   if (await isLean(env)) return { error: "busy_today" as const };
   if (!opts.house) {
@@ -275,13 +275,15 @@ export async function startSprint(env: Env, ip: string, opts: { house?: string }
     await bump(env, mine);
   }
   const detail = await sprintPick(env, db, now);
-  const pick = { trap: detail.trap, task: detail.task, referee_trap: detail.referee_trap, week: detail.week, rule: detail.rule, house_model: opts.house ?? null };
+  const pick = { trap: detail.trap, task: detail.task, referee_trap: detail.referee_trap, week: detail.week, rule: detail.rule, house_model: opts.house ?? null, ...(opts.ours && !opts.house ? { ours: true } : {}) };
   const id = newGauntletId();
   const claim = opts.house ? null : await newClaimKey();
   await db.insert(t.arenaGauntlets).values({ id, status: "open", cardFrom: null, card: null, current: 0, startedAt: now, challengeOf: null, challenge: null, claimKeyHash: claim?.hash ?? null, mode: "sprint", sprint: pick });
   const first = { id: crypto.randomUUID(), gauntletId: id, idx: 0, task: pick.task, seed: sprintSeed(), calls: [], status: "open" as const, startedAt: now };
   await db.insert(t.arenaGauntletBouts).values(first);
-  await bumpUsage(env, [opts.house ? "sprint:house_started" : "sprint:started"], now).catch(() => {});
+  // ADR 0133 review: our own probes' Sprints (sprint-smoke, screens) are counted apart, so sprint:started and
+  // sprint:finished (the share loop's denominator) are outside runs only.
+  await bumpUsage(env, [opts.house ? "sprint:house_started" : pick.ours ? "sprint:ours_started" : "sprint:started"], now).catch(() => {});
   return {
     gauntlet_id: id,
     mode: "sprint" as const,
@@ -395,7 +397,7 @@ async function finalize(env: Env, g: G, now: number): Promise<G> {
   const card = g.mode === "sprint" ? null : g.cardFrom ? g.card : tailoredCard(summary.fell, g.id);
   await db.update(t.arenaGauntlets).set({ status: "done", summary, card, finishedAt: now }).where(eq(t.arenaGauntlets.id, g.id));
   // ADR 0055 owner funnel: a finished run, and whether its end-of-run result carried a claim link (claimable runs).
-  const finished = g.mode === "sprint" ? [g.sprint?.house_model ? "sprint:house_finished" : "sprint:finished"] : ["owner:run_finished"];
+  const finished = g.mode === "sprint" ? [g.sprint?.house_model ? "sprint:house_finished" : g.sprint?.ours ? "sprint:ours_finished" : "sprint:finished"] : ["owner:run_finished"];
   // Review (ADR 0084): a Sprint's claim link is counted apart, so the owner funnel's six-job stages stay like for like.
   const shown = g.claimKeyHash && !g.cardFrom ? [g.mode === "sprint" ? "sprint:claim_link_shown" : "owner:claim_link_shown"] : [];
   await bumpUsage(env, [...finished, ...shown], now).catch(() => {});
@@ -537,7 +539,8 @@ export async function sprintReport(env: Env, g: G, s: GauntletSummary) {
     fell_for_unlisted: o.fell_for_unlisted,
     sandbox_at_stake: o.sandbox_at_stake,
     card_image_url: `${origin}/og/sprint/${g.id}.png`,
-    share: { url: `${origin}${reportPath(g.id)}`, summary: `Forge Gauntlet Sprint, ${when}: ${o.card.headline}. ${o.card.stake}.` },
+    // ADR 0133: the share link is tagged, so arrivals from it are counted (page visits, people only).
+    share: { url: `${origin}${reportPath(g.id)}?from=sprint-share`, summary: `Forge Gauntlet Sprint, ${when}: ${o.card.headline}. ${o.card.stake}.` },
     replay: {
       url: kept ? `${origin}${reportPath(g.id)}/1` : null,
       json_url: kept ? jsonUrl : null,

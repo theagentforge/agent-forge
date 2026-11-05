@@ -167,6 +167,40 @@ const SOURCES: [RegExp, string][] = [
  */
 export const likelyPerson = (req: { headers: Pick<Headers, "get">; cf?: unknown }) => !isLikelyBot(req) && !internalCaller(req.headers);
 
+/**
+ * ADR 0133: listing and directory sites, by referring host, for the channel scoreboard (/admin/channels). People who
+ * click through from a listing's web page are counted as `visit:dir:<label>` beside their usual source label.
+ */
+export const DIRECTORY_REFERRERS: [RegExp, string][] = [
+  [/(^|\.)glama\.ai$/, "glama"],
+  [/(^|\.)lobehub\.com$/, "lobehub"],
+  [/(^|\.)mcp\.so$/, "mcp-so"],
+  [/(^|\.)mcpservers\.org$/, "mcpservers"],
+  [/(^|\.)mcp\.directory$/, "mcp-directory"],
+  [/(^|\.)mcpmarket\.com$/, "mcp-market"],
+  [/(^|\.)cursor\.directory$/, "cursor-directory"],
+  [/(^|\.)clawhub\.ai$/, "clawhub"],
+  [/(^|\.)skills\.sh$/, "skills-sh"],
+  [/(^|\.)pulsemcp\.com$/, "pulsemcp"],
+  [/(^|\.)registry\.modelcontextprotocol\.io$/, "mcp-registry"],
+  [/(^|\.)hub\.docker\.com$/, "docker"],
+  [/(^|\.)agentverse\.ai$/, "agentverse"],
+  [/(^|\.)a2aregistry\.org$/, "a2aregistry"],
+  [/(^|\.)agentrank\.[a-z]+$/, "agentrank"],
+  [/(^|\.)mcpbeat\.[a-z]+$/, "mcpbeat"],
+];
+
+/** The directory label for a Referer header, or null when it isn't a listing site we track. */
+export function directoryLabel(referer: string | null | undefined): string | null {
+  if (!referer) return null;
+  try {
+    const host = new URL(referer).hostname.toLowerCase();
+    return DIRECTORY_REFERRERS.find(([re]) => re.test(host))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Source label for a Referer header: "direct" when there is none, "internal" for our own pages, "other" otherwise. */
 export function sourceLabel(referer: string | null | undefined, origin: string) {
   if (!referer) return "direct";
@@ -197,7 +231,8 @@ export function visitCounters(req: { method: string; url: string; headers: Heade
   if (source === "internal") return ["visit:all", ...connect];
   const q = new URL(req.url).searchParams;
   const tag = (q.get("from") ?? q.get("ref") ?? q.get("utm_source") ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
-  return ["visit:all", ...connect, "visit:arrivals", `visit:src:${source}`, ...(tag ? [`visit:tag:${tag}`] : [])];
+  const dir = directoryLabel(req.headers.get("referer"));
+  return ["visit:all", ...connect, "visit:arrivals", `visit:src:${source}`, ...(tag ? [`visit:tag:${tag}`] : []), ...(dir ? [`visit:dir:${dir}`] : [])];
 }
 
 /**

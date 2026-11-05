@@ -62,7 +62,7 @@ function sources() {
       },
     },
     "stats.json": { rules_version: "2.0", blended: { work: { bouts_refereed: 39, ranked_bouts: 28, traps_sprung: 26, field_reports: null, skills_scanned: null, tools_tracked: null }, gauntlet_runs_finished: 0 } },
-    "home.json": { hero: { headline_source: { status: "not_found" } } },
+    "home.json": { hero: { fixed_source: { status: "not_found" } } },
   };
 }
 

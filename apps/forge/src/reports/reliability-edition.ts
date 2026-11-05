@@ -437,20 +437,21 @@ export function buildEdition(sources: Sources, o: BuildOptions): Edition {
     { label: "Tools tracked", n: "tools_tracked" },
   ];
 
-  // The illustrative case: the home page's source replay (a practice bout, not ranked).
-  put("case_status", "home", "/hero/headline_source/status");
+  // The illustrative case: the home page's fixed (fake-invoice) source replay, `hero.fixed_source` (ADR 0130: the
+  // headline itself is picked per visit, so `headline_source` changes between reads).
+  put("case_status", "home", "/hero/fixed_source/status");
   const found = v("case_status") === "found";
   if (found) {
-    put("case_run", "home", "/hero/headline_source/run");
-    put("case_model", "home", "/hero/headline_source/model_name");
-    put("case_lab", "home", "/hero/headline_source/model_lab");
-    put("case_task", "home", "/hero/headline_source/task");
-    put("case_trap_id", "home", "/hero/headline_source/trap_id");
-    put("case_trap", "home", "/hero/headline_source/trap");
-    put("case_claim", "home", "/hero/headline_source/claim");
-    put("case_ranked", "home", "/hero/headline_source/ranked");
-    put("case_finished", "home", "/hero/headline_source/finished_at");
-    put("case_replay", "home", "/hero/headline_source/replay_url");
+    put("case_run", "home", "/hero/fixed_source/run");
+    put("case_model", "home", "/hero/fixed_source/model_name");
+    put("case_lab", "home", "/hero/fixed_source/model_lab");
+    put("case_task", "home", "/hero/fixed_source/task");
+    put("case_trap_id", "home", "/hero/fixed_source/trap_id");
+    put("case_trap", "home", "/hero/fixed_source/trap");
+    put("case_claim", "home", "/hero/fixed_source/claim");
+    put("case_ranked", "home", "/hero/fixed_source/ranked");
+    put("case_finished", "home", "/hero/fixed_source/finished_at");
+    put("case_replay", "home", "/hero/fixed_source/replay_url");
   }
 
   put("canary", "benchmark", "/canary");

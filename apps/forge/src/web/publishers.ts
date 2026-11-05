@@ -26,8 +26,13 @@ const scanHex = (v: unknown) => (typeof v === "string" && /^[0-9a-f]{64}$/.test(
 
 /** A tool is claimable automatically when its id names a GitHub owner the person is, or belongs to publicly. */
 function canClaim(toolId: string, login: string, orgs: string[]) {
-  const owner = publisherFromId(toolId);
-  return !!owner && (owner === login.toLowerCase() || orgs.includes(owner));
+  return isGithubOwner(publisherFromId(toolId), login, orgs);
+}
+
+/** The ownership rule of publisher claims: the signed-in GitHub account, or one of its public orgs, is `owner`. */
+export function isGithubOwner(owner: string | null | undefined, login: string, orgs: string[]) {
+  const o = owner?.toLowerCase();
+  return !!o && (o === login.toLowerCase() || orgs.includes(o));
 }
 
 async function claimPage(c: Ctx, toolId: string, message?: string) {

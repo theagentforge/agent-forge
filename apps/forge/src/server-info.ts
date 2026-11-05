@@ -17,6 +17,8 @@ export const ARENA_FIRST = "See which AI models fall for traps in real jobs, and
 export const SERVERS = [
   { key: "public", path: "/mcp/public", serverName: "the-agent-forge-public", name: "io.theagentforge/forge-public", title: "The Agent Forge (no sign-in)", description: ARENA_FIRST, websitePath: "/connect" },
   { key: "gauntlet", path: "/mcp/gauntlet", serverName: "the-agent-forge-gauntlet", name: "io.theagentforge/forge-gauntlet", title: "The Forge Gauntlet", description: "See whether your own agent falls for the traps AI models fall for: six refereed jobs. No account.", websitePath: "/gauntlet" },
+  // ADR 0131: anonymous test requests, kept off /mcp/public so that endpoint stays read-only.
+  { key: "requests", path: "/mcp/requests", serverName: "the-agent-forge-requests", name: "io.theagentforge/forge-requests", title: "The Agent Forge test requests", description: "Queue a public npm or PyPI MCP server at an exact version for the House tester's next sweep, and read its dated result. No account.", websitePath: "/request-a-test" },
   { key: "signed-in", path: "/mcp", serverName: "the-agent-forge", name: "io.theagentforge/forge", title: "The Agent Forge", description: ARENA_FIRST, websitePath: "/connect" },
 ] as const;
 

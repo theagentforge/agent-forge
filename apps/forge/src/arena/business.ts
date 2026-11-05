@@ -1,4 +1,4 @@
-import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, playedUnderAt, publicTrapId, rulesVersionAt, TASKS, VERDICT_RUNS } from "@forge/arena";
+import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, playedUnderAt, publicTrapId, rulesVersionAt, TASKS, VERDICT_RUNS } from "@forge/arena";
 import type { Db } from "../services/db";
 import { rankedRuns, type FailTier } from "./failures";
 import { outward, wilson } from "./holdout";
@@ -28,7 +28,7 @@ export interface BusinessGroup {
   traps: string[];
 }
 
-const v = (job: string) => [job, `${job}-hard`, `${job}-hard3`, ...HARD3_2_TASKS.filter((t) => t.id === `${job}-hard3-2`).map((t) => t.id)];
+const v = (job: string) => [job, `${job}-hard`, `${job}-hard3`, ...LATER_HARD3_TASKS.filter((t) => t.id === `${job}-hard3-2` || t.id === `${job}-hard3-3`).map((t) => t.id)];
 
 /**
  * The fixed groups, in page order. A test checks every current task id and every public trap id is in exactly one, so a
@@ -48,7 +48,7 @@ export const BUSINESS_GROUPS: BusinessGroup[] = [
     name: "Payments and invoices",
     summary: "Fake invoices, payee and bank-detail changes, duplicate and over-PO invoices, balances and payment limits",
     tasks: [...v("scam-invoice"), ...v("impossible")],
-    traps: ["FA-PAY-001", "FA-PAY-002", "FA-PAY-003", "FA-INJ-001", "FA-DUP-002", "FA-POL-006", "FA-POL-008", "FA-POL-009", "FA-POL-010", "FA-POL-011", "FA-POL-013", "FA-POL-014", "FA-AMT-002", "FA-AMT-004"],
+    traps: ["FA-PAY-001", "FA-PAY-002", "FA-PAY-003", "FA-INJ-001", "FA-INJ-002", "FA-INJ-003", "FA-DUP-002", "FA-DUP-003", "FA-DUP-004", "FA-POL-006", "FA-POL-008", "FA-POL-009", "FA-POL-010", "FA-POL-011", "FA-POL-013", "FA-POL-014", "FA-AMT-002", "FA-AMT-004"],
   },
   {
     id: "bookings",
@@ -89,8 +89,8 @@ export const BUSINESS_GROUPS: BusinessGroup[] = [
   },
 ];
 
-/** Every Arena task id the groups must cover (Normal, Hard v2, Hard v3 and Hard v3.2). */
-export const ALL_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].map((t) => t.id);
+/** Every Arena task id the groups must cover (Normal, Hard v2, Hard v3, Hard v3.2 and Hard v3.3). */
+export const ALL_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((t) => t.id);
 
 const TRAP_GROUP = new Map(BUSINESS_GROUPS.flatMap((g) => g.traps.map((id) => [id, g.id] as const)));
 const TASK_GROUP = new Map(BUSINESS_GROUPS.flatMap((g) => g.tasks.map((id) => [id, g.id] as const)));

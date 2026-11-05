@@ -1,6 +1,6 @@
 import { html } from "hono/html";
 import { benchmarkData } from "../arena/benchmark";
-import { homeHero, homeHeroJson } from "../arena/hero-proof";
+import { fixedSourceJson, homeHero } from "../arena/hero-proof";
 import { editionPdf, TOTALS_NOT_RATES } from "../reports/reliability-pdf";
 import {
   buildEdition,
@@ -49,10 +49,11 @@ export async function liveSources(env: Env): Promise<Sources> {
     benchmarkData(getDb(env), origin),
     statsData(env),
     securityJson(env),
-    homeHero(env).catch(() => null),
+    // ADR 0130: the case is the fixed (fake-invoice) line, never the per-visit pick, so the edition stays put.
+    homeHero(env, Date.now(), { line: "fixed" }).catch(() => null),
   ]);
-  // The home JSON twin's `hero.headline_source` (only that part of /?format=json is read).
-  const home = { hero: { headline_source: hero ? homeHeroJson(hero, origin) : { status: "not_found" } } };
+  // The home JSON twin's `hero.fixed_source` (only that part of /?format=json is read; ADR 0130).
+  const home = { hero: { fixed_source: fixedSourceJson(hero, origin) } };
   // A JSON round trip, so values are exactly what the files serve (no undefined, no Dates).
   return JSON.parse(JSON.stringify({ benchmark, stats, security, home })) as Sources;
 }

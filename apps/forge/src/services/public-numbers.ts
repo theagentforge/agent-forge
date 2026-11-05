@@ -84,8 +84,10 @@ export async function publicNumbers(env: Env, now = Date.now()): Promise<PublicN
 export const secondsLeftOf = (asOf: string, now = Date.now()) => secondsLeft({ until: bucketOf(Date.parse(asOf)) + SPAN }, now);
 
 /** The line every page with these numbers shows under them. */
-// Review of ADR 0116: the edge cache is per data centre, so the line claims one count a minute, not one count everywhere.
-export const asOfText = (n: Pick<PublicNumbers, "as_of">) => `Counted at ${n.as_of.slice(11, 16)} UTC on ${n.as_of.slice(0, 10)}; the pages showing these totals share one count each minute.`;
+// Build plan 5 Nov, item 4 (wording approved by Dinike): the snapshot is shared per clock minute within one data centre
+// (the edge cache is per data centre), so two pages read in different minutes, or served from different data centres,
+// can differ. The line claims only what holds everywhere: each page states when it was counted.
+export const asOfText = (n: Pick<PublicNumbers, "as_of">) => `Counted at ${n.as_of.slice(11, 16)} UTC on ${n.as_of.slice(0, 10)}; each page states when it was counted.`;
 
 /** The home band's short form of the same line. */
 export const asOfShort = (asOf: string) => `Counted at ${asOf.slice(11, 16)} UTC.`;

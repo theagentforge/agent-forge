@@ -122,8 +122,8 @@ describe("the A2A arena-results skill", () => {
   it("is on the agent card with a data-style description", async () => {
     const card = (await (await fetchWorker("/.well-known/agent-card.json")).json()) as { skills: { id: string; description: string }[] };
     const s = card.skills.find((x) => x.id === "arena-results")!;
-    expect(s.description).toMatch(/^Use this when .* Give .* Returns /);
-    expect(s.description.length).toBeLessThanOrEqual(420);
+    expect(s.description).toMatch(/^Use this when .* Inputs: .* Returns: .* Limits: /);
+    expect(s.description.length).toBeLessThanOrEqual(500); // ADR 0133: the structured form's cap
     expect(s.description).not.toMatch(AGENT_DIRECTED);
     expect(A2A_SKILLS.map((x) => x.id)).toContain("arena-results");
   });

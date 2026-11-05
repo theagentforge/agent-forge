@@ -51,9 +51,9 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<h2 id="cite">How to cite</h2>');
     expect(body).toContain("@misc{forgearena2026,");
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/arena/methodology`);
-    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2).");
+    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3).");
     expect(body).toContain('<h2 id="changelog">Changelog</h2>');
-    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]) expect(body).toContain(`<b>${v}</b>`);
+    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "Hard v3.3", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]) expect(body).toContain(`<b>${v}</b>`);
     expect(body).toContain("16 Oct 2026");
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
@@ -62,6 +62,11 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<tr id="FA-PRM-001">');
     expect(body).not.toContain("Reserved for traps in a later task version");
     expect(body).toContain('rel="alternate" type="application/json" href="/arena/methodology?format=json"');
+    // Hard v3.3 (ADR 0132): the hidden-instruction and double-payment traps are in the catalog, and the method says how
+    // they are judged (by what was done, never by what was said).
+    for (const id of ["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]) expect(body).toContain(`<tr id="${id}">`);
+    expect(body).toContain('id="hidden-instructions"');
+    expect(body).toContain("what the model says about the instruction is never scored");
   });
 
   it("the JSON twin is structured data: catalog, versions and citation", async () => {
@@ -76,7 +81,9 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       expect.objectContaining({ version: "Hard v3", date: "2026-10-17", effective_from: "2026-10-17T00:00:00Z" }),
       expect.objectContaining({ version: "Hard v3.1", date: "2026-10-17", effective_from: HARD3_1_FROM }),
       { version: "Hard v3.2", date: "2026-10-26", effective_from: "2026-10-26T00:00:00Z", tasks: ["refund-hard3-2", "flaky-supplier-hard3-2"] },
+      { version: "Hard v3.3", date: "2026-11-05", effective_from: "2026-11-05T00:00:00Z", tasks: ["scam-invoice-hard3-3"] },
     ]);
+    expect(j.catalog.filter((e) => e.since === "Hard v3.3").map((e) => e.id)).toEqual(["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]);
     // Hard v3.2 (ADR 0054): a stale approval and an accepted-then-rejected order, on their own task ids.
     expect(j.catalog.filter((e) => e.since === "Hard v3.2").map((e) => [e.id, e.traps])).toEqual([
       ["FA-POL-016", ["refund-hard3-2/stale_approval"]],
@@ -93,11 +100,11 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       description: expect.any(String),
       provenance: { pattern: expect.any(String), source_title: expect.any(String), source_url: "https://www.ic3.gov/PSA/2024/PSA240911" },
       since: "Normal 1.0",
-      traps: ["scam-invoice/wrong_account", "scam-invoice-hard/wrong_account", "scam-invoice-hard3/wrong_account"],
+      traps: ["scam-invoice/wrong_account", "scam-invoice-hard/wrong_account", "scam-invoice-hard3/wrong_account", "scam-invoice-hard3-3/wrong_account"],
     });
     expect(j.families.PRM!.reserved).toBe(false);
     expect(j.families.PAY!.reserved).toBe(false);
-    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-10-26" });
+    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-11-05" });
     // Data only: no HTML and no changelog prose in the twin.
     expect(JSON.stringify(j)).not.toMatch(/<[a-z]/i);
     expect(j).not.toHaveProperty("changelog");

@@ -1,7 +1,7 @@
 import { and, count, countDistinct, eq, gte, inArray, isNull, like, lt, lte, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { agentFunnel, outsidePeople } from "./agent-funnel";
-import { HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
+import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
 import { getDb } from "./db";
 import { ownerFunnel } from "./owner-funnel";
 import { ownerActivity, ownersBySource } from "./owners";
@@ -536,8 +536,8 @@ export async function dataInventory(env: Env, now = Date.now()): Promise<DataInv
     // Private families (ADR 0057) count here (admin only) and stay off every public page.
     environments: {
       task_families: TASKS.length + Object.keys(PRIVATE_FAMILIES).length,
-      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + HARD3_2_TASKS.length + PRIVATE_TASK_IDS.length,
-      tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
+      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + LATER_HARD3_TASKS.length + PRIVATE_TASK_IDS.length,
+      tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", "Hard v3.3", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
     },
     refereed_runs: {
       total,

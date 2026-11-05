@@ -1,4 +1,4 @@
-import { PRIVATE_TASK_IDS, RULES_0_6_TASKS, RULES_HISTORY, TASK_VERSIONS, taskById, type TaskVersion } from "@forge/arena";
+import { PRIVATE_TASK_IDS, RULES_0_6_TASKS, RULES_HISTORY, TASK_VERSIONS, taskById, TRAP_CATALOG, type TaskVersion } from "@forge/arena";
 import { LICENCE_ID } from "../services/provenance";
 import { BENCHMARK_JSON_PATH, BENCHMARK_PATH, BENCHMARK_SCHEMA_PATH, TRAP_SET, TRAP_SET_NAME, TRAP_SET_VERSIONS, trapSchema, trapSetEntries, VERSIONING } from "./benchmark";
 
@@ -59,7 +59,11 @@ export function changelogEntries(): ChangelogEntry[] {
     const has = (tv: readonly TaskVersion[]) => trapIds((e) => tv.includes(e.since));
     const prev = i ? has(TRAP_SET_VERSIONS[i - 1]!.task_versions) : [];
     const now = has(v.task_versions);
-    return { kind: "trap_set", version: v.version, date: v.date, change: v.change, trap_ids: { added: now.filter((x) => !prev.includes(x)), changed: [], retired: prev.filter((x) => !now.includes(x)) } };
+    // Changed: earlier traps that a task version new in this Trap Set version can also spring (they gain referee ids).
+    const newTv = i ? v.task_versions.filter((tv) => !TRAP_SET_VERSIONS[i - 1]!.task_versions.includes(tv)) : [];
+    const newJobs = TASK_VERSIONS.filter((tv) => newTv.includes(tv.version)).flatMap((tv) => tv.tasks);
+    const changed = prev.filter((x) => now.includes(x) && TRAP_CATALOG.find((e) => e.id === x)!.traps.some((k) => newJobs.includes(k.split("/")[0]!)));
+    return { kind: "trap_set", version: v.version, date: v.date, change: v.change, trap_ids: { added: now.filter((x) => !prev.includes(x)), changed, retired: prev.filter((x) => !now.includes(x)) } };
   });
   const seen = new Set<string>();
   const tasks: ChangelogEntry[] = TASK_VERSIONS.map((v) => {

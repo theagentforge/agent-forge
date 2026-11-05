@@ -91,8 +91,41 @@ export function toDescriptions(r, caps = TOOL_CAPS) {
   return { id: toolIdOf(r), version: r.version, tools };
 }
 
-/** Results from every shard, deduplicated by package. */
-export function mergeResults(files, read = (f) => readFileSync(f, "utf8")) {
+/**
+ * ADR 0131: one requested server's answer for the site, re-validated (step 1 ran untrusted code), or null. Requested
+ * entries carry request_id; they are sent only here, never as House reports, sweep entries or House tool scans, so the
+ * sweep's own figures stay what they were.
+ */
+const REQ_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const isRequested = (r) => typeof r?.request_id === "string";
+export function toRequestResult(r) {
+  if (!isRequested(r) || !REQ_ID.test(r.request_id) || !registryOf(r) || !PKG.test(r.pkg ?? "") || !VERSION.test(r.version ?? "")) return null;
+  const entry = toRunEntry(r);
+  if (!entry) return null;
+  const desc = toDescriptions(r);
+  return {
+    request_id: r.request_id,
+    registry: registryOf(r),
+    pkg: r.pkg,
+    version: r.version,
+    fingerprint: FP.test(r.fingerprint ?? "") ? r.fingerprint : null,
+    outcome: entry.outcome,
+    tools_count: entry.tools,
+    ms: entry.ms,
+    slow: entry.slow,
+    tools: desc ? desc.tools : null,
+  };
+}
+
+/** The requests shard's results file (probe.mjs REQUESTS_SHARD; artifact house-results-requests). */
+export const isRequestsFile = (f) => /(^|[\\/])house-results-requests[\\/]/.test(String(f));
+
+/**
+ * Results from every shard, deduplicated by package (requested entries by request id). Requested entries are taken
+ * only from the requests shard's file and sweep entries only from the others (ADR 0131 review): each runner ran
+ * untrusted code, so a file can't speak for servers that weren't on its runner.
+ */
+export function mergeResults(files, read = (f) => readFileSync(f, "utf8"), requestsFile = isRequestsFile) {
   const by = new Map();
   let probedAt = null;
   for (const f of files) {
@@ -103,8 +136,10 @@ export function mergeResults(files, read = (f) => readFileSync(f, "utf8")) {
       continue;
     }
     if (typeof data?.probedAt === "string" && (!probedAt || data.probedAt > probedAt)) probedAt = data.probedAt;
+    const fromRequests = requestsFile(f);
     for (const r of Array.isArray(data?.results) ? data.results : []) {
-      const key = `${r?.registry === "pypi" ? "pypi" : "npm"}:${r?.pkg}`;
+      if (isRequested(r) !== fromRequests) continue;
+      const key = isRequested(r) ? `request:${r.request_id}` : `${r?.registry === "pypi" ? "pypi" : "npm"}:${r?.pkg}`;
       if (r?.pkg && !by.has(key)) by.set(key, r);
     }
   }
@@ -141,7 +176,10 @@ async function main() {
   const sweep = rest.includes("--sweep");
   const files = rest.filter((f) => f !== "--sweep");
   if (!/^https:\/\/[a-z0-9.-]+$/.test(origin ?? "")) throw new Error("usage: node file.mjs https://theagentforge.io [--sweep] [results.json…]");
-  const { probedAt, results } = mergeResults(files.length ? files : ["results.json"]);
+  const merged = mergeResults(files.length ? files : ["results.json"]);
+  const probedAt = merged.probedAt;
+  const results = merged.results.filter((r) => !isRequested(r));
+  const requested = merged.results.map(toRequestResult).filter(Boolean).slice(0, 20);
   const reports = results.map(toReport).filter(Boolean).slice(0, 1500);
   let token = await oidcToken(origin);
   let tokenAt = Date.now();
@@ -183,6 +221,18 @@ async function main() {
     scanned += Number(body.scanned) || 0;
   }
   console.log(`Tool descriptions: ${descs.length} servers sent, ${scanned} new or changed scans stored`);
+  // Requested servers (ADR 0131), in small groups (each may carry up to 64 KB of tool text). Not fatal either.
+  let answered = 0;
+  for (const group of batches(requested, 5)) {
+    const res = await postReport(`${origin}/api/v1/house/requests`, { method: "POST", headers: houseHeaders(await fresh()), body: JSON.stringify({ probedAt: probedAt ?? new Date().toISOString(), results: group }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.log(`Requested servers: ${res.status}; stopping`);
+      break;
+    }
+    answered += Number(body.stored) || 0;
+  }
+  if (requested.length) console.log(`Requested servers: ${requested.length} sent, ${answered} stored`);
   const summary = `### House tester${sweep ? " (weekly sweep)" : ""}\n\n${entries.length} servers tested; ${lines.length} new reports filed to ${origin}; House Report upload ${run.status}; tool descriptions sent for ${descs.length} servers (${scanned} new or changed).\n\n| Tool | Outcome | Result |\n|---|---|---|\n${lines.join("\n")}\n`;
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
   if (!run.ok) process.exit(1);

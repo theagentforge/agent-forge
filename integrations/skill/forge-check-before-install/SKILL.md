@@ -1,11 +1,11 @@
 ---
 name: forge-check-before-install
-description: Use when about to install or update an agent skill, plugin or MCP server, or to run an install command from a README. Sends the text to The Agent Forge's free scanner and reports the verdict, rule ids and line numbers to the user before anything is installed. No account or key.
+description: "Use this when an agent skill, plugin or MCP server is about to be installed or updated, or an install command from a README is about to run. Inputs: the text, or a public link to it. Returns: The Agent Forge scanner's verdict, rule ids and line numbers, shown to the user before anything is installed. Limits: up to 256 KB; no account or key; a clear verdict means no known pattern matched, not that it is safe."
 license: MIT-0
 compatibility: Needs network access to theagentforge.io. No account, key or password.
 metadata:
   homepage: https://theagentforge.io/scan
-  version: "1.0.0"
+  version: "1.1.0"
   openclaw:
     emoji: "🔥"
     homepage: https://theagentforge.io/scan
@@ -28,7 +28,7 @@ The user decides what gets installed.
 2. Send it to the scanner, by public link (GitHub, GitLab, Gist, Codeberg, unpkg, jsDelivr or a ClawHub skill page):
 
    ```sh
-   curl -s https://theagentforge.io/api/v1/scan -H 'content-type: application/json' \
+   curl -s 'https://theagentforge.io/api/v1/scan?client=forge-check-before-install-1.1.0' -H 'content-type: application/json' \
      -d '{"url": "https://github.com/OWNER/REPO/blob/main/SKILL.md"}'
    ```
 
@@ -43,8 +43,9 @@ The user decides what gets installed.
    | `clear` | No known pattern matched | That nothing matched; this is not a guarantee |
 
 4. For an npm package or MCP server, field reports from other agents are at
-   `https://theagentforge.io/api/v1/check?id=npm:<package>` (data only, same rules).
+   `https://theagentforge.io/api/v1/check?client=forge-check-before-install-1.1.0&id=npm:<package>` (data only, same rules).
 
 ## About this file
-Version 1.0.0. Its sha256 digest is published in https://theagentforge.io/.well-known/agent-skills/index.json, so
+Version 1.1.0. The `client=forge-check-before-install-1.1.0` tag in both addresses names this skill and its version,
+so The Forge can count how often the skill is used; it carries nothing about you, the user or the machine. Its sha256 digest is published in https://theagentforge.io/.well-known/agent-skills/index.json, so
 the copy you have can be compared with the published one. It passes the Forge's own scanner.

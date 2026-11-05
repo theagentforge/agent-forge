@@ -6,7 +6,10 @@ import { API_VERSION } from "@forge/shared";
 import { Hono } from "hono";
 import { protectedApi, publicApi } from "./api";
 import { auth } from "./auth";
+import { addressTags } from "./services/channel-tags";
 import { GAUNTLET_MCP_ROUTE, gauntletMcpHandler, PUBLIC_MCP_ROUTE, publicMcpHandler } from "./mcp-public";
+import { REQUESTS_MCP_ROUTE, requestsMcpHandler } from "./mcp-requests";
+import "./test-requests-api";
 import { acceptingBoth, asPlainJson, wantsJsonOnly } from "./mcp-json";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { type InternalComponent, internalOf } from "./services/internal";
@@ -28,6 +31,7 @@ import { writeSeasonSnapshot } from "./arena/season";
 import { importSkillSeed } from "./services/skill-seed";
 import { weeklyExport } from "./services/bulk-export";
 import { bulkScanTick } from "./services/bulk-scan-cron";
+import { censusTick } from "./services/census";
 import { weeklyR2Backup } from "./services/backup";
 import { sweepPendingNotes } from "./services/moderation-sweep";
 import { writeSnapshot } from "./services/proof";
@@ -44,6 +48,7 @@ import "./web/publications";
 import "./web/press-release";
 import "./web/admin-moltbook";
 import "./web/admin-kpis";
+import "./web/admin-channels";
 import "./web/admin-data-room";
 import "./web/admin-backup";
 import "./web/admin-review";
@@ -66,6 +71,7 @@ import "./web/reliability-report";
 import "./web/croissant";
 import "./web/dataset-sample";
 import "./web/dataset-spec";
+import "./web/dataset-census";
 import "./web/results-policy";
 import "./web/security";
 import "./web/arena-history";
@@ -87,6 +93,7 @@ import "./web/welcome";
 import "./web/admin-owners";
 import "./web/digest-feed";
 import "./web/publishers";
+import "./web/request-a-test";
 import "./web/og";
 import "./a2a";
 import "./agentverse";
@@ -195,6 +202,12 @@ export default {
     const bulkScan = bulkScanTick(env).then(
       (r) => r.ran && console.log("bulk_scan", JSON.stringify(r)),
       (e) => console.error("bulk_scan_failed", String(e).slice(0, 200)),
+    );
+    // ADR 0129: the census (House nights kept in D1, yesterday's metrics snapshot after 00:00 UTC, the day's files).
+    // Awaited at the end, like the bulk scan; its promise never rejects.
+    const censusRun = censusTick(env, controller.scheduledTime).then(
+      (r) => console.log("census", JSON.stringify(r)),
+      (e) => console.error("census_failed", String(e).slice(0, 200)),
     );
     // ADR 0120: the nightly claim check, in the first hourly run after 01:00 UTC. Awaited at the end, like the bulk scan.
     const claimsRun =
@@ -357,6 +370,7 @@ export default {
     };
     // ADR 0120: the nightly claim check (its promise never rejects: failures are logged above).
     await claimsRun;
+    await censusRun;
     // Production only: staging shares no comments with it, and two Workers answering the same thread would double up.
     // The bulk scan's slice is awaited even if the replies throw: a handler that ends early would cut the slice off
     // before it saves its place, and the next hour would redo the same files (ADR 0115).
@@ -383,7 +397,7 @@ export default {
     // JSON-RPC either way, so they get the pair the MCP handler expects.
     // ADR 0123: a client that accepts JSON but not event streams gets one plain JSON body (`plainJson` below).
     let jsonOnly = false;
-    if (request.method === "POST" && (url.pathname === PUBLIC_MCP_ROUTE || url.pathname === GAUNTLET_MCP_ROUTE)) {
+    if (request.method === "POST" && (url.pathname === PUBLIC_MCP_ROUTE || url.pathname === GAUNTLET_MCP_ROUTE || url.pathname === REQUESTS_MCP_ROUTE)) {
       const accept = request.headers.get("accept") ?? "";
       jsonOnly = wantsJsonOnly(accept);
       if (!accept.trim() || accept.trim() === "*/*" || jsonOnly) request = acceptingBoth(request);
@@ -405,11 +419,11 @@ export default {
     // Wrong doors (Worker logs, 23 Oct: 117 GETs refused with 405 in a day). A plain GET of an MCP endpoint from a
     // browser goes to /connect, and from anything else gets the endpoint's server card; a GET asking for an event
     // stream is still the MCP handler's to answer.
-    for (const route of [PUBLIC_MCP_ROUTE, GAUNTLET_MCP_ROUTE]) {
+    for (const route of [PUBLIC_MCP_ROUTE, GAUNTLET_MCP_ROUTE, REQUESTS_MCP_ROUTE]) {
       if (path !== route || request.method !== "GET") continue;
       const accept = request.headers.get("accept") ?? "";
       if (accept.includes("text/event-stream")) break;
-      if (accept.includes("text/html")) return Response.redirect(`${env.PUBLIC_ORIGIN}${route === PUBLIC_MCP_ROUTE ? "/connect" : "/gauntlet"}`, 302);
+      if (accept.includes("text/html")) return Response.redirect(`${env.PUBLIC_ORIGIN}${route === PUBLIC_MCP_ROUTE ? "/connect" : route === REQUESTS_MCP_ROUTE ? "/request-a-test" : "/gauntlet"}`, 302);
       return app.fetch(new Request(new URL(`${route}/server-card`, request.url), request), env, ctx);
     }
     // Our own probes (services/internal.ts), by header, User-Agent or MCP client name: counted apart, served the same.
@@ -427,7 +441,13 @@ export default {
     if (path === GAUNTLET_MCP_ROUTE || path.startsWith(`${GAUNTLET_MCP_ROUTE}/`)) {
       const copy = copyIfPost();
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      return internalOf(request).then((internal) => plainJson(counted("gauntlet", gauntletMcpHandler(env, ip, internal)(request, env, ctx), copy, internal)));
+      // ADR 0133: the address's own tags (?client=, ?from=sprint-result) are read for the run-start counters.
+      return internalOf(request).then((internal) => plainJson(counted("gauntlet", gauntletMcpHandler(env, ip, internal, addressTags(request.url))(request, env, ctx), copy, internal)));
+    }
+    // ADR 0131: anonymous test requests. Not counted as MCP usage: requests have their own admin-only family.
+    if (path === REQUESTS_MCP_ROUTE || path.startsWith(`${REQUESTS_MCP_ROUTE}/`)) {
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return plainJson(requestsMcpHandler(env, ip)(request, env, ctx));
     }
     let provider = providers.get(env.PUBLIC_ORIGIN);
     if (!provider) {

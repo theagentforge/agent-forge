@@ -4,13 +4,15 @@ import { copyBlock } from "./components";
 
 // ADR 0083: the "Run the 90-second Sprint" picker and lines. No route registrations here (pages.ts imports it).
 
-export const SPRINT_LINE = (origin: string) =>
-  `Connect to the MCP server ${origin}/mcp/gauntlet and run the Forge Gauntlet Sprint: call gauntlet_start with mode "sprint", then do the one job with gauntlet_act.`;
-export const SPRINT_HTTP_LINE = (origin: string) => `Read ${origin}/gauntlet.md and run the Forge Gauntlet Sprint over its HTTP API (POST /api/v1/gauntlet with {"mode":"sprint"}).`;
+/** ADR 0133: `from` tags the Gauntlet address (the Sprint result page passes "sprint-result"); no tag by default. */
+const tagged = (url: string, from?: string) => (from ? `${url}?from=${encodeURIComponent(from)}` : url);
+export const SPRINT_LINE = (origin: string, from?: string) =>
+  `Connect to the MCP server ${tagged(`${origin}/mcp/gauntlet`, from)} and run the Forge Gauntlet Sprint: call gauntlet_start with mode "sprint", then do the one job with gauntlet_act.`;
+export const SPRINT_HTTP_LINE = (origin: string, from?: string) => `Read ${origin}/gauntlet.md and run the Forge Gauntlet Sprint over its HTTP API (POST ${tagged("/api/v1/gauntlet", from)} with {"mode":"sprint"}).`;
 
 /** The one-line "add the server" command per app (the /connect app picker's apps), then the line to give the agent. */
-export function sprintAddCommands(origin: string) {
-  const url = `${origin}/mcp/gauntlet`;
+export function sprintAddCommands(origin: string, from?: string) {
+  const url = tagged(`${origin}/mcp/gauntlet`, from);
   return [
     { id: "claude-code", app: "Claude Code", command: `claude mcp add --scope user --transport http forge-gauntlet ${url}` },
     { id: "codex", app: "Codex", command: `codex mcp add forge-gauntlet --url ${url}` },
@@ -21,13 +23,13 @@ export function sprintAddCommands(origin: string) {
 }
 
 /** "Run the 90-second Sprint": a button that opens the add command for each app, then the line. No script needed. */
-export function sprintPicker(origin: string, prefix: string, open = false) {
+export function sprintPicker(origin: string, prefix: string, open = false, from?: string) {
   return html`<details class="sprint-cta"${open ? html` open` : ""} data-sprint-picker="${prefix}">
 <summary class="btn primary chamfer">Run the 90-second Sprint</summary>
 <div class="sprint-cta-body">
 <p class="small">One job with one planted trap, at most ${SPRINT_MCP_CALLS_MAX} tool calls, free, no account. <b>1.</b> Add the Gauntlet server to your app:</p>
-<ul class="plain">${sprintAddCommands(origin).map((a) => html`<li><p class="small">${a.app}:</p>${copyBlock(`${prefix}-sprint-${a.id}`, a.command)}</li>`)}</ul>
-<p class="small"><b>2.</b> Give your agent this line:</p>${copyBlock(`${prefix}-sprint-line`, SPRINT_LINE(origin))}
+<ul class="plain">${sprintAddCommands(origin, from).map((a) => html`<li><p class="small">${a.app}:</p>${copyBlock(`${prefix}-sprint-${a.id}`, a.command)}</li>`)}</ul>
+<p class="small"><b>2.</b> Give your agent this line:</p>${copyBlock(`${prefix}-sprint-line`, SPRINT_LINE(origin, from))}
 <p class="small muted">You get a verdict, a share card naming the trap, its sandbox amount at stake (invented money) and a signed replay. <a href="${SPRINT_PATH}">How the Sprint works</a>.</p>
 </div></details>`;
 }

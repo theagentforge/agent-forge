@@ -1,4 +1,4 @@
-import { like, sql } from "drizzle-orm";
+import { and, between, gte, like, not, sql } from "drizzle-orm";
 import { displayVerdict, type VerdictInput } from "@forge/shared/light";
 import * as t from "../db/schema";
 import { PUBLIC_ROW_MINIMUMS, rowShown } from "./counters";
@@ -101,8 +101,19 @@ export const INSTALL_DAYS = 7;
 const DAY = 86_400_000;
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+/**
+ * Build plan 5 Nov, item 3: when the install counters hold numbers from. Counting began with counting rules 2.2 on
+ * 28 Oct 2026. From 1 to 4 Nov 2026 the cost guard's lean mode skipped every usage_daily write, these counters included
+ * (fixed by ADR 0124, released 5 Nov); the install_ids table was never stopped, so install IDs from those days were kept
+ * while their checks were not. Those days are never backfilled.
+ */
+export const INSTALL_COUNTING_BEGAN = "2026-10-28";
+export const INSTALL_GAPS = [{ from: "2026-11-01", to: "2026-11-04", why: "lean mode skipped every usage counter, install checks included (fixed by ADR 0124, released 5 Nov); install IDs were kept" }] as const;
+
 export interface InstallTotals {
   days: number;
+  /** The first UTC day any install counter was written (null: none yet). */
+  first_day?: string | null;
   /** Gross: every install-time check, our own tests included. */
   gross: Record<"all_time" | "last_7_days", Record<InstallOutcome, number>>;
   /** Internal only (admin): our own tagged callers, per client. Never on a public page. */
@@ -119,9 +130,10 @@ export async function installTotals(env: Env, now = Date.now()): Promise<Install
     .from(t.usageDaily)
     .where(like(t.usageDaily.key, "install:%"))
     .groupBy(t.usageDaily.key);
+  const [first] = await getDb(env).select({ day: sql<string | null>`min(${t.usageDaily.day})` }).from(t.usageDaily).where(like(t.usageDaily.key, "install:%"));
   const zero = (): Record<InstallOutcome, number> => ({ checked: 0, blocked: 0, advisory: 0 });
   const pair = () => ({ all_time: zero(), last_7_days: zero() });
-  const out: InstallTotals = { days: INSTALL_DAYS, gross: pair(), ours: pair(), by_client: Object.fromEntries(INSTALL_CLIENTS.map((c) => [c, pair()])) as InstallTotals["by_client"] };
+  const out: InstallTotals = { days: INSTALL_DAYS, first_day: first?.day ?? null, gross: pair(), ours: pair(), by_client: Object.fromEntries(INSTALL_CLIENTS.map((c) => [c, pair()])) as InstallTotals["by_client"] };
   for (const r of rows) {
     const m = /^install:(ours:)?(checked|blocked|advisory):([a-z-]+)$/.exec(r.key);
     if (!m || !(INSTALL_CLIENTS as readonly string[]).includes(m[3]!)) continue;
@@ -136,6 +148,25 @@ export async function installTotals(env: Env, now = Date.now()): Promise<Install
   }
   return out;
 }
+
+/**
+ * Internal only (admin): install IDs seen in the last 7 UTC days, per client (ours included, like the gross counts). An
+ * ID is written by the same request as its check (api.ts), so a client with IDs this week and no check counted means
+ * the counting is broken; the admin panel flags it.
+ */
+export async function installIdsSeen(env: Env, now = Date.now()): Promise<Partial<Record<InstallClient, number>>> {
+  const since = isoDay(now - (INSTALL_DAYS - 1) * DAY);
+  const rows = await getDb(env)
+    .select({ client: t.installIds.client, n: sql<number>`count(*)` })
+    .from(t.installIds)
+    // An ID last seen on a day whose checks weren't counted (INSTALL_GAPS) is left out: it would flag a fault that isn't.
+    .where(and(gte(t.installIds.lastDay, since), ...INSTALL_GAPS.map((g) => not(between(t.installIds.lastDay, g.from, g.to)))))
+    .groupBy(t.installIds.client);
+  return Object.fromEntries(rows.filter((r) => (INSTALL_CLIENTS as readonly string[]).includes(r.client)).map((r) => [r.client, Number(r.n)]));
+}
+
+/** Clients whose install IDs were seen this week while none of their checks was counted (should always be empty). */
+export const installMismatches = (v: Pick<InstallTotals, "by_client">, ids: Partial<Record<InstallClient, number>>) => INSTALL_CLIENTS.filter((c) => (ids[c] ?? 0) > 0 && v.by_client[c].last_7_days.checked === 0);
 
 /** The gross all-time install checks, for the home band (null when there are none yet). */
 export async function installChecksTotal(env: Env): Promise<number | null> {

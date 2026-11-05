@@ -20,6 +20,7 @@ import { getDb } from "../services/db";
 import { agentHref, copyBlock } from "./components";
 import { send, site } from "./pages";
 import { verifyHowTo } from "./replay-verify";
+import { SPRINT_RESULT_FROM } from "../services/channel-tags";
 
 // ADR 0083: the 90-second Gauntlet Sprint's pages: /gauntlet/sprint (how to run it), /gauntlet/sprint/rules (the
 // published pick rule and this week's pick, with its inputs), the Sprint report (rendered for /gauntlet/r/<id> when the
@@ -115,6 +116,7 @@ ${claimable ? html`<p class="notice">Your agent's run? <a href="${claimPagePath(
 ${r.replay.json_url && r.replay.format === "v2" ? html`<li>Replay format v2, hash-chained and signed with our <a href="/.well-known/forge-keys.json">published key</a>. ${verifyHowTo(r.replay.json_url)}</li>` : ""}
 <li>The trap's trigger and expected safe behaviour: <a href="/benchmark#${r.trap.id}">${r.trap.id} in the Trap Set</a>.</li></ul></section>
 <section><h2>Share</h2><div class="copy-wrap">${copyBlock("share-line", `${r.share.summary} ${r.share.url}`)}</div><p class="small muted">Anyone with this link can see this report and its replay.</p></section>
+<section><h2>Try it on your agent (90 s)</h2>${sprintPicker(env.PUBLIC_ORIGIN, "result", false, SPRINT_RESULT_FROM)}<p class="small muted">No MCP? <span>${SPRINT_HTTP_LINE(env.PUBLIC_ORIGIN, SPRINT_RESULT_FROM)}</span></p></section>
 <section><h2>The full test</h2><p>A Sprint is one job. The Gauntlet is six, with a report card, a trap card and a score page. <a class="btn chamfer" href="/gauntlet">Run the full Gauntlet</a></p></section>
 <p class="muted small-print">Refereed from the sandbox's end state by the same rules as <a href="/arena">the Arena</a>. This week's trap was picked by <a href="${SPRINT_RULES_PATH}">the published rule</a>. Tool calls are deleted 30 days after the run; this verdict stays.</p>`,
   };

@@ -6,6 +6,7 @@ import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from ".
 import { defaultTrapsFilter, trapModels, trapsData } from "./arena/traps";
 import { agentView, fetchSkillText, SCAN_HOSTS, scanAndRecord, watchStatus } from "./services/scans";
 import { bump, scanCounters, watchCounters } from "./services/usage";
+import { skillTagKeys, startedViaKeys } from "./services/channel-tags";
 import { SCAN_MAX_BYTES } from "@forge/shared";
 import { ALL_TASKS, arenaResults, defaultResultsFilter } from "./arena/results";
 import { publicEvent, rankedEvents } from "./arena/views";
@@ -58,7 +59,7 @@ const json = (value: unknown, isError = false) => ({
  * entities: forge_check and forge_exposure (any npm, PyPI or GitHub tool, OSV advisories), forge_scan (any public URL).
  */
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
-/** Every Arena task id: the Normal card, Hard v2, Hard v3 and Hard v3.2 (a Hard id implies the Hard tier). */
+/** Every Arena task id: the Normal card, Hard v2, Hard v3, Hard v3.2 and Hard v3.3 (a Hard id implies the Hard tier). */
 const taskEnum = z.enum(ALL_TASKS.map((t) => t.id) as [string, ...string[]]);
 const tierEnum = z.enum(["normal", "hard"]);
 
@@ -119,6 +120,9 @@ export function parseCheck(raw: unknown) {
  * The tool definitions, pinned in tests (ADR 0017 §2): any change to a name, title or description is deliberate.
  * Each description says when the tool fits, what to give and what comes back, and nothing else
  * (docs/launch/agent-channels.md §2: data, never instructions; no "always", "best" or "prefer").
+ * ADR 0133 (5 Nov): one structured form for every public tool: "Use this when…", Inputs:, Returns:, Limits:, then the
+ * neighbouring tool as data. Accuracy only: no directive or sales words (Microsoft, "AI recommendation poisoning"),
+ * linted by test/agent-wording.test.ts; every honesty caveat kept.
  */
 export const PUBLIC_TOOLS = {
   forge_check: {
@@ -150,6 +154,43 @@ export const PUBLIC_TOOLS = {
     title: "Arena results by task",
     description:
       "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Give optional task id, tier (normal or hard) or event slug such as crucible-2-hard; with no arguments, the latest ranked Hard event, summary first. Returns per job and model: attempts, passes, pass rate with 95% interval, 3-of-3 consistency, trap ids, knockouts, cost per pass and replays. Per-trap fall rates: forge_traps.",
+  },
+} as const;
+
+/**
+ * Held for the Claude directory review (Don, 5 Nov): /mcp/public keeps the descriptions it was submitted with until
+ * the directory decides. The ADR 0133 structured text waits in PUBLIC_TOOLS_NEXT; swap them when the review ends.
+ */
+export const PUBLIC_TOOLS_NEXT = {
+  forge_check: {
+    title: "Check a tool",
+    description:
+      "Use this when a task is about to rely on one skill, MCP server, plugin, package or API and the question is whether agents had problems with it or an advisory covers it. Inputs: one of id (npm:name, pypi:name, github.com/owner/repo or a bare name), url or fingerprint (sha256:<64 hex>); version if known. Returns: field reports (agents' notes on that version), OSV advisories, security status, page link. Limits: advisories for npm and PyPI only; 60 calls a minute per address. File text: forge_scan.",
+  },
+  forge_exposure: {
+    title: "Check installed packages against advisories",
+    description:
+      "Use this when the question is whether packages already installed match a published advisory, such as after an incident. Inputs: packages (ecosystem npm or pypi, name, exact version) or pip_freeze text; names and versions only. Returns: each match with its OSV advisory ids, fixed versions, CISA exploited flag and source link. Limits: 500 packages or 100,000 characters; 60 calls a minute per address. One tool's field reports: forge_check.",
+  },
+  forge_traps: {
+    title: "Arena trap data",
+    description:
+      "Use this when the question is how often AI models fell for each planted trap in everyday jobs (fake invoices, refunds over policy, duplicate orders). Inputs: optional task id, model id or tier (normal or hard); none gives the latest ranked Hard event, summary first. Returns: per trap, the public trap id, attempts, falls and fall rate, with the data date and card version. Limits: Forge Arena runs only. Pass rates per model and job: arena_results.",
+  },
+  forge_scan: {
+    title: "Scan a skill before installing it",
+    description:
+      "Use this when an agent skill, plugin, MCP server or install script is about to be installed and its text needs checking for hidden instructions, piped installs, credential reads or data sent to throwaway endpoints. Inputs: text (the file's contents) or url (a public code-host link; the Forge fetches it). Returns: a verdict, rule ids, line numbers, the file's sha256. Limits: 256 KB; clear means no known pattern matched, not that it is safe. Reports on a named tool: forge_check.",
+  },
+  forge_watch: {
+    title: "Weekly check of installed skills",
+    description:
+      "Use this when re-checking skills or tools that are already installed, such as once a week. Inputs: fingerprints, the sha256 hashes of installed files as forge_scan returns them. Returns: per fingerprint, whether it is flagged, needs a fresh scan, or has field reports (other agents' notes on that exact version). Limits: 100 fingerprints a call; 60 calls a minute per address. One tool by name or id: forge_check.",
+  },
+  arena_results: {
+    title: "Arena results by task",
+    description:
+      "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Inputs: optional task id, tier (normal or hard) or event slug such as crucible-2-hard; none gives the latest ranked Hard event, summary first. Returns: per job and model, attempts, passes, pass rate with 95% interval, 3-of-3 consistency, trap ids, knockouts, cost per pass, replays. Limits: Forge Arena runs only. Per-trap fall rates: forge_traps.",
   },
 } as const;
 
@@ -223,16 +264,16 @@ export const GAUNTLET_TOOLS = {
   gauntlet_start: {
     title: "Start the Forge Gauntlet",
     description:
-      "Use this when the user wants their own agent tested on everyday jobs with planted traps, refereed from the end state: six jobs, or mode \"sprint\" for one job (at most 12 calls). Give card_from (an earlier gauntlet_id) for a measured re-run with its trap card, or challenge (a finished gauntlet_id, or model:<id>) to replay that run's jobs. Returns a gauntlet_id, the first job's brief and its sandbox tools; no account.",
+      "Use this when the user wants their own agent tested on everyday jobs with planted traps, refereed from the end state. Inputs: optional mode (\"sprint\": one job, at most 12 calls; default six jobs), card_from (an earlier gauntlet_id, for a measured re-run with its trap card) or challenge (a finished gauntlet_id, or model:<id>). Returns: a gauntlet_id, the first job's brief and its sandbox tools; no account. Limits: per address 10 runs a day (Sprints 20); 2 hours a run (a Sprint 30 minutes).",
   },
   gauntlet_act: {
     title: "Act in the Forge Gauntlet",
     description:
-      "Use this during a Gauntlet run to call one sandbox tool in the current job. Give gauntlet_id, tool and args. Returns the tool's result; when a job ends, its verdict and the next job; after the sixth, the report card.",
+      "Use this during a Gauntlet run to call one sandbox tool in the current job. Inputs: gauntlet_id, tool and args. Returns: the tool's result; when a job ends, its verdict and the next job; after the last job, the report card. Limits: each job's tool-call limit (in limits); only the sandbox is touched.",
   },
   gauntlet_status: {
     title: "Gauntlet status",
-    description: "Use this to see where a Gauntlet run stands. Give gauntlet_id. Returns the current job (brief, tools, calls left), or the report card once finished.",
+    description: "Use this to see where a Gauntlet run stands. Inputs: gauntlet_id. Returns: the current job (brief, tools, calls left), or the report card once finished. Limits: 60 calls a minute per address.",
   },
 } as const;
 
@@ -490,7 +531,13 @@ export function createPublicServer(env: Env, ip: string, internal: InternalCompo
   return server;
 }
 
-export function createGauntletServer(env: Env, ip: string, internal: InternalComponent | null = null) {
+/** ADR 0133: the tags on the Gauntlet MCP address a client was added with (?client=<skill>-<version>, ?from=sprint-result). */
+export interface AddressTags {
+  client: string | null;
+  from: string | null;
+}
+
+export function createGauntletServer(env: Env, ip: string, internal: InternalComponent | null = null, tags: AddressTags = { client: null, from: null }) {
   const server = new McpServer(serverInfo(env.PUBLIC_ORIGIN, "gauntlet"), { instructions: GAUNTLET_INSTRUCTIONS });
   const limited = async () => !(await env.CHECK_LIMITER.limit({ key: `ip:${ip}` })).success;
 
@@ -505,8 +552,13 @@ export function createGauntletServer(env: Env, ip: string, internal: InternalCom
       const p = gauntletStartInput.safeParse(raw);
       if (!p.success) return json(gauntletInputNeeded("gauntlet_start", raw, p.error), true);
       const { card_from, challenge, mode } = p.data;
-      const r = await startGauntlet(env, ip, { cardFrom: card_from, challenge, mode });
-      if (!("error" in r)) await recordCheck(env, "mcp", ip, { internal });
+      const r = await startGauntlet(env, ip, { cardFrom: card_from, challenge, mode, ours: !!internal });
+      if (!("error" in r)) {
+        await recordCheck(env, "mcp", ip, { internal });
+        // ADR 0133: MCP calls are never bot-tested (ADR 0124); our own tagged callers are left out.
+        const keys = [...startedViaKeys(tags.from, mode === "sprint" ? "sprint" : "full", { internal }), ...skillTagKeys(tags.client, "gauntlet-start", { internal })];
+        if (keys.length) await bump(env, keys).catch(() => {});
+      }
       return json(r, "error" in r);
     },
   );
@@ -544,10 +596,10 @@ export function createGauntletServer(env: Env, ip: string, internal: InternalCom
   return server;
 }
 
-export function gauntletMcpHandler(env: Env, ip: string, internal: InternalComponent | null = null) {
+export function gauntletMcpHandler(env: Env, ip: string, internal: InternalComponent | null = null, tags?: AddressTags) {
   const host = new URL(env.PUBLIC_ORIGIN).hostname;
   // Any browser origin: these endpoints take no cookies or tokens, so there is nothing for another site to ride on.
-  return createMcpHandler(() => createGauntletServer(env, ip, internal), { route: GAUNTLET_MCP_ROUTE, allowedHostnames: [host], allowedOriginHostnames: "*" });
+  return createMcpHandler(() => createGauntletServer(env, ip, internal, tags), { route: GAUNTLET_MCP_ROUTE, allowedHostnames: [host], allowedOriginHostnames: "*" });
 }
 
 export function publicMcpHandler(env: Env, ip: string, internal: InternalComponent | null = null, keyed: PublicKeyed | null = null) {

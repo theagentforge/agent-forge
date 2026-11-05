@@ -34,11 +34,11 @@ describe("frozen snapshots", () => {
     expect(SNAPSHOTS.map((s) => s.version)).toEqual(TRAP_SET_VERSIONS.map((v) => v.version));
   });
 
-  it("a version bump without a snapshot fails the release check (1.1 once its re-score is applied)", () => {
+  it("a version bump without a snapshot fails the release check (1.2 once the re-score is applied; ADR 0132)", () => {
     const applied = CORRECTIONS.map((c) => (c.id === TRAP_SET_1_1_CORRECTION ? { ...c, published: true, applied: true, counts: { checked: 10, changed: 1, passToFail: 1, failToPass: 0, events: 1, models: 1 } } : c));
     const bumped = trapSetVersions(applied as typeof CORRECTIONS);
-    expect(bumped.at(-1)!.version).toBe("1.1");
-    expect(missingSnapshots(bumped)).toEqual(snapshotOf("1.1") ? [] : ["1.1"]);
+    expect(bumped.at(-1)!.version).toBe("1.2");
+    expect(missingSnapshots(bumped)).toEqual(snapshotOf("1.2") ? [] : ["1.2"]);
   });
 
   it("no snapshot's bytes have changed since it was frozen", async () => {
@@ -51,6 +51,7 @@ describe("frozen snapshots", () => {
   const FROZEN_SHA256: Record<string, string> = {
     "1.0": "d5835388be5ef57222d5f3739b00fe9794bd543e60083fdd9498df29d3cceb71",
     "1.0.1": "e6fb92c0da4f3e69421d04273cbff00c80972b10d1e22ec2c10043bed75ee0b9",
+    "1.1": "f9e99c6a8d7cb6994697d27015728ab79c443dff10a0e79afb40edd26b4caff1",
   };
   it("every snapshot's sha256 equals the one pinned when it was frozen (an edit plus a re-index still fails)", async () => {
     expect(Object.keys(FROZEN_SHA256)).toEqual(SNAPSHOTS.map((s) => s.version));
@@ -82,6 +83,11 @@ describe("frozen snapshots", () => {
     expect(v10.statement).toContain(`Reconstructed on 29 Oct 2026 from the catalog at commit ${v10.from_commit.slice(0, 7)}`);
     expect(v10.statement).toContain("Not the original bytes");
     expect(parseSnapshot(snapshotOf("1.0.1")!).snapshot).toMatchObject({ kind: "frozen", original_bytes: true });
+    // Trap Set 1.1 (ADR 0132): Hard v3.3's four traps, frozen the day they were added.
+    const v11 = parseSnapshot(snapshotOf("1.1")!);
+    expect(v11.snapshot).toMatchObject({ kind: "frozen", original_bytes: true, made_on: "2026-11-05" });
+    expect(v11.counts.traps).toBe(45);
+    expect(v11.traps.filter((t: any) => t.since === "Hard v3.3").map((t: any) => t.id)).toEqual(["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]);
   });
 
   it("the current version's snapshot matches the code: a trap change without a version bump fails here", () => {

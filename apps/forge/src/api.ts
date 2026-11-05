@@ -17,7 +17,7 @@ import { exposureAnswer, ownerClaim, restCheckAnswer, scanRelated, watchAnswer }
 import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsToken, verifyHouseToken } from "./services/house";
 import { postToMoltbook, validatePost } from "./social/moltbook";
 import { takeReport } from "./social/moltbook-replies";
-import { DAILY_CAP_USD, PROMPTS, runSelection, SELECTION_MODELS } from "./ops/tool-selection";
+import { DAILY_CAP_USD, DESCRIPTION_SETS, PROMPTS, runSelection, SELECTION_MODELS, type DescriptionSet } from "./ops/tool-selection";
 import { CITATION_MODELS, CITATION_QUESTIONS, runCitations } from "./ops/citations";
 import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
@@ -39,6 +39,7 @@ import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 import { anonymousLimited, keyGate } from "./services/api-keys";
 import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
+import { skillTagKeys, startedViaKeys } from "./services/channel-tags";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -52,6 +53,8 @@ publicApi.get("/api/v1/check", async (c) => {
   // Only the four query keys count: link tags such as ?from= or utm_* are ignored rather than refused (24 Oct check:
   // 37 refusals a day), and they don't split the cache.
   const url = new URL(c.req.url);
+  // ADR 0133: our Agent Skills tag their calls with ?client=<skill>-<version>; read before the tags are dropped.
+  const skillClient = url.searchParams.get("client");
   for (const k of [...url.searchParams.keys()]) if (!CHECK_KEYS.has(k)) url.searchParams.delete(k);
   const parsed = checkQuerySchema.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return c.json({ error: "invalid_query", detail: parsed.error.issues[0]?.message, ...CHECK_QUERY_HELP }, 400);
@@ -68,6 +71,15 @@ publicApi.get("/api/v1/check", async (c) => {
   // else (same limits, same answer). ADR 0124: crawlers and fake browsers (services/bots.ts, the agents' rule: scripts
   // and agent clients still count) get the same answer but add no check source and no tool check.
   const internal = internalCaller(c.req.raw.headers) ?? houseInstall(c.env, c.req.header(INSTALL_ID_HEADER));
+  // ADR 0133 review: a skill-tagged call is counted only within its own per-address limit (60 a minute, cached answers
+  // included), so replaying one cached URL can't raise the ClawHub figures faster than real checks could. Calls with
+  // an API key are metered per key already. A refused (429) call is never counted.
+  const tagged = isLikelyBot(c.req.raw, "api") ? [] : skillTagKeys(skillClient, "check", { internal });
+  const countTag = () => {
+    if (!tagged.length) return;
+    const allowed = keyed ? Promise.resolve(true) : c.env.CHECK_LIMITER.limit({ key: `skilltag-count:${ip}` }).then((r) => r.success, () => false);
+    c.executionCtx.waitUntil(allowed.then((ok) => (ok ? bump(c.env, tagged) : undefined)).catch(() => {}));
+  };
   if (!isLikelyBot(c.req.raw, "api")) {
     c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal }));
     c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent"), internal, channel: "api" }));
@@ -80,6 +92,7 @@ publicApi.get("/api/v1/check", async (c) => {
   // the install (blocked, advisory or neither), cached answers included.
   const ua = c.req.header("User-Agent");
   if (hit) {
+    countTag();
     if (!installClient(ua)) return keyed ? withKeyHeaders(hit, keyed) : hit;
     // Read once and answered from the copy, so counting never waits on the client reading the body.
     const text = await hit.text();
@@ -98,6 +111,7 @@ publicApi.get("/api/v1/check", async (c) => {
     const { success } = await c.env.CHECK_LIMITER.limit({ key: `ip:${ip}` });
     if (!success) return c.json(anonymousLimited(c.env), 429, { "Retry-After": "60" });
   }
+  countTag();
 
   const checked = await checkTool(c.env, parsed.data);
   const share = await checkShare(c.env, checked, parsed.data.id ?? parsed.data.url ?? parsed.data.fingerprint ?? "");
@@ -222,14 +236,17 @@ publicApi.get("/api/v1/ops/scout-signals", async (c) => {
 
 /**
  * POST /api/v1/ops/tool-selection — one slice of the tool-selection test (agent-channels §4.1), from the
- * tool-selection.yml workflow in the private repo (GitHub OIDC). Body: { model, from, to }, at most 10 prompts a call.
- * Spend is capped per day in KV, apart from the Arena's budget.
+ * tool-selection.yml workflow in the private repo (GitHub OIDC). Body: { model, from, to, set? }, at most 10 prompts a
+ * call; set is "after" (the live descriptions, the default) or "before" (ADR 0133: the 4 Nov set, for a same-day
+ * before/after). Spend is capped per day in KV, apart from the Arena's budget.
  */
 publicApi.post("/api/v1/ops/tool-selection", async (c) => {
   const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!(await verifyActionsToken(token, c.env.PUBLIC_ORIGIN, privateWorkflow("tool-selection.yml")))) return c.json({ error: "unauthorized" }, 401);
-  const b = (await c.req.json().catch(() => null)) as { model?: unknown; from?: unknown; to?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { model?: unknown; from?: unknown; to?: unknown; set?: unknown } | null;
   const from = Number(b?.from), to = Number(b?.to);
+  const set: DescriptionSet = b?.set === undefined ? "after" : (b.set as DescriptionSet);
+  if (!DESCRIPTION_SETS.includes(set)) return c.json({ error: "set is after or before" }, 422);
   if (!SELECTION_MODELS.includes(b?.model as never) || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > PROMPTS.length || to - from < 1 || to - from > 10)
     return c.json({ error: "give model (one of SELECTION_MODELS) and from/to, at most 10 prompts" }, 422);
   const key = opsSpendKey();
@@ -239,7 +256,7 @@ publicApi.post("/api/v1/ops/tool-selection", async (c) => {
   const selModel = modelById(String(b!.model));
   const allowed = await opsCallAllowed(c.env, !!selModel && isClaudeByok(selModel));
   if (!allowed.ok) return c.json({ error: "paused_credit", remaining: allowed.remaining, reserve: allowed.reserve }, 429);
-  const r = await runSelection(c.env, b!.model as string, from, to);
+  const r = await runSelection(c.env, b!.model as string, from, to, fetch, set);
   await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
   return c.json(r, 200);
 });
@@ -313,7 +330,8 @@ async function scanRequest(c: Context<{ Bindings: Env }>, input: { text?: unknow
   } else return c.json({ error: "give text or url" }, 400);
   const { result, isPublic } = await scanAndRecord(c.env, text, { name: input.name, sourceUrl });
   const internal = internalCaller(c.req.raw.headers);
-  c.executionCtx.waitUntil(bump(c.env, internal ? [internalKey(internal, "scans")] : scanCounters("api", result.verdict)).catch(() => {}));
+  const tagged = skillTagKeys(c.req.query("client"), "scan", { internal, bot: isLikelyBot(c.req.raw, "api") });
+  c.executionCtx.waitUntil(bump(c.env, [...(internal ? [internalKey(internal, "scans")] : scanCounters("api", result.verdict)), ...tagged]).catch(() => {}));
   return keyedJson(c.json({ ...agentView(result, { isPublic, origin: c.env.PUBLIC_ORIGIN, sourceUrl }), related: scanRelated(result.fingerprint), share: await scanShare(c.env, result, { isPublic, sourceUrl }), owner_claim: ownerClaim(c.env.PUBLIC_ORIGIN, "scan") }, 200, { "Cache-Control": "no-store" }), g.headers);
 }
 
@@ -394,8 +412,14 @@ publicApi.post("/api/v1/gauntlet", async (c) => {
   const mode = body.mode === "sprint" || body.mode === "full" ? body.mode : undefined;
   if (body.mode !== undefined && !mode) return c.json({ error: "invalid_mode" }, 400);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const r = await startGauntlet(c.env, ip, { cardFrom, challenge, mode });
-  if (!("error" in r)) c.executionCtx.waitUntil(recordCheck(c.env, "api", ip, { internal: internalCaller(c.req.raw.headers) }));
+  const internal = internalCaller(c.req.raw.headers);
+  const r = await startGauntlet(c.env, ip, { cardFrom, challenge, mode, ours: !!internal });
+  if (!("error" in r)) {
+    c.executionCtx.waitUntil(recordCheck(c.env, "api", ip, { internal }));
+    // ADR 0133: runs started from a Sprint result page's commands (?from=sprint-result) and by our skills (?client=).
+    const keys = [...startedViaKeys(c.req.query("from"), "mode" in r && r.mode === "sprint" ? "sprint" : "full", { internal }), ...skillTagKeys(c.req.query("client"), "gauntlet-start", { internal, bot: isLikelyBot(c.req.raw, "api") })];
+    if (keys.length) c.executionCtx.waitUntil(bump(c.env, keys).catch(() => {}));
+  }
   return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
 });
 

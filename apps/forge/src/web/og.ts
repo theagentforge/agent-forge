@@ -344,7 +344,8 @@ export function gauntletImage(duel: Duel, size: number): Node | null {
 
 site.get("/og/home.png", async (c) => {
   const duel = (await channelDuels(c.env, getDb(c.env)).catch(() => []))[0];
-  const l = homeCardLines(duel, (await homeHero(c.env)).headline);
+  // ADR 0130: the share image keeps the fixed line, never the per-visit pick.
+  const l = homeCardLines(duel, (await homeHero(c.env, Date.now(), { line: "fixed" })).share_headline);
   const art = duel ? gauntletImage(duel, 400) : null;
   // ADR 0029: the headline beside today's Gauntlet, robots and all; the old text score bug only if there's no art.
   if (art && duel) {

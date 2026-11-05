@@ -41,7 +41,7 @@ import {
 } from "./components";
 import { channelDuels, gauntletClipId } from "../arena/featured";
 import { finishedRuns } from "../arena/views";
-import { D2_HEADLINE, homeHero, homeHeroJson, type HomeHero } from "../arena/hero-proof";
+import { D2_HEADLINE, fixedSourceJson, FRAME, heroClickCounters, heroFromTag, heroLine, heroShownKey, heroStripTag, homeHero, homeHeroJson, lineAction, lineText, pinnedLineKeys, randomIndex, STRIP_ORDER, type HeroLine, type HeroProof, type HomeHero } from "../arena/hero-proof";
 import { agentGauntlet } from "../arena/gauntlet-claims";
 import { agentSeasonBadges } from "../arena/season";
 import { foundingBadgeOf } from "../services/owners";
@@ -77,6 +77,11 @@ import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts"
 
 type Ctx = Context<{ Bindings: Env }>;
 export const PAGE_CACHE_SECONDS = 60;
+/** ADR 0130: the home line picked for this visit, in the edge cache key only (never read from the address). */
+const HERO_PARAM = "hero";
+export const HERO_LINES_SCRIPT = "/hero-lines.js";
+export const HERO_LINE_HEADER = "X-Hero-Line";
+const heroPicks = new WeakMap<Request, string>();
 export const TRACKING_PARAM = /^(from|ref|utm_[a-z]+|fbclid|gclid|mc_[a-z]+)$/i;
 
 /**
@@ -221,7 +226,8 @@ site.use("*", async (c, next) => {
     if (ai.length) c.executionCtx.waitUntil(bump(c.env, ai).catch(() => {}));
     // Where visitors come from (services/usage.ts): counted before the cache, so cached pages count too. HTML only.
     if (!wantsJson(c) && !/^\/(og|api|feeds)\//.test(c.req.path) && !/\.(png|txt|json|xml|svg|ico|csv|zip)$/.test(c.req.path))
-      c.executionCtx.waitUntil(bump(c.env, visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN)).catch(() => {}));
+      // ADR 0130: a click from the home headline's source line or strip to its replay, counted per line (people only).
+      c.executionCtx.waitUntil(bump(c.env, [...visitCounters(c.req.raw, c.env.PUBLIC_ORIGIN), ...(bot || ours ? [] : heroClickCounters(url))]).catch(() => {}));
     if (markdown && !ours) c.executionCtx.waitUntil(bump(c.env, ["disc:markdown"]).catch(() => {}));
   }
   if (wantsJson(c)) url.searchParams.set("format", "json");
@@ -232,6 +238,26 @@ site.use("*", async (c, next) => {
   // Share images and receipt badges (ADR 0124): only `?v=` changes an image, so any other parameter a scraper adds
   // can't make it draw the same image again.
   if (isLongCached(c.req.path)) for (const k of [...url.searchParams.keys()]) if (k !== "v") url.searchParams.delete(k);
+  // ADR 0130: the home headline is one backed line picked at random per visit. The page is edge-cached for 60 s, so
+  // the pick is made here, before the cache: each line is its own cache entry (at most six), and the handler renders
+  // the line it is handed. A `hero` parameter in the address is never trusted.
+  const home = c.req.path === "/";
+  if (home) {
+    url.searchParams.delete(HERO_PARAM);
+    const asked = new URL(c.req.url).searchParams.get(HERO_PARAM);
+    const keys = await pinnedLineKeys(c.env).catch(() => [] as string[]);
+    if (keys.length) {
+      // A background refresh (ADR 0125) re-renders the line of the stale copy it replaces; a visitor's address never chooses.
+      const pick = refresh && asked && keys.includes(asked) ? asked : keys[randomIndex(keys.length)]!;
+      url.searchParams.set(HERO_PARAM, pick);
+      heroPicks.set(c.req.raw, pick);
+    }
+  }
+  // Which line a person saw first (ADR 0130), from the response itself, so cached copies count too. HTML only.
+  const countShown = (res: Response) => {
+    const line = res.headers.get(HERO_LINE_HEADER);
+    if (home && line && !refresh && !bot && !ours && !wantsJson(c) && !markdown && res.status === 200) c.executionCtx.waitUntil(bump(c.env, [heroShownKey(line)]).catch(() => {}));
+  };
   const key = new Request(url.toString(), { method: "GET" });
   // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404). Bots never count.
   // ADR 0069: Gauntlet score badges are counted apart (badge:score_serve), so the maintainer badge KPI stays tools-only.
@@ -253,6 +279,7 @@ site.use("*", async (c, next) => {
     countBadge(hit.status);
     // Pages outside the stale-while-revalidate list, and copies stored before it, are served as they are.
     const stored = fresh === null ? null : readStored(hit, fresh);
+    if (stored?.state !== "expired") countShown(hit);
     if (!stored) return hit;
     if (stored.state === "stale") c.executionCtx.waitUntil(refreshStale(key, c.req.header("Accept") ?? null, (req) => site.fetch(req, c.env, c.executionCtx)));
     if (stored.state !== "expired") return stored.res;
@@ -267,6 +294,7 @@ site.use("*", async (c, next) => {
   }
   await next();
   countBadge(c.res.status);
+  countShown(c.res);
   if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
   if (anonymous && c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public") && !c.res.headers.has("Set-Cookie")) {
     if (refresh && fresh !== null) {
@@ -371,32 +399,93 @@ export function liveBand(w: WorkTotals | null, live: Awaited<ReturnType<typeof l
   return statStrip({ main, secondary, caption, notes, label: "Live numbers", attrs: { "data-work-live": "", "data-agent-live": "" } });
 }
 
+/** A line's h1 content: the shared frame with the action phrase in its own span (the part that changes), or its own words. */
+function lineH1(l: HeroLine) {
+  const act = lineAction(l);
+  return act ? html`${FRAME.start}<span class="hero-act">${act}</span>${FRAME.end}<em>${l.em}</em>${l.tail}` : html`${l.lead}<em>${l.em}</em>${l.tail}`;
+}
+
 /**
- * The hero headline (W2.1, follow-up 28 Oct): the D2 headline only when a public replay backs it; otherwise a count
+ * The hero headline (W2.1, follow-up 28 Oct; ADR 0130): a line only when a public replay backs it; otherwise a count
  * anyone can reproduce from /arena/dataset.json, or, with no fall at all, a question that claims nothing.
  */
 export function heroHeadline(h: HomeHero) {
-  if (h.case === "replay") return html`<h1>An AI agent paid a fake invoice and <em>reported the job done</em>.</h1>`;
+  if (h.case === "replay") return html`<h1 aria-live="off">${lineH1(h.line)}</h1>`;
   if (h.case === "count") return html`<h1>AI agents paid a planted fake invoice in <em>${h.fell_display} of ${h.runs.toLocaleString("en-US")}</em> refereed sandbox runs.</h1>`;
   return html`<h1>Would your AI agent pay a <em>fake invoice</em>?</h1>`;
 }
 
+/** The source line's words for one replay: our template words and catalogue phrases only; nothing the model wrote. */
+function sourceParts(p: HeroProof) {
+  // Whose model it was, in the lineup's words ("IBM (open weights)" reads "IBM, open weights"), and whether the bout was
+  // ranked: a practice run of a small open model must not pass for a frontier model's ranked bout (review 28 Oct).
+  const lab = p.lab ? ` (${p.lab.replace(/ \((.+)\)$/, ", $1")})` : "";
+  return {
+    kind: p.ranked ? "ranked bout" : "practice bout, not ranked",
+    title: `${p.trap.id}: ${p.trap.description}`,
+    name: `${p.name}${lab}`,
+    day: dayLabel(new Date(p.finished_at).toISOString().slice(0, 10)),
+    href: `${p.replay}?from=${heroFromTag(p.line)}`,
+  };
+}
+
 /**
- * The headline's source, right under it (decision D2: the claim must be true and sourced). Our own template words and
- * catalogue phrases only; nothing the model wrote.
+ * The headline's source, right under it (decision D2: the claim must be true and sourced). Site audit 29 Oct (issue 2):
+ * one short line; the trap's catalogue entry is one hover away, and the replay one tap.
  */
 export function heroSource(h: HomeHero) {
   if (h.case === "count")
-    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the scam-invoice jobs, practice and ranked, Normal and Hard (Lab arms left out). <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
+    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the Normal scam-invoice job, practice and ranked (Lab arms left out). <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
   if (h.case === "question")
     return html`<p class="small muted hero-source" data-hero-source="question">Every Arena job hides planted traps, a fake invoice among them. <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
-  const p = h.proof;
-  const day = dayLabel(new Date(p.finished_at).toISOString().slice(0, 10));
-  // Whose model it was, in the lineup's words ("IBM (open weights)" reads "IBM, open weights"), and whether the bout was
-  // ranked: a practice run of a small open model must not pass for a frontier model's ranked bout (review 28 Oct).
-  // Site audit 29 Oct (issue 2): one short line; the trap's catalogue entry is one hover away, and the replay one tap.
-  const lab = p.lab ? ` (${p.lab.replace(/ \((.+)\)$/, ", $1")})` : "";
-  return html`<p class="small hero-source" data-hero-source="${p.run}"><span class="muted">Refereed replay:</span> <span title="${p.trap.id}: ${p.trap.description}">${p.ranked ? "ranked bout" : "practice bout, not ranked"}</span> · ${p.name}${lab} · ${day} · <a href="${p.replay}?from=home-source">Watch the replay</a></p>`;
+  const s = sourceParts(h.proof);
+  return html`<p class="small hero-source" data-hero-source="${h.proof.run}" data-hero-line="${h.proof.line}"><span class="muted">Refereed replay:</span> <span title="${s.title}">${s.kind}</span> · ${s.name} · ${s.day} · <a href="${s.href}">Watch the replay</a></p>`;
+}
+
+/** Every backed line as the one-cycle script reads it (public/hero-lines.js): words and source, structured, no HTML. */
+export function heroLinesData(h: HomeHero) {
+  if (h.case !== "replay") return [];
+  return h.lines.map((p) => {
+    const l = heroLine(p.line)!;
+    return { key: l.key, action: lineAction(l), lead: l.lead, em: l.em, tail: l.tail, text: lineText(l), run: p.run, ...sourceParts(p) };
+  });
+}
+
+/** "Caught in refereed runs: …": every backed line's job, each linked to its replay. Static, for everyone (no script). */
+export function heroStrip(h: HomeHero) {
+  if (h.case !== "replay" || h.lines.length < 2) return "";
+  const items = STRIP_ORDER.flatMap((k) => h.lines.filter((p) => p.line === k)).map((p) => html`<a href="${p.replay}?from=${heroStripTag(p.line)}" data-strip-line="${p.line}">${heroLine(p.line)!.strip}</a>`);
+  return html`<p class="small hero-strip" data-hero-strip><span class="muted">Caught in refereed runs:</span> ${items.map((x, i) => html`${i ? " · " : ""}${x}`)}</p>`;
+}
+
+/** "Latest AI caught by a trap: 2 d ago": a date from the newest public fall, never a count. */
+export function heroLatest(h: HomeHero, now: number) {
+  if (!h.latest_fall) return "";
+  return html`<p class="small muted hero-latest">Latest AI caught by a trap: <time datetime="${new Date(h.latest_fall).toISOString()}">${agoText(h.latest_fall, now)}</time></p>`;
+}
+
+/**
+ * The hero's headline block (ADR 0130). One backed line, picked per visit, is in the HTML; with two or more, every
+ * line's words and source ride along as data, the hero reserves the tallest one's height (hidden copies in the same
+ * grid cell, so nothing moves when the line changes: CLS 0 at every width), and a small Pause control beside the
+ * source line (WCAG 2.2.2; a 24 px target, WCAG 2.5.8) controls
+ * the one cycle. Below them, the static strip of every backed job.
+ */
+export function heroBlock(h: HomeHero, now: number) {
+  const data = heroLinesData(h);
+  if (h.case !== "replay" || data.length < 2) return html`${heroHeadline(h)}${heroSource(h)}${heroStrip(h)}${heroLatest(h, now)}`;
+  const start = data.findIndex((d) => d.key === h.line.key);
+  // Every line, the shown one too: when another line is up, the cell must still be as tall as the tallest.
+  const all = h.lines;
+  return html`<div class="hero-rot" data-hero-rot data-start="${start}" data-hero-lines="${JSON.stringify(data)}">
+<div class="hero-cell">${heroHeadline(h)}${all.map((p) => html`<p class="hero-size hero-size-h1" aria-hidden="true" data-nosnippet>${lineText(heroLine(p.line)!)}</p>`)}</div>
+<div class="hero-srcrow"><div class="hero-cell">${heroSource(h)}${all.map((p) => {
+    const s = sourceParts(p);
+    return html`<p class="small hero-source hero-size" aria-hidden="true" data-nosnippet>Refereed replay: ${s.kind} · ${s.name} · ${s.day} · Watch the replay</p>`;
+  })}</div>
+<button type="button" class="hero-pause hero-pause-off" data-hero-pause aria-pressed="false"><span class="hero-ico" aria-hidden="true"></span><span class="hero-lbl" data-hero-pause-label>Pause headlines</span></button></div>
+</div>
+${heroStrip(h)}${heroLatest(h, now)}`;
 }
 
 site.get("/", async (c) => {
@@ -420,7 +509,7 @@ site.get("/", async (c) => {
     totalsRead.then(([, l]) => l),
     gullibilityBoard(c.env, db, now).catch(() => EMPTY_BOARD),
     frontierHard(c.env, db, now).catch(() => null),
-    homeHero(c.env, now),
+    homeHero(c.env, now, { line: heroPicks.get(c.req.raw) ?? null }),
   ]);
   const duel = duels[0] ?? null;
   const [posts, duelClip] = await Promise.all([
@@ -433,6 +522,8 @@ site.get("/", async (c) => {
     headline: hh.headline,
     subline: HOME_SUBHEAD,
     headline_source: homeHeroJson(hh, origin),
+    // ADR 0130: the fixed (fake-invoice) line's source, the same on every visit (the share title and the report use it).
+    fixed_source: fixedSourceJson(hh, origin),
     primary_cta: { label: PRIMARY_CTA.label, url: `${origin}${PRIMARY_CTA.href}` },
     secondary_ctas: [
       { label: "Connect your AI", url: `${origin}/connect` },
@@ -440,8 +531,9 @@ site.get("/", async (c) => {
     ],
     for_security_teams: `${origin}/security`,
   };
-  if (wantsJson(c)) return sendJson(c, { hero, featured_bout: duel, bouts: duels, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), trap_card_experiments: experimentsData(), which_ai_falls_for_it: boardJson(board, origin), third_party: [], stats: s, stats_json: `${c.env.PUBLIC_ORIGIN}/stats.json`, live_wire: wire, watchlist: watch, top_scouts: scouts }, secondsLeft(numbers));
-  return send(c, {
+  const shownLine = hh.case === "replay" ? hh.line.key : null;
+  if (wantsJson(c)) return withHeroLine(sendJson(c, { hero, featured_bout: duel, bouts: duels, hard_tier: hard.length ? "/arena?tier=hard" : null, trap_card_measured: lift.filter((j) => j.shown), trap_card_experiments: experimentsData(), which_ai_falls_for_it: boardJson(board, origin), third_party: [], stats: s, stats_json: `${c.env.PUBLIC_ORIGIN}/stats.json`, live_wire: wire, watchlist: watch, top_scouts: scouts }, secondsLeft(numbers)), shownLine);
+  return withHeroLine(await send(c, {
     title: hh.headline,
     ogTitle: hh.share,
     description: SITE_DESCRIPTION,
@@ -449,6 +541,8 @@ site.get("/", async (c) => {
     nav: "home",
     image: "/og/home.png",
     jsonAlternate: "/?format=json",
+    // ADR 0130: the one-cycle script, only when two or more lines are backed.
+    modules: heroLinesData(hh).length > 1 ? [HERO_LINES_SCRIPT] : undefined,
     jsonLd: {
       "@context": "https://schema.org",
       "@graph": [
@@ -470,8 +564,7 @@ site.get("/", async (c) => {
     body: html`
 <section class="hero2">
 <div class="hero2-copy">
-${heroHeadline(hh)}
-${heroSource(hh)}
+${heroBlock(hh, now)}
 <p class="lead">${HOME_SUBHEAD}</p>
 <p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/check?from=home-hero">Check a tool</a></p>
 <p class="small muted">Free, no account. Short on time? <a href="${SPRINT_PATH}?from=home-hero">Try the 90-second Sprint</a>.</p>
@@ -501,8 +594,14 @@ ${wireHero(posts, now)}
 <h2 id="home-final">Would your agent pay the fake invoice?</h2>
 <p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home">${PRIMARY_CTA.label}</a></p>
 </section>`,
-  }, { maxAge: secondsLeft(numbers) });
+  }, { maxAge: secondsLeft(numbers) }), shownLine);
 });
+
+/** ADR 0130: the line this response shows, for the edge cache's per-line count (a cached copy keeps the header). */
+function withHeroLine(res: Response, line: string | null) {
+  if (line) res.headers.set(HERO_LINE_HEADER, line);
+  return res;
+}
 
 /**
  * A published advisory from OSV on a tool page (crisis-wave plan C2; wording per docs/launch/crisis-messaging.md §4):

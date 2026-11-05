@@ -16,10 +16,12 @@ export const SKILLS = [
   { name: "forge-run-the-gauntlet", text: gauntletMd },
 ] as const;
 
-/** The `description` from a SKILL.md's YAML front matter (single line, as ours are written). */
+/** The `description` from a SKILL.md's YAML front matter (single line, as ours are written; quotes taken off). */
 export function frontMatterDescription(md: string): string {
   const fm = /^---\n([\s\S]*?)\n---/.exec(md)?.[1] ?? "";
-  return /^description:\s*(.+)$/m.exec(fm)?.[1]?.trim() ?? "";
+  const raw = /^description:\s*(.+)$/m.exec(fm)?.[1]?.trim() ?? "";
+  // A description with ": " in it is written as a double-quoted YAML string (ADR 0133's "Inputs: … Returns: …").
+  return /^".*"$/.test(raw) ? raw.slice(1, -1).replace(/\\"/g, '"') : raw;
 }
 
 export async function digestOf(text: string) {

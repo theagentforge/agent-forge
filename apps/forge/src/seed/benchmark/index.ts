@@ -3,6 +3,7 @@
 // Each sha256 was taken from the file when it was frozen; test/benchmark-versions.test.ts fails if a file's bytes change.
 import v1_0 from "./v1.0.json.txt";
 import v1_0_1 from "./v1.0.1.json.txt";
+import v1_1 from "./v1.1.json.txt";
 
 export interface SnapshotEntry {
   version: string;
@@ -18,4 +19,5 @@ const text = (m: unknown) => {
 export const SNAPSHOTS: SnapshotEntry[] = [
   { version: "1.0", sha256: "d5835388be5ef57222d5f3739b00fe9794bd543e60083fdd9498df29d3cceb71", text: text(v1_0) },
   { version: "1.0.1", sha256: "e6fb92c0da4f3e69421d04273cbff00c80972b10d1e22ec2c10043bed75ee0b9", text: text(v1_0_1) },
+  { version: "1.1", sha256: "f9e99c6a8d7cb6994697d27015728ab79c443dff10a0e79afb40edd26b4caff1", text: text(v1_1) },
 ];

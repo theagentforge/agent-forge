@@ -136,6 +136,11 @@ describe("/mcp/public (ADR 0017 §3)", () => {
     // the neighbouring question (as data, "File text: forge_scan"); forge_watch drops "Reads only" (readOnlyHint says it).
     // 4 Nov 2026 (ADR 0123): arena_results and forge_traps say that no arguments gives the latest ranked Hard event,
     // summary first; both trimmed to stay within 420 characters.
+    // 5 Nov 2026 (ADR 0133): one structured form, "Use this when… Inputs: … Returns: … Limits: …", with each tool's
+    // real limits (sizes, per-address rate); forge_scan says the Forge fetches a URL itself and keeps "not that it is
+    // safe". Accuracy only, no directive or sales words (the description lint in test/agent-wording.test.ts).
+    // 5 Nov 2026 (Don): held at the submitted text until the Claude directory review ends; ADR 0133 text waits in
+    // PUBLIC_TOOLS_NEXT (digest 9c1cc893…).
     expect(digest).toBe("3d7edea4185d43494b0068707e23c2286036b692e925f3258694020511952e29");
   });
 });

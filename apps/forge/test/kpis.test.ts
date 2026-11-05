@@ -168,7 +168,7 @@ describe("the dataset inventory (ADR 0040)", () => {
     expect(after.refereed_runs.with_trap_fall - before.refereed_runs.with_trap_fall).toBe(2);
     expect(after.calibration.per_task.find((x) => x.task === "inv-task")).toEqual({ task: "inv-task", n: 6, pass_rate: 50 });
     // The four private families (ADR 0057) count here, admin only; the public mirror has none.
-    expect(after.environments).toMatchObject({ task_families: 6 + Object.keys(PRIVATE_FAMILIES).length, job_versions: 20 + PRIVATE_TASK_IDS.length });
+    expect(after.environments).toMatchObject({ task_families: 6 + Object.keys(PRIVATE_FAMILIES).length, job_versions: 21 + PRIVATE_TASK_IDS.length });
     expect(after.controls).toEqual(DATA_CONTROLS);
     expect(Object.keys(dataSnapshotValues(after))).toContain("data_trap_falls");
   });

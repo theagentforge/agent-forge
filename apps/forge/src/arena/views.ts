@@ -1,5 +1,5 @@
 import { publicTrapId, taskVersion } from "@forge/arena";
-import { boutOutcome, conservative, glicko2, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { boutOutcome, conservative, glicko2, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
@@ -12,7 +12,7 @@ export type Kind = "card" | "guest" | "practice";
 
 /** The Normal card (TASKS) and the Hard tier (HARD_TASKS, ADR 0021): the same six jobs, shown as separate sections. */
 export type Tier = "normal" | "hard";
-const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].map((x) => x.id);
+const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((x) => x.id);
 export const tierOf = (task: string): Tier => (HARD_IDS.includes(task) ? "hard" : "normal");
 export const tierTasks = (tier: Tier) => (tier === "hard" ? HARD_TASKS : TASKS);
 /** `?tier=hard` picks the Hard tier; anything else (or nothing) is Normal. */
@@ -269,7 +269,7 @@ export async function eventCard(db: Db, slug: string) {
   const event = await publicEvent(db, slug);
   if (!event) return null;
   const runs = await finishedRuns(db, { eventId: event.id });
-  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS].map((task) => {
+  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();
     for (const r of runs.filter((x) => x.summary.task === task.id)) by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.result]);
     const rows = [...by.entries()].map(([model, results]) => ({ model, results, stats: summarize(results) })).sort((a, b) => b.stats.score - a.stats.score);

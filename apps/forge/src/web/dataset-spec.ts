@@ -3,7 +3,7 @@ import { html } from "hono/html";
 import { BENCHMARK_JSON_PATH, BENCHMARK_PATH, BENCHMARK_SCHEMA_PATH, benchmarkData, STAKE_SEEDS, TRAP_SET_NAME } from "../arena/benchmark";
 import { BENCHMARK_CHANGELOG_PATH, BENCHMARK_FILE_SCHEMA_PATH, BENCHMARK_LICENCE_PATH, BENCHMARK_TRAPS_PATH } from "../arena/benchmark-files";
 import { BENCHMARK_DIFF_PATH, BENCHMARK_HELD_OUT_PATH, BENCHMARK_VERSIONS_PATH, versionsData } from "../arena/benchmark-versions";
-import { readSampleMeta, SAMPLE_DIR, SAMPLE_INDEX_PATH, SAMPLE_SCHEMA_PATH, SAMPLE_ZIP_PATH } from "../arena/sample";
+import { latestSample, SAMPLE_DIR, SAMPLE_INDEX_PATH, SAMPLE_SCHEMA_PATH, SAMPLE_ZIP_PATH } from "../arena/sample";
 import { getDb } from "../services/db";
 import { history as houseHistory, latestRun } from "../services/house-report";
 import { OSV_FEED_PATH, osvRecords } from "../services/osv-feed";
@@ -63,15 +63,18 @@ export function dayRange(a: string, b: string) {
 /** The /dataset object (also /dataset.json). Every number comes from the same function as its own public page. */
 export async function datasetSpecData(env: Env) {
   const origin = env.PUBLIC_ORIGIN;
-  const [bench, stats, run, runs, sample, osv] = await Promise.all([
+  const [bench, stats, run, runs, latest, osv] = await Promise.all([
     benchmarkData(getDb(env), origin),
     statsData(env),
     latestRun(env).catch(() => null),
     houseHistory(env).catch(() => []),
-    readSampleMeta(env).catch(() => null),
+    latestSample(env).catch(() => null),
     osvRecords(env, origin).catch(() => null),
   ]);
   const work = stats.blended.work;
+  // ADR 0128: the newest published sample version (v1.1 once built, else v1).
+  const sample = latest?.meta ?? null;
+  const sampleZip = latest ? latest.spec.zipPath : SAMPLE_ZIP_PATH;
   const kinds = new Map<string, { family: string; name: string; traps: number }>();
   for (const t of bench.traps) {
     const k = kinds.get(t.trap_kind.family) ?? { family: t.trap_kind.family, name: t.trap_kind.name, traps: 0 };
@@ -170,9 +173,11 @@ export async function datasetSpecData(env: Env) {
       sample: {
         page: `${origin}${SAMPLE_DIR}`,
         status: sample ? "published" : "not_published_yet",
-        zip: sample ? `${origin}${SAMPLE_ZIP_PATH}` : null,
+        version: sample?.version ?? null,
+        zip: sample ? `${origin}${sampleZip}` : null,
         sha256: sample?.zip.sha256 ?? null,
         records: sample?.counts.records ?? null,
+        verified: sample?.verified?.line ?? null,
         listing: `${origin}${SAMPLE_INDEX_PATH}`,
         schema: `${origin}${SAMPLE_SCHEMA_PATH}`,
       },
@@ -256,7 +261,7 @@ ${row("Distinct skill files scanned (launch scan seed included)", k.skill_scans.
 ${row("Tools with a page (mostly registry listings, not reviewed)", k.tools_with_a_page, "tools_tracked", "/stats/rules#tools_tracked")}
 ${row("OSV feed records", k.osv_feed.records, "osv_records", OSV_FEED_PATH)}
 </tbody></table></div>
-<p class="small muted" data-as-of="${d.as_of}">${asOfText(d)} The running totals here are the ones <a href="/stats">/stats</a> shows.</p>
+<p class="small muted" data-as-of="${d.as_of}">${asOfText(d)} The running totals here are counted the same way as on <a href="/stats">/stats</a>.</p>
 ${more(html`<span id="kinds">Traps per kind</span>`, html`<ul>${k.trap_set.traps_per_kind.map((x) => html`<li><code>${x.family}</code> ${x.name}: <span data-kind="${x.family}">${x.traps}</span></li>`)}</ul>`, { hint: `${k.trap_set.traps} traps in ${k.trap_set.trap_kinds} kinds` })}
 <h3 id="models">Models with public results</h3>
 <p>${modelsLine ?? "No ranked public results yet."} Ranked public attempts only, under <a href="/results-policy">the results policy</a>; per-model pass rates with intervals are on <a href="${BENCHMARK_PATH}#results">/benchmark</a>.</p>
@@ -284,7 +289,7 @@ ${more(html`<span id="install-tests">Field reports and install tests</span>`, ht
 <li>JSON Schema: <a href="${BENCHMARK_SCHEMA_PATH}">per trap</a> and <a href="${BENCHMARK_FILE_SCHEMA_PATH}">whole file</a> (2020-12).</li>
 <li>Croissant 1.0 with RAI: <a href="${CROISSANT_PATH}">${CROISSANT_PATH}</a>. CITATION.cff: <a href="${BENCHMARK_PATH}/v1/CITATION.cff">${BENCHMARK_PATH}/v1/CITATION.cff</a>.</li>
 <li>OSV feed: <a href="${OSV_FEED_PATH}">${OSV_FEED_PATH}</a> (OSV schema; pattern findings, not confirmed vulnerabilities).</li>
-<li>Sample: <a href="${SAMPLE_DIR}">the sample dataset</a>${f.sample.status === "published" ? html`, <a href="${SAMPLE_ZIP_PATH}">zip</a>, ${n(f.sample.records)} records, SHA-256 <code class="mono-break">${f.sample.sha256}</code>` : ""} (<a href="${SAMPLE_SCHEMA_PATH}">record schema</a>).</li>
+<li>Sample: <a href="${SAMPLE_DIR}">the sample dataset</a>${f.sample.status === "published" ? html`, <a href="${f.sample.zip ? new URL(f.sample.zip).pathname : SAMPLE_ZIP_PATH}">zip</a>${f.sample.version ? ` (${f.sample.version})` : ""}, ${n(f.sample.records)} records${f.sample.verified ? `, ${f.sample.verified}` : ""}, SHA-256 <code class="mono-break">${f.sample.sha256}</code>` : ""} (<a href="${SAMPLE_SCHEMA_PATH}">record schema</a>).</li>
 <li>Released versions (frozen or reconstructed, as marked): <a href="${BENCHMARK_VERSIONS_PATH}">${BENCHMARK_VERSIONS_PATH}</a>, diff at <code>${BENCHMARK_DIFF_PATH}?from=&lt;version&gt;&amp;to=&lt;version&gt;</code>.
 <ul>${f.frozen_versions.versions.map((v) => html`<li>${v.url ? html`<a href="${v.url.replace(c.env.PUBLIC_ORIGIN, "")}">${v.version}</a>` : v.version} (${v.date}${v.kind ? `, ${v.kind}` : ""})${v.sha256 ? html`: sha256 <code>${v.sha256}</code>` : ""}</li>`)}</ul></li>
 </ul>

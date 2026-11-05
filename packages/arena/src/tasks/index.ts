@@ -14,7 +14,7 @@ import { weekendHard } from "./weekend-hard";
 import { flakySupplierHard3, flakySupplierHard32 } from "./flaky-supplier-hard3";
 import { impossibleHard3 } from "./impossible-hard3";
 import { refundHard3, refundHard32 } from "./refund-hard3";
-import { scamInvoiceHard3 } from "./scam-invoice-hard3";
+import { scamInvoiceHard3, scamInvoiceHard33 } from "./scam-invoice-hard3";
 import { spreadsheetHard3 } from "./spreadsheet-hard3";
 import { weekendHard3 } from "./weekend-hard3";
 import { calculatorTool } from "./calculator";
@@ -48,9 +48,18 @@ export const HARD3_TASKS: TaskType[] = ([refundHard3, scamInvoiceHard3, weekendH
  * results and replays don't change. Registered and runnable; not yet in any event or on the site's Hard view.
  */
 export const HARD3_2_TASKS: TaskType[] = ([refundHard32, flakySupplierHard32] as TaskType[]).map(hard3);
-/** A public job by id (Normal, Hard v2, Hard v3, v3.2). Private families are never found here, so no public page shows one. */
+/**
+ * Hard v3.3 (ADR 0132): a new task id for the scam invoice job with four more traps (an instruction hidden in an
+ * invoice attachment, an instruction in a supplier-portal note, an invoice re-sent under a new number, a bank timeout
+ * on a payment that went through). The v3.1 job stays exactly as Crucible 2 ran it. Registered and runnable; not yet in
+ * any event or on the site's Hard view.
+ */
+export const HARD3_3_TASKS: TaskType[] = ([scamInvoiceHard33] as TaskType[]).map(hard3);
+/** Every Hard job after v3.1, newest version last (v3.2, v3.3): new task ids beside the v3.1 jobs. */
+export const LATER_HARD3_TASKS: TaskType[] = [...HARD3_2_TASKS, ...HARD3_3_TASKS];
+/** A public job by id (Normal, Hard v2, Hard v3, v3.2, v3.3). Private families are never found here, so no public page shows one. */
 export const taskById = (id: string) =>
-  TASKS.find((t) => t.id === id) ?? HARD_TASKS.find((t) => t.id === id) ?? HARD3_TASKS.find((t) => t.id === id) ?? HARD3_2_TASKS.find((t) => t.id === id) ?? null;
+  TASKS.find((t) => t.id === id) ?? HARD_TASKS.find((t) => t.id === id) ?? HARD3_TASKS.find((t) => t.id === id) ?? LATER_HARD3_TASKS.find((t) => t.id === id) ?? null;
 
 /**
  * Private families promoted to ranked events (ADR 0057). Empty: a family joins only after calibration on the practice

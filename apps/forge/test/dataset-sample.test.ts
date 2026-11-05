@@ -437,7 +437,8 @@ describe("publishing: once, then fixed", () => {
     expect(await sha(new Uint8Array(await (await fetchWorker(SAMPLE_ZIP_PATH)).arrayBuffer()))).toBe(hash);
     const admin = await (await fetchWorker(SAMPLE_ADMIN_PATH, { headers: { Cookie: adminCookie, Accept: "text/html" } })).text();
     expect(admin).toContain("Published");
-    expect(admin).not.toContain('action="/admin/dataset-sample"');
+    // v1 has no Build button any more (ADR 0128: only an unbuilt version, here v1.1, still offers one).
+    expect(admin).not.toContain('name="version" value="v1"');
   });
 });
 

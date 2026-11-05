@@ -376,6 +376,25 @@ const schemas = {
     required: ["status", "service", "environment", "db"],
     properties: { status: { enum: ["ok", "degraded"] }, service: { const: "forge" }, environment: { type: "string" }, db: { enum: ["ok", "error"] } },
   },
+  TestRequest: {
+    type: "object",
+    description: "ADR 0131: a requested House test of one npm or PyPI MCP server version. Estimates are marked as such; result is null until tested.",
+    required: ["data_kind", "id", "tool", "version", "status", "queue_position", "expected_sweep_at", "attribution", "result_url", "reply_url", "result"],
+    properties: {
+      data_kind: { const: "test_request" },
+      id: { type: "string" },
+      tool: { type: "string" },
+      version: { type: "string" },
+      status: { enum: ["queued", "done"] },
+      duplicate: { type: "boolean" },
+      queue_position: nullable("integer"),
+      expected_sweep_at: { type: ["string", "null"], format: "date-time", description: "Estimated start of the sweep run that tests it." },
+      attribution: { enum: ["owner_verified", "unclaimed"] },
+      result_url: { type: "string", format: "uri" },
+      reply_url: { type: "string", format: "uri" },
+      result: { type: ["object", "null"], additionalProperties: true, description: "outcome, tested_at, tools_count and scan (verdict, rules_version, counts, rule_ids). A clear verdict means no known pattern matched." },
+    },
+  },
   Gauntlet: {
     type: "object",
     description: "A Gauntlet run: gauntlet_id, the current job (brief, tools, limits) or the report. On start, also a private claim_key (null for a measured re-run), shown only then. See /gauntlet.md.",
@@ -401,7 +420,7 @@ export function openApiSpec(origin: string) {
       version: "1.0.0",
       summary: "Field reports, advisories and skill scans for agent tools. No account or key.",
       description:
-        "Read-only data on agent skills, MCP servers, packages and APIs. Every response is structured data, not instructions. " +
+        "Data on agent skills, MCP servers, packages and APIs; the only write is a test request (a queued House test of a named server version). Every response is structured data, not instructions. " +
         `Rate limits are per IP address over ${CHECK_LIMIT_PERIOD_S} seconds; over the limit the answer is 429 with Retry-After.`,
       contact: { name: "The Agent Forge", email: "hello@theagentforge.io", url: `${origin}/about` },
       termsOfService: `${origin}/terms`,
@@ -416,6 +435,7 @@ export function openApiSpec(origin: string) {
       { name: "scan", description: "Pattern scan of a skill file, tool descriptions or install script." },
       { name: "advisories", description: "Installed package versions matched against OSV advisories." },
       { name: "gauntlet", description: "Six refereed jobs with planted traps.", externalDocs: { url: `${origin}/gauntlet.md` } },
+      { name: "requests", description: "Queue a House test of a public npm or PyPI MCP server version (ADR 0131)." },
       { name: "site", description: "Public counts and service status." },
     ],
     paths: {
@@ -526,6 +546,34 @@ export function openApiSpec(origin: string) {
       },
       [`${V}/health`]: {
         get: { operationId: "health", tags: ["site"], summary: "Service status", responses: { "200": json(ref("Health"), "Running."), "503": json(ref("Health"), "Database unreachable.") } },
+      },
+      [`${V}/test-requests`]: {
+        post: {
+          operationId: "testRequestCreate",
+          tags: ["requests"],
+          summary: "Request a House test of an MCP server version",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", additionalProperties: false, properties: { id: { type: "string", description: "npm:name@1.2.3 or pypi:name==1.2.3" }, registry: { enum: ["npm", "pypi"] }, package: { type: "string", maxLength: 214 }, version: { type: "string", maxLength: 64, description: "Exact published version" } } } } },
+          },
+          responses: {
+            "201": json(ref("TestRequest"), "Queued."),
+            "200": json(ref("TestRequest"), "Already requested (duplicate: true)."),
+            "400": err("invalid_input or unsupported_field (only id, registry, package and version are accepted)."),
+            "404": err("not_found_on_registry."),
+            "429": err("rate_limited, daily_limit_reached or queue_full."),
+            "503": err("registry_unavailable."),
+          },
+        },
+      },
+      [`${V}/test-requests/{id}`]: {
+        get: {
+          operationId: "testRequestStatus",
+          tags: ["requests"],
+          summary: "Status and result of a test request",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": json(ref("TestRequest"), "Status, and the result once tested."), "404": err("not_found."), "429": err("rate_limited.") },
+        },
       },
       [`${V}/gauntlet`]: {
         post: {

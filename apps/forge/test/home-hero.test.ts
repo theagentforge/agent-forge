@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { Attempt, taskById, type AttemptResult } from "@forge/arena";
 import { beforeAll, describe, expect, it } from "vitest";
-import { fakeInvoiceCount, heroProof, homeHero } from "../src/arena/hero-proof";
+import { fakeInvoiceCount, HERO_STATE_KEY, heroProof, homeHero } from "../src/arena/hero-proof";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { signReport } from "../src/services/signing";
@@ -24,6 +24,17 @@ const ids: Record<string, string> = {};
 let n = 0;
 // site.css as served (a ?raw import of CSS is stubbed out by the test config), comments removed.
 let rules = "";
+/** ADR 0130: a line with no source is searched again only every 10 minutes; tests that add runs start afresh. */
+const resetHero = () => env.KV.delete(HERO_STATE_KEY);
+/** The home page until it opens on the fake-invoice line (with two lines backed, the pick is random per visit). */
+async function invoicePage() {
+  for (let i = 0; i < 60; i++) {
+    const b = await page();
+    if (b.includes('data-hero-line="invoice"')) return b;
+  }
+  throw new Error("the fake-invoice line never came up");
+}
+const INVOICE_H1 = '<h1 aria-live="off">An AI agent <span class="hero-act">paid a fake invoice</span> and <em>reported the job done</em>.</h1>';
 const page = async (path = "/") => (await fetchWorker(`${path}${path.includes("?") ? "&" : "?"}n=hero${++n}`, { headers: { Accept: "text/html" } })).text();
 
 function run(fell: string[], status: "done" | "cannot_complete" = "done") {
@@ -74,7 +85,7 @@ beforeAll(async () => {
 async function heroSurfaces() {
   const html = await page();
   const json = await (await fetchWorker(`/?format=json&n=hero-s${++n}`)).text();
-  const og = JSON.stringify(homeCardLines(undefined, (await homeHero(env)).headline));
+  const og = JSON.stringify(homeCardLines(undefined, (await homeHero(env, Date.now(), { line: "fixed" })).share_headline));
   return { html, json, og, all: `${html}\n${json}\n${og}` };
 }
 
@@ -93,10 +104,12 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     // Each fails one replay rule; held-out, held-event and embargoed runs aren't public, so they aren't counted either.
     await addRun("embargoed", practice, EMBARGOED.id, run(["paid_scam"]), t0 + 1);
     await addRun("cannot", practice, "mistral-large-4", run(["paid_scam"], "cannot_complete"), t0 + 2);
-    await addRun("other-trap", practice, "mistral-large-4", run(["wrong_account"]), t0 + 3);
+    // Another trap, and not called done: backs no line (with "done" it would back the bank-details line, ADR 0130).
+    await addRun("other-trap", practice, "mistral-large-4", run(["wrong_account"], "cannot_complete"), t0 + 3);
     await addRun("unsigned", practice, "mistral-large-4", run(["paid_scam"]), t0 + 4, { badSignature: true });
     await addRun("held-out", practice, "mistral-large-4", run(["paid_scam"]), t0 + 5, { heldOut: true });
     await addRun("held-event", held, "mistral-large-4", run(["paid_scam"]), t0 + 6);
+    await resetHero();
     expect(await heroProof(env)).toBeNull();
     expect(await fakeInvoiceCount(env)).toEqual({ runs: 3, fell: 2 });
     const h = await homeHero(env);
@@ -133,20 +146,23 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     // 26 ranked falls where the model never said "done" sort ahead of every practice run. They must not crowd the one
     // qualifying run out of the candidates (review 28 Oct: rule 2 is in the query, not only in code).
     for (let i = 0; i < 26; i++) await addRun(`ranked-cannot-${i}`, ranked, "mistral-large-4", run(["paid_scam"], "cannot_complete"), t0 + i / 100);
+    await resetHero();
     expect(await heroProof(env)).toBeNull();
     const counted = await fakeInvoiceCount(env);
     // Production's case: a Lab arm practice run of a small open model, v1 (HMAC) replay.
     await addRun("pick", lab, "granite-4-micro", run(["paid_scam", "wrong_account"]), t0 + 10);
     await addRun("later", practice, "qwen3.8-max", run(["paid_scam"]), t0 + 20);
+    await resetHero();
     // The count matches /arena/dataset.json, which leaves Lab arms out.
     expect(await fakeInvoiceCount(env)).toEqual({ runs: counted.runs + 1, fell: counted.fell + 1 });
     const ds = (await (await fetchWorker(`/arena/dataset.json?n=hero-ds`)).json()) as { runs: { id: string; task: string; traps_triggered: string[] }[] };
     expect(ds.runs.some((r) => r.id === ids.pick)).toBe(false);
     expect(ds.runs.some((r) => r.id === ids.later)).toBe(true);
-    // N and M are exactly what anyone counts in the dataset: scam-invoice runs, and those with the fake invoice paid.
-    const inv = ds.runs.filter((r) => r.task.startsWith("scam-invoice"));
+    // N and M are exactly what anyone counts in the dataset: Normal scam-invoice runs (review 5 Nov: on Hard the same
+    // trap also covers a genuine invoice paid to a hijacked account), and those with the fake invoice paid.
+    const inv = ds.runs.filter((r) => r.task === "scam-invoice");
     expect(inv.length).toBe(counted.runs + 1);
-    expect(inv.filter((r) => r.traps_triggered.some((x) => x === "FA-INJ-001" || x === "FA-PAY-002")).length).toBe(counted.fell + 1);
+    expect(inv.filter((r) => r.traps_triggered.some((x) => x === "FA-INJ-001")).length).toBe(counted.fell + 1);
     const p = await heroProof(env);
     expect(p?.run).toBe(ids.pick);
     expect(p!.lab).toBe("IBM (open weights)");
@@ -158,6 +174,8 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     // The replay it links to is served.
     expect((await fetchWorker(`/arena/run/${ids.pick}`, { headers: { Accept: "text/html" } })).status).toBe(200);
     expect((await heroSurfaces()).og).toContain(HOME_H1);
+    // This run also sent money to a bank account not on file (the Normal job), so it backs that line too (ADR 0130).
+    expect((await homeHero(env, Date.now(), { line: "bank-details" })).headline).toBe("An AI agent sent money to a bank account that wasn't on file and reported the job done.");
   });
 
   it("keeps its first pick, and never picks an embargoed model, a 'can't be done', a held-out run or a held event", async () => {
@@ -171,12 +189,12 @@ describe("the home hero (W2.1)", () => {
     expect(HOME_H1).toBe("An AI agent paid a fake invoice and reported the job done.");
     // BRAND v1.3 (Dinike, 29 Oct 2026, site audit option A).
     expect(HOME_SUBHEAD).toBe("We test AI agents on real business jobs with hidden traps, and check the tools they install.");
-    const body = await page();
-    const h1 = body.indexOf("<h1>An AI agent paid a fake invoice and <em>reported the job done</em>.</h1>");
+    const body = await invoicePage();
+    const h1 = body.indexOf(INVOICE_H1);
     expect(h1).toBeGreaterThan(0);
     const source = body.indexOf(`data-hero-source="${ids.pick}"`);
     expect(source).toBeGreaterThan(h1);
-    expect(body).toContain(`href="/arena/run/${ids.pick}?from=home-source">Watch the replay</a>`);
+    expect(body).toContain(`href="/arena/run/${ids.pick}?from=home-source-invoice">Watch the replay</a>`);
     // Site audit 29 Oct (issue 2): one short line. Says honestly whose model it was and that the bout was practice, not
     // a ranked bout; the trap's catalogue entry is in the title.
     expect(body).toContain('<span class="muted">Refereed replay:</span> <span title="FA-INJ-001: ');
@@ -222,7 +240,7 @@ describe("the home hero (W2.1)", () => {
     expect(JSON.stringify(await (await fetchWorker(`/?format=json&n=hero-e`)).json())).not.toMatch(SHOWS_EMBARGOED);
   });
 
-  it("the share title, description and image carry the new hero", async () => {
+  it("the share title, description and image carry the new hero, whichever line the visit opens on (ADR 0130)", async () => {
     const body = await page();
     expect(HOME_OG_TITLE).toBe(HOME_H1.replace(/\.$/, ""));
     expect(body).toContain(`<meta property="og:title" content="${HOME_OG_TITLE}">`);
@@ -239,7 +257,10 @@ describe("the home hero (W2.1)", () => {
   });
 
   it("the JSON twin has the same hero, its source replay and the call to action", async () => {
-    const j = (await (await fetchWorker(`/?format=json&n=hero-j`)).json()) as { hero: Record<string, unknown> & { headline_source: Record<string, unknown>; primary_cta: { label: string; url: string } } };
+    type J = { hero: Record<string, unknown> & { headline_source: Record<string, unknown>; primary_cta: { label: string; url: string } } };
+    let j: J | null = null;
+    for (let i = 0; i < 60 && j?.hero.headline_source.line !== "invoice"; i++) j = (await (await fetchWorker(`/?format=json&n=hero-j${i}`)).json()) as J;
+    j = j!;
     expect(j.hero.descriptor).toBe(DESCRIPTOR);
     expect(j.hero.headline).toBe(HOME_H1);
     expect(j.hero.subline).toBe(HOME_SUBHEAD);
@@ -318,7 +339,7 @@ describe("positioning (AQ-01)", () => {
       marketplace: await (await fetchWorker("/marketplace.json")).text(),
       mcp_initialize: await mcp("initialize"),
       mcp_tools: await mcp("tools/list"),
-      og_home: JSON.stringify(homeCardLines(undefined, (await homeHero(env)).headline)),
+      og_home: JSON.stringify(homeCardLines(undefined, (await homeHero(env, Date.now(), { line: "fixed" })).share_headline)),
       agentverse: `${AV_DESCRIPTION}\n${avReadme(env.PUBLIC_ORIGIN)}`,
       error_page: await errorPage("Sign-in failed", "Try again.").text(),
       // The fallback share image (public/og/site.png) is drawn by this script: the descriptor and the current tagline.

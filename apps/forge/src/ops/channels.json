@@ -1,0 +1,349 @@
+{
+  "$comment": "Public copy of apps/forge/src/ops/channels.json (ADR 0133): the same channel list without the hand-read outside figures (downloads), which stay internal. ADR 0133: the channel scoreboard's list (/admin/channels). Edit by hand: status, listed and review dates, signals and external readings. Signals name only what the Worker can see. A channel with no use signal shows 'not measurable'. counted_from = the first full UTC day its use signal was live (null: not live yet, shown as 'not yet measured'; set it when the tagged skill is on the listing and in production; absent: live all along). listed = the date the listing went live or was submitted (docs/strategy/agent-awareness-audit-2026-10-29.md §2); review = the kill date, 4 weeks on (first reviews 19-21 Nov). external = figures read by hand from the other side's own page (source and date given), never estimated.",
+  "version": 1,
+  "updated": "2026-11-05",
+  "channels": [
+    {
+      "id": "claude-code-plugin",
+      "name": "Claude Code plugin (our marketplace.json)",
+      "kind": "plugin",
+      "status": "live",
+      "listed": null,
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "install",
+          "client": "plugin"
+        }
+      ],
+      "note": "Install checks from the plugin's PreToolUse hook; new installs are new anonymous install IDs (ADR 0103)."
+    },
+    {
+      "id": "claude-plugin-directory",
+      "name": "Claude plugin directory (official marketplace)",
+      "kind": "listing",
+      "status": "pending",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [],
+      "note": "The plugin sends the same User-Agent whichever marketplace installed it, so this listing can't be told apart from ours."
+    },
+    {
+      "id": "cli",
+      "name": "CLI @theagentforge/cli (npm)",
+      "kind": "cli",
+      "status": "live",
+      "listed": null,
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "install",
+          "client": "cli"
+        }
+      ]
+    },
+    {
+      "id": "cli-hooks",
+      "name": "CLI hooks for Codex, Gemini CLI and Copilot CLI",
+      "kind": "cli",
+      "status": "live",
+      "listed": "2026-10-24",
+      "review": "2026-11-21",
+      "signals": [
+        {
+          "type": "install",
+          "client": "hook-codex"
+        },
+        {
+          "type": "install",
+          "client": "hook-gemini"
+        },
+        {
+          "type": "install",
+          "client": "hook-copilot"
+        }
+      ]
+    },
+    {
+      "id": "github-action-forge-check",
+      "name": "GitHub Action forge-check (Marketplace)",
+      "kind": "action",
+      "status": "live",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "install",
+          "client": "action"
+        }
+      ],
+      "note": "Runs on fresh CI machines, so it sends no install ID: checks are counted, new installs can't be."
+    },
+    {
+      "id": "github-action-skill-scan",
+      "name": "GitHub Action skill-scan (Marketplace)",
+      "kind": "action",
+      "status": "live",
+      "listed": "2026-10-24",
+      "review": "2026-11-21",
+      "signals": [
+        {
+          "type": "install",
+          "client": "skill-scan"
+        }
+      ],
+      "note": "Counted only for users who opt in with count-run: true (ADR 0090), so a lower bound."
+    },
+    {
+      "id": "clawhub-check-before-install",
+      "name": "ClawHub skill forge-check-before-install",
+      "kind": "skill",
+      "status": "live",
+      "listed": "2026-10-28",
+      "review": "2026-11-25",
+      "counted_from": null,
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "skilltag:forge-check-before-install@",
+          "what": "calls"
+        },
+        {
+          "type": "arrivals",
+          "label": "clawhub"
+        }
+      ],
+      "note": "Tagged calls come from skill 1.1.0 on (?client=). ClawHub, skills.sh and /.well-known/agent-skills serve the same file, so tagged calls are an upper bound for ClawHub alone; 1.0.0 installs send no tag."
+    },
+    {
+      "id": "clawhub-run-the-gauntlet",
+      "name": "ClawHub skill forge-run-the-gauntlet",
+      "kind": "skill",
+      "status": "pending",
+      "listed": "2026-10-28",
+      "review": "2026-11-25",
+      "counted_from": null,
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "skilltag:forge-run-the-gauntlet@",
+          "what": "calls"
+        }
+      ],
+      "note": "Tagged runs come from skill 1.2.0 on; MCP starts are tagged only when the server was added with the skill's address."
+    },
+    {
+      "id": "skills-sh",
+      "name": "skills.sh (forge-check-before-install)",
+      "kind": "listing",
+      "status": "live",
+      "listed": "2026-10-20",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "skills-sh"
+        }
+      ],
+      "note": "Same file as the ClawHub skill: its calls are counted in the ClawHub row. Only click-through arrivals are its own."
+    },
+    {
+      "id": "mcp-registry",
+      "name": "Official MCP Registry (io.theagentforge/forge)",
+      "kind": "listing",
+      "status": "live",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "mcp-registry"
+        }
+      ],
+      "note": "MCP clients don't say which listing sent them; outside calls by agent app are in the MCP rows below."
+    },
+    {
+      "id": "glama",
+      "name": "Glama",
+      "kind": "listing",
+      "status": "live",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "glama"
+        }
+      ],
+      "note": "Glama's own health checks are a directory client and never count."
+    },
+    {
+      "id": "lobehub",
+      "name": "LobeHub MCP",
+      "kind": "listing",
+      "status": "pending",
+      "listed": "2026-10-26",
+      "review": "2026-11-23",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "lobehub"
+        }
+      ]
+    },
+    {
+      "id": "mcp-web-directories",
+      "name": "mcpservers.org, mcp.directory, MCP Market, cursor.directory",
+      "kind": "listing",
+      "status": "pending",
+      "listed": "2026-10-24",
+      "review": "2026-11-21",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "mcpservers"
+        },
+        {
+          "type": "arrivals",
+          "label": "mcp-directory"
+        },
+        {
+          "type": "arrivals",
+          "label": "mcp-market"
+        },
+        {
+          "type": "arrivals",
+          "label": "cursor-directory"
+        }
+      ]
+    },
+    {
+      "id": "pr-marketplaces",
+      "name": "Docker MCP Catalog, Cline, Kilo, Grok Build, GitHub MCP Registry (pull requests)",
+      "kind": "listing",
+      "status": "pending",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "arrivals",
+          "label": "docker"
+        }
+      ],
+      "note": "None of these is merged; an MCP client name (cline, kilo...) shows the app, not the listing."
+    },
+    {
+      "id": "mcp-claude-code",
+      "name": "MCP: Claude Code (any route to /mcp/public)",
+      "kind": "mcp-app",
+      "status": "live",
+      "listed": null,
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "mcp_client",
+          "match": "^claude-code"
+        }
+      ]
+    },
+    {
+      "id": "claude-connector-directory",
+      "name": "Claude connector directory (claude.ai)",
+      "kind": "listing",
+      "status": "pending",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "mcp_client",
+          "match": "^(claude-ai|anthropicclaudeai|claude-desktop)"
+        }
+      ],
+      "note": "claude.ai custom connectors report the same client name, and the 2025 protocol doesn't name calls, so sessions show but named calls usually read 0."
+    },
+    {
+      "id": "chatgpt-app",
+      "name": "ChatGPT / Codex app",
+      "kind": "listing",
+      "status": "not done",
+      "listed": null,
+      "review": null,
+      "signals": [
+        {
+          "type": "mcp_client",
+          "match": "^(openai-mcp|chatgpt|codex)"
+        }
+      ],
+      "note": "Not submitted (waits on Dinike's ID check and video). Calls under these names today are developer-mode or Codex connections. Set listed and review when it goes live."
+    },
+    {
+      "id": "mcp-other-apps",
+      "name": "MCP: Cursor, VS Code, Cline, Gemini CLI and other agent apps",
+      "kind": "mcp-app",
+      "status": "live",
+      "listed": null,
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "mcp_client",
+          "match": "^(cursor|vscode|visual studio code|copilot|github-copilot|cline|clinecore|roo|kilo|gemini|goose|windsurf|zed|continue)"
+        }
+      ]
+    },
+    {
+      "id": "a2a",
+      "name": "A2A agent card + /a2a (a2aregistry.org)",
+      "kind": "a2a",
+      "status": "live",
+      "listed": "2026-10-22",
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "a2a:skill:",
+          "what": "calls"
+        },
+        {
+          "type": "arrivals",
+          "label": "a2aregistry"
+        }
+      ],
+      "note": "A2A requests carry no client name and aren't bot-tested (ADR 0124), so registry probes that send a real request count too: an upper bound."
+    },
+    {
+      "id": "agentverse",
+      "name": "Agentverse / ASI:One",
+      "kind": "a2a",
+      "status": "live",
+      "listed": "2026-10-26",
+      "review": "2026-11-23",
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "agentverse:messages",
+          "what": "calls"
+        },
+        {
+          "type": "arrivals",
+          "label": "agentverse"
+        }
+      ]
+    },
+    {
+      "id": "x",
+      "name": "X (approve-to-post)",
+      "kind": "social",
+      "status": "live",
+      "listed": null,
+      "review": "2026-11-19",
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "visit:src:x",
+          "what": "arrivals"
+        }
+      ],
+      "note": "People arriving from x.com or t.co links; no agent use can come from here."
+    }
+  ]
+}

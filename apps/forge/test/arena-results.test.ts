@@ -275,8 +275,8 @@ describe("what agents read", () => {
       expect(d).toMatch(/^Use this when /);
       // ADR 0123: no arguments gives the latest ranked Hard event (test/arena-first-call.test.ts).
       expect(d).toContain("tier (normal or hard)");
-      expect(d).toContain("with no arguments, the latest ranked Hard event");
-      expect(d.length).toBeLessThanOrEqual(420);
+      expect(d).toMatch(/(none gives|with no arguments,) the latest ranked Hard event/); // held text or ADR 0133 text
+      expect(d.length).toBeLessThanOrEqual(500); // ADR 0133: the structured form's cap
       expect(AGENT_DIRECTED.exec(d)?.[0] ?? null).toBeNull();
     }
     expect(PUBLIC_TOOLS.arena_results.description).toContain("crucible-2-hard");

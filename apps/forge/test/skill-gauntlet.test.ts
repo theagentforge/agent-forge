@@ -36,10 +36,10 @@ describe("the Run the Gauntlet skill: format", () => {
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(frontMatter).toMatch(/^license: MIT-0$/m);
     expect(frontMatter).toMatch(/^compatibility: .{10,500}$/m);
-    expect(frontMatter).toMatch(/^ {2}version: "1\.1\.0"$/m);
+    expect(frontMatter).toMatch(/^ {2}version: "1\.2\.0"$/m);
     expect(frontMatter).toMatch(/^ {2}openclaw:\n {4}emoji: .+\n {4}homepage: https:\/\/theagentforge\.io\//m);
     expect(gauntletMd.split("\n").length).toBeLessThanOrEqual(150);
-    expect(body).toContain("Version 1.1.0");
+    expect(body).toContain("Version 1.2.0");
   });
 
   it("is served from both skills indexes, with the digest of the exact bytes", async () => {
@@ -168,6 +168,7 @@ describe("the Run the Gauntlet skill: every tool and route it names exists", () 
       const res = await fetchWorker(l.split("#")[0]!, { headers: { Accept: "text/html" } });
       expect(res.status, l).toBe(200);
     }
-    expect(links).toEqual(expect.arrayContaining(["/mcp/gauntlet", "/mcp", "/gauntlet.md", "/benchmark/submit"]));
+    // ADR 0133: both start addresses carry the skill's own tag (?client=<skill>-<version>).
+    expect(links).toEqual(expect.arrayContaining(["/mcp/gauntlet?client=forge-run-the-gauntlet-1.2.0", "/api/v1/gauntlet?client=forge-run-the-gauntlet-1.2.0", "/mcp", "/gauntlet.md", "/benchmark/submit"]));
   });
 });

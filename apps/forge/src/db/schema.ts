@@ -13,6 +13,8 @@ export interface SprintPick {
   rule: string;
   /** Set only for a run by The Forge's own house agent: the model it ran on. */
   house_model?: string | null;
+  /** ADR 0133 review: set only for a run started by our own tagged callers (services/internal.ts), never shown. */
+  ours?: boolean;
 }
 
 // MASTER_PLAN §10.4. Timestamps are milliseconds since epoch. No email addresses anywhere.
@@ -1078,4 +1080,134 @@ export const claimChecks = sqliteTable(
     rowHash: text("row_hash").notNull(),
   },
   (t) => [uniqueIndex("claim_checks_prev").on(t.prevHash), index("claim_checks_claim").on(t.claimId, t.checkedAt)],
+);
+
+// --- Census history (ADR 0129, build plan 5 Nov P0 items 1 and 2) --------------------------------------------------
+
+/**
+ * Every tool-description set the House tester has seen, append-only: one row per server + version + sha256 of the
+ * description set (names, descriptions and schemas, as scanned). A repeat sighting with no change moves only last_seen.
+ * The scan fields are the result at first sighting under `rules_version`. `carried` rows were copied once from the
+ * single current row each server had before this table existed: their first_seen is that row's scan time, and earlier
+ * sightings weren't kept.
+ */
+export const toolDescriptionHistory = sqliteTable(
+  "tool_description_history",
+  {
+    id: id(),
+    toolId: text("tool_id")
+      .notNull()
+      .references(() => tools.id),
+    server: text("server").notNull(),
+    version: text("version").notNull(),
+    descriptionSha256: text("description_sha256").notNull(),
+    toolsCount: integer("tools_count").notNull(),
+    descriptionsCount: integer("descriptions_count").notNull(),
+    verdict: text("verdict").notNull(),
+    counts: text("counts", { mode: "json" }).notNull(),
+    findings: text("findings", { mode: "json" }).notNull(),
+    rulesVersion: text("rules_version").notNull(),
+    toolList: text("tool_list", { mode: "json" }).notNull(),
+    firstSeen: integer("first_seen").notNull(),
+    lastSeen: integer("last_seen").notNull(),
+    carried: integer("carried", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [uniqueIndex("tool_description_history_key").on(t.toolId, t.version, t.descriptionSha256), index("tool_description_history_seen").on(t.lastSeen), index("tool_description_history_server").on(t.server, t.version)],
+);
+
+/**
+ * The House tester's result for each server on each night, per family (top500_nightly | weekly_sweep), so the two
+ * denominators never merge. Until this table existed the per-server rows lived only in KV (nightly 120 days, sweep 21
+ * days); `origin` says whether a row came from the tester's post or was copied from those KV days. A re-run on the same
+ * UTC night replaces that night's rows, as the House Report does.
+ */
+export const houseResults = sqliteTable(
+  "house_results",
+  {
+    family: text("family").notNull(),
+    night: text("night").notNull(),
+    server: text("server").notNull(),
+    version: text("version"),
+    outcome: text("outcome").notNull(),
+    rank: integer("rank"),
+    downloads: integer("downloads"),
+    tools: integer("tools"),
+    ms: integer("ms"),
+    slow: integer("slow", { mode: "boolean" }).notNull().default(false),
+    probedAt: integer("probed_at").notNull(),
+    origin: text("origin").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.family, t.night, t.server] })],
+);
+
+/** One row per metric per UTC day, written once by the daily cron for the day just ended. Never backfilled. */
+export const metricSnapshots = sqliteTable(
+  "metric_snapshots",
+  {
+    date: text("date").notNull(),
+    metric: text("metric").notNull(),
+    family: text("family").notNull(),
+    value: real("value").notNull(),
+    unit: text("unit").notNull(),
+    kind: text("kind").notNull(),
+    method: text("method").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.date, t.metric] })],
+);
+
+/** Each published census version (/dataset/census): the sha256 and size of every file, kept for good. */
+export const censusVersions = sqliteTable("census_versions", {
+  version: text("version").primaryKey(),
+  publishedAt: integer("published_at").notNull(),
+  /** Each file's hash and size; `fp` (ADR 0129 review) is what a roster or month file was built from, so an unchanged one is reused. */
+  files: text("files", { mode: "json" }).notNull().$type<{ path: string; sha256: string; bytes: number; fp?: string }[]>(),
+});
+/**
+ * ADR 0131: "Request a test". Anyone names a public npm or PyPI MCP server at an exact version; it joins the next
+ * weekly-sweep run of the House tester and gets a dated public result page. One row per server + version (dedupe).
+ * Requests are their own metric family (admin only); a request counts as an owner's only after GitHub ownership proof.
+ */
+export const testRequests = sqliteTable(
+  "test_requests",
+  {
+    id: text("id").primaryKey(),
+    /** npm | pypi */
+    registry: text("registry").notNull(),
+    /** npm: lower-case name; PyPI: PEP 503 name */
+    package: text("package").notNull(),
+    /** The exact published version, checked against the registry when requested. */
+    version: text("version").notNull(),
+    /** sha256 fingerprint from the registry at request time (npm: of dist.integrity; PyPI: of the files' digests). */
+    fingerprint: text("fingerprint").notNull(),
+    /** The GitHub owner and repository named in the package's repository field, lower case; null when none. */
+    repoOwner: text("repo_owner"),
+    repoName: text("repo_name"),
+    /** queued | done */
+    status: text("status").notNull(),
+    /** web | api | mcp */
+    channel: text("channel").notNull(),
+    /** The signed-in person who asked (web only); anonymous requests have none. */
+    requesterHumanId: text("requester_human_id"),
+    /** Set only after GitHub ownership proof (a signed-in account or public org matching repo_owner). */
+    claimedByHumanId: text("claimed_by_human_id"),
+    claimedAt: integer("claimed_at"),
+    /** HMAC of the IP with the UTC day (rotates daily), for the per-IP daily cap. Never the IP itself. */
+    ipDay: text("ip_day").notNull(),
+    /** UTC day of the request, YYYY-MM-DD (the global daily cap). */
+    day: text("day").notNull(),
+    requestedAt: integer("requested_at").notNull(),
+    completedAt: integer("completed_at"),
+    /** worked | partial | failed | needs_config | no_answer | not_on_npm | not_on_pypi | no_command | error (the House
+     * tester's), or not_tested (no sweep answer within 7 days) */
+    outcome: text("outcome"),
+    /** The dated result (scan of the tool descriptions, tool names, timing). */
+    result: text("result", { mode: "json" }),
+  },
+  (t) => [
+    uniqueIndex("test_requests_server").on(t.registry, t.package, t.version),
+    index("test_requests_queue").on(t.status, t.requestedAt),
+    index("test_requests_day").on(t.day),
+    index("test_requests_ip_day").on(t.ipDay),
+  ],
 );

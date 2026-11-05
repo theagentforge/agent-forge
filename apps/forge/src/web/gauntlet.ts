@@ -146,7 +146,7 @@ site.get("/gauntlet/r/:id", async (c) => {
   const badges = s ? await runSeasonBadges(c.env, id).catch(() => null) : null;
   const [claimRow] = s && !agent ? await db.select({ id: t.gauntletClaims.gauntletId }).from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, id)) : [];
   const claimable = !!s && !agent && !claimRow && !!g.claimKeyHash && !g.cardFrom;
-  if (c.req.query("format") === "json") return c.json({ id, mode: g.mode, status: g.status, measured_rerun_of: g.cardFrom, summary: s, trap_card: g.cardFrom ? null : g.card, rerun: rerun?.id ?? null, agent, season: badges, ...(g.mode === "sprint" ? { not_a_gauntlet_score: true, sprint: g.sprint } : {}) });
+  if (c.req.query("format") === "json") return c.json({ id, mode: g.mode, status: g.status, measured_rerun_of: g.cardFrom, summary: s, trap_card: g.cardFrom ? null : g.card, rerun: rerun?.id ?? null, agent, season: badges, ...(g.mode === "sprint" ? { not_a_gauntlet_score: true, sprint: g.sprint && (({ ours: _ours, ...pick }) => pick)(g.sprint) } : {}) });
   if (!s)
     return send(
       c,

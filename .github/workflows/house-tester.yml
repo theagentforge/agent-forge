@@ -6,7 +6,9 @@ name: House tester
 #
 # Every morning, the weekly sweep (ADR 0108): a seventh of EVERY no-setup npm and PyPI server in the registry (a stable
 # hash split, so each server is tested once a week), npm with npx and PyPI with uvx, in 10 shards. Both modes also send
-# each working server's tools/list descriptions, which the site scans with the skill scanner's rules.
+# each working server's tools/list descriptions, which the site scans with the skill scanner's rules. The sweep also
+# takes up to 20 requested servers from the site's public queue ("Request a test", ADR 0131), reported apart. They run
+# on their own runner (the "requests" shard), never beside the sweep's own servers.
 #
 # The plan and probe jobs run untrusted code (the servers) or read untrusted data, and have no secrets and no write
 # permissions. The file job runs no third-party code; it proves who it is with GitHub's OIDC token, which the site checks.
@@ -53,7 +55,7 @@ jobs:
           MODE: ${{ inputs.mode || (github.event.schedule == '41 5 * * *' && 'sweep') || 'top' }}
         run: |
           if [ "$MODE" = "sweep" ]; then
-            echo "mode=sweep" >> "$GITHUB_OUTPUT"; echo "shards=[0,1,2,3,4,5,6,7,8,9]" >> "$GITHUB_OUTPUT"; echo "count=10" >> "$GITHUB_OUTPUT"
+            echo "mode=sweep" >> "$GITHUB_OUTPUT"; echo 'shards=[0,1,2,3,4,5,6,7,8,9,"requests"]' >> "$GITHUB_OUTPUT"; echo "count=10" >> "$GITHUB_OUTPUT"
           else
             echo "mode=top" >> "$GITHUB_OUTPUT"; echo "shards=[0,1,2,3,4]" >> "$GITHUB_OUTPUT"; echo "count=5" >> "$GITHUB_OUTPUT"
           fi

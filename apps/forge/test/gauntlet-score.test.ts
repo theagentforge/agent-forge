@@ -105,7 +105,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     const text = await svg.text();
     expect(text).toContain("Gauntlet score");
     expect(text).toContain(new Date().toISOString().slice(0, 10));
-    expect(text).toContain("Trap Set v1.0");
+    expect(text).toContain("Trap Set v1.1");
     expect(text).not.toContain("expired");
     const shield = (await (await get(`/badge/score/${id}.json`)).json()) as any;
     expect(shield).toMatchObject({ schemaVersion: 1, label: "Gauntlet score" });
@@ -151,7 +151,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     await getDb(env).update(t.humans).set({ isHouse: true }).where(eq(t.humans.id, owner.human.id));
     const s = (await gauntletScore(env, id))!;
     expect(s.owner.counts_as).toBe("ours");
-    expect(trapSetVersionOf("rules 0.6", "Normal 1.0")).toBe("1.0.1");
+    expect(trapSetVersionOf("rules 0.6", "Normal 1.0")).toBe("1.1");
     expect(trapSetVersionOf("rules 0.5", "Normal 1.0")).toBeNull();
     const old = scoreBadge({ ...s, benchmark: { ...s.benchmark, version: null } });
     expect(old.message).toContain("before Trap Set v1.0");
@@ -208,7 +208,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     await claimRun(env, owner.human.id, owner.agent.id, run.claim_key);
     const s = (await gauntletScore(env, id))!;
     expect(s.attribution).toEqual({ claimed_with_run_key: true, player_checked: false, owner_chooses_runs_shown: true });
-    expect(scoreBadge(s).message).toMatch(/^\d\/6 jobs right · fell for \d+ traps? · \d{4}-\d{2}-\d{2} · Trap Set v1\.0\.1$/);
+    expect(scoreBadge(s).message).toMatch(/^\d\/6 jobs right · fell for \d+ traps? · \d{4}-\d{2}-\d{2} · Trap Set v1\.1$/);
     expect(scoreBadge({ ...s, gauntlet_score: { ...s.gauntlet_score, traps_fell: 1 } }).message).toContain("fell for 1 trap ·");
     expect(await (await get(`/score/${id}`)).text()).toContain("doesn't check which agent or model played it");
     // shields.io asks for JSON, which the page cache keys apart (?format=json); a hide must drop that copy too.

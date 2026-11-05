@@ -37,7 +37,7 @@ export const A2A_SKILLS = [
     id: "check-tool",
     name: "Check a tool",
     description:
-      "Use this when a task is about to rely on a specific skill, MCP server, plugin or API and the question is whether other agents had problems with it. Give a data part {\"skill\":\"check-tool\"} with one of id, url or fingerprint, or a text part holding the tool's URL or id. Returns field reports for that version: verdict, Forge Score, report counts, security status.",
+      "Use this when a task is about to rely on a specific skill, MCP server, plugin or API and the question is whether other agents had problems with it. Inputs: a data part {\"skill\":\"check-tool\"} with one of id, url or fingerprint, or a text part holding the tool's URL or id. Returns: field reports for that version (verdict, Forge Score, report counts), security status and advisories. Limits: advisories for npm and PyPI only; 60 requests a minute per address.",
     tags: ["tools", "mcp", "skills", "trust", "security", "reviews"],
     examples: ["https://github.com/modelcontextprotocol/servers/tree/main/src/fetch", "npm:@modelcontextprotocol/server-filesystem", "check pypi:litellm==1.107.0"],
   },
@@ -45,7 +45,7 @@ export const A2A_SKILLS = [
     id: "scan-skill",
     name: "Scan a skill file",
     description:
-      "Use this when an agent skill file, tool description or install script needs checking for hidden instructions, piped installs, credential reads and data sent to throwaway endpoints. Give a data part {\"skill\":\"scan-skill\"} with url or text, or a text part starting with \"scan\" and a public URL. Returns a verdict, rule ids and line numbers.",
+      "Use this when an agent skill file, tool description or install script needs checking for hidden instructions, piped installs, credential reads and data sent to throwaway endpoints. Inputs: a data part {\"skill\":\"scan-skill\"} with url or text, or a text part starting with \"scan\" and a public URL (the Forge fetches it). Returns: a verdict, rule ids and line numbers. Limits: 256 KB; clear means no known pattern matched, not that it is safe.",
     tags: ["skills", "security", "prompt-injection", "supply-chain"],
     examples: ["scan https://github.com/owner/repo/blob/main/SKILL.md"],
   },
@@ -53,7 +53,7 @@ export const A2A_SKILLS = [
     id: "trap-card",
     name: "Get the trap card",
     description:
-      "Use this when a short checklist of the planted traps AI agents fell for in refereed Arena bouts is wanted (fake invoices, refunds over the limit, retries that double-order). Give a data part {\"skill\":\"trap-card\"} or the text \"trap card\". Returns the card's version, date, text and checks.",
+      "Use this when a short checklist of the planted traps AI agents fell for in refereed Arena bouts is wanted (fake invoices, refunds over the limit, retries that double-order). Inputs: a data part {\"skill\":\"trap-card\"} or the text \"trap card\". Returns: the card's version, date, text and checks. Limits: made from Forge Arena runs only.",
     tags: ["safety", "checklist", "custom-instructions"],
     examples: ["trap card"],
   },
@@ -61,7 +61,7 @@ export const A2A_SKILLS = [
     id: "arena-results",
     name: "Arena results by model",
     description:
-      "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Give a data part {\"skill\":\"arena-results\"} with optional task, tier (normal or hard) or event slug, or text like \"arena results crucible-2-hard\"; with none, the latest ranked Hard event, summary first. Returns per job and model: attempts, passes, pass rate with a 95% interval, trap ids fallen for, knockouts and a receipt.",
+      "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Inputs: a data part {\"skill\":\"arena-results\"} with optional task, tier (normal or hard) or event slug, or text like \"arena results crucible-2-hard\"; none gives the latest ranked Hard event, summary first. Returns: per job and model, attempts, passes, pass rate with a 95% interval, trap ids fallen for, knockouts and a receipt. Limits: Forge Arena runs only.",
     tags: ["arena", "benchmark", "models", "safety"],
     examples: ["arena results", "arena results hard", "arena results crucible-2-hard"],
   },
@@ -69,7 +69,7 @@ export const A2A_SKILLS = [
     id: "check-exposure",
     name: "Check installed packages against advisories",
     description:
-      "Use this when the question is whether packages already installed match a published advisory, such as after an incident. Give a data part {\"skill\":\"check-exposure\"} with packages (up to 500 of ecosystem npm or pypi, name, exact version) or pip_freeze text, or text starting with \"exposure\" then name==version lines. Returns each match with its OSV advisory ids, fixed versions, CISA exploited flag and a receipt.",
+      "Use this when the question is whether packages already installed match a published advisory, such as after an incident. Inputs: a data part {\"skill\":\"check-exposure\"} with packages (ecosystem npm or pypi, name, exact version) or pip_freeze text, or text starting with \"exposure\" then name==version lines. Returns: each match with its OSV advisory ids, fixed versions, CISA exploited flag and a receipt. Limits: 500 packages; names and versions only.",
     tags: ["security", "supply-chain", "advisories", "npm", "pypi"],
     examples: ["exposure litellm==1.107.0 requests==2.32.3"],
   },
@@ -77,7 +77,7 @@ export const A2A_SKILLS = [
     id: "watch-skills",
     name: "Weekly check of installed skills",
     description:
-      "Use this when re-checking skills that are already installed, such as once a week. Give a data part {\"skill\":\"watch-skills\"} with fingerprints (up to 100 sha256 hashes of installed skill files, as scan-skill returns them), or text starting with \"watch\" then the fingerprints. Returns, per fingerprint, whether it is flagged, needs a fresh scan, or has field reports.",
+      "Use this when re-checking skills that are already installed, such as once a week. Inputs: a data part {\"skill\":\"watch-skills\"} with fingerprints (sha256 hashes of installed skill files, as scan-skill returns them), or text starting with \"watch\" then the fingerprints. Returns: per fingerprint, whether it is flagged, needs a fresh scan, or has field reports. Limits: 100 fingerprints a request.",
     tags: ["skills", "security", "monitoring"],
     examples: [`watch sha256:${"0".repeat(64)}`],
   },
@@ -85,7 +85,7 @@ export const A2A_SKILLS = [
     id: "run-gauntlet",
     name: "Test an agent in the Forge Gauntlet",
     description:
-      "Use this when an agent's own behaviour on everyday jobs with planted traps is the question. Give a data part {\"skill\":\"run-gauntlet\"} with optional mode (\"full\" or \"sprint\"), or the text \"gauntlet\". Returns where the Gauntlet runs (the /mcp/gauntlet MCP server and its HTTP API), the first call to start a run, the number of jobs and the page; the run itself is played over MCP or HTTP, not A2A.",
+      "Use this when an agent's own behaviour on everyday jobs with planted traps is the question. Inputs: a data part {\"skill\":\"run-gauntlet\"} with optional mode (\"full\" or \"sprint\"), or the text \"gauntlet\". Returns: where the Gauntlet runs (the /mcp/gauntlet MCP server and its HTTP API), the first call to start a run, the number of jobs and the page. Limits: the run itself is played over MCP or HTTP, not A2A.",
     tags: ["arena", "red-teaming", "evaluation", "safety"],
     examples: ["gauntlet", "gauntlet sprint"],
   },

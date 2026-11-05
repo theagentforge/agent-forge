@@ -31,11 +31,12 @@ export function creditPanel(g: CreditGuard, byok: Awaited<ReturnType<typeof byok
 <tr><td>Model-agnostic filler</td><td>${FILLER_MODELS.join(", ")} (BYOK), then the Workers AI practice models</td></tr>
 </tbody></table>`;
 }
-import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_OUTCOMES, installTotals, type InstallTotals } from "../services/install-metrics";
+import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_COUNTING_BEGAN, INSTALL_GAPS, INSTALL_OUTCOMES, installIdsSeen, installMismatches, installTotals, type InstallClient, type InstallTotals } from "../services/install-metrics";
 import { ID_CLIENTS, installReturnsData, RETURN_DAYS, type Cohort, type InstallReturns } from "../services/install-ids";
 import { landingFunnel, LANDING_STAGES, type LandingFunnel } from "../services/landing-funnel";
 import { privateWorkflow, verifyActionsToken, type OidcClaims } from "../services/house";
 import { growthStats } from "../services/growth";
+import { heroLineStats } from "../arena/hero-proof";
 
 const measured = (n: number | null) => (n === null ? "not yet measured" : n.toLocaleString("en-US"));
 
@@ -90,7 +91,7 @@ export function ownersPanel(active: Kpi | undefined, sources: Kpi | undefined) {
  * here (admins only), next to what a public headline would have shown under the old ADR 0067 minimum.
  */
 export async function thirdPartyData(env: Env, now = Date.now()) {
-  const [splits, owners, page, checksToday, install, returns, outsideUse] = await Promise.all([headlineSplits(env), ownerActivity(env, now, 30, false), outsideStatsData(env).catch(() => null), connectChecksToday(env, now).catch(() => null), installTotals(env, now).catch(() => null), installReturnsData(env, now).catch(() => null), outsideMetrics(env, now).catch(() => null)]);
+  const [splits, owners, page, checksToday, install, returns, outsideUse, ids] = await Promise.all([headlineSplits(env), ownerActivity(env, now, 30, false), outsideStatsData(env).catch(() => null), connectChecksToday(env, now).catch(() => null), installTotals(env, now).catch(() => null), installReturnsData(env, now).catch(() => null), outsideMetrics(env, now).catch(() => null), installIdsSeen(env, now).catch(() => null)]);
   return {
     internal_only: true as const,
     rules_version: STATS_RULES_VERSION,
@@ -103,7 +104,7 @@ export async function thirdPartyData(env: Env, now = Date.now()) {
     stats_page: page,
     connect_check_sources_today: checksToday,
     /** B2-06 (ADR 0086): install checks, gross, ours and outside (gross less ours), by client. Never public. */
-    install: install ? { ...install, outside: installOutside(install) } : null,
+    install: install ? { ...install, outside: installOutside(install), ids_7d: ids, mismatched: ids ? installMismatches(install, ids) : null } : null,
     /** B3-09 (ADR 0103): return cohorts from the anonymous install IDs, outside-only with ours apart. Never public. */
     install_returns: returns,
     /** ADR 0126: the outside-use block exactly as /stats shows it once PUBLIC_METRICS is on, and whether it is on. */
@@ -119,13 +120,20 @@ export function installOutside(v: InstallTotals) {
 }
 
 /** B2-06 (ADR 0086): install checks by client, with the outside split and distinct sources. Internal only. */
-export function installPanel(v: (InstallTotals & { outside: ReturnType<typeof installOutside> }) | null, sources: Record<string, { external_exact: number; house: number }> | null) {
+export function installPanel(v: (InstallTotals & { outside: ReturnType<typeof installOutside>; ids_7d?: Partial<Record<InstallClient, number>> | null; mismatched?: InstallClient[] | null }) | null, sources: Record<string, { external_exact: number; house: number }> | null) {
   if (!v) return "";
+  const ids = v.ids_7d ?? null;
+  const bad = new Set(v.mismatched ?? []);
+  // Build plan 5 Nov, item 3: say what "all time" covers, so a 0 is never read as "nobody used it" for days not counted.
+  const from = v.first_day ? `Counted from ${v.first_day} (the first day an install check was counted).` : "No install check has been counted yet.";
+  const gaps = INSTALL_GAPS.map((g) => `${g.from} to ${g.to} not counted: ${g.why}.`).join(" ");
   const cell = (r: Record<string, number>) => INSTALL_OUTCOMES.map((o) => r[o]!.toLocaleString("en-US")).join(" · ");
   return html`<h2 id="install">Install checks (B2-06): outside split, internal</h2>
 <p><small>Checked · would block · advisory. Gross is what /stats shows; outside is gross less our tagged CI and repositories (<code>install:ours:*</code>). The outside numbers are never shown publicly (Dinike, 28 Oct). Distinct sources today come from check_sources (the plugin, the CLI and its hooks, and the Action; daily-salted codes, never an IP).</small></p>
-<table class="kpi-table"><thead><tr><th>Client</th><th>Last 7 days (gross)</th><th>All time (gross)</th></tr></thead><tbody>
-${INSTALL_CLIENTS.map((c) => html`<tr data-client="${c}"><td>${INSTALL_CLIENT_NAMES[c]}</td><td>${cell(v.by_client[c].last_7_days)}</td><td>${cell(v.by_client[c].all_time)}</td></tr>`)}
+<p data-k="install_counted_from"><small>${from} Install counting began ${INSTALL_COUNTING_BEGAN} (counting rules 2.2); earlier checks were never counted. ${gaps} Nothing is backfilled.</small></p>
+${bad.size ? html`<p class="notice warn" data-k="install_mismatch">Counting fault: install IDs were seen this week for ${[...bad].map((c) => INSTALL_CLIENT_NAMES[c]).join(", ")} but no check of theirs was counted. An ID is written by the same request as its check, so these numbers are wrong until this is fixed.</p>` : ""}
+<table class="kpi-table"><thead><tr><th>Client</th><th>Last 7 days (gross)</th><th>All time (gross)</th>${ids ? html`<th>Install IDs seen, last 7 days</th>` : ""}</tr></thead><tbody>
+${INSTALL_CLIENTS.map((c) => html`<tr data-client="${c}"${bad.has(c) ? html` class="kpi-off"` : ""}><td>${INSTALL_CLIENT_NAMES[c]}</td><td>${cell(v.by_client[c].last_7_days)}</td><td>${cell(v.by_client[c].all_time)}</td>${ids ? html`<td>${c === "skill-scan" ? "–" : (ids[c] ?? 0).toLocaleString("en-US")}</td>` : ""}</tr>`)}
 <tr><td><b>All clients, gross</b></td><td>${cell(v.gross.last_7_days)}</td><td>${cell(v.gross.all_time)}</td></tr>
 <tr><td>Ours (tagged)</td><td>${cell(v.ours.last_7_days)}</td><td>${cell(v.ours.all_time)}</td></tr>
 <tr data-k="install_outside"><td><b>Outside</b></td><td><b>${cell(v.outside.last_7_days)}</b></td><td><b>${cell(v.outside.all_time)}</b></td></tr>
@@ -183,6 +191,14 @@ ${d.connect_check_sources_today === null ? "" : html`<tr><td>Distinct outside so
 const pctText = (p: number | null) => (p === null ? "–" : `${p}%`);
 
 /** ADR 0065: every step from opening /connect to a verified owner, with drop-off. Internal only. */
+/** ADR 0130: which home line people saw first, and clicks to its replay (source line and strip), last 7 days. Internal only. */
+export function heroLinesPanel(h: Awaited<ReturnType<typeof heroLineStats>>) {
+  return html`<h2 id="hero-lines">Home headline lines (ADR 0130)</h2>
+<p><small>People only (no crawlers or our probes), last ${h.days} days. "Shown first" is the line the page opened on; the page then cycles once through the other backed lines. Clicks are replay visits from that line's "Watch the replay" link and from its item in the strip. No cookies or visitor data. Never shown publicly.</small></p>
+<table class="kpi-table"><thead><tr><th>Line</th><th>Shown first</th><th>Replay clicks</th><th>Strip clicks</th></tr></thead>
+<tbody>${h.lines.map((l) => html`<tr data-hero-line="${l.key}"><td>${l.text}</td><td>${fmt(l.shown)}</td><td>${fmt(l.clicks)}</td><td>${fmt(l.strip_clicks)}</td></tr>`)}</tbody></table>`;
+}
+
 export function landingFunnelPanel(f: LandingFunnel) {
   const choices = [7, 30, 90].map((d) => (d === f.window.days ? html`<b>${d} days</b>` : html`<a href="/admin/kpis?days=${d}#funnel">${d} days</a>`));
   return html`<h2 id="funnel">From /connect to verified owner</h2>
@@ -287,6 +303,7 @@ site.get("/admin/kpis", async (c) => {
   const days = [7, 30, 90].includes(Number(c.req.query("days"))) ? Number(c.req.query("days")) : 30;
   const funnel = await landingFunnel(c.env, Date.now(), days);
   const disputes = await openDisputes(c.env);
+  const heroStats = await heroLineStats(c.env).catch(() => null);
   const third = await thirdPartyData(c.env).catch((e) => (console.error("admin: third-party numbers unavailable", String(e)), null));
   const small = await smallRows(c.env).catch(() => null);
   const north = kpis[0]!;
@@ -296,7 +313,7 @@ site.get("/admin/kpis", async (c) => {
     {
       ...page,
       body: html`<h1 class="page-title">Growth KPIs</h1>
-<p>Full UTC days to ${as_of}. Definitions: ADR 0039. Internal only.</p>
+<p>Full UTC days to ${as_of}. Definitions: ADR 0039. Internal only. <a href="/admin/channels">Channel scoreboard, Sprint share loop and ClawHub use</a> (ADR 0133).</p>
 <p><b>North star:</b> ${fmt(north.value)} ${north.unit} (${STATUS_LABEL[north.status]}); last 14 days ${spark(daily)}</p>
 <table class="kpi-table">
 <thead><tr><th>KPI</th><th>Now</th><th>First target</th><th>Second target</th><th>Status</th><th>30-day trend</th></tr></thead>
@@ -305,6 +322,7 @@ site.get("/admin/kpis", async (c) => {
       )}</tbody></table>
 ${credit && byok ? creditPanel(credit, byok) : html`<h2 id="credit">Arena credit (ADR 0064)</h2><p>Couldn't be worked out just now (see the Worker log). The runner pauses new practice and panel bouts on credit-spending models while that's so.</p>`}
 ${landingFunnelPanel(funnel)}
+${heroStats ? heroLinesPanel(heroStats) : ""}
 ${disputesPanel(disputes, Date.now(), csrf)}
 ${third?.public_metrics.preview ? html`${outsideUseBlock(third.public_metrics.preview, !third.public_metrics.on)}<p><small>ADR 0126: ${third.public_metrics.on ? "public on /stats and /stats.json (PUBLIC_METRICS is on)." : "not public: PUBLIC_METRICS is off (F-02, Dinike 28 Oct). Setting it to \"on\" in the Worker settings shows this block on /stats."}</small></p>` : ""}
 ${third ? thirdPartyPanel(third) : ""}

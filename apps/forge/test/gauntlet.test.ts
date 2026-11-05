@@ -160,7 +160,9 @@ describe("the Gauntlet's tool definitions", () => {
     // 20 Oct 2026: descriptions rewritten as "Use this when… Give… Returns…" (docs/launch/agent-channels.md §4.1).
     // 24 Oct 2026: gauntlet_start takes `challenge` (V2, ADR 0047): play the identical jobs of a finished run.
     // 28 Oct 2026: gauntlet_start takes `mode: "sprint"` (ADR 0083): the one-job Gauntlet Sprint.
-    expect(digest).toBe("5e0c1b4ba5d7a26751770750111c8fa85f53feaf44f4b6be1b0f3ca52f14162d");
+    // 5 Nov 2026 (ADR 0133): "Use this when… Inputs: … Returns: … Limits: …" with the real limits (runs a day per
+    // address, time per run); "no account" kept.
+    expect(digest).toBe("2f938ea06985726d75b6c096e926fb6c5d646ca0ed2ec874e35a50108bbb40b7");
     expect(Object.keys(PUBLIC_TOOLS)).not.toContain("gauntlet_start");
   });
 });

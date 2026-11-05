@@ -289,3 +289,82 @@ describe("weekly sweep of every no-setup server, npm and PyPI (ADR 0108)", () =>
     expect(mergeResults(["a"], (f) => files[f]).results).toHaveLength(2);
   });
 });
+
+// ADR 0131: requested servers ride along with the sweep, and are reported apart from it.
+import { isRequested, mergeResults as mergeAll, toDescriptions as toDesc, toRequestResult, toRunEntry as toEntry } from "../file.mjs";
+import { fetchRequested, REQUEST_CAP, requestedCandidates } from "../probe.mjs";
+
+describe("requested servers (ADR 0131)", () => {
+  const RID = "0123abcd-0000-4000-8000-0000000000aa";
+  it("re-validates the site's queue and caps it", () => {
+    const ok = requestedCandidates({
+      requests: [
+        { request_id: RID, registry: "npm", pkg: "@scope/x-mcp", version: "1.0.0" },
+        { request_id: RID, registry: "pypi", pkg: "py-mcp", version: "0.3.0" },
+        { request_id: "bad", registry: "npm", pkg: "x", version: "1.0.0" },
+        { request_id: RID, registry: "npm", pkg: "x; rm -rf /", version: "1.0.0" },
+        { request_id: RID, registry: "npm", pkg: "x", version: "latest" },
+        { request_id: RID, registry: "pypi", pkg: "Py_MCP", version: "1.0" },
+        { request_id: RID, registry: "docker", pkg: "x", version: "1.0.0" },
+      ],
+    });
+    expect(ok).toEqual([
+      { registryName: null, pkg: "@scope/x-mcp", version: "1.0.0", request_id: RID },
+      { registry: "pypi", registryName: null, pkg: "py-mcp", version: "0.3.0", request_id: RID },
+    ]);
+    const many = { requests: Array.from({ length: 50 }, (_, i) => ({ request_id: RID, registry: "npm", pkg: `p${i}`, version: "1.0.0" })) };
+    expect(requestedCandidates(many)).toHaveLength(REQUEST_CAP);
+    expect(requestedCandidates(null)).toEqual([]);
+  });
+
+  it("reads the public queue without any token, and an unreachable site gives none", async () => {
+    const calls = [];
+    const fetcher = async (url, init) => {
+      calls.push([url, init?.headers?.Authorization ?? null]);
+      return Response.json({ requests: [{ request_id: RID, registry: "npm", pkg: "x", version: "1.0.0" }] });
+    };
+    expect(await fetchRequested("https://theagentforge.io", { fetcher })).toHaveLength(1);
+    expect(calls).toEqual([["https://theagentforge.io/api/v1/house/requests/queue", null]]);
+    expect(await fetchRequested("https://theagentforge.io", { fetcher: async () => { throw new Error("down"); } })).toEqual([]);
+    expect(await fetchRequested("https://theagentforge.io", { fetcher: async () => new Response("", { status: 404 }) })).toEqual([]);
+  });
+
+  it("keeps requested results apart from the sweep's reports, entries and tool scans", () => {
+    const sweep = { pkg: "x", version: "1.0.0", fingerprint: `sha256:${"a".repeat(64)}`, outcome: "worked", toolCount: 1, tools: [{ name: "t", description: "d" }] };
+    const req = { ...sweep, request_id: RID };
+    const files = { "results/house-results-0/results.json": JSON.stringify({ probedAt: "2026-11-06T06:00:00.000Z", results: [sweep] }), "results/house-results-requests/results.json": JSON.stringify({ probedAt: "2026-11-06T06:00:00.000Z", results: [req] }) };
+    const merged = mergeAll(Object.keys(files), (f) => files[f]).results;
+    expect(merged).toHaveLength(2); // the same package as a sweep entry and a requested one
+    const own = merged.filter((r) => !isRequested(r));
+    expect(own).toHaveLength(1);
+    expect(own.map(toEntry).filter(Boolean)).toHaveLength(1);
+    expect(own.map((r) => toDesc(r)).filter(Boolean)).toHaveLength(1);
+    expect(toRequestResult(req)).toEqual({ request_id: RID, registry: "npm", pkg: "x", version: "1.0.0", fingerprint: sweep.fingerprint, outcome: "worked", tools_count: 1, ms: null, slow: false, tools: [{ name: "t", description: "d", schema: null }] });
+    expect(toRequestResult({ ...req, outcome: "skip", why: "needs_config", tools: undefined })).toMatchObject({ outcome: "needs_config", tools: null, tools_count: null });
+    expect(toRequestResult(sweep)).toBeNull();
+    expect(toRequestResult({ ...req, request_id: "x" })).toBeNull();
+  });
+});
+
+describe("requested servers run on their own runner (ADR 0131 review)", () => {
+  const RID = "0123abcd-0000-4000-8000-0000000000bb";
+  it("the requests shard holds every requested server and no sweep server; sweep shards hold none", async () => {
+    const { planShard, REQUESTS_SHARD } = await import("../probe.mjs");
+    const plan = [...Array.from({ length: 12 }, (_, i) => ({ pkg: `s${i}`, version: null })), { pkg: "r1", version: "1.0.0", request_id: RID }, { pkg: "r2", version: "1.0.0", request_id: RID }];
+    expect(planShard(plan, REQUESTS_SHARD, 10).map((c) => c.pkg)).toEqual(["r1", "r2"]);
+    const sweep = Array.from({ length: 10 }, (_, s) => planShard(plan, String(s), 10)).flat();
+    expect(sweep.map((c) => c.pkg).sort()).toEqual(plan.slice(0, 12).map((c) => c.pkg).sort());
+    expect(sweep.some((c) => c.request_id)).toBe(false);
+  });
+
+  it("a shard file can't speak for servers that weren't on its runner", () => {
+    const sweep = { pkg: "victim", version: "1.0.0", outcome: "failed" };
+    const forgedReq = { pkg: "queued-one", version: "1.0.0", outcome: "worked", toolCount: 0, request_id: RID };
+    const files = {
+      "results/house-results-3/results.json": JSON.stringify({ results: [sweep, forgedReq] }),
+      "results/house-results-requests/results.json": JSON.stringify({ results: [{ pkg: "other-sweep", version: "2.0.0", outcome: "failed" }, { ...forgedReq, pkg: "real-req" }] }),
+    };
+    const merged = mergeAll(Object.keys(files), (f) => files[f]).results;
+    expect(merged.map((r) => r.pkg).sort()).toEqual(["real-req", "victim"]);
+  });
+});

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FAMILIES, recordHouseNight } from "./house-results";
 
 // The Forge House Report (ADR 0011 b): every night the House tester starts the most-downloaded no-setup MCP servers
 // from the official registry and sends the whole night's results here. Kept in KV: the latest run, each day's run
@@ -67,6 +68,8 @@ export async function storeRun(env: Env, input: unknown) {
     env.KV.put(dayKey(day), body, { expirationTtl: 120 * 86_400 }),
     env.KV.put(KEY_HISTORY, JSON.stringify(history.slice(-120))),
   ]);
+  // ADR 0129: the same night, per server, kept in D1 for good (KV keeps it 120 days).
+  await recordHouseNight(env, FAMILIES.top500, run, "post");
   return { ok: true as const, day, servers: entries.length };
 }
 
@@ -84,6 +87,8 @@ export async function storeSweep(env: Env, input: unknown) {
   hist.push({ day, total: entries.length, counts: run.counts });
   hist.sort((a, b) => a.day.localeCompare(b.day));
   await Promise.all([env.KV.put(sweepKey(day), JSON.stringify(run), { expirationTtl: 21 * 86_400 }), env.KV.put(KEY_SWEEP_HISTORY, JSON.stringify(hist.slice(-120)))]);
+  // ADR 0129: kept in D1 for good (KV keeps a sweep day 21 days), apart from the nightly family.
+  await recordHouseNight(env, FAMILIES.sweep, run, "post");
   return { ok: true as const, day, servers: entries.length };
 }
 

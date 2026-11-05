@@ -23,6 +23,9 @@ const UNDOCUMENTED = [
   "POST /api/v1/house/run",
   "POST /api/v1/house/sweep",
   "POST /api/v1/house/tools",
+  // ADR 0131: the House tester's hooks for requested servers.
+  "GET /api/v1/house/requests/queue",
+  "POST /api/v1/house/requests",
   "POST /api/v1/social/moltbook",
   "GET /api/v1/social/moltbook/replies",
   "GET /api/v1/ops/scout-signals",
@@ -96,6 +99,13 @@ describe("GET /openapi.json", () => {
       gauntletStart: () => post("/api/v1/gauntlet", { card_from: "x" }),
       gauntletStatus: () => fetchWorker(`/api/v1/gauntlet/${g.gauntlet_id}`),
       gauntletAct: () => post(`/api/v1/gauntlet/${g.gauntlet_id}/act`, {}),
+      testRequestCreate: () => post("/api/v1/test-requests", { registry: "npm", package: "x", version: "latest" }),
+      // The registries are offline in tests, so the request row goes in directly.
+      testRequestStatus: async () => {
+        const id = "00000000-0000-4000-8000-0000000000aa";
+        await env.DB.prepare("INSERT OR IGNORE INTO test_requests (id, registry, package, version, fingerprint, status, channel, ip_day, day, requested_at) VALUES (?1, 'npm', 'openapi-test', '1.0.0', 'sha256:x', 'queued', 'api', 'x', '2026-01-01', ?2)").bind(id, Date.now()).run();
+        return fetchWorker(`/api/v1/test-requests/${id}`);
+      },
     };
     const schemas = spec.components.schemas as unknown as Record<string, { required?: string[] }>;
     for (const ops of Object.values(spec.paths))

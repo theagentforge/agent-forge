@@ -625,6 +625,32 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 /* W2.1: the headline's source line and the one primary call to action (Run the Gauntlet), then the secondary two. */
 .hero-source{margin:0 0 var(--s4);max-width:60ch;color:var(--text)}
 .hero-source .mono{font-family:var(--font-mono);font-size:var(--fs-xs)}
+/* ADR 0130: one backed line per visit, then one cycle through the others. Each cell stacks the shown text and hidden
+   copies of the other lines in one grid area, so the cell is as tall as the tallest line at every width (CLS 0). */
+.hero-cell{display:grid}
+.hero-cell>*{grid-area:1/1}
+.hero-size{visibility:hidden}
+.hero2 .hero-size-h1{font-family:var(--font-display);font-size:var(--fs-hero);line-height:.98;margin:var(--s4) 0;font-stretch:112%;font-weight:800;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:break-word}
+.hero-act,.hero-rot h1,.hero-rot .hero-source{transition:opacity .25s ease}
+.hero-fade{opacity:0}
+@media (prefers-reduced-motion:reduce){.hero-act,.hero-rot h1,.hero-rot .hero-source{transition:none}}
+/* The Pause control: small and quiet beside the source line, still a 24 px target (WCAG 2.5.8). Its space is kept
+   before the script shows it (visibility only), so showing it moves nothing. */
+.hero-srcrow{display:flex;align-items:flex-start;gap:var(--s2)}
+.hero-srcrow>.hero-cell{flex:1 1 auto;min-width:0}
+.hero-pause{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:24px;min-width:24px;padding:2px 6px;margin:0;border:1px solid transparent;border-radius:4px;background:none;color:var(--text-muted);font:inherit;font-size:var(--fs-xs);line-height:1.2;cursor:pointer;white-space:nowrap}
+.hero-pause:hover{color:var(--text);border-color:currentColor}
+.hero-pause:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+/* Both labels' widths are reserved (zero-height hidden copies), so "Pause" turning into "Play" moves nothing. */
+.hero-lbl{display:inline-grid}
+.hero-lbl::before{content:"Play headlines"}
+.hero-lbl::after{content:"Pause headlines"}
+.hero-lbl::before,.hero-lbl::after{visibility:hidden;height:0;overflow:hidden}
+.hero-ico{display:inline-block;width:8px;height:10px;box-sizing:border-box;border-left:3px solid currentColor;border-right:3px solid currentColor}
+.hero-pause[aria-pressed="true"] .hero-ico{width:0;height:0;border-right:0;border-left:8px solid currentColor;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.hero-pause-off{visibility:hidden}
+.hero-strip{margin:0 0 var(--s3);max-width:60ch}
+.hero-latest{margin:0 0 var(--s4)}
 .hero-ctas{display:flex;flex-wrap:wrap;gap:var(--s2);margin:var(--s4) 0 var(--s2)}
 @media (max-width:640px){.hero-ctas .btn{flex:1 1 100%;justify-content:center}.hero-ctas .btn:not(.primary){flex:1 1 0}}
 .counters{display:flex;flex-wrap:wrap;gap:var(--s5);margin:var(--s4) 0 0;padding:0;list-style:none}

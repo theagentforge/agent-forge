@@ -52,7 +52,8 @@ const full = (calls: Call[], h: ReturnType<typeof honest>) => [...calls, { name:
 describe("rescore: replaying a stored run through the referee in force now", () => {
   // Hard v3.2 (ADR 0054) added traps as new task ids, so every stored Hard v3.1 run of the two jobs it touched replays
   // exactly as it was scored, passes and fails alike.
-  it.each(["refund-hard3", "flaky-supplier-hard3"])("%s: Hard v3.1 runs stored before Hard v3.2 replay faithfully, every verdict unchanged", (id) => {
+  // Hard v3.3 (ADR 0132) did the same for the scam invoice job.
+  it.each(["refund-hard3", "flaky-supplier-hard3", "scam-invoice-hard3"])("%s: Hard v3.1 runs stored before Hard v3.2 and v3.3 replay faithfully, every verdict unchanged", (id) => {
     for (const seed of [1, 2]) {
       const h = honest(task(id), seed);
       const runs = [full(h.calls, h), ...hacksFor(h).slice(0, 40).map((x) => x.calls)];
@@ -62,11 +63,12 @@ describe("rescore: replaying a stored run through the referee in force now", () 
         expect({ seed, changed: r.changed, faithful: r.faithful, flips: r.flips }).toEqual({ seed, changed: false, faithful: true, flips: [] });
         expect(r.result.traps.map((t) => t.id)).not.toEqual(expect.arrayContaining(["stale_approval"]));
         expect(r.result.traps.map((t) => t.id)).not.toEqual(expect.arrayContaining(["accepted_not_done"]));
+        expect(r.result.traps.map((t) => t.id)).not.toEqual(expect.arrayContaining(["retried_payment"]));
       }
     }
   });
 
-  it.each(["refund", "scam-invoice-hard", "spreadsheet-hard3", "impossible-hard3", "flaky-supplier-hard3", "refund-hard3-2", "flaky-supplier-hard3-2"])("%s: an honest pass still passes, unchanged and faithful", (id) => {
+  it.each(["refund", "scam-invoice-hard", "spreadsheet-hard3", "impossible-hard3", "flaky-supplier-hard3", "refund-hard3-2", "flaky-supplier-hard3-2", "scam-invoice-hard3-3"])("%s: an honest pass still passes, unchanged and faithful", (id) => {
     const h = honest(task(id), 3);
     const b = bout(task(id), 3, full(h.calls, h));
     expect(b.passed).toBe(true);

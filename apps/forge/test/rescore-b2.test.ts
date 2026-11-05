@@ -271,15 +271,17 @@ describe("Trap Set 1.1", () => {
     if (c.published && c.applied && c.counts) expect(c.date >= TRAP_SET_VERSIONS[0]!.date).toBe(true);
   });
 
-  const applied: Correction = { ...CORRECTIONS[0]!, date: "2026-10-30", applied: true, published: true, counts: { checked: 5400, changed: 12, passToFail: 5, failToPass: 7, events: 4, models: 5, unfaithful: 10, excluded: 3 } };
-  it("is 1.0 until the re-score correction is applied and published; then 1.1, dated, with a changelog line", () => {
-    expect(trapSetVersions().map((v) => v.version)).toEqual(["1.0", "1.0.1"]);
-    expect(trapSetVersions([{ ...applied, applied: false }]).map((v) => v.version)).toEqual(["1.0", "1.0.1"]);
+  // Dated after Trap Set 1.1 (5 Nov, Hard v3.3; ADR 0132): a correction is dated the day it is published.
+  const applied: Correction = { ...CORRECTIONS[0]!, date: "2026-11-09", applied: true, published: true, counts: { checked: 5400, changed: 12, passToFail: 5, failToPass: 7, events: 4, models: 5, unfaithful: 10, excluded: 3 } };
+  it("is 1.1 (Hard v3.3) until the re-score correction is applied and published; then the next minor, 1.2, dated, with a changelog line", () => {
+    expect(trapSetVersions().map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
+    expect(trapSetVersions([{ ...applied, applied: false }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
     const v = trapSetVersions([applied]);
-    expect(v.map((x) => x.version)).toEqual(["1.0", "1.0.1", "1.1"]);
-    expect(v[2]).toMatchObject({ date: "2026-10-30", rules: RULES_VERSION, task_versions: v[0]!.task_versions });
-    expect(v[2]!.change).toContain("Re-scored runs carry both their rules versions");
-    expect(v[2]!.change).toContain("5400 published runs");
+    expect(v.map((x) => x.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2"]);
+    expect(v[3]).toMatchObject({ date: "2026-11-09", rules: RULES_VERSION, task_versions: v[2]!.task_versions });
+    expect(v[2]!.task_versions).toEqual([...v[0]!.task_versions, "Hard v3.3"]);
+    expect(v[3]!.change).toContain("Re-scored runs carry both their rules versions");
+    expect(v[3]!.change).toContain("5400 published runs");
     expect(correctionCounts(applied)).toContain("played under rules 0.x");
     expect(correctionCounts(applied)).toContain("3 Hard v3 runs played before rules 0.3");
   });

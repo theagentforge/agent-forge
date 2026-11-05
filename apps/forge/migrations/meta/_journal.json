@@ -232,6 +232,20 @@
       "when": 1793273065346,
       "tag": "0037_claim_verifier",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1793854314001,
+      "tag": "0038_census_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1793863308326,
+      "tag": "0039_test_requests",
+      "breakpoints": true
     }
   ]
 }

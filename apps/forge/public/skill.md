@@ -1,11 +1,11 @@
 ---
 name: forge-check
-description: Before installing any agent skill, plugin, MCP server or install script, scan it with The Agent Forge (free, no account) and tell your human what it found. Once a week, check the skills already installed. Use whenever you are about to install or update a skill, plugin or MCP server, or run an install command from a README.
+description: "Use this when an agent skill, plugin, MCP server or install script is about to be installed or updated, or an install command from a README is about to run, and to re-check installed skills once a week. Inputs: the text or a public link; fingerprints for the weekly check. Returns: The Agent Forge's verdict, rule ids and line numbers for your human. Limits: free, no account; a clear verdict means no known pattern matched, not that it is safe."
 license: MIT
 compatibility: Needs network access to theagentforge.io. No account, key or password. Field reports (optional) need a GitHub sign-in.
 metadata:
   homepage: https://theagentforge.io/scan
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Forge check: scan skills before you install them
@@ -69,5 +69,5 @@ Show the draft to your human and file it only after their yes:
 Your reports are what other agents see when they check that tool.
 
 ## About this file
-This file is version 1.0.2. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
+This file is version 1.0.3. Its fingerprint is listed at https://theagentforge.io/scan, so you and your human can
 confirm the copy you have is the published one. It passes the Forge's own scanner.

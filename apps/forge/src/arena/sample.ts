@@ -40,6 +40,49 @@ export { COMMERCIAL_LICENCE_LINE } from "../services/provenance";
 /** What the public never gets from this sample (and the full set keeps back). */
 export const SAMPLE_WITHHELD = ["held-out seeds and their runs", "private trap families (FA-*-101 and up) and their jobs", "the trap generator", "embargoed models and events held for review"] as const;
 
+/**
+ * One published version of the sample: its name, paths, write-once KV keys and D1 claim. v1 (29 Oct) keeps every value
+ * it was published under, so its files and checksum never change. v1.1 (build plan 5 Nov, item 5; ADR 0128) is drawn
+ * by the same strata rules from verifiable bouts only: every record's raw signed v2 replay ships in the zip and passes
+ * `forge verify`, and the listing states "N of N records verify".
+ */
+export interface SampleSpec {
+  version: string;
+  name: string;
+  zipPath: string;
+  filesPath: string;
+  schemaPath: string;
+  kv: { zip: string; meta: string };
+  claimId: string;
+  /** Only bouts whose replay `forge verify` accepts, and every record's replay in the zip. */
+  verifiedOnly: boolean;
+}
+
+function specOf(version: string, verifiedOnly: boolean, schemaPath?: string): SampleSpec {
+  const name = `forge-trap-sample-${version}`;
+  return {
+    version,
+    name,
+    zipPath: `${SAMPLE_DIR}/${name}.zip`,
+    filesPath: `${SAMPLE_DIR}/${version}`,
+    schemaPath: schemaPath ?? `${SAMPLE_DIR}/${version}/schema.json`,
+    kv: { zip: `dataset:sample:${version}:zip`, meta: `dataset:sample:${version}:meta` },
+    claimId: `dataset-sample-${version}`,
+    verifiedOnly,
+  };
+}
+
+/** v1, exactly as published on 29 Oct 2026 (the constants above). */
+export const SAMPLE_V1: SampleSpec = specOf(SAMPLE_VERSION, false, SAMPLE_SCHEMA_PATH);
+/** v1.1: verifiable records only (ADR 0128). Built by an admin on /admin/dataset-sample, never automatically. */
+export const SAMPLE_V1_1: SampleSpec = specOf("v1.1", true);
+/** Every version, oldest first. The newest published one leads the public page. */
+export const SAMPLE_SPECS: readonly SampleSpec[] = [SAMPLE_V1, SAMPLE_V1_1];
+export const sampleSpec = (version: string | null | undefined) => SAMPLE_SPECS.find((s) => s.version === version) ?? null;
+
+/** The listing's line for a verifiable sample (ADR 0128). */
+export const verifyLine = (verified: number, records: number) => `${verified} of ${records} records verify`;
+
 /** One record: one public trap present in one public bout, and whether the model fell for it. */
 export interface SampleRecord {
   record_id: string;
@@ -95,8 +138,10 @@ export interface SampleMeta {
   files: SampleFile[];
   counts: { records: number; falls: number; passes: number; models: number; trap_kinds: number; candidates: number; records_v2: number; records_v1: number; replays_v2: number };
   pair: { task: string; task_version: string; ruleset_version?: string; seed: number; trap_id: string; pass: string; fail: string };
-  /** The signed v2 replays shipped in the zip (0 to 2; ADR 0116). */
+  /** The signed v2 replays shipped in the zip (v1: 0 to 2, ADR 0116; v1.1: one per bout in the sample, ADR 0128). */
   replays: string[];
+  /** v1.1 (ADR 0128): records whose raw replay in the zip passes `forge verify`, of all records, and the listing's line. */
+  verified?: { records: number; of: number; line: string; method: string };
   licence_id: string;
   canary_guid: string;
 }
@@ -257,6 +302,96 @@ export async function draw(all: Candidate[], seed: number, replayOk: (c: Candida
   return { picked, pair, replays };
 }
 
+/**
+ * The v1.1 draw (ADR 0128): the same strata as `draw` (a same-seed pass and fall scored by the same rules, a frontier
+ * fall, at least `minFailsPerKind` falls of every kind that has them, then round-robin to `target`, at most
+ * `maxPerFamily` a kind), but only bouts sealed with replay format v2 that `replayOk` accepts (what `forge verify` calls
+ * VERIFIED) can give a record. A bout that doesn't verify is dropped with all its records, never shipped. Every picked
+ * bout is a replay. Deterministic from the candidates, the seed and the verdicts; each bout is verified at most once.
+ */
+export async function drawVerified(all: Candidate[], seed: number, replayOk: (c: Candidate) => Promise<boolean>, L = SAMPLE_LIMITS): Promise<Draw | { error: string }> {
+  const rng = mulberry32(seed);
+  const pool = all.filter((c) => c.sealed).sort(byKey);
+  const picked: Candidate[] = [];
+  const taken = new Set<string>();
+  const verdicts = new Map<string, boolean>();
+  const ok = async (c: Candidate) => {
+    if (!verdicts.has(c.run)) verdicts.set(c.run, await replayOk(c));
+    return verdicts.get(c.run)!;
+  };
+  const usable = (c: Candidate) => !taken.has(key(c)) && verdicts.get(c.run) !== false;
+  /** A seeded pick from `xs` whose bout verifies, or null; bouts that don't verify are dropped as they are met. */
+  const pickVerified = async (xs: Candidate[]) => {
+    let left = xs.filter(usable);
+    while (left.length) {
+      const c = left[Math.floor(rng() * left.length)]!;
+      if (await ok(c)) return c;
+      left = left.filter((x) => x.run !== c.run);
+    }
+    return null;
+  };
+  const take = (c: Candidate) => {
+    if (taken.has(key(c))) return;
+    picked.push(c);
+    taken.add(key(c));
+  };
+  const count = (f: TrapFamily, fell?: boolean) => picked.filter((p) => p.family === f && (fell === undefined || p.fell === fell)).length;
+  const isPass = (c: Candidate) => !c.fell && c.boutPassed;
+
+  // 1. The same-seed pair, from verifiable bouts only: groups in seeded order until one gives both sides.
+  const groups = new Map<string, Candidate[]>();
+  for (const c of pool) {
+    const g = `${c.task}\u0000${c.taskVersion}\u0000${c.rules}\u0000${c.seed}\u0000${c.trap}`;
+    groups.set(g, [...(groups.get(g) ?? []), c]);
+  }
+  const eligible = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).filter(([, cs]) => cs.some((c) => c.fell) && cs.some(isPass));
+  let pair: Draw["pair"] | null = null;
+  while (eligible.length && !pair) {
+    const [, cs] = eligible.splice(Math.floor(rng() * eligible.length), 1)[0]!;
+    const fail = await pickVerified(cs.filter((c) => c.fell));
+    const pass = fail ? await pickVerified(cs.filter(isPass)) : null;
+    if (fail && pass) pair = { pass, fail };
+  }
+  if (!pair) return { error: "No job version, seed and trap yet has both a fall and a clean pass, scored by the same rules (0.5 or 0.6), in public bouts whose signed v2 replay verifies." };
+  take(pair.fail);
+  take(pair.pass);
+
+  // 2. A frontier fall.
+  if (!picked.some((p) => p.fell && p.frontier)) {
+    const c = await pickVerified(pool.filter((x) => x.fell && x.frontier && count(x.family) < L.maxPerFamily));
+    if (!c) return { error: "No public fall by a frontier model shown on /benchmark whose signed v2 replay verifies." };
+    take(c);
+  }
+
+  // 3. Falls of every kind.
+  const families = (Object.keys(TRAP_FAMILIES) as TrapFamily[]).filter((f) => pool.some((c) => c.family === f));
+  for (const f of families)
+    while (count(f, true) < L.minFailsPerKind && count(f) < L.maxPerFamily) {
+      const c = await pickVerified(pool.filter((x) => x.family === f && x.fell));
+      if (!c) break;
+      take(c);
+    }
+
+  // 4. Fill.
+  for (let added = true; added && picked.length < L.target; ) {
+    added = false;
+    for (const f of families) {
+      if (picked.length >= L.target || count(f) >= L.maxPerFamily) continue;
+      const c = await pickVerified(pool.filter((x) => x.family === f));
+      if (!c) continue;
+      take(c);
+      added = true;
+    }
+  }
+  if (picked.length < L.min) return { error: `Only ${picked.length} records with a verifiable signed v2 replay could be drawn (at least ${L.min} needed).` };
+  if (new Set(picked.map((p) => p.model)).size < L.minModels) return { error: `Fewer than ${L.minModels} models among the bouts whose replay verifies.` };
+  // Every record's bout ships as a replay: a passed bout first, then the rest by run id.
+  const runs = new Map<string, Candidate>();
+  for (const c of [...picked].sort(byKey)) if (!runs.has(c.run)) runs.set(c.run, c);
+  const replays = [...runs.values()].sort((a, b) => Number(b.boutPassed) - Number(a.boutPassed) || (a.run < b.run ? -1 : a.run > b.run ? 1 : 0));
+  return { picked, pair, replays };
+}
+
 // --- Reading the public bouts -------------------------------------------------------------------------------------
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -348,15 +483,18 @@ export function sampleRecord(origin: string, c: Candidate, run: { modelId: strin
   };
 }
 
-/** JSON Schema (2020-12) for one line of sample.jsonl, published at SAMPLE_SCHEMA_PATH. Fixed for v1. */
-export function sampleSchema(origin: string) {
+/**
+ * JSON Schema (2020-12) for one line of sample.jsonl. v1's is published at SAMPLE_SCHEMA_PATH and fixed; v1.1's (in its
+ * zip and at its files path) is the same record shape, with every replay format v2.
+ */
+export function sampleSchema(origin: string, spec: SampleSpec = SAMPLE_V1) {
   const str = { type: "string", minLength: 1 };
   const strOrNull = { type: ["string", "null"] };
   const intOrNull = { type: ["integer", "null"], minimum: 0 };
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: `${origin}${SAMPLE_SCHEMA_PATH}`,
-    title: `${TRAP_SET_NAME} sample ${SAMPLE_VERSION}: one record`,
+    $id: `${origin}${spec.schemaPath}`,
+    title: `${TRAP_SET_NAME} sample ${spec.version}: one record`,
     description: "One public trap present in one public Arena bout, and whether the model fell for it.",
     type: "object",
     additionalProperties: false,
@@ -397,8 +535,8 @@ export function sampleSchema(origin: string) {
       },
       replay_id: str,
       replay_url: { type: "string", pattern: "^https?://" },
-      replay_format: { enum: [1, 2] },
-      replay_verification: { enum: [REPLAY_VERIFICATION[1], REPLAY_VERIFICATION[2]] },
+      replay_format: spec.verifiedOnly ? { enum: [2] } : { enum: [1, 2] },
+      replay_verification: spec.verifiedOnly ? { enum: [REPLAY_VERIFICATION[2]] } : { enum: [REPLAY_VERIFICATION[1], REPLAY_VERIFICATION[2]] },
       canary_guid: { const: CANARY_GUID },
     },
   };
@@ -437,14 +575,16 @@ const FIELDS: [keyof SampleRecord, string][] = [
   ["canary_guid", "The benchmark canary GUID, on every record so a copied record still carries it."],
 ];
 
-/** The five-line Python loader in the README (CI runs it against the test fixture's zip). */
-export const PYTHON_LOADER = [
+/** The five-line Python loader in the README for a sample's zip name. */
+export const pythonLoader = (name: string) => [
   "import json, zipfile",
-  `with zipfile.ZipFile("${SAMPLE_NAME}.zip") as z:`,
+  `with zipfile.ZipFile("${name}.zip") as z:`,
   '    rows = [json.loads(line) for line in z.read("sample.jsonl").decode("utf-8").splitlines() if line]',
   'falls = [r for r in rows if r["verdict"] == "fail"]',
   'print(len(rows), "records,", len(falls), "falls")',
 ].join("\n");
+/** v1's loader (CI runs it against the test fixture's zip). */
+export const PYTHON_LOADER = pythonLoader(SAMPLE_NAME);
 
 /** The README's exact count line (ADR 0116): how many records, and how many signed v2 replays, the zip holds. */
 export function countLine(records: number, v2Records: number, replays: number) {
@@ -452,12 +592,25 @@ export function countLine(records: number, v2Records: number, replays: number) {
   return `This zip holds exactly ${n(records, "record", "records")} (${v2Records} with replay format v2, ${records - v2Records} with replay format v1) and ${n(replays, "signed v2 replay", "signed v2 replays")}.`;
 }
 
-function readme(origin: string, m: { builtAt: string; records: SampleRecord[]; replays: { id: string; verdict: string }[]; pair: Draw["pair"]; candidates: number }) {
+function readme(origin: string, m: { builtAt: string; records: SampleRecord[]; replays: { id: string; verdict: string }[]; pair: Draw["pair"]; candidates: number; verified?: number }, spec: SampleSpec = SAMPLE_V1) {
   const falls = m.records.filter((r) => r.verdict === "fail").length;
   const v2 = m.records.filter((r) => r.replay_format === 2).length;
   const kinds = [...new Set(m.records.map((r) => r.trap_kind.family))].sort();
   const models = [...new Set(m.records.map((r) => r.model))].sort();
-  return `# ${TRAP_SET_NAME}: public sample ${SAMPLE_VERSION}
+  const vo = spec.verifiedOnly;
+  const replaysLine = vo
+    ? `${m.replays.length} raw signed replays (replay format v2), one for every bout in \`sample.jsonl\` (\`replays/<replay_id>.json\`), byte for byte as ${origin}/arena/run/<id>.json served them at build time. Each was checked at build time the way \`forge verify\` checks it.`
+    : m.replays.length
+      ? `${m.replays.length === 1 ? "one raw signed replay" : `${m.replays.length} raw signed replays`} (replay format v2, verifiable with \`forge verify\`), byte for byte as ${origin}/arena/run/<id>.json served them at build time: ${m.replays.map((r) => `\`${r.id}.json\` (bout ${r.verdict})`).join(" and ")}.`
+      : "empty: no public v2 bout could be verified at build time, so this zip ships no raw replay.";
+  const steps = vo
+    ? `1. Candidates: each public trap present in a public bout that finished normally (no knockout) under ${SAMPLE_RULES.join(" or ")}, on a public seed, sealed with replay format v2, and whose replay \`forge verify\` accepts (chain, record, signature, the open referee's same verdict, faithful re-run). A bout that doesn't verify is left out with all its records.
+2. One pass and one fail on the same job version, seed and trap, scored by the same rules version (this sample: ${m.pair.fail.trap} on \`${m.pair.fail.task}\` ${m.pair.fail.taskVersion}, ${m.pair.fail.rules}, seed ${m.pair.fail.seed}).
+3. Every bout that gives a record ships its raw replay in \`replays/\`.`
+    : `1. Candidates: each public trap present in a public bout that finished normally (no knockout) under ${SAMPLE_RULES.join(" or ")}, on a public seed.
+2. One pass and one fail on the same job version, seed and trap, scored by the same rules version, from public bouts of either replay format, a pair of verifiable v2 bouts tried first (this sample: ${m.pair.fail.trap} on \`${m.pair.fail.task}\` ${m.pair.fail.taskVersion}, ${m.pair.fail.rules}, seed ${m.pair.fail.seed}; replay format ${m.pair.pass.sealed ? 2 : 1} for the pass and ${m.pair.fail.sealed ? 2 : 1} for the fall).
+3. The raw replays: only v2 bouts that \`forge verify\` accepts (chain, record, signature, the open referee's same verdict, faithful re-run); the pair's own when both are, otherwise a passed bout and a fall drawn from the v2 bouts.`;
+  return `# ${TRAP_SET_NAME}: public sample ${spec.version}
 
 ${CANARY}
 
@@ -465,16 +618,16 @@ ${CANARY}
 
 ${m.records.length} records from The Forge Arena, where AI models do everyday business jobs (refunds, supplier payments, bookings, stock, records) in invented sandboxes with planted traps, and a referee scores the sandbox's end state and the call log, never the model's own account. Each record is one public trap present in one bout: the model's tool calls in order, whether it fell for the trap, the safe behaviour the referee accepts and the sandbox amount at stake. ${falls} records are falls and ${m.records.length - falls} are passes, across ${kinds.length} trap kinds and ${models.length} models.
 
-${countLine(m.records.length, v2, m.replays.length)}
+${countLine(m.records.length, v2, m.replays.length)}${vo ? ` ${verifyLine(m.verified ?? 0, m.records.length)}: every record's raw signed replay is in \`replays/\` and passes \`forge verify\`.` : ""}
 
 Contains no personal data: tools, traps and model runs only.
 
-Drawn from already-public bouts: every record is a bout that ${origin}/arena/dataset.json already publishes, with its replay at ${origin}/arena/run/<replay_id>.json. Each record states its replay format and how it can be checked: \`${REPLAY_VERIFICATION[2]}\` (hash chain and Ed25519 signature, with \`forge verify\`) or \`${REPLAY_VERIFICATION[1]}\` (older bouts: the log can be re-scored by the open referee, but no public key signs it). Built ${m.builtAt} from the ${m.candidates} candidate records then public.
+Drawn from already-public bouts: every record is a bout that ${origin}/arena/dataset.json already publishes, with its replay at ${origin}/arena/run/<replay_id>.json. ${vo ? `Every record is replay format v2: \`${REPLAY_VERIFICATION[2]}\` (hash chain and Ed25519 signature, with \`forge verify\`).` : `Each record states its replay format and how it can be checked: \`${REPLAY_VERIFICATION[2]}\` (hash chain and Ed25519 signature, with \`forge verify\`) or \`${REPLAY_VERIFICATION[1]}\` (older bouts: the log can be re-scored by the open referee, but no public key signs it).`} Built ${m.builtAt} from the ${m.candidates} candidate records then public.
 
 ## Files
 
-- \`sample.jsonl\`: one record per line (schema: \`schema.json\`, also at ${origin}${SAMPLE_SCHEMA_PATH}).
-- \`replays/\`: ${m.replays.length ? `${m.replays.length === 1 ? "one raw signed replay" : `${m.replays.length} raw signed replays`} (replay format v2, verifiable with \`forge verify\`), byte for byte as ${origin}/arena/run/<id>.json served them at build time: ${m.replays.map((r) => `\`${r.id}.json\` (bout ${r.verdict})`).join(" and ")}.` : "empty: no public v2 bout could be verified at build time, so this zip ships no raw replay."}
+- \`sample.jsonl\`: one record per line (schema: \`schema.json\`, also at ${origin}${spec.schemaPath}).
+- \`replays/\`: ${replaysLine}
 - \`croissant.json\`: Croissant 1.0 metadata for this sample.
 - \`LICENSE.txt\`: the licence.
 - \`SHA256SUMS\`: SHA-256 of every other file (\`sha256sum -c SHA256SUMS\`).
@@ -489,9 +642,7 @@ ${FIELDS.map(([k, v]) => `| \`${k}\` | ${v} |`).join("\n")}
 
 Not by hand. A seeded random draw within strata (ADR 0100), with seed **${SAMPLE_SEED}** and the mulberry32 generator, over every candidate record sorted by \`record_id\`:
 
-1. Candidates: each public trap present in a public bout that finished normally (no knockout) under ${SAMPLE_RULES.join(" or ")}, on a public seed.
-2. One pass and one fail on the same job version, seed and trap, scored by the same rules version, from public bouts of either replay format, a pair of verifiable v2 bouts tried first (this sample: ${m.pair.fail.trap} on \`${m.pair.fail.task}\` ${m.pair.fail.taskVersion}, ${m.pair.fail.rules}, seed ${m.pair.fail.seed}; replay format ${m.pair.pass.sealed ? 2 : 1} for the pass and ${m.pair.fail.sealed ? 2 : 1} for the fall).
-3. The raw replays: only v2 bouts that \`forge verify\` accepts (chain, record, signature, the open referee's same verdict, faithful re-run); the pair's own when both are, otherwise a passed bout and a fall drawn from the v2 bouts.
+${steps}
 4. At least one fall by a frontier model (the lineup's Heavyweight division) already shown on ${origin}/benchmark.
 5. At least ${SAMPLE_LIMITS.minFailsPerKind} falls of every trap kind that has public falls, then filled round-robin across trap kinds to ${SAMPLE_LIMITS.target} records, at most ${SAMPLE_LIMITS.maxPerFamily} from any one trap kind.
 
@@ -509,12 +660,12 @@ Each v2 replay is hash-chained and signed with Ed25519 (public keys at ${origin}
 ${verifyCommand(m.replays[0] ? `replays/${m.replays[0].id}.json` : `${origin}/arena/run/<replay_id>.json`)}
 \`\`\`
 
-A v1 record's replay has no public signature; \`forge verify\` reports it as format v1 and re-runs the referee on its log.
+${vo ? `Every replay in \`replays/\` checks the same way (\`forge verify replays/<replay_id>.json\`).` : "A v1 record's replay has no public signature; `forge verify` reports it as format v1 and re-runs the referee on its log."}
 
 ## Load it in Python
 
 \`\`\`python
-${PYTHON_LOADER}
+${pythonLoader(spec.name)}
 \`\`\`
 
 ## Licence
@@ -535,7 +686,7 @@ Canary: ${CANARY}
 `;
 }
 
-const licenceText = (origin: string) => `${TRAP_SET_NAME}: public sample ${SAMPLE_VERSION}
+const licenceText = (origin: string, spec: SampleSpec = SAMPLE_V1) => `${TRAP_SET_NAME}: public sample ${spec.version}
 
 ${DATASET_LICENCE}
 
@@ -547,7 +698,7 @@ Licence id: ${LICENCE_ID}
 ${CANARY}
 `;
 
-function sampleCroissant(origin: string, builtAt: string, jsonl: { bytes: number; sha256: string }) {
+function sampleCroissant(origin: string, builtAt: string, jsonl: { bytes: number; sha256: string }, spec: SampleSpec = SAMPLE_V1) {
   const col = (name: keyof SampleRecord | string, dataType: string, description: string) => ({
     "@type": "cr:Field",
     "@id": `records/${name}`,
@@ -560,9 +711,10 @@ function sampleCroissant(origin: string, builtAt: string, jsonl: { bytes: number
     "@context": CROISSANT_CONTEXT,
     "@type": "sc:Dataset",
     conformsTo: ["http://mlcommons.org/croissant/1.0", "http://mlcommons.org/croissant/RAI/1.0"],
-    name: `${TRAP_SET_NAME} sample ${SAMPLE_VERSION}`,
+    name: `${TRAP_SET_NAME} sample ${spec.version}`,
     description: "A fixed sample of public Arena records: one public trap in one public bout per record, with the model's tool calls, the referee's verdict on the trap, the expected safe behaviour and the sandbox cost of failure. Drawn by a seeded random pick within strata from already-public bouts.",
     url: `${origin}${SAMPLE_DIR}`,
+    ...(spec.verifiedOnly ? { "rai:dataReleaseMaintenancePlan": "Fixed: a new sample is a new version. Every record's raw signed replay is in replays/ and passes forge verify." } : {}),
     license: `${origin}${LICENCE_PATH}`,
     licenceText: `${DATASET_LICENCE} ${COMMERCIAL_LICENCE_LINE}`,
     creator: { "@type": "sc:Organization", name: "The Agent Forge", url: origin },
@@ -570,7 +722,7 @@ function sampleCroissant(origin: string, builtAt: string, jsonl: { bytes: number
     isAccessibleForFree: true,
     isLiveDataset: false,
     datePublished: builtAt.slice(0, 10),
-    version: SAMPLE_VERSION.replace(/^v/, "") + ".0.0",
+    version: [...spec.version.replace(/^v/, "").split("."), "0", "0"].slice(0, 3).join("."),
     keywords: ["AI agents", "evaluation", "benchmark", "tool use", "agent safety", "sample"],
     inLanguage: "en",
     "rai:dataCollection": "Each record comes from a bout The Forge ran itself (the model called through its provider's API, given the job brief and sandbox tools) and refereed from the sandbox's end state and call log.",
@@ -628,8 +780,8 @@ export interface BuiltSample {
   meta: SampleMeta;
 }
 
-/** Builds the sample from the public bouts as of `now`. Pure read: nothing is stored. */
-export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSample | { error: string }> {
+/** Builds the sample (v1 unless another version is named) from the public bouts as of `now`. Pure read: nothing is stored. */
+export async function buildSample(env: Env, now = Date.now(), spec: SampleSpec = SAMPLE_V1): Promise<BuiltSample | { error: string }> {
   const origin = env.PUBLIC_ORIGIN;
   const db = getDb(env);
   const pool = await candidates(env, now);
@@ -642,8 +794,17 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
     }
     return docs.get(id)!;
   };
-  const d = await draw(pool, SAMPLE_SEED, async (c) => replayVerifies(env, JSON.parse((await load(c.run)).text)));
+  // The runs whose replay, as the exact text shipped in the zip, passed the check `forge verify` makes.
+  const verifiedRuns = new Set<string>();
+  const replayOk = async (c: Candidate) => {
+    const good = await replayVerifies(env, JSON.parse((await load(c.run)).text));
+    if (good) verifiedRuns.add(c.run);
+    return good;
+  };
+  const d = await (spec.verifiedOnly ? drawVerified : draw)(pool, SAMPLE_SEED, replayOk);
   if ("error" in d) return d;
+  // ADR 0128: a v1.1 sample is never built with a record whose replay isn't in the zip and verified.
+  if (spec.verifiedOnly && d.picked.some((c) => !verifiedRuns.has(c.run) || !d.replays.some((r) => r.run === c.run))) return { error: "A drawn record's replay did not verify; nothing was built." };
   const records: SampleRecord[] = [];
   for (const c of d.picked) {
     const { run } = await load(c.run);
@@ -653,12 +814,13 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
   const builtAt = new Date(now).toISOString();
   const jsonl = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
   const replays = d.replays.map((c) => ({ id: c.run, verdict: c.boutPassed ? "passed" : "failed" }));
+  const verifiedCount = records.filter((r) => verifiedRuns.has(r.replay_id) && replays.some((x) => x.id === r.replay_id)).length;
   const files: { name: string; text: string }[] = [
-    { name: "README.md", text: readme(origin, { builtAt, records, replays, pair: d.pair, candidates: pool.length }) },
-    { name: "LICENSE.txt", text: licenceText(origin) },
+    { name: "README.md", text: readme(origin, { builtAt, records, replays, pair: d.pair, candidates: pool.length, verified: verifiedCount }, spec) },
+    { name: "LICENSE.txt", text: licenceText(origin, spec) },
     { name: "sample.jsonl", text: jsonl },
-    { name: "schema.json", text: JSON.stringify(sampleSchema(origin), null, 2) + "\n" },
-    { name: "croissant.json", text: JSON.stringify(sampleCroissant(origin, builtAt, { bytes: enc.encode(jsonl).length, sha256: await sha256Hex(jsonl) }), null, 2) + "\n" },
+    { name: "schema.json", text: JSON.stringify(sampleSchema(origin, spec), null, 2) + "\n" },
+    { name: "croissant.json", text: JSON.stringify(sampleCroissant(origin, builtAt, { bytes: enc.encode(jsonl).length, sha256: await sha256Hex(jsonl) }, spec), null, 2) + "\n" },
     ...(await Promise.all(replays.map(async (r) => ({ name: `replays/${r.id}.json`, text: (await load(r.id)).text })))),
   ];
   const listed: SampleFile[] = await Promise.all(files.map(async (f) => ({ name: f.name, bytes: enc.encode(f.text).length, sha256: await sha256Hex(f.text) })));
@@ -673,11 +835,11 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
     zip,
     meta: {
       format: SAMPLE_FORMAT,
-      name: SAMPLE_NAME,
-      version: SAMPLE_VERSION,
+      name: spec.name,
+      version: spec.version,
       built_at: builtAt,
       seed: SAMPLE_SEED,
-      zip: { name: `${SAMPLE_NAME}.zip`, bytes: zip.length, sha256: zipSha, url: `${origin}${SAMPLE_ZIP_PATH}` },
+      zip: { name: `${spec.name}.zip`, bytes: zip.length, sha256: zipSha, url: `${origin}${spec.zipPath}` },
       files: listed,
       counts: {
         records: records.length,
@@ -692,6 +854,7 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
       },
       pair: { task: d.pair.fail.task, task_version: d.pair.fail.taskVersion, ruleset_version: d.pair.fail.rules, seed: d.pair.fail.seed, trap_id: d.pair.fail.trap, pass: d.pair.pass.run, fail: d.pair.fail.run },
       replays: replays.map((r) => r.id),
+      ...(spec.verifiedOnly ? { verified: { records: verifiedCount, of: records.length, line: verifyLine(verifiedCount, records.length), method: "Each record's raw replay in replays/ passed, at build time, the check forge verify makes: hash chain, record, Ed25519 signature against the published keys, and the open referee's same verdict on a faithful re-run." } } : {}),
       licence_id: LICENCE_ID,
       canary_guid: CANARY_GUID,
     },
@@ -701,7 +864,7 @@ export async function buildSample(env: Env, now = Date.now()): Promise<BuiltSamp
 // --- Write once, read forever ---------------------------------------------------------------------------------------
 
 /** The zip's KV key, addressed by its SHA-256, so a meta can only ever point at the bytes it describes. */
-export const sampleZipKey = (sha256: string) => `${SAMPLE_KV.zip}:${sha256}`;
+export const sampleZipKey = (sha256: string, spec: SampleSpec = SAMPLE_V1) => `${spec.kv.zip}:${sha256}`;
 /**
  * The build's claim (review of ADR 0100, ADR 0105): one audit_log row with a fixed id. D1 is strongly consistent and KV
  * is not (a meta written in one place can take a minute to be seen in another), so the claim, not the KV meta, decides
@@ -714,13 +877,24 @@ export const SAMPLE_CLAIM_STALE_MS = 10 * 60_000;
 /** KV's read-cache for the sample meta: 60 s, KV's minimum, so the page's status catches up within about a minute of a publish. */
 export const SAMPLE_META_CACHE_TTL_S = 60;
 
-export async function readSampleMeta(env: Pick<Env, "KV">): Promise<SampleMeta | null> {
-  return env.KV.get<SampleMeta>(SAMPLE_KV.meta, { type: "json", cacheTtl: SAMPLE_META_CACHE_TTL_S });
+export async function readSampleMeta(env: Pick<Env, "KV">, spec: SampleSpec = SAMPLE_V1): Promise<SampleMeta | null> {
+  return env.KV.get<SampleMeta>(spec.kv.meta, { type: "json", cacheTtl: SAMPLE_META_CACHE_TTL_S });
+}
+
+/** Every version with its meta (null until built), oldest first. */
+export async function readSampleMetas(env: Pick<Env, "KV">) {
+  return Promise.all(SAMPLE_SPECS.map(async (spec) => ({ spec, meta: await readSampleMeta(env, spec).catch(() => null) })));
+}
+
+/** The newest published version (v1.1 once built, else v1), or null when none is. */
+export async function latestSample(env: Pick<Env, "KV">) {
+  const all = await readSampleMetas(env);
+  return [...all].reverse().find((x) => x.meta) ?? null;
 }
 
 /** The published zip, only if its bytes hash to the meta's SHA-256 (never a zip the listing doesn't describe). */
-export async function readSampleZip(env: Pick<Env, "KV">, meta: SampleMeta): Promise<Uint8Array | null> {
-  for (const k of [sampleZipKey(meta.zip.sha256), SAMPLE_KV.zip]) {
+export async function readSampleZip(env: Pick<Env, "KV">, meta: SampleMeta, spec: SampleSpec = SAMPLE_V1): Promise<Uint8Array | null> {
+  for (const k of [sampleZipKey(meta.zip.sha256, spec), spec.kv.zip]) {
     const b = await env.KV.get(k, { type: "arrayBuffer", cacheTtl: 3600 });
     if (b && (await sha256Bytes(b)) === meta.zip.sha256) return new Uint8Array(b);
   }
@@ -736,8 +910,8 @@ type ClaimState = { state: "building" | "published"; sha256?: string; built_at?:
  * fixed). Only the holder of the D1 claim builds; the zip goes to a key named by its SHA-256 and the meta is written
  * last, so a failed write publishes nothing and a reader never pairs a meta with other bytes.
  */
-export async function publishSample(env: Env, now = Date.now(), actor = "admin"): Promise<{ status: "published" | "exists"; meta: SampleMeta } | { status: "refused"; error: string }> {
-  const existing = await env.KV.get<SampleMeta>(SAMPLE_KV.meta, "json");
+export async function publishSample(env: Env, now = Date.now(), actor = "admin", spec: SampleSpec = SAMPLE_V1): Promise<{ status: "published" | "exists"; meta: SampleMeta } | { status: "refused"; error: string }> {
+  const existing = await env.KV.get<SampleMeta>(spec.kv.meta, "json");
   if (existing) return { status: "exists", meta: existing };
   const db = getDb(env);
   const clock = Date.now();
@@ -745,36 +919,36 @@ export async function publishSample(env: Env, now = Date.now(), actor = "admin")
   const isBuilding = sql`json_extract(${t.auditLog.detail}, '$.state') = 'building'`;
   const won = await db
     .insert(t.auditLog)
-    .values({ id: SAMPLE_CLAIM_ID, actor, action: "dataset_sample_build", target: SAMPLE_NAME, detail: building, createdAt: clock })
+    .values({ id: spec.claimId, actor, action: "dataset_sample_build", target: spec.name, detail: building, createdAt: clock })
     .onConflictDoNothing()
     .returning({ id: t.auditLog.id });
   if (!won.length) {
     const took = await db
       .update(t.auditLog)
       .set({ actor, detail: building, createdAt: clock })
-      .where(and(eq(t.auditLog.id, SAMPLE_CLAIM_ID), isBuilding, lt(t.auditLog.createdAt, clock - SAMPLE_CLAIM_STALE_MS)))
+      .where(and(eq(t.auditLog.id, spec.claimId), isBuilding, lt(t.auditLog.createdAt, clock - SAMPLE_CLAIM_STALE_MS)))
       .returning({ id: t.auditLog.id });
     if (!took.length) {
-      const row = await db.query.auditLog.findFirst({ where: eq(t.auditLog.id, SAMPLE_CLAIM_ID) });
+      const row = await db.query.auditLog.findFirst({ where: eq(t.auditLog.id, spec.claimId) });
       const st = (row?.detail as ClaimState | null)?.state;
       return { status: "refused", error: st === "published" ? "It is already published; the listing shows it within a few minutes." : "Another build is running. Reload in a few minutes." };
     }
   }
-  const release = () => db.delete(t.auditLog).where(and(eq(t.auditLog.id, SAMPLE_CLAIM_ID), isBuilding));
+  const release = () => db.delete(t.auditLog).where(and(eq(t.auditLog.id, spec.claimId), isBuilding));
   try {
-    const built = await buildSample(env, now);
+    const built = await buildSample(env, now, spec);
     if ("error" in built) {
       await release();
       return { status: "refused", error: built.error };
     }
-    await env.KV.put(sampleZipKey(built.meta.zip.sha256), built.zip);
-    await env.KV.put(SAMPLE_KV.meta, JSON.stringify(built.meta));
+    await env.KV.put(sampleZipKey(built.meta.zip.sha256, spec), built.zip);
+    await env.KV.put(spec.kv.meta, JSON.stringify(built.meta));
     const done: ClaimState = { state: "published", sha256: built.meta.zip.sha256, built_at: built.meta.built_at };
-    await db.update(t.auditLog).set({ detail: done }).where(eq(t.auditLog.id, SAMPLE_CLAIM_ID));
+    await db.update(t.auditLog).set({ detail: done }).where(eq(t.auditLog.id, spec.claimId));
     return { status: "published", meta: built.meta };
   } catch (e) {
     // Nothing was published if the meta write didn't happen; free the claim so a later press can try again.
-    if (!(await env.KV.get(SAMPLE_KV.meta))) await release().catch(() => {});
+    if (!(await env.KV.get(spec.kv.meta))) await release().catch(() => {});
     throw e;
   }
 }

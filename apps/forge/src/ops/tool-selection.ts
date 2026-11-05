@@ -2,7 +2,7 @@ import { billedToCredit, callModel } from "../arena/adapters";
 import { isClaudeByok, noteByokFallback } from "../arena/credit";
 import { modelById } from "../arena/lineup";
 import type { ToolSpec } from "@forge/arena";
-import { PUBLIC_TOOLS } from "../mcp-public";
+import { PUBLIC_TOOLS, PUBLIC_TOOLS_NEXT } from "../mcp-public";
 
 // Tool-selection accuracy (docs/launch/agent-channels.md §4.1): does a model pick our tool when it fits, and leave it
 // alone when it doesn't? 30 fixed requests (20 that fit one of our five public tools, 10 that fit none) are sent to a
@@ -54,19 +54,43 @@ export const PROMPTS: { prompt: string; expect: string[] | "none" }[] = [
 const obj = (properties: ToolSpec["parameters"]["properties"], required: string[] = []) => ({ type: "object" as const, properties, required, additionalProperties: false as const });
 const s = (description: string) => ({ type: "string", description });
 
+/**
+ * ADR 0133: the descriptions as they stood before the structured rewrite (4 Nov 2026, digest 3d7edea4… in
+ * test/trap-card.test.ts), so one run can measure both sets under the same conditions: "before" sends these, "after"
+ * the live PUBLIC_TOOLS. The parameter texts, decoys and order are the same in both, so only the descriptions differ.
+ */
+export const BEFORE_2026_11_04: Record<keyof typeof PUBLIC_TOOLS, string> = {
+  forge_check:
+    "Use this when a task is about to rely on one skill, MCP server, plugin, package or API and the question is whether agents had problems with it or an advisory covers it. Give one of id (npm:name, pypi:name, github.com/owner/repo), url or fingerprint (sha256:<64 hex>), plus version if known. Returns field reports (agents' notes on that version), OSV advisories, security status and a page link. File text: forge_scan.",
+  forge_exposure:
+    "Use this when the question is whether packages already installed match a published advisory, such as after an incident. Give packages (up to 500 of ecosystem npm or pypi, name, exact version) or pip_freeze text; names and versions only. Returns each match with its OSV advisory ids, fixed versions, CISA exploited flag and source link. One tool's field reports and advisories: forge_check.",
+  forge_traps:
+    "Use this when the question is how often AI models fell for each planted trap in everyday jobs (fake invoices, refunds over policy, duplicate orders). Give optional task id, model id or tier (normal or hard); with no arguments, the latest ranked Hard event, summary first. Returns per trap: public trap id, attempts, falls and fall rate, with the data date and card version. Pass rates per model and job: arena_results.",
+  forge_scan:
+    "Use this when an agent skill, plugin, MCP server or install script is about to be installed and its text needs checking for hidden instructions, piped installs, credential reads or data sent to throwaway endpoints. Give text (the file's contents) or url (a public code host). Returns a verdict, rule ids, line numbers and the file's sha256. Other agents' reports on a named tool: forge_check.",
+  forge_watch:
+    "Use this when re-checking skills or tools that are already installed, such as once a week. Give fingerprints: up to 100 sha256 hashes of installed files, as forge_scan returns them. Returns, per fingerprint, whether it is flagged, needs a fresh scan, or has field reports (other agents' notes on that exact version). One tool by name or id: forge_check.",
+  arena_results:
+    "Use this when comparing AI models on an everyday job (invoices, refunds, travel, restocking). Give optional task id, tier (normal or hard) or event slug such as crucible-2-hard; with no arguments, the latest ranked Hard event, summary first. Returns per job and model: attempts, passes, pass rate with 95% interval, 3-of-3 consistency, trap ids, knockouts, cost per pass and replays. Per-trap fall rates: forge_traps.",
+};
+export const DESCRIPTION_SETS = ["after", "before"] as const;
+export type DescriptionSet = (typeof DESCRIPTION_SETS)[number];
+const descriptionOf = (name: keyof typeof PUBLIC_TOOLS, set: DescriptionSet) => (set === "before" ? BEFORE_2026_11_04[name] : PUBLIC_TOOLS_NEXT[name].description);
+
 /** Our six public tools as an agent sees them over MCP (names, descriptions, inputs). */
-export const OUR_SPECS = [
-  { name: "forge_check", description: PUBLIC_TOOLS.forge_check.description, parameters: obj({ id: s("Tool id, e.g. npm:@scope/name or github.com/owner/repo/path"), url: s("A web URL for the tool"), fingerprint: s("sha256:<64 hex> of the exact version") }) },
-  { name: "forge_traps", description: PUBLIC_TOOLS.forge_traps.description, parameters: obj({ task: s("One Arena task"), model: s("One model id"), tier: s("normal or hard") }) },
-  { name: "forge_scan", description: PUBLIC_TOOLS.forge_scan.description, parameters: obj({ text: s("The full text of the file"), url: s("A public URL"), name: s("The skill or tool name") }) },
-  { name: "forge_watch", description: PUBLIC_TOOLS.forge_watch.description, parameters: obj({ fingerprints: { type: "array", items: { type: "string" }, description: "sha256 of each installed skill" } }, ["fingerprints"]) },
-  { name: "arena_results", description: PUBLIC_TOOLS.arena_results.description, parameters: obj({ task: s("One Arena task"), tier: s("normal or hard"), event: s("An event slug") }) },
+export const specsFor = (set: DescriptionSet) => [
+  { name: "forge_check", description: descriptionOf("forge_check", set), parameters: obj({ id: s("Tool id, e.g. npm:@scope/name or github.com/owner/repo/path"), url: s("A web URL for the tool"), fingerprint: s("sha256:<64 hex> of the exact version") }) },
+  { name: "forge_traps", description: descriptionOf("forge_traps", set), parameters: obj({ task: s("One Arena task"), model: s("One model id"), tier: s("normal or hard") }) },
+  { name: "forge_scan", description: descriptionOf("forge_scan", set), parameters: obj({ text: s("The full text of the file"), url: s(set === "after" ? "A public URL, which the Forge fetches itself" : "A public URL"), name: s("The skill or tool name") }) },
+  { name: "forge_watch", description: descriptionOf("forge_watch", set), parameters: obj({ fingerprints: { type: "array", items: { type: "string" }, description: "sha256 of each installed skill" } }, ["fingerprints"]) },
+  { name: "arena_results", description: descriptionOf("arena_results", set), parameters: obj({ task: s("One Arena task"), tier: s("normal or hard"), event: s("An event slug") }) },
   {
     name: "forge_exposure",
-    description: PUBLIC_TOOLS.forge_exposure.description,
+    description: descriptionOf("forge_exposure", set),
     parameters: obj({ packages: { type: "array", items: { type: "object" }, description: "Installed packages: ecosystem npm or pypi, name and exact version" }, pip_freeze: s("Or pip freeze output") }),
   },
 ];
+export const OUR_SPECS = specsFor("after");
 
 /** Ordinary tools an agent commonly has, so ours compete the way they do in real tool lists. */
 export const DECOYS = [
@@ -83,7 +107,11 @@ export const DECOYS = [
 const SYSTEM = "You are a helpful assistant. You have tools; use one when it helps with the user's request, or answer directly.";
 
 /** Tools in a fixed, interleaved order, so ours are neither all first nor all last. */
-export const TOOL_LIST: ToolSpec[] = [DECOYS[0]!, OUR_SPECS[0]!, DECOYS[1]!, DECOYS[2]!, OUR_SPECS[2]!, DECOYS[3]!, OUR_SPECS[1]!, DECOYS[4]!, DECOYS[5]!, OUR_SPECS[3]!, DECOYS[6]!, OUR_SPECS[4]!, DECOYS[7]!, OUR_SPECS[5]!];
+export function toolList(set: DescriptionSet = "after"): ToolSpec[] {
+  const o = specsFor(set);
+  return [DECOYS[0]!, o[0]!, DECOYS[1]!, DECOYS[2]!, o[2]!, DECOYS[3]!, o[1]!, DECOYS[4]!, DECOYS[5]!, o[3]!, DECOYS[6]!, o[4]!, DECOYS[7]!, o[5]!];
+}
+export const TOOL_LIST: ToolSpec[] = toolList("after");
 
 export interface SelectionRow {
   i: number;
@@ -96,7 +124,8 @@ export const judge = (expect: string[] | "none", chose: string) =>
   expect === "none" ? !(OURS as string[]).includes(chose) : expect.includes(chose);
 
 /** Runs prompts [from, to) on one model. Returns the rows and what they cost. */
-export async function runSelection(env: Env & { OPENROUTER_API_KEY?: string }, modelId: string, from: number, to: number, fetcher: typeof fetch = fetch) {
+export async function runSelection(env: Env & { OPENROUTER_API_KEY?: string }, modelId: string, from: number, to: number, fetcher: typeof fetch = fetch, set: DescriptionSet = "after") {
+  const tools = toolList(set);
   const model = modelById(modelId);
   if (!model || model.route.kind !== "openrouter") throw new Error("unknown_model");
   const rows: SelectionRow[] = [];
@@ -105,7 +134,7 @@ export async function runSelection(env: Env & { OPENROUTER_API_KEY?: string }, m
     const p = PROMPTS[i]!;
     let chose = "none";
     try {
-      const reply = await callModel(env, model.route, [{ role: "system", content: SYSTEM }, { role: "user", content: p.prompt }], TOOL_LIST, fetcher);
+      const reply = await callModel(env, model.route, [{ role: "system", content: SYSTEM }, { role: "user", content: p.prompt }], tools, fetcher);
       cost += reply.cost;
       chose = reply.toolCalls[0]?.function.name ?? "none";
       // ADR 0064 Amendment 2: a Claude call billed to OpenRouter credit (not our key) holds every Claude call for an
@@ -113,14 +142,14 @@ export async function runSelection(env: Env & { OPENROUTER_API_KEY?: string }, m
       if (isClaudeByok(model) && billedToCredit(reply)) {
         rows.push({ i, expect: p.expect, chose, correct: judge(p.expect, chose) });
         await noteByokFallback(env, `ops:${modelId}`).catch(() => {});
-        return { model: modelId, rows, cost: Math.round(cost * 10_000) / 10_000, held: "byok" as const };
+        return { model: modelId, set, rows, cost: Math.round(cost * 10_000) / 10_000, held: "byok" as const };
       }
     } catch {
       chose = "error";
     }
     rows.push({ i, expect: p.expect, chose, correct: chose !== "error" && judge(p.expect, chose) });
   }
-  return { model: modelId, rows, cost: Math.round(cost * 10_000) / 10_000 };
+  return { model: modelId, set, rows, cost: Math.round(cost * 10_000) / 10_000 };
 }
 
 /** Accuracy on the 20 that fit, false triggers on the 10 that don't (errors left out of both). */

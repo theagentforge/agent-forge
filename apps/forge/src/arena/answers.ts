@@ -1,4 +1,4 @@
-import { familyOf, HARD3_2_TASKS, HARD3_TASKS, HARD_TASKS, taskById, TASKS, wilsonInterval } from "@forge/arena";
+import { familyOf, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, taskById, TASKS, wilsonInterval } from "@forge/arena";
 import type { Db } from "../services/db";
 import { modelRow, RESULTS_METHOD, trapsFell, versionsAndDates, type Run } from "./results";
 import { finishedRuns, isKnockout, RANKED_KINDS, tierOf, type Tier } from "./views";
@@ -43,14 +43,15 @@ export const arenaQuestion = (slug: string) => ARENA_QUESTIONS.find((q) => q.slu
 /** The answer page for a task id (any tier), for links from the task guides. */
 export const questionForTask = (task: string) => ARENA_QUESTIONS.find((q) => q.job === familyOf(task)) ?? null;
 
-export type AnswerVersion = "Hard v3.2" | "Hard v3" | "Hard v2" | "Normal";
+export type AnswerVersion = "Hard v3.3" | "Hard v3.2" | "Hard v3" | "Hard v2" | "Normal";
 
 /**
  * A job's versions, newest and hardest first: the answer leads with the first one that has ranked results. Hard v3.2
- * (ADR 0054) is listed for the two jobs that have it; like every version, it shows only once it has ranked runs.
+ * (ADR 0054) and Hard v3.3 (ADR 0132) are listed for the jobs that have them; like every version, it shows only once it has ranked runs.
  */
 export const versionsOf = (job: string) =>
   [
+    { task: HARD3_3_TASKS.find((x) => x.id === `${job}-hard3-3`), version: "Hard v3.3" as const },
     { task: HARD3_2_TASKS.find((x) => x.id === `${job}-hard3-2`), version: "Hard v3.2" as const },
     { task: HARD3_TASKS.find((x) => x.id === `${job}-hard3`), version: "Hard v3" as const },
     { task: HARD_TASKS.find((x) => x.id === `${job}-hard`), version: "Hard v2" as const },
