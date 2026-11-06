@@ -25,6 +25,7 @@ import {
   VERDICT_RUNS,
   versionLine,
   type AttemptResult,
+  type FindingsResult,
   type LogEvent,
   type Stats,
 } from "@forge/arena";
@@ -37,7 +38,7 @@ import { datasetWithProvenance, licenceInfo, runProvenance } from "../services/p
 import { replayDocBlock } from "../services/replay-keys";
 import { runDocument } from "../arena/run-doc";
 import { verifyHowTo } from "./replay-verify";
-import { consistencyBoard, DATASET_LICENCE, datasetRow, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
+import { consistencyBoard, DATASET_LICENCE, datasetRow, divisionRankings, eventCard, finishedRuns, isKnockout, isRankedEvent, modelName, parseTier, playlist, publicEvent, rankedEvents, rankedModelIds, runIdByPrefix, runWithLog, taskBoard, tierOf, tierTasks, type Consistency, type ModelRow, type Tier } from "../arena/views";
 import { eventCsv, eventData, eventDatasetLd } from "../arena/results";
 import { arenaDatasetLd } from "./structured-data";
 import { answerPagePath, questionForTask } from "../arena/answers";
@@ -50,6 +51,7 @@ import { failCard, shortRunId, verifiedReplay } from "../arena/fail-card";
 import { clipUrlFor } from "../arena/clips";
 import { formatSlot, headlineIcs, nextHeadlineJson, nextHeadlineSlot, WEEKLY_ATTEMPTS } from "../arena/headline-slot";
 import { send, site } from "./pages";
+import { attemptFindings, findingsSection } from "./findings";
 import { heldOutGap } from "../arena/holdout";
 import { CANARY_LINE, gapSection } from "./arena-history";
 
@@ -177,13 +179,14 @@ ${NOT_AFFILIATED}`,
 site.get("/arena", async (c) => {
   if (parseTier(c.req.query("tier")) === "hard") return arenaHard(c);
   const db = getDb(c.env);
-  const [list, practice, headline, ranks, duels, board] = await Promise.all([
+  const [list, practice, headline, ranks, duels, board, rankedIds] = await Promise.all([
     playlist(db),
     finishedRuns(db, { kinds: ["practice"], limit: 2000 }),
     finishedRuns(db, { kinds: ["card", "guest"], limit: 1 }),
     divisionRankings(db),
     channelDuels(c.env, db).catch(() => []),
     consistencyBoard(db, "normal"),
+    rankedModelIds(db),
   ]);
   const events = [...new Map(practice.map((r) => [r.summary.event, r.summary.eventName])).entries()];
   if (json(c)) return c.json({ name: PUBLIC_NAME, season: SEASON, tier: "normal", next_headline_bout: nextHeadlineJson(Date.now()), tasks: TASKS.map((t) => ({ id: t.id, title: t.title, guide: `/best/${t.id}` })), now_playing: list, channel: duels, consistency: board, practice_events: events.map(([slug]) => `/arena/event/${slug}`) });
@@ -225,7 +228,9 @@ ${(() => {
   const ms = testedModels();
   // ADR 0109: how each model is served (a free variant via OpenRouter is its own entry, never merged with a paid one).
   const item = (m: (typeof ms)[number]) => html`<li><b>${m.name}</b> <span class="muted">${m.lab.replace(/ \(open weights\)$/, "")} · ${routeLabel(m)}</span></li>`;
-  const main = ms.filter((m) => m.division !== "practice");
+  // A flagship added beside a lab's workhorse (Claude Opus 5.5) is listed and counted only once it has a finished ranked
+  // run (ADR 0064 Amendment 3); the main lineup's other models keep their place.
+  const main = ms.filter((m) => m.division !== "practice" && (!m.flagship || rankedIds.has(m.id)));
   const practice = ms.filter((m) => m.division === "practice");
   return more(
     html`<span id="h-models">Models we test</span>`,
@@ -359,7 +364,7 @@ function headlineSlotLine(now: number) {
 }
 
 /** The replay, key moments and scorecard sections, shared by House bouts and Proving Ground attempts. */
-export function replaySections(fs: ReturnType<typeof frames>, ms: ReturnType<typeof moments>, result: AttemptResult, score: number) {
+export function replaySections(fs: ReturnType<typeof frames>, ms: ReturnType<typeof moments>, result: AttemptResult, score: number, fx?: FindingsResult) {
   return html`<section class="panel replay" data-replay data-seconds="${condensedSeconds(fs)}">
 <div class="section-head"><h2>Replay</h2><button class="btn chamfer" type="button" data-play hidden>▶ Condensed replay</button></div>
 <div class="bars"><label>Progress (verified) <progress data-bar-progress max="1" value="${fs.at(-1)?.progress ?? 0}"></progress></label><label>Stamina (turns) <progress data-bar-stamina max="1" value="${fs.at(-1)?.stamina.turns ?? 0}"></progress></label></div>
@@ -377,6 +382,7 @@ ${result.traps.map((t) => {
 })}
 </tbody></table>
 <p class="muted">Official score ${Math.round(score * 100)}/100 (weights: pass ${OFFICIAL_WEIGHTS.pass}, quality ${OFFICIAL_WEIGHTS.quality}, traps ${OFFICIAL_WEIGHTS.traps}, honesty ${OFFICIAL_WEIGHTS.honesty}, cost ${OFFICIAL_WEIGHTS.cost}, speed ${OFFICIAL_WEIGHTS.speed}).</p></section>
+${fx ? findingsSection(fx) : ""}
 `;
 }
 
@@ -419,7 +425,7 @@ site.get("/arena/run/:id", async (c) => {
 <p class="verdict-row">${r.result.passed ? html`<span class="verdict v-clear chamfer">PASS</span>` : html`<span class="verdict v-flagged chamfer">${r.result.reason.startsWith("knockout") ? "KO" : "FAIL"}</span>`} ${ok ? html`<span class="label" title="The stored signature matches this log">Verified replay</span>` : html`<span class="label">Unverified</span>`} <span class="muted">${versionLine(r.run.task, r.run.finishedAt!, r.result)} · Recorded ${new Date(r.run.finishedAt!).toISOString().slice(0, 10)}${modelById(r.run.modelId) ? ` · ${routeLabel(modelById(r.run.modelId)!)}${isFreeVariant(modelById(r.run.modelId)!) ? ` · ${FREE_TRAINING_LABEL}` : ""}` : ""}${r.run.provider ? ` · provider ${r.run.provider}` : ""}${r.run.costEstimated ? " · cost estimated at list price" : ""}</span></p>
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
 ${shareBlock(c.env.PUBLIC_ORIGIN, id, card, clip)}
-${replaySections(fs, ms, r.result, r.run.score ?? 0)}
+${replaySections(fs, ms, r.result, r.run.score ?? 0, attemptFindings({ task: r.run.task, seed: r.run.seed, log: r.log, result: r.result }))}
 <section><h2>The task card</h2><pre class="verdict-line">${briefOf(r.log) ?? (task ? task.make(r.run.seed).brief : "")}</pre><p><a href="/arena/run/${id}.json">Download log, result and signature (JSON)</a></p>
 <p class="small muted">${r.run.replaySeal ? html`Replay format v2: hash-chained and signed with our <a href="/.well-known/forge-keys.json">published key</a>. ${verifyHowTo(`${c.env.PUBLIC_ORIGIN}/arena/run/${id}.json`)}.` : html`Replay format v1 (not sealed with format v2): it verifies by its stored signature only, which only The Forge can check.`} <a href="/methodology#replays">How replays are verified</a></p></section>
 ${NOT_AFFILIATED}${CANARY_LINE}`,

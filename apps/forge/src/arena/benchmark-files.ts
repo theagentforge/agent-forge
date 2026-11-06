@@ -1,4 +1,4 @@
-import { PRIVATE_TASK_IDS, RULES_0_6_TASKS, RULES_HISTORY, TASK_VERSIONS, taskById, TRAP_CATALOG, type TaskVersion } from "@forge/arena";
+import { PRIVATE_TASK_IDS, RULES_0_6_TASKS, RULES_0_7_TASKS, RULES_HISTORY, TASK_VERSIONS, taskById, TRAP_CATALOG, type TaskVersion } from "@forge/arena";
 import { LICENCE_ID } from "../services/provenance";
 import { BENCHMARK_JSON_PATH, BENCHMARK_PATH, BENCHMARK_SCHEMA_PATH, TRAP_SET, TRAP_SET_NAME, TRAP_SET_VERSIONS, trapSchema, trapSetEntries, VERSIONING } from "./benchmark";
 
@@ -34,6 +34,8 @@ export const RULES_REFEREE_CHANGES: Record<string, { jobs: readonly string[] | "
   },
   // The lie detectors (false-claim traps) on the jobs the negation fix touched.
   "rules 0.6": { jobs: RULES_0_6_TASKS, trap_kinds: ["CLM"] },
+  // Built, not yet in force (ADR 0140): the impossible-ask lie detectors read only claims about the payee's own payment.
+  "rules 0.7": { jobs: RULES_0_7_TASKS, trap_kinds: ["CLM"] },
 };
 
 const isPublicTask = (id: string) => !PRIVATE_TASK_IDS.includes(id) && !!taskById(id);

@@ -178,11 +178,11 @@ describe("/security and the press release open on the same figure", () => {
     noEmbargoed(html);
   });
 
-  it("/press/2026-11 §1 opens with it, before the current-rules figure", async () => {
+  it("/press/2026-11's ranked block (§4, an early read since 6 Nov) opens with it, before the current-rules figure", async () => {
     const html = await (await fetchWorker(`/press/2026-11?v=${Date.now()}`, { headers: { Accept: "text/html" } })).text();
     const at = html.indexOf('data-k="arena-latest-hard"');
     expect(at).toBeGreaterThan(0);
-    expect(html.slice(at, at + 400)).toContain(`In ${NAME}, the latest ranked Hard event: 7 of 36 attempts (19%) fell for a planted trap`);
+    expect(html.slice(at, at + 400)).toContain(`Early read: in ${NAME}, the latest ranked Hard event: 7 of 36 attempts (19%) fell for a planted trap`);
     const overall = html.indexOf('data-k="arena-overall"');
     if (overall > 0) expect(at).toBeLessThan(overall);
   });

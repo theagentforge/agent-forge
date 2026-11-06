@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import isolateSrc from "../../../integrations/house/isolate.mjs?raw";
 import probeSrc from "../../../integrations/house/probe.mjs?raw";
 import llms from "../public/llms.txt?raw";
 import * as t from "../src/db/schema";
@@ -246,7 +247,14 @@ describe("B3-06: field reports say what most of them are", () => {
     expect(Number(/SLOW_MS = (\d[\d_]*)/.exec(probeSrc)![1]!.replace(/_/g, "")) / 1000).toBe(HOUSE_SLOW_S);
     expect(probeSrc).toMatch(/"-y", `\$\{pkg\}@\$\{version\}`/);
     expect(probeSrc).toContain('method: "tools/list"');
-    expect(probeSrc).toContain("mkdtempSync");
+    // "A new, empty folder": since ADR 0134 amendment 2 the sandbox (isolate.mjs) makes it: a fresh home per probe,
+    // created with mkdir -m 700 for the probe's own throwaway user (or mkdtempSync locally), never reused.
+    expect(probeSrc).toContain("await sandbox.create()");
+    expect(isolateSrc).toContain('"mkdir", "-m", "700", "--", home');
+    expect(isolateSrc).toContain("mkdtempSync");
+    // Review (6 Nov): "in" that folder (its working directory) and "a clean environment" (probeEnv, env -i).
+    expect(isolateSrc).toContain('"/usr/bin/env", "-i", "-C", home');
+    expect(probeSrc).toContain("probeEnv(box.home");
     // Review (ADR 0105): the time limit and "slow" run from before npx starts, so they include the install.
     const hs = probeSrc.slice(probeSrc.indexOf("export function handshake"));
     // ADR 0108: npx or uvx (launcher), still spawned after the clock starts.

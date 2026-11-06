@@ -1,0 +1,74 @@
+name: House tool-history backfill shard
+
+# One shard of house-backfill.yml (ADR 0134), called once per shard. It runs third-party code (every version of the
+# servers in its share of the plan) with no secret, no token of ours and read-only contents. It checks the plan against
+# the sha256 the plan job reported, and reports its own results file's sha256 as this job's output, so the file job can
+# tell its file from one another shard's package code uploaded under its name. Within the shard, each version runs as
+# its own throwaway OS user (integrations/house/isolate.mjs, ADR 0134 amendment 2), so one package can't rewrite the
+# shard's other results, read this job's environment or files, or leave a process behind for the next version.
+on:
+  workflow_call:
+    inputs:
+      shard:
+        type: number
+        required: true
+      plan_sha:
+        type: string
+        required: true
+    outputs:
+      results_sha:
+        description: "sha256 of this shard's results.json"
+        value: ${{ jobs.probe.outputs.results_sha }}
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    outputs:
+      results_sha: ${{ steps.sha.outputs.results_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: house-backfill-plan
+          path: ${{ runner.temp }}
+      - name: Check the plan is the one the plan job wrote
+        working-directory: ${{ runner.temp }}
+        env:
+          PLAN_SHA: ${{ inputs.plan_sha }}
+        run: echo "$PLAN_SHA  plan.json" | sha256sum --check --strict
+      # Root-owned under /opt: probe users can run uv but not change it (ADR 0134 amendment 2).
+      - name: Install uv for PyPI servers (pinned version, hash-checked)
+        run: |
+          sudo python3 -m venv /opt/house-uv
+          sudo /opt/house-uv/bin/pip install --quiet --require-hashes --no-deps -r "$GITHUB_WORKSPACE/integrations/house/uv-requirements.txt"
+          echo "/opt/house-uv/bin" >> "$GITHUB_PATH"
+      # Closes the runner's home, workspace, temp folder ($GITHUB_* files) and runner directory to other users, then
+      # checks as a throwaway probe user that none of them, nor the docker socket, is reachable and it can't sudo.
+      - name: Lock the runner's folders away from probe users (and check)
+        run: node "$GITHUB_WORKSPACE/integrations/house/isolate.mjs" lockdown --uvx
+      - name: Install each version and list its tools (each as its own throwaway user, no secrets)
+        working-directory: ${{ runner.temp }}
+        env:
+          SHARD: ${{ inputs.shard }}
+          HOUSE_ISOLATION: user
+        run: node "$GITHUB_WORKSPACE/integrations/house/backfill.mjs" run plan.json "$SHARD" 10
+      - name: Fingerprint the results (the file job believes only this file)
+        id: sha
+        working-directory: ${{ runner.temp }}
+        run: echo "results_sha=$(sha256sum results.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: house-backfill-results-${{ inputs.shard }}
+          path: ${{ runner.temp }}/results.json
+          retention-days: 14

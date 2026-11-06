@@ -1,5 +1,6 @@
 import { FREE_TRAINING_LABEL } from "../arena/free-lane";
-import { ATTEMPTS, CANARY, CANARY_GUID, CHANGELOG, FIRST_STAMPED_RULES, LONGITUDINAL, citation, PUBLIC_NAME, RULES_HISTORY, RULES_VERSION, TASK_VERSIONS, TRAP_CATALOG, TRAP_FAMILIES, type TrapFamily } from "@forge/arena";
+import { ATTEMPTS, CANARY, CANARY_GUID, CHANGELOG, EXPLOITABILITY, FIRST_STAMPED_RULES, IMPACT, LONGITUDINAL, citation, OWASP_AGENTIC, PUBLIC_NAME, RULES_HISTORY, RULES_VERSION, SEVERITIES, SEVERITY_BANDS, SEVERITY_LABEL, SEVERITY_VERSION, severityDistribution, severityRubric, TASK_VERSIONS, TRAP_CATALOG, TRAP_FAMILIES, trapSeverity, type TrapEntry, type TrapFamily } from "@forge/arena";
+import { costOfFailure } from "../arena/benchmark";
 import { html } from "hono/html";
 import { copyBlock } from "./components";
 import { send, site } from "./pages";
@@ -8,6 +9,19 @@ import { DATASET_LICENCE, LICENCE_ID, LICENCE_PATH } from "../services/provenanc
 
 // The citable Arena methodology (ADR 0023 §5): how a bout is refereed, the trap catalog with stable public IDs and
 // provenance, the versions every result runs under, how to cite it, and a dated changelog. JSON twin: data only.
+
+/** ADR 0137: each trap's sandbox cost of failure (the Trap Set's own figure), computed once per isolate. */
+let COSTS: Map<string, ReturnType<typeof costOfFailure>> | null = null;
+const costs = () => (COSTS ??= new Map(TRAP_CATALOG.map((e) => [e.id, costOfFailure(e)])));
+const dollars = (c: number) => `$${(c / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+/** The cost of failure in words: a sandbox dollar range, records or units, or none. */
+export function costText(e: TrapEntry) {
+  const c = costs().get(e.id)!;
+  if (c.unit === "none" || c.min === null || c.max === null) return "No sandbox money moves";
+  const range = (f: (n: number) => string) => (c.min === c.max ? f(c.min!) : `${f(c.min!)} to ${f(c.max!)}`);
+  if (c.unit === "usd_cents_sandbox") return `${range(dollars)} (sandbox${c.scope === "job" ? ", whole job" : ""})`;
+  return `${range(String)} ${c.unit === "records" ? "records" : "units"}`;
+}
 
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -34,7 +48,11 @@ export function methodologyData(origin: string) {
       provenance: { pattern: e.provenance.pattern, source_title: e.provenance.source?.title ?? null, source_url: e.provenance.source?.url ?? null },
       since: e.since,
       traps: e.traps,
+      // ADR 0137: severity (an annotation with its own version, not part of the frozen Trap Set) and cost of failure.
+      severity: trapSeverity(e.id),
+      cost_of_failure: costs().get(e.id) ?? null,
     })),
+    severity: { ...severityRubric(), distribution: severityDistribution() },
     citation: citation(origin),
     licence: { id: LICENCE_ID, text: DATASET_LICENCE, url: `${origin}${LICENCE_PATH}`, croissant: `${origin}${CROISSANT_PATH}`, results_policy: `${origin}/results-policy` },
     contamination: {
@@ -55,6 +73,12 @@ site.get("/arena/methodology", async (c) => {
     return c.json(methodologyData(c.env.PUBLIC_ORIGIN), 200, { "Cache-Control": "public, max-age=300", Vary: "Accept" });
   const famName = (f: TrapFamily) => TRAP_FAMILIES[f].name;
   const reserved = (Object.keys(TRAP_FAMILIES) as TrapFamily[]).filter((f) => !TRAP_CATALOG.some((e) => e.family === f));
+  const dist = severityDistribution();
+  const sevCell = (e: TrapEntry) => {
+    const v = trapSeverity(e.id);
+    if (!v) return "";
+    return html`<b>${SEVERITY_LABEL[v.severity]}</b>: ${v.reason}.${v.owasp_agentic ? html` <span class="small">OWASP ${v.owasp_agentic.id} ${v.owasp_agentic.name}${v.owasp_agentic.fit === "partial" ? " (partial fit)" : ""}</span>` : ""}`;
+  };
   return send(c, {
     title: `${PUBLIC_NAME} methodology`,
     description: "How Arena bouts are refereed, the trap catalogue with stable IDs and real-world sources, versions, and how to cite results.",
@@ -86,10 +110,17 @@ site.get("/arena/methodology", async (c) => {
 <h2 id="catalog">Trap catalogue</h2>
 <p>Every trap has a stable public ID: <code>FA-</code>, a family code, and a number. IDs never change once published; a new trap gets the next number. ${TRAP_CATALOG.length} traps in ${new Set(TRAP_CATALOG.map((e) => e.family)).size} families.${reserved.length ? html` Reserved for traps in a later task version: ${reserved.map((f) => html`<b>${f}</b> (${TRAP_FAMILIES[f].name.toLowerCase()})`)}.` : ""} How often each model falls for each trap is on <a href="/arena/failures">the failure-mode board</a>; the same traps grouped by business task (refunds, payments, bookings, stock, records, truthful "done", permissions) are on <a href="/arena/business">business agent reliability</a>.</p>
 <div class="table-wrap"><table class="table stack trap-catalog">
-<thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Based on (real-world pattern)</th><th scope="col">Since</th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">Family</th><th scope="col">Trap</th><th scope="col">Severity</th><th scope="col">Cost of failure</th><th scope="col">Based on (real-world pattern)</th><th scope="col">Since</th></tr></thead>
 <tbody>${TRAP_CATALOG.map(
-      (e) => html`<tr id="${e.id}"><td data-label="ID"><a href="/arena/failures/${e.id}"><code>${e.id}</code></a></td><td data-label="Family">${famName(e.family)}</td><td data-label="Trap">${e.description}</td><td data-label="Models">${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</td><td data-label="Since">${e.since}</td></tr>`,
+      (e) => html`<tr id="${e.id}"><td data-label="ID"><a href="/arena/failures/${e.id}"><code>${e.id}</code></a></td><td data-label="Family">${famName(e.family)}</td><td data-label="Trap">${e.description}</td><td data-label="Severity">${sevCell(e)}</td><td data-label="Cost of failure">${costText(e)}</td><td data-label="Models">${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</td><td data-label="Since">${e.since}</td></tr>`,
     )}</tbody></table></div>
+
+<h2 id="severity">Severity</h2>
+<p>Each trap has a severity on a four-level scale (${SEVERITY_VERSION}, ${fmtDate("2026-11-05")}), worked out by code from two ratings: what the failure does (impact) and what it takes to trigger it outside the sandbox (exploitability). The impact level plus the exploitability adjustment gives a score: ${SEVERITY_BANDS.map((b) => `${Number.isFinite(b.min) ? `${b.min}${b.severity === "critical" ? " or more" : ""}` : "2 or less"} is ${SEVERITY_LABEL[b.severity]}`).join(", ")}. Severity is an annotation on the Trap Set, not part of its frozen definition, and it never changes a verdict.</p>
+<div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Severity</th><th scope="col">Means</th><th scope="col" class="num">Public traps</th></tr></thead><tbody>${SEVERITIES.map((v) => html`<tr><td data-label="Severity"><b>${SEVERITY_LABEL[v]}</b></td><td data-label="Means">${SEVERITY_BANDS.find((b) => b.severity === v)!.text}</td><td data-label="Traps" class="num">${dist[v]}</td></tr>`)}</tbody></table></div>
+<p><b>Impact</b> (level): ${Object.values(IMPACT).map((x, i) => html`${i ? "; " : ""}${x.text} (${x.level})`)}.</p>
+<p><b>Exploitability</b> (adjustment): ${Object.values(EXPLOITABILITY).map((x, i) => html`${i ? "; " : ""}${x.text} (${x.adjust > 0 ? `+${x.adjust}` : x.adjust})`)}.</p>
+<p>Where a trap fits a category of the <a href="${OWASP_AGENTIC.source.url}" rel="noopener">${OWASP_AGENTIC.source.title}</a>, the catalogue names it, and says when the fit is partial; traps with no close category name none. The cost of failure beside each rating is the Trap Set's sandbox amount at stake, measured on the job's own published seeds: invented money, never an estimate of real losses.</p>
 
 <h2 id="versions">Versions</h2>
 <p>Two version numbers go with every result: the <b>rules</b> (the referee, harness, limits and scoring) and the <b>task version</b> of the job. A bout page shows them as, for example, "Rules 0.3 · Hard v3", and each row of <a href="/arena/dataset.json">the dataset</a> has <code>rules_version</code>, <code>task_version</code> and the public IDs of the traps it sprang.</p>

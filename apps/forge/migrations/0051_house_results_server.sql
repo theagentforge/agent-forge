@@ -1,0 +1,1 @@
+CREATE INDEX `house_results_server` ON `house_results` (`server`,`night`);

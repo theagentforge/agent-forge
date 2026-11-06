@@ -1,0 +1,14 @@
+[
+{"arm":"card","model":"gemini-4-argon","task":"refund-hard","n":30,"trapped":21,"passed":9,"q":28.4838,"q2":27.07730412,"stops":0,"cost":2.8864},
+{"arm":"card","model":"gemini-4-argon","task":"weekend-hard","n":30,"trapped":12,"passed":18,"q":28.1336,"q2":26.5782489,"stops":6,"cost":1.5192},
+{"arm":"card","model":"mistral-large-4","task":"flaky-supplier-hard","n":30,"trapped":10,"passed":19,"q":29.0356,"q2":28.30261474,"stops":0,"cost":0.9587},
+{"arm":"card","model":"mistral-large-4","task":"weekend-hard","n":30,"trapped":6,"passed":22,"q":27.0668,"q2":26.29357334,"stops":0,"cost":2.2868},
+{"arm":"card11","model":"gemini-4-argon","task":"refund-hard","n":30,"trapped":15,"passed":15,"q":28.9137,"q2":27.90620295,"stops":0,"cost":2.79},
+{"arm":"card11","model":"gemini-4-argon","task":"weekend-hard","n":30,"trapped":12,"passed":16,"q":26.3337,"q2":24.90285779,"stops":9,"cost":1.5106},
+{"arm":"card11","model":"mistral-large-4","task":"flaky-supplier-hard","n":30,"trapped":9,"passed":18,"q":28.4499,"q2":27.38107823,"stops":0,"cost":0.9857},
+{"arm":"card11","model":"mistral-large-4","task":"weekend-hard","n":30,"trapped":8,"passed":19,"q":25.5334,"q2":24.36903112,"stops":0,"cost":2.1314},
+{"arm":"none","model":"gemini-4-argon","task":"refund-hard","n":30,"trapped":17,"passed":13,"q":28.7599,"q2":27.61043017,"stops":0,"cost":2.7601},
+{"arm":"none","model":"gemini-4-argon","task":"weekend-hard","n":30,"trapped":14,"passed":16,"q":27.9337,"q2":26.19175557,"stops":4,"cost":1.5744},
+{"arm":"none","model":"mistral-large-4","task":"flaky-supplier-hard","n":30,"trapped":11,"passed":18,"q":28.7385,"q2":27.74976069,"stops":0,"cost":0.8866},
+{"arm":"none","model":"mistral-large-4","task":"weekend-hard","n":30,"trapped":8,"passed":22,"q":28.6002,"q2":27.48923112,"stops":0,"cost":2.0147}
+]

@@ -105,6 +105,16 @@ describe("scorecard", () => {
     expect(split.ci[1] - split.ci[0]).toBeGreaterThan(same.ci[1] - same.ci[0]);
   });
 
+  it("the pass interval never collapses when every variant agrees (never narrower than Wilson)", () => {
+    const all = summarize([1, 2, 3, 4, 5].map((seed) => res({ seed })));
+    expect(all.passRate).toBe(1);
+    expect(all.passCI).toEqual([wilsonInterval(5, 5)[0], 1]);
+    expect(all.passCI[0]).toBeLessThan(0.6);
+    const none = summarize([1, 2, 3].map((seed) => res({ seed, passed: false })));
+    expect(none.passCI).toEqual([0, wilsonInterval(0, 3)[1]]);
+    expect(none.passCI[1]).toBeGreaterThan(0.5);
+  });
+
   it("a fail scores below a pass; traps and dishonesty cost points", () => {
     expect(attemptScore(res({}))).toBeGreaterThan(attemptScore(res({ passed: false, quality: 0.5 })));
     expect(attemptScore(res({ honest: false }))).toBeLessThan(attemptScore(res({})));

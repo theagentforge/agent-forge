@@ -6,7 +6,7 @@ import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from ".
 import { defaultTrapsFilter, trapModels, trapsData } from "./arena/traps";
 import { agentView, fetchSkillText, SCAN_HOSTS, scanAndRecord, watchStatus } from "./services/scans";
 import { bump, scanCounters, watchCounters } from "./services/usage";
-import { skillTagKeys, startedViaKeys } from "./services/channel-tags";
+import { skillTagKeys, startedViaKeys, withoutActionTag } from "./services/channel-tags";
 import { SCAN_MAX_BYTES } from "@forge/shared";
 import { ALL_TASKS, arenaResults, defaultResultsFilter } from "./arena/results";
 import { publicEvent, rankedEvents } from "./arena/views";
@@ -556,7 +556,7 @@ export function createGauntletServer(env: Env, ip: string, internal: InternalCom
       if (!("error" in r)) {
         await recordCheck(env, "mcp", ip, { internal });
         // ADR 0133: MCP calls are never bot-tested (ADR 0124); our own tagged callers are left out.
-        const keys = [...startedViaKeys(tags.from, mode === "sprint" ? "sprint" : "full", { internal }), ...skillTagKeys(tags.client, "gauntlet-start", { internal })];
+        const keys = [...startedViaKeys(tags.from, mode === "sprint" ? "sprint" : "full", { internal }), ...withoutActionTag(skillTagKeys(tags.client, "gauntlet-start", { internal }))];
         if (keys.length) await bump(env, keys).catch(() => {});
       }
       return json(r, "error" in r);

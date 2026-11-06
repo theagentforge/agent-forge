@@ -10,12 +10,13 @@
 // MASTER_PLAN §7.2; docs/runbooks/house-tester.md
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { defaultSandbox, isolationBroken, probeEnv, probePath, whichIn, writeResultsFile } from "./isolate.mjs";
 
 export const REGISTRY = "https://registry.modelcontextprotocol.io";
 export const PROBE_TIMEOUT_MS = 75_000;
+/** The longest JSON-RPC line read from a server (characters): far above any honest tools/list answer. */
+export const MAX_LINE = 16 << 20;
 export const SLOW_MS = 20_000;
 export const PROTOCOL = "2025-06-18";
 
@@ -319,59 +320,70 @@ export function launcher(registry, pkg, version, args = []) {
   return registry === "pypi" ? ["uvx", [`${pkg}@${version}`, ...safe]] : ["npx", ["-y", `${pkg}@${version}`, ...safe]];
 }
 
-/** Starts one server with npx (or uvx) and speaks just enough MCP to list its tools. */
-export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [], registry = "npm") {
+/**
+ * Starts one server with npx (or uvx) and speaks just enough MCP to list its tools. ADR 0134 amendment 2: the server
+ * runs inside a sandbox from isolate.mjs: with HOUSE_ISOLATION=user (the House workflows), as a fresh OS user created
+ * for this probe alone, with a minimal explicit environment, and removed (every process killed) before this returns.
+ * `opts.command` ([absolute path, argv]) replaces the launcher; only the isolation tests use it.
+ */
+export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [], registry = "npm", opts = {}) {
+  return (async () => {
+    const sandbox = opts.sandbox ?? defaultSandbox();
+    const box = await sandbox.create();
+    try {
+      return await converse(box, pkg, version, timeoutMs, args, registry, opts.command);
+    } finally {
+      await box.destroy();
+    }
+  })();
+}
+
+function converse(box, pkg, version, timeoutMs, args, registry, command) {
   return new Promise((resolve) => {
-    const dir = mkdtempSync(join(tmpdir(), "house-"));
+    const [name, argv] = command ?? launcher(registry, pkg, version, args);
+    // The launcher by absolute path (looked up on the runner's PATH), so the server's own PATH can stay minimal.
+    const cmd = name.includes("/") ? name : (whichIn(name) ?? name);
+    // A clean environment: no tokens or secrets reach the server, only PATH, HOME, LANG and caches inside its home
+    // (isolate.mjs probeEnv). Proxy settings pass through where they exist.
+    const env = probeEnv(box.home, { path: probePath(cmd) });
     const started = Date.now();
-    const [cmd, argv] = launcher(registry, pkg, version, args);
-    const child = spawn(cmd, argv, {
-      cwd: dir,
-      // A clean environment: no tokens or secrets reach the server. Proxy settings pass through where they exist.
-      // uv keeps its cache, tools and any Python it downloads inside the scratch folder too.
-      env: {
-        PATH: process.env.PATH,
-        HOME: dir,
-        CI: "1",
-        npm_config_cache: join(dir, ".npm"),
-        npm_config_update_notifier: "false",
-        UV_CACHE_DIR: join(dir, ".uv-cache"),
-        UV_TOOL_DIR: join(dir, ".uv-tools"),
-        UV_PYTHON_INSTALL_DIR: join(dir, ".uv-python"),
-        UV_PYTHON_PREFERENCE: "system",
-        UV_NO_CONFIG: "1",
-        ...Object.fromEntries(
-          ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
-            .filter((k) => process.env[k])
-            .map((k) => [k, process.env[k]]),
-        ),
-        ...(process.env.NODE_EXTRA_CA_CERTS ? { npm_config_cafile: process.env.NODE_EXTRA_CA_CERTS } : {}),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
-    });
     const result = { initialized: false, toolsListed: undefined, stderr: "", ms: 0, tools: [] };
+    let child;
+    try {
+      child = box.spawn(cmd, argv, env);
+    } catch (e) {
+      result.stderr = String(e?.message ?? e);
+      resolve(result);
+      return;
+    }
     let buf = "";
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       result.ms = Date.now() - started;
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
+      // The sandbox's destroy (in handshake) kills every process the server left; this only stops our pipes.
+      for (const s of [child.stdin, child.stdout, child.stderr]) s?.destroy?.();
       resolve(result);
     };
-    const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
+    // A server that closes its stdin or exits early makes a write fail with EPIPE; without a handler that error would
+    // end the whole shard's process (every other server's result lost). The exit handler records the server's answer.
+    child.stdin.on("error", () => {});
+    const send = (m) => {
+      if (!done) child.stdin.write(`${JSON.stringify(m)}\n`);
+    };
     const timer = setTimeout(finish, timeoutMs);
+    // Review (6 Nov): decoded as UTF-8 across chunk boundaries (a character split between two chunks is not mangled).
+    child.stderr.setEncoding?.("utf8");
+    child.stdout.setEncoding?.("utf8");
     child.stderr.on("data", (d) => {
-      if (result.stderr.length < 4000) result.stderr += d.toString();
+      if (result.stderr.length < 4000) result.stderr += String(d).slice(0, 4000);
     });
     child.stdout.on("data", (d) => {
-      buf += d.toString();
+      if (done) return;
+      buf += String(d);
       let i;
-      while ((i = buf.indexOf("\n")) >= 0) {
+      while (!done && (i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
         let msg;
@@ -380,6 +392,9 @@ export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [],
         } catch {
           continue;
         }
+        // Review (6 Nov): a server printing `null` (or any non-object) made `msg.id` throw inside this handler, an
+        // uncaught exception that ended the whole shard's process; such lines are skipped like invalid JSON.
+        if (msg === null || typeof msg !== "object") continue;
         if (msg.id === 1 && msg.result) {
           result.initialized = true;
           send({ jsonrpc: "2.0", method: "notifications/initialized" });
@@ -392,6 +407,14 @@ export function handshake(pkg, version, timeoutMs = PROBE_TIMEOUT_MS, args = [],
           clearTimeout(timer);
           finish();
         }
+      }
+      // Review (6 Nov): a server writing without newlines grew `buf` until the shard's process ran out of memory (every
+      // result lost). An unfinished line longer than MAX_LINE ends this probe (no answer); honest tools/list answers
+      // are far smaller.
+      if (!done && buf.length > MAX_LINE) {
+        result.stderr = `${result.stderr.slice(0, 3900)}\n[house] output line over ${MAX_LINE} characters`;
+        clearTimeout(timer);
+        finish();
       }
     });
     child.on("exit", () => {
@@ -478,7 +501,8 @@ async function probeAll(candidates) {
 }
 
 function writeResults(results) {
-  writeFileSync("results.json", JSON.stringify({ probedAt: new Date().toISOString(), results }, null, 2));
+  // Written by this (parent) process only, mode 600; in user mode only into a folder probe users can't open.
+  writeResultsFile("results.json", JSON.stringify({ probedAt: new Date().toISOString(), results }, null, 2));
   const by = results.reduce((a, r) => ((a[r.why ?? r.outcome] = (a[r.why ?? r.outcome] ?? 0) + 1), a), {});
   console.log(JSON.stringify(by));
 }
@@ -510,6 +534,7 @@ async function main() {
     const shard = planShard(plan, rest[1] ?? "0", Number(rest[2] ?? 1));
     console.log(`Probing ${shard.length} servers`);
     writeResults(await probeAll(shard));
+    failIfBroken();
     return;
   }
   const count = Number(mode ?? 40);
@@ -518,6 +543,16 @@ async function main() {
   const candidates = await pickCandidates(count, dayIndex);
   console.log(`Probing ${candidates.length} servers`);
   writeResults(await probeAll(candidates));
+  failIfBroken();
+}
+
+/** A probe user's processes survived: this runner's results can't be trusted, so the job fails (nothing is filed). */
+export function failIfBroken() {
+  const why = isolationBroken();
+  if (why) {
+    console.error(`Isolation broken: ${why}; this shard's results are not to be believed`);
+    process.exit(1);
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main().then(() => process.exit(0));

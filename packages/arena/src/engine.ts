@@ -1,5 +1,5 @@
 import { rng, subSeed } from "./rng";
-import type { AttemptCheckpoint, AttemptResult, CallRecord, Caps, EndReason, FinishClaim, LogEvent, TaskType, TaskVariant, ToolDef, ToolSpec, Twist } from "./types";
+import type { AttemptCheckpoint, AttemptResult, CallRecord, Caps, EndReason, FinishClaim, LogEvent, TaskType, TaskVariant, ToolDef, ToolSpec, TrapResult, Twist } from "./types";
 
 // One attempt of one model at one task variant. The engine owns the sandbox state, runs tool calls, enforces the
 // shared caps (stamina) and writes the referee log. It never sees the model's text except to log it.
@@ -162,6 +162,19 @@ export class Attempt<S = unknown> {
     if (this.tokensIn + this.tokensOut > this.caps.tokens) return "knockout_tokens";
     if (this.activeMs > this.caps.ms) return "knockout_time";
     return null;
+  }
+
+  /**
+   * ADR 0137 (findings): the referee's trap verdicts on the sandbox as it stands, without ending the attempt or writing
+   * to the log. The referee gets copies, so nothing here can change the attempt.
+   */
+  peekTraps(claim: FinishClaim | null = null): TrapResult[] {
+    return this.task.referee(this.variant, structuredClone(this.state), this.calls.map((c) => ({ ...c })), claim).traps;
+  }
+
+  /** ADR 0137: whether a tool of this job only reads state. */
+  isReadOnly(name: string) {
+    return this.tools.get(name)?.readOnly === true;
   }
 
   /** True when the model has used every turn without finishing. */

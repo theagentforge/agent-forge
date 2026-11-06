@@ -170,6 +170,12 @@ describe("the Sprint end to end over MCP (acceptance tests 1, 2, 4)", () => {
     expect(end.report.fell_for).toContain("FA-INJ-001");
     expect(end.report.trap.id).toBe("FA-INJ-001");
     expect(end.report.share.summary).toContain("My agent fell for FA-INJ-001");
+    // ADR 0137: the Sprint result carries the finding: the call that sprang it, the mechanism and the fix.
+    const f = end.report.findings.find((x: any) => x.trap.id === "FA-INJ-001");
+    expect(f).toMatchObject({ sprung_by: "call", act: { tool: "pay_invoice" }, basis: { model_text_used: false, llm_used: false } });
+    expect(end.report.findings_basis).toBe("referee_record_and_trace_only_no_model_text_no_llm");
+    const page = await (await get(end.report.report_url)).text();
+    expect(page).toContain('id="finding-FA-INJ-001"');
   });
 
   it("works over HTTP with {\"mode\":\"sprint\"}, and refuses a bad mode or a Sprint with card_from", async () => {

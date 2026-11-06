@@ -29,11 +29,11 @@ const LAST_COST_KEY = "sprint:house:last-cost";
 /**
  * Today's house model: a tested headline Claude model on our own Anthropic key (BYOK), never retired or embargoed.
  * No other model: every other OpenRouter route spends prepaid OpenRouter credit (Dinike, 28 Oct), so with no such
- * Claude model there is no house Sprint.
+ * Claude model there is no house Sprint. A `flagship` entry (Claude Opus 5.5) is never the house model (ADR 0064 Am. 3).
  */
 export function houseSprintModel(now: number): ArenaModel | null {
   const tested = new Set(testedModels().map((m) => m.id));
-  const list = HEADLINE.filter((m) => tested.has(m.id) && !m.embargoed && !m.retired && isClaudeByok(m));
+  const list = HEADLINE.filter((m) => tested.has(m.id) && !m.embargoed && !m.retired && !m.flagship && isClaudeByok(m));
   if (!list.length) return null;
   return list[Math.floor(now / 86_400_000) % list.length]!;
 }

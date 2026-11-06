@@ -26,6 +26,10 @@ const UNDOCUMENTED = [
   // ADR 0131: the House tester's hooks for requested servers.
   "GET /api/v1/house/requests/queue",
   "POST /api/v1/house/requests",
+  // ADR 0134: the tool-history backfill's hooks (House internals, like the ones above).
+  "GET /api/v1/house/backfill/plan",
+  "POST /api/v1/house/backfill/versions",
+  "POST /api/v1/house/backfill/results",
   "POST /api/v1/social/moltbook",
   "GET /api/v1/social/moltbook/replies",
   "GET /api/v1/ops/scout-signals",
@@ -73,7 +77,8 @@ describe("GET /openapi.json", () => {
   });
 
   it("documents every public route in api.ts except the ones left out on purpose", () => {
-    const norm = (p: string) => p.replace(/\{[^}]+\}|:[a-z]+/gi, ":p");
+    // A trailing "*" (GET /api/v1/history/*, ADR 0141: the server id may hold "/") is one path parameter too.
+    const norm = (p: string) => p.replace(/\{[^}]+\}|:[a-z]+|\*$/gi, ":p");
     const documented = new Set(Object.entries((openApiSpec(env.PUBLIC_ORIGIN) as Spec).paths).flatMap(([p, ops]) => Object.keys(ops).map((m) => `${m.toUpperCase()} ${norm(p)}`)));
     const routed = [...new Set(publicApi.routes.filter((r) => r.method !== "ALL").map((r) => `${r.method} ${norm(r.path)}`))];
     const missing = routed.filter((r) => !documented.has(r) && !UNDOCUMENTED.includes(r));
@@ -95,6 +100,7 @@ describe("GET /openapi.json", () => {
       watchSkills: () => post("/api/v1/watch", { fingerprints: [scan.fingerprint] }),
       checkExposure: () => post("/api/v1/exposure", {}),
       stats: () => fetchWorker("/api/v1/stats"),
+      serverHistory: () => fetchWorker(`/api/v1/history/${encodeURIComponent("npm:@openapi-test/none")}`, { headers: { "CF-Connecting-IP": IP } }),
       health: () => fetchWorker("/api/v1/health"),
       gauntletStart: () => post("/api/v1/gauntlet", { card_from: "x" }),
       gauntletStatus: () => fetchWorker(`/api/v1/gauntlet/${g.gauntlet_id}`),

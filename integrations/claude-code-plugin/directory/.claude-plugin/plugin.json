@@ -1,0 +1,15 @@
+{
+  "name": "theagentforge",
+  "displayName": "The Agent Forge",
+  "version": "0.9.0",
+  "description": "The Agent Forge for Claude Code: connects the Forge MCP servers to check a skill, MCP server or package before you trust it and to file field reports, adds the forge skill, and runs the Gauntlet Sprint (/theagentforge:sprint) and the Gauntlet (/theagentforge:gauntlet).",
+  "author": { "name": "The Agent Forge", "email": "hello@theagentforge.io", "url": "https://theagentforge.io" },
+  "homepage": "https://theagentforge.io/connect",
+  "documentationUrl": "https://theagentforge.io/connect",
+  "privacyPolicyUrl": "https://theagentforge.io/privacy",
+  "termsOfServiceUrl": "https://theagentforge.io/terms",
+  "supportUrl": "https://theagentforge.io/about",
+  "repository": "https://github.com/theagentforge/agent-forge",
+  "license": "MIT",
+  "keywords": ["security", "mcp", "skills", "supply-chain", "field-reports"]
+}

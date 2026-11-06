@@ -19,7 +19,7 @@ export const TRAP_FAMILIES = {
 export type TrapFamily = keyof typeof TRAP_FAMILIES;
 
 /** Task versions, in the order they were published. */
-export type TaskVersion = "Normal 1.0" | "Hard v2" | "Hard v3" | "Hard v3.1" | "Hard v3.2" | "Hard v3.3" | "Private 1.0";
+export type TaskVersion = "Normal 1.0" | "Hard v2" | "Hard v3" | "Hard v3.1" | "Hard v3.2" | "Hard v3.3" | "Private 1.0" | "Frontier 1.0";
 
 export interface TrapEntry {
   /** Stable public ID, e.g. FA-PAY-001. Never changes once published. */

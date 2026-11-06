@@ -313,7 +313,7 @@ site.get("/admin/kpis", async (c) => {
     {
       ...page,
       body: html`<h1 class="page-title">Growth KPIs</h1>
-<p>Full UTC days to ${as_of}. Definitions: ADR 0039. Internal only. <a href="/admin/channels">Channel scoreboard, Sprint share loop and ClawHub use</a> (ADR 0133).</p>
+<p>Full UTC days to ${as_of}. Definitions: ADR 0039. Internal only. <a href="/admin/channels">Channel scoreboard, Sprint share loop and ClawHub use</a> (ADR 0133). <a href="/admin/tool-history">Tool-definition backfill</a> (ADR 0134).</p>
 <p><b>North star:</b> ${fmt(north.value)} ${north.unit} (${STATUS_LABEL[north.status]}); last 14 days ${spark(daily)}</p>
 <table class="kpi-table">
 <thead><tr><th>KPI</th><th>Now</th><th>First target</th><th>Second target</th><th>Status</th><th>30-day trend</th></tr></thead>

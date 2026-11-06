@@ -1,4 +1,4 @@
-import { Attempt, DEFAULT_CAPS, freshBoutSeed, publicTrapId, RULES_VERSION, TASKS, taskById, taskVersion, type AttemptResult, type CallRecord, type TaskType } from "@forge/arena";
+import { Attempt, bySeverity, DEFAULT_CAPS, freshBoutSeed, publicTrapId, RULES_VERSION, TASKS, taskById, taskVersion, type AttemptResult, type CallRecord, type Finding, type TaskType } from "@forge/arena";
 import { provenance } from "../services/provenance";
 import { sealRun } from "../services/replay-keys";
 import { TRAP_CARD_DATE, TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
@@ -14,6 +14,7 @@ import { bump as bumpUsage } from "../services/usage";
 import { modelName, notEmbargoed } from "./views";
 import { SPRINT_CAPS, SPRINT_DAILY_PER_SOURCE, SPRINT_MCP_CALLS_MAX, SPRINT_PATH, SPRINT_TIME_LIMIT_MS, SPRINT_TOOL_CALLS, sprintOutcome, sprintPick, sprintSeed } from "./sprint";
 import { verifyCommand } from "../web/replay-verify";
+import { attemptFindings, findingsJson } from "../web/findings";
 
 // The Gauntlet (ADR 0024): the six everyday jobs in a row, for any agent, with no account. The server only referees:
 // it rebuilds each sandbox by replaying the stored calls, so a run costs D1 writes and no model. At the end the agent
@@ -55,6 +56,8 @@ export interface GauntletSummary {
   traps_total: number;
   /** "task/trap" keys of the traps it fell for. */
   fell: string[];
+  /** ADR 0137: findings per job, built when the run finished (public scope; the logs are deleted after 30 days). */
+  findings?: { job: number; findings: Finding[]; withheld: number }[];
 }
 
 const newGauntletId = () => `g${crypto.randomUUID().replace(/-/g, "")}`;
@@ -151,7 +154,9 @@ function replay(b: Pick<B, "task" | "seed" | "calls">, caps = DEFAULT_CAPS) {
  */
 export function tailoredCard(fell: string[], runId: string): string {
   const hit = new Set(fell);
-  const first = TRAP_CHECKS.filter((c) => c.traps.some((k) => hit.has(k)));
+  // ADR 0137: the checks for traps it fell for, most severe trap first (the published card's order within a level).
+  const worst = (c: (typeof TRAP_CHECKS)[number]) => c.traps.filter((k) => hit.has(k)).map((k) => publicTrapId(k.split("/")[0]!, k.split("/")[1]!))[0] ?? null;
+  const first = bySeverity(TRAP_CHECKS.filter((c) => c.traps.some((k) => hit.has(k))), worst);
   const rest = TRAP_CHECKS.filter((c) => !first.includes(c));
   const head = `Checks for my AI agent (Forge trap card v${TRAP_CARD_VERSION}, ${TRAP_CARD_DATE}, tailored from Gauntlet run ${runId.slice(1, 9)}):`;
   if (!first.length) return [head, ...rest.map((c) => `- ${c.text}`)].join("\n");
@@ -392,7 +397,7 @@ async function finishAll(env: Env, g: G, b: B, now: number, reason: "knockout_ti
 async function finalize(env: Env, g: G, now: number): Promise<G> {
   const db = getDb(env);
   const bouts = await db.select().from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, g.id)).orderBy(asc(t.arenaGauntletBouts.idx));
-  const summary = summarise(bouts, jobsOf(g));
+  const summary: GauntletSummary = { ...summarise(bouts, jobsOf(g)), findings: jobFindings(bouts) };
   // The first run gets its own card; a measured re-run keeps the card it was given; a Sprint (one job) gets none.
   const card = g.mode === "sprint" ? null : g.cardFrom ? g.card : tailoredCard(summary.fell, g.id);
   await db.update(t.arenaGauntlets).set({ status: "done", summary, card, finishedAt: now }).where(eq(t.arenaGauntlets.id, g.id));
@@ -428,6 +433,25 @@ export function summarise(bouts: Pick<B, "idx" | "task" | "result">[], list: Tas
   };
 }
 
+/** ADR 0137: each finished job's findings, from its stored log and result (public scope). */
+export function jobFindings(bouts: Pick<B, "idx" | "task" | "seed" | "log" | "result">[]): NonNullable<GauntletSummary["findings"]> {
+  return bouts
+    .filter((b) => b.result)
+    .map((b) => {
+      const fx = attemptFindings({ task: b.task, seed: b.seed, log: b.log, result: b.result });
+      return { job: b.idx + 1, findings: fx.findings, withheld: fx.withheld };
+    })
+    .filter((x) => x.findings.length || x.withheld);
+}
+
+/** A finished run's findings: as stored when it finished, else rebuilt from logs still kept. */
+export async function runFindings(db: Db, g: Pick<G, "id" | "summary">) {
+  const s = g.summary as GauntletSummary | null;
+  if (s?.findings) return s.findings;
+  const bouts = await db.select().from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, g.id)).orderBy(asc(t.arenaGauntletBouts.idx));
+  return jobFindings(bouts);
+}
+
 async function reportOf(env: Env, g: G) {
   const origin = env.PUBLIC_ORIGIN;
   const s = g.summary as GauntletSummary | null;
@@ -452,7 +476,9 @@ async function reportOf(env: Env, g: G) {
     jobs_total: s.jobs_total,
     traps_fell: s.traps_fell,
     traps_total: s.traps_total,
-    fell_for: s.jobs.flatMap((j) => j.traps.filter((x) => x.triggered).map((x) => x.public_id ?? `${j.task}/${x.id}`)),
+    fell_for: bySeverity(s.jobs.flatMap((j) => j.traps.filter((x) => x.triggered).map((x) => x.public_id ?? `${j.task}/${x.id}`)), (x) => x),
+    /** ADR 0137: per job, what the agent did for each sprung trap, built from the referee's record and the trace. */
+    findings: await runFindings(db, g),
     measured_rerun_of: g.cardFrom,
     /** V2: the run this one challenged, and the head-to-head page (data). */
     challenge_of: g.challengeOf ?? null,
@@ -537,6 +563,8 @@ export async function sprintReport(env: Env, g: G, s: GauntletSummary) {
     featured_trap: g.sprint!.trap,
     fell_for: o.fell_for,
     fell_for_unlisted: o.fell_for_unlisted,
+    /** ADR 0137: the finding for each sprung trap (public catalogue only), from the referee's record and the trace. */
+    ...findingsJson(sprintFindings(s, bout)),
     sandbox_at_stake: o.sandbox_at_stake,
     card_image_url: `${origin}/og/sprint/${g.id}.png`,
     // ADR 0133: the share link is tagged, so arrivals from it are counted (page visits, people only).
@@ -556,6 +584,12 @@ export async function sprintReport(env: Env, g: G, s: GauntletSummary) {
     upgrade: { mode: "full" as const, jobs: JOBS.length, start: { tool: "gauntlet_start", arguments: {} }, page: `${origin}/gauntlet` },
     provenance: provenance("gauntlet", g.finishedAt ?? g.startedAt),
   };
+}
+
+function sprintFindings(s: GauntletSummary, bout: B | undefined) {
+  const stored = s.findings?.find((x) => x.job === 1);
+  if (stored) return { findings: stored.findings, withheld: stored.withheld };
+  return bout ? attemptFindings({ task: bout.task, seed: bout.seed, log: bout.log, result: bout.result }) : { findings: [], withheld: 0 };
 }
 
 /**

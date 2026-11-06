@@ -130,8 +130,9 @@ describe("Lab #3 results are published (18 Oct 2026)", () => {
 
 describe("the main lineup", () => {
   it("is each lab's workhorse, pinned to one no-data-collection provider, with unique ids", () => {
-    // Embargoed entries (K2) are checked in their own private test.
-    expect(HEADLINE.filter((m) => !m.embargoed).map((m) => m.lab)).toEqual(["Anthropic", "OpenAI", "Google", "Mistral AI", "DeepSeek (open weights)", "Alibaba"]);
+    // Embargoed entries (K2) are checked in their own private test. A flagship beside a workhorse (ADR 0064 Am. 3) too.
+    expect(HEADLINE.filter((m) => !m.embargoed && !m.flagship).map((m) => m.lab)).toEqual(["Anthropic", "OpenAI", "Google", "Mistral AI", "DeepSeek (open weights)", "Alibaba"]);
+    expect(HEADLINE.filter((m) => m.flagship).map((m) => m.id)).toEqual(["claude-opus-5.5"]);
     for (const m of HEADLINE) {
       expect(m.division).toBe("heavyweight");
       if (m.route.kind === "openrouter") expect(m.route.provider).toMatch(/^[a-z-]+$/);

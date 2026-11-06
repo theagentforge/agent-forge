@@ -328,9 +328,9 @@ ${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class
 // (26 Oct check: the Lab results and the Registry census were in no sitemap).
 export const SITEMAP_STATIC = [
   ...new Set([
-    "/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/gauntlet/sprint", "/gauntlet/sprint/rules", "/gauntlet/season-1", "/founding", "/connect", "/methodology", "/results-policy", "/security", "/about", "/stats", "/stats/rules", "/wire", "/watchlist",
+    "/", "/arena", "/best", "/scan", "/scan/rules", "/skill-watch", "/trap-card", "/gauntlet", "/gauntlet/sprint", "/gauntlet/sprint/rules", "/gauntlet/ci", "/gauntlet/season-1", "/founding", "/connect", "/methodology", "/results-policy", "/security", "/about", "/stats", "/stats/rules", "/wire", "/watchlist",
     "/reports/skill-scan-2026-10", "/reports/state-of-agent-reliability/2026-q4", "/arena/business", "/reports/business-agents-2026-10", "/guides/check-before-install", "/advisories/2026-10",
-    "/arena/rules", "/arena/methodology", "/benchmark", "/benchmark/changelog", "/benchmark/licence", "/benchmark/held-out", "/dataset", "/dataset/sample", "/arena/proving-ground", "/arena/failures", "/scouts", "/teams", "/privacy", "/terms",
+    "/arena/rules", "/arena/methodology", "/benchmark", "/benchmark/changelog", "/benchmark/licence", "/benchmark/held-out", "/dataset", "/dataset/sample", "/history-api", "/arena/proving-ground", "/arena/failures", "/scouts", "/teams", "/privacy", "/terms",
     ...PUBLICATIONS.filter((p) => p.live).map((p) => p.path),
     ANSWERS_PATH,
     ...ARENA_QUESTIONS.map(answerPagePath),

@@ -26,22 +26,24 @@ site.get(`${CENSUS_DIR}/manifest/:file{[0-9]{4}-[0-9]{2}-[0-9]{2}\\.json}`, asyn
   return c.json(m, 200, { ...HEADERS, "Cache-Control": "public, max-age=86400" });
 });
 
-const MAIN = ["series.csv", "series.json", "schema.json"];
+const MAIN = ["series.csv", "series.json", "schema.json", "drift.csv"];
 
 site.get(CENSUS_DIR, async (c) => {
   const bundle = await latestBundle(c.env);
   const rosters = bundle ? bundle.hashes.filter((h) => h.path.startsWith("roster/")) : [];
   const months = bundle ? bundle.hashes.filter((h) => h.path.startsWith("server-history/")) : [];
+  const toolMonths = bundle ? bundle.hashes.filter((h) => h.path.startsWith("tool-history/")) : [];
   const latestRoster = rosters.at(-1);
   const body = html`<h1 class="page-title">Census dataset</h1>
 <p class="lead">${CENSUS_STATEMENT}</p>
-<p>Daily figures from the House tester's install checks, tool-description scans, skill-file scans and the tools tracked, built from stored data only. A day before a metric was first measured is absent, never a zero. Days are UTC.</p>
+<p>Daily figures from the House tester's install checks, tool-description scans, skill-file scans and the tools tracked, built from stored data only. The tool-history files list each server version's tool-definition hash (tools/list) with its publish date and when we ran it; drift.csv lists the versions whose definitions changed. A day before a metric was first measured is absent, never a zero. Days are UTC.</p>
 ${
   bundle
     ? html`<p class="small muted">Version ${bundle.version} (data through the end of that UTC day).</p>
 <ul>
 ${MAIN.map((p) => html`<li><a href="${CENSUS_DIR}/${p}">${p}</a></li>`)}
 ${months.map((h) => html`<li><a href="${CENSUS_DIR}/${h.path}">${h.path}</a></li>`)}
+${toolMonths.map((h) => html`<li><a href="${CENSUS_DIR}/${h.path}">${h.path}</a></li>`)}
 <li><a href="${CENSUS_DIR}/manifest.json">manifest.json</a>: the sha256 of every file in this version, and every earlier version's manifest</li>
 ${latestRoster ? html`<li><a href="${CENSUS_DIR}/${latestRoster.path}">${latestRoster.path}</a>: the latest nightly top-500 roster (${rosters.length} nights in the manifest)</li>` : ""}
 </ul>`

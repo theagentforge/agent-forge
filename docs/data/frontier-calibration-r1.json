@@ -1,0 +1,35 @@
+[
+  {
+    "slug": "frontier-cal-r1-opus",
+    "name": "Frontier tier calibration, round 1: Claude Opus 5.5 (dev seeds, ADR 0139)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": ["claude-opus-5.5"],
+    "tasks": ["data-request-frontier", "payroll-change-frontier", "procurement-frontier"],
+    "seeds": [900001, 900002, 900003],
+    "attempts": 1
+  },
+  {
+    "slug": "frontier-cal-r1-sonnet",
+    "name": "Frontier tier calibration, round 1: Claude Sonnet 5.5 (dev seeds, ADR 0139)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": ["claude-sonnet-5.5"],
+    "tasks": ["data-request-frontier", "payroll-change-frontier", "procurement-frontier"],
+    "seeds": [900001, 900002, 900003, 900004, 900005],
+    "attempts": 1
+  },
+  {
+    "slug": "frontier-cal-r1-small",
+    "name": "Frontier tier calibration, round 1: Haiku 5.5 and two open models (dev seeds, ADR 0139)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": ["claude-haiku-5.5", "glm-5.3-flash", "gemma-4-26b"],
+    "tasks": ["data-request-frontier", "payroll-change-frontier", "procurement-frontier"],
+    "seeds": [900001, 900002, 900003, 900004, 900005],
+    "attempts": 2
+  }
+]

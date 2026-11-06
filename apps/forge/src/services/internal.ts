@@ -66,8 +66,23 @@ export function internalFromMcpBody(body: unknown): InternalComponent | null {
 }
 
 /** Headers first, then (for a small POST) the MCP client name in the body. Reads a copy; never throws. */
+/**
+ * Our own MCP connectors whose app can't add a header (Claude and Cowork custom connectors take only a URL): the address
+ * carries `?forge_internal=<component>`, e.g. https://theagentforge.io/mcp/public?forge_internal=house. Like every tag,
+ * it only leaves traffic out of the counts (ADR 0124's House TODO).
+ */
+export const INTERNAL_PARAM = "forge_internal";
+export function internalFromUrl(url: string): InternalComponent | null {
+  try {
+    const v = new URL(url).searchParams.get(INTERNAL_PARAM);
+    return v && v.trim() ? component(v.slice(0, 40)) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function internalOf(request: Request): Promise<InternalComponent | null> {
-  const byHeader = internalCaller(request.headers);
+  const byHeader = internalCaller(request.headers) ?? internalFromUrl(request.url);
   if (byHeader || request.method !== "POST" || Number(request.headers.get("content-length") ?? 0) > 65_536) return byHeader;
   try {
     return internalFromMcpBody(JSON.parse(await request.clone().text()));

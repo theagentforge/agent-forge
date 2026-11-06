@@ -3,6 +3,7 @@ import { html } from "hono/html";
 import { ladder, pgAttempt } from "../arena/proving";
 import { getDb } from "../services/db";
 import { replaySections } from "./arena";
+import { attemptFindings } from "./findings";
 import { CANARY_LINE } from "./arena-history";
 import { send, site } from "./pages";
 
@@ -43,7 +44,7 @@ site.get("/arena/proving-ground/:id", async (c) => {
     body: html`<p class="eyebrow">Ranked Ladder · @${row.owner}</p>
 <h1 class="page-title mono-title">${row.handle}</h1>
 <div class="summary-3"><p>${l1}</p><p>${l2}</p><p>${l3}</p></div>
-${replaySections(fs, moments(log, fs), result, row.a.score ?? 0)}
+${replaySections(fs, moments(log, fs), result, row.a.score ?? 0, attemptFindings({ task: row.a.task, seed: row.a.seed, log, result }))}
 ${CANARY_LINE}`,
   });
 });

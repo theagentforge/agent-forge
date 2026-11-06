@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { Attempt, checkReplay, HARNESS_FROM, refereeCheck, playedUnderAt, rescoreRefusal, RULES_VERSION, rulesReading, rulesVersionAt, taskById, versionLine, type AttemptResult } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { benchmarkData, TRAP_SET_VERSIONS, trapSetVersions } from "../src/arena/benchmark";
+import { benchmarkData, TRAP_SET, TRAP_SET_VERSIONS, trapSetVersions } from "../src/arena/benchmark";
 import { benchmarkFileSchema } from "../src/arena/benchmark-files";
 import { CORRECTIONS, correctionCounts, type Correction } from "../src/arena/corrections";
 import { PRACTICE } from "../src/arena/lineup";
@@ -244,7 +244,9 @@ describe("re-scored runs are shown apart from native rules 0.6 runs", () => {
     const native = rows.find((m) => m.rules_version === RULES_VERSION)!;
     const rescored = rows.find((m) => m.rules_version === `${RULES_VERSION} re-scored`)!;
     expect(native).toMatchObject({ attempts: 2, rescored_from_signed_logs: false, played_under: { [RULES_VERSION]: 2 } });
-    expect(rescored).toMatchObject({ attempts: 3, rescored_from_signed_logs: true, scored_under: RULES_VERSION, played_under: { "rules 0.4": 3 }, scored_under_trap_set_rules: true });
+    // Scored under the Trap Set's rules only once the set catches up with the rules in force (Trap Set 1.2 on rules 0.7,
+    // published with the re-score correction; ADR 0140). Until then a rules 0.7 group is honestly not the set's rules.
+    expect(rescored).toMatchObject({ attempts: 3, rescored_from_signed_logs: true, scored_under: RULES_VERSION, played_under: { "rules 0.4": 3 }, scored_under_trap_set_rules: RULES_VERSION === TRAP_SET.rules });
     expect(bench.limits.model_tier_rows_rescored_from_signed_logs).toBeGreaterThanOrEqual(1);
     // The whole-file schema (ADR 0087) accepts both groups.
     const check = new Validator(benchmarkFileSchema(env.PUBLIC_ORIGIN) as never, "2020-12", false).validate(JSON.parse(JSON.stringify(bench)));
@@ -263,22 +265,31 @@ describe("re-scored runs are shown apart from native rules 0.6 runs", () => {
   });
 });
 
-describe("Trap Set 1.1", () => {
+describe("Trap Set 1.1 and 1.2", () => {
   it("versions are dated in order: a correction flipped with a date before 1.0 fails here (set its date to the day it is published)", () => {
     const dates = TRAP_SET_VERSIONS.map((v) => v.date);
     expect([...dates].sort()).toEqual(dates);
-    const c = CORRECTIONS.find((x) => x.id === "2026-10-rules-0.6-negation")!;
+    const c = CORRECTIONS.find((x) => x.id === "2026-11-rules-0.7-payee-claims")!;
     if (c.published && c.applied && c.counts) expect(c.date >= TRAP_SET_VERSIONS[0]!.date).toBe(true);
   });
 
   // Dated after Trap Set 1.1 (5 Nov, Hard v3.3; ADR 0132): a correction is dated the day it is published.
   const applied: Correction = { ...CORRECTIONS[0]!, date: "2026-11-09", applied: true, published: true, counts: { checked: 5400, changed: 12, passToFail: 5, failToPass: 7, events: 4, models: 5, unfaithful: 10, excluded: 3 } };
   it("is 1.1 (Hard v3.3) until the re-score correction is applied and published; then the next minor, 1.2, dated, with a changelog line", () => {
-    expect(trapSetVersions().map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
+    // Published 6 Nov with the production apply counts (src/arena/corrections.ts): the live set is 1.2, dated that day.
+    const live = trapSetVersions();
+    expect(live.map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2"]);
+    expect(live[3]).toMatchObject({ date: "2026-11-06", rules: "rules 0.7", task_versions: live[2]!.task_versions });
+    expect(live[3]!.change).toContain("581 published runs replayed from their signed logs, 12 changed verdict");
+    // Until the correction is applied, published and counted, there is no 1.2.
     expect(trapSetVersions([{ ...applied, applied: false }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
+    expect(trapSetVersions([{ ...applied, published: false }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
+    expect(trapSetVersions([{ ...applied, counts: null }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
     const v = trapSetVersions([applied]);
     expect(v.map((x) => x.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2"]);
-    expect(v[3]).toMatchObject({ date: "2026-11-09", rules: RULES_VERSION, task_versions: v[2]!.task_versions });
+    // 1.2 is scored under the correction's rules (rules 0.7, in force once it is applied; ADR 0140).
+    expect(v[3]).toMatchObject({ date: "2026-11-09", rules: applied.rules, task_versions: v[2]!.task_versions });
+    expect(applied.rules).toBe("rules 0.7");
     expect(v[2]!.task_versions).toEqual([...v[0]!.task_versions, "Hard v3.3"]);
     expect(v[3]!.change).toContain("Re-scored runs carry both their rules versions");
     expect(v[3]!.change).toContain("5400 published runs");

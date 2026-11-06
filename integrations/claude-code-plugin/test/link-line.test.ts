@@ -142,7 +142,7 @@ describe("the link line (OA-04)", () => {
 });
 
 describe("the built SessionStart hook (what Claude Code actually runs)", () => {
-  const hook = join(here, "..", "release", "forge", "hooks", "session-start.mjs");
+  const hook = join(here, "..", "release", "forge-full", "hooks", "session-start.mjs");
   /** Runs the shipped hook with a fresh data folder and returns its stdout (the trap card and weekly check off). */
   const run = (env: Record<string, string>, input: object = { source: "startup" }) => {
     const data = mkdtempSync(join(tmpdir(), "forge-link-"));

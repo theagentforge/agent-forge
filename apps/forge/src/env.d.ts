@@ -48,6 +48,12 @@ interface ForgeSecrets {
    * until she says otherwise. Not a secret.
    */
   PUBLIC_METRICS?: string;
+  /**
+   * ADR 0136 release switch (review, 5 Nov): "on" publishes /benchmark/validity, its files, the error record and the
+   * trap pages' dispute and correction history. Off by default (unset): those are 404 for everyone but a signed-in
+   * admin until Dinike approves publishing them. Not a secret.
+   */
+  VALIDITY_PUBLIC?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

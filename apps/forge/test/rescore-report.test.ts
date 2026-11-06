@@ -183,26 +183,38 @@ describe("/admin/arena-rescore", () => {
   });
 });
 
-describe("the rules 0.6 correction note", () => {
-  it("is drafted but unpublished: no page, file or API shows it until the counts are in and it is flipped", async () => {
-    const note = CORRECTIONS.find((c) => c.id === "2026-10-rules-0.6-negation")!;
-    expect(note).toMatchObject({ rules: "rules 0.6", published: false, counts: null });
-    expect(publishedCorrections()).toEqual([]);
-    expect(resultsPolicyData("https://x").corrections.log).toEqual([]);
-    const html = await (await fetchWorker("/results-policy")).text();
-    expect(html).not.toContain("wasn't sent");
-    expect(html).not.toContain("Corrections so far");
+describe("the rules 0.7 correction note (carries the rules 0.6 re-score; ADR 0140)", () => {
+  // Published 6 Nov (docs/runbooks/rescore.md "Rules 0.7 / Trap Set 1.2" step 6) with the production apply counts.
+  it("is published with the apply counts: /results-policy and its JSON show it, with the exact counts sentence", async () => {
+    const note = CORRECTIONS.find((c) => c.id === "2026-11-rules-0.7-payee-claims")!;
+    const counts = { checked: 581, changed: 12, passToFail: 5, failToPass: 7, events: 4, models: 5, unfaithful: 10, excluded: 0 };
+    expect(note).toMatchObject({ rules: "rules 0.7", date: "2026-11-06", published: true, applied: true, counts });
+    expect(publishedCorrections()).toEqual([note]);
+    expect(resultsPolicyData("https://x").corrections.log).toEqual([{ id: note.id, date: "2026-11-06", rules: "rules 0.7", title: note.title, counts, stored_results_updated: true }]);
+    const sentence =
+      '12 of 581 published runs changed verdict (5 pass to fail, 7 fail to pass), across 4 events and 5 models. 10 more couldn\'t be replayed exactly (the job changed since they ran) and weren\'t re-scored. Each re-scored result is now labelled "scored under rules 0.7, re-scored from the signed log (played under rules 0.x)" and shown apart from runs played under rules 0.7; its original rules stamp, signed log and seal are kept.';
+    expect(correctionCounts(note)).toBe(sentence);
+    const raw = await (await fetchWorker("/results-policy")).text();
+    const html = raw.replace(/&#39;|&#x27;/g, "'").replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, "&");
+    expect(html).toContain("wasn't sent");
+    expect(html).toContain("Corrections so far");
+    expect(raw).toContain(`<li id="${note.id}"><b>2026-11-06</b> (rules 0.7)`);
+    expect(html).toContain(note.what);
+    expect(html).toContain(sentence);
   });
 
   it("a published correction must carry its counts; once flipped it shows on /results-policy and in its JSON", async () => {
     for (const c of CORRECTIONS) if (c.published) expect(c.counts, c.id).not.toBeNull();
-    const note = CORRECTIONS.find((c) => c.id === "2026-10-rules-0.6-negation")!;
-    const saved = { counts: note.counts, published: note.published };
+    const note = CORRECTIONS.find((c) => c.id === "2026-11-rules-0.7-payee-claims")!;
+    // A constructed draft: the same note before its counts were in (not yet applied), flipped to published.
+    const saved = { counts: note.counts, published: note.published, applied: note.applied };
     try {
       note.published = true;
+      note.applied = false;
+      note.counts = null;
       expect(publishedCorrections()).toEqual([]); // still hidden without counts
       note.counts = { checked: 120, changed: 3, passToFail: 0, failToPass: 3, events: 2, models: 2, unfaithful: 0 };
-      expect(correctionCounts(note)).toBe("3 of 120 published runs changed verdict (0 pass to fail, 3 fail to pass), across 2 events and 2 models. Stored results keep the verdict they were given; the change applies to results scored under rules 0.6 and later.");
+      expect(correctionCounts(note)).toBe("3 of 120 published runs changed verdict (0 pass to fail, 3 fail to pass), across 2 events and 2 models. Stored results keep the verdict they were given; the change applies to results scored under rules 0.7 and later.");
       // Runs that couldn't be replayed exactly are counted, not hidden.
       expect(correctionCounts({ ...note, counts: { ...note.counts, unfaithful: 4 } })).toContain("4 more couldn't be replayed exactly");
       expect(resultsPolicyData("https://x").corrections.log).toHaveLength(1);

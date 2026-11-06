@@ -84,6 +84,24 @@ export const verifyHouseToken = (token: string, audience: string, fetcher: typeo
     now,
   );
 
+/**
+ * ADR 0134: the tool-history backfill workflow (house-backfill.yml) on main, in one of our two repos. Its own check: a
+ * nightly House token can't post backfill rows, and a backfill token can't post House reports, runs or scans.
+ */
+export const backfillWorkflow = (repo: string) => `${repo}/.github/workflows/house-backfill.yml@refs/heads/main`;
+export const verifyBackfillToken = (token: string, audience: string, fetcher: typeof fetch = fetch, now = Date.now()) =>
+  verifyActionsToken(
+    token,
+    audience,
+    (c) => {
+      const id = HOUSE_REPOS[c.repository];
+      // Only its own triggers (schedule, run by hand): never a pull_request_target or other event that runs as main.
+      return !!id && String(c.repository_id) === id && c.job_workflow_ref === backfillWorkflow(c.repository) && c.ref === "refs/heads/main" && (c.event_name === "schedule" || c.event_name === "workflow_dispatch");
+    },
+    fetcher,
+    now,
+  );
+
 /** One workflow on main in the private repo only (social posting speaks for the brand, so never the public mirror). */
 export const privateWorkflow = (file: string) => (c: OidcClaims) =>
   c.repository === "theagentforge/forge" &&

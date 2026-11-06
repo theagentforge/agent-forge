@@ -39,7 +39,7 @@ import { recordMcp, bump, scanCounters, watchCounters } from "./services/usage";
 import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 import { anonymousLimited, keyGate } from "./services/api-keys";
 import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
-import { skillTagKeys, startedViaKeys } from "./services/channel-tags";
+import { actionTagOncePerSourceDay, skillTagKeys, startedViaKeys } from "./services/channel-tags";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
@@ -418,7 +418,8 @@ publicApi.post("/api/v1/gauntlet", async (c) => {
     c.executionCtx.waitUntil(recordCheck(c.env, "api", ip, { internal }));
     // ADR 0133: runs started from a Sprint result page's commands (?from=sprint-result) and by our skills (?client=).
     const keys = [...startedViaKeys(c.req.query("from"), "mode" in r && r.mode === "sprint" ? "sprint" : "full", { internal }), ...skillTagKeys(c.req.query("client"), "gauntlet-start", { internal, bot: isLikelyBot(c.req.raw, "api") })];
-    if (keys.length) c.executionCtx.waitUntil(bump(c.env, keys).catch(() => {}));
+    // ADR 0135 review: the Action's tag counts once a day per runner address, so a script can't inflate it.
+    if (keys.length) c.executionCtx.waitUntil(actionTagOncePerSourceDay(c.env, ip, keys).then((k) => (k.length ? bump(c.env, k) : undefined)).catch(() => {}));
   }
   return c.json(r, "error" in r ? (r.error === "rate_limited" || r.error === "daily_limit" || r.error === "busy_today" ? 429 : 400) : 201);
 });

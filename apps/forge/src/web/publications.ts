@@ -24,6 +24,9 @@ import lab5Prereg from "../../../../lab/005-trap-card-v11-frontier/PREREGISTRATI
 import lab5CardV10 from "../../../../lab/005-trap-card-v11-frontier/prompts/C-card.txt";
 import lab5CardV11 from "../../../../lab/005-trap-card-v11-frontier/prompts/E-card-v1.1.txt";
 import lab5Selection from "../../../../lab/005-trap-card-v11-frontier/selection.json";
+import lab5Results from "../../../../lab/005-trap-card-v11-frontier/RESULTS.md";
+import lab5Output from "../../../../lab/005-trap-card-v11-frontier/analysis-output.md";
+import lab5Counts from "../../../../lab/005-trap-card-v11-frontier/counts.json";
 import { experimentForPath } from "./experiments";
 import { send, site } from "./pages";
 
@@ -128,6 +131,18 @@ export const PUBLICATIONS: Publication[] = [
     files: [
       { name: "arm-c-card.txt", label: "Arm C: trap card v1.0, frozen", text: lab4Card, type: "text/plain" },
       { name: "selection.json", label: "The 7 model–job pairs, fixed before any run", text: JSON.stringify(lab4Selection, null, 1), type: "application/json" },
+    ],
+  },
+  {
+    path: "/lab/5/results",
+    markdown: lab5Results,
+    description: "Forge Lab #5 results: a sharper trap card (v1.1) didn't measurably reduce traps for frontier models either (36.7% vs 41.7%), and models said \"can't be done\" more often on doable jobs (7.5% vs 3.3%).",
+    // Pre-registered to be published whatever it showed.
+    live: true,
+    files: [
+      { name: "analysis-output.md", label: "Full analysis output", text: lab5Output, type: "text/markdown" },
+      { name: "counts.json", label: "Counts per arm, model and job (JSON)", text: JSON.stringify(lab5Counts, null, 1), type: "application/json" },
+      { name: "preregistration.md", label: "Pre-registration", text: lab5Prereg, type: "text/markdown" },
     ],
   },
   {

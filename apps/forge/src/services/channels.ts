@@ -224,7 +224,7 @@ export function shareLoop(rows: Row[], asOf: string, days = 7) {
 
 /** Item 11: calls tagged by our skills, per skill version and endpoint, beside ClawHub's own download readings. */
 export const SKILL_USE_METHOD =
-  "Calls carrying ?client=<skill>-<version> (skills 1.1.0+ of forge-check-before-install and 1.2.0+ of forge-run-the-gauntlet), counted on /api/v1/check, /api/v1/scan and Gauntlet starts; crawlers, fake browsers and our own tagged callers are left out. ClawHub, skills.sh and /.well-known/agent-skills serve the same file, so these are calls by the skill from any of them: an upper bound for ClawHub alone. Downloads are ClawHub's own count, read by hand (date and source given). Checks per download is shown only for a reading whose 7 days the tag was already counting.";
+  "Calls carrying ?client=<skill>-<version> (skills 1.1.0+ of forge-check-before-install and 1.2.0+ of forge-run-the-gauntlet; the Gauntlet GitHub Action as gh-action-gauntlet, HTTP run starts only, at most one a day per runner address), counted on /api/v1/check, /api/v1/scan and Gauntlet starts; crawlers, fake browsers and our own tagged callers are left out. ClawHub, skills.sh and /.well-known/agent-skills serve the same file, so these are calls by the skill from any of them: an upper bound for ClawHub alone. Downloads are ClawHub's own count, read by hand (date and source given). Checks per download is shown only for a reading whose 7 days the tag was already counting.";
 
 export function skillUse(rows: Row[], asOf: string, readings: ExternalReading[]) {
   const weekFrom = shift(asOf, -6);

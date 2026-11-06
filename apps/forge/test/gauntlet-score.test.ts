@@ -1,9 +1,15 @@
-import { RULES_VERSION, TASKS } from "@forge/arena";
+import { RULES_HISTORY, RULES_VERSION, TASKS } from "@forge/arena";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { claimRun, setClaimHidden } from "../src/arena/gauntlet-claims";
-import { gauntletRules, gauntletScore, isExpired, SCORE_BADGE_TTL_DAYS, scoreBadge, TRAP_SET, TRAP_SET_NAME, trapSetVersionOf } from "../src/arena/score";
+import { gauntletRules, gauntletScore, isExpired, newerThanTrapSet, SCORE_BADGE_TTL_DAYS, scoreBadge, TRAP_SET, TRAP_SET_NAME, trapSetVersionOf } from "../src/arena/score";
+
+// Rules 0.7 is in force, and since its re-score correction was published on 6 Nov (ADR 0140; docs/runbooks/rescore.md
+// step 6) Trap Set 1.2 is its version: a new run is "Trap Set v1.2". A run under rules newer than every version's (the
+// gap before the next correction) is "after Trap Set v1.2", never a version that doesn't exist yet or "before v1.0".
+const AFTER = `after Trap Set v${TRAP_SET.version}`;
+const CURRENT = "Trap Set v1.2";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { connectApprovedAgent, fetchWorker } from "./helpers";
@@ -62,7 +68,9 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     const body = await page.text();
     expect(body).toContain(owner.agent.handle);
     expect(body).toContain(`https://github.com/${owner.human.githubLogin}`);
-    expect(body).toContain(`${TRAP_SET_NAME}</a> v${TRAP_SET.version}`);
+    expect(body).toContain(`${TRAP_SET_NAME}</a> v1.2 · jobs Normal 1.0`);
+    expect(body).not.toContain("newer than v");
+    expect(body).not.toContain("(refereed under rules from before v1.0)");
     expect(body).toContain('href="/benchmark"');
     expect(body).toContain(RULES_VERSION);
     expect(body).toContain("How the score is computed");
@@ -77,7 +85,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
       owner: { github: owner.human.githubLogin, counts_as: "third_party" },
       model: null,
       model_stated: false,
-      benchmark: { name: "The Forge Trap Set", version: TRAP_SET.version },
+      benchmark: { name: "The Forge Trap Set", version: "1.2", scored_under_newer_rules: false },
       task_version: "Normal 1.0",
       rules_version: RULES_VERSION,
       rules_version_from: "stamp",
@@ -105,7 +113,9 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     const text = await svg.text();
     expect(text).toContain("Gauntlet score");
     expect(text).toContain(new Date().toISOString().slice(0, 10));
-    expect(text).toContain("Trap Set v1.1");
+    expect(text).toContain(CURRENT);
+    expect(text).not.toContain(AFTER);
+    expect(text).not.toContain("before Trap Set");
     expect(text).not.toContain("expired");
     const shield = (await (await get(`/badge/score/${id}.json`)).json()) as any;
     expect(shield).toMatchObject({ schemaVersion: 1, label: "Gauntlet score" });
@@ -143,7 +153,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     expect(isExpired(Date.now() - 89 * DAY)).toBe(false);
   });
 
-  it("labels a House owner's run as ours, and a run under older rules as before Trap Set v1.0", async () => {
+  it("labels a House owner's run as ours, a run under older rules as before Trap Set v1.0, and one under unreleased rules as after the newest", async () => {
     const owner = await connectApprovedAgent();
     const run = await finishedRun();
     const id = run.gauntlet_id;
@@ -153,9 +163,37 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     expect(s.owner.counts_as).toBe("ours");
     expect(trapSetVersionOf("rules 0.6", "Normal 1.0")).toBe("1.1");
     expect(trapSetVersionOf("rules 0.5", "Normal 1.0")).toBeNull();
-    const old = scoreBadge({ ...s, benchmark: { ...s.benchmark, version: null } });
+    expect(trapSetVersionOf("rules 0.7", "Normal 1.0")).toBe("1.2");
+    expect(trapSetVersionOf("rules 0.8", "Normal 1.0")).toBeNull();
+    expect([newerThanTrapSet("rules 0.5"), newerThanTrapSet("rules 0.6"), newerThanTrapSet("rules 0.7"), newerThanTrapSet("rules 0.8")]).toEqual([false, false, false, true]);
+    expect(scoreBadge({ ...s, benchmark: { ...s.benchmark, version: null, scored_under_newer_rules: true } }).message).toMatch(/ · after Trap Set v1\.2$/);
+    expect(scoreBadge({ ...s, benchmark: { ...s.benchmark, version: "1.1", scored_under_newer_rules: false } }).message).toMatch(/ · Trap Set v1\.1$/);
+    const old = scoreBadge({ ...s, benchmark: { ...s.benchmark, version: null, scored_under_newer_rules: false } });
     expect(old.message).toContain("before Trap Set v1.0");
     expect(old.message).not.toContain("Trap Set v1.0 ");
+  });
+
+  it("a run under rules newer than every Trap Set version's (a constructed rules 0.8) says so on its page, naming the newest version", async () => {
+    const owner = await connectApprovedAgent();
+    const run = await finishedRun();
+    const id = run.gauntlet_id;
+    await claimRun(env, owner.human.id, owner.agent.id, run.claim_key);
+    const db = getDb(env);
+    const bouts = await db.select().from(t.arenaGauntletBouts).where(eq(t.arenaGauntletBouts.gauntletId, id));
+    for (const b of bouts) await db.update(t.arenaGauntletBouts).set({ result: { ...(b.result as object), rules: "rules 0.8" } }).where(eq(t.arenaGauntletBouts.id, b.id));
+    const draft = { version: "rules 0.8", date: "2026-11-30", change: "test only" };
+    RULES_HISTORY.push(draft);
+    try {
+      const s = (await gauntletScore(env, id))!;
+      expect(s.rules_version).toBe("rules 0.8");
+      expect(s.benchmark).toMatchObject({ version: null, scored_under_newer_rules: true });
+      const page = (await (await get(`/score/${id}`)).text()).replace(/&#39;/g, "'");
+      expect(page).toContain(`(refereed under rules 0.8, newer than v${TRAP_SET.version}'s rules; the next version comes with its re-score correction)`);
+      expect(TRAP_SET.version).toBe("1.2");
+      expect(page).not.toContain("refereed under rules from before v1.0");
+    } finally {
+      RULES_HISTORY.splice(RULES_HISTORY.indexOf(draft), 1);
+    }
   });
 
   it("never scores a run of a revoked agent, a bad id or an unfinished run", async () => {
@@ -208,7 +246,7 @@ describe("Gauntlet score page and badge (ADR 0069)", () => {
     await claimRun(env, owner.human.id, owner.agent.id, run.claim_key);
     const s = (await gauntletScore(env, id))!;
     expect(s.attribution).toEqual({ claimed_with_run_key: true, player_checked: false, owner_chooses_runs_shown: true });
-    expect(scoreBadge(s).message).toMatch(/^\d\/6 jobs right · fell for \d+ traps? · \d{4}-\d{2}-\d{2} · Trap Set v1\.1$/);
+    expect(scoreBadge(s).message).toMatch(/^\d\/6 jobs right · fell for \d+ traps? · \d{4}-\d{2}-\d{2} · Trap Set v1\.2$/);
     expect(scoreBadge({ ...s, gauntlet_score: { ...s.gauntlet_score, traps_fell: 1 } }).message).toContain("fell for 1 trap ·");
     expect(await (await get(`/score/${id}`)).text()).toContain("doesn't check which agent or model played it");
     // shields.io asks for JSON, which the page cache keys apart (?format=json); a hide must drop that copy too.

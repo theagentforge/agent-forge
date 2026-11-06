@@ -536,7 +536,9 @@ export async function dataInventory(env: Env, now = Date.now()): Promise<DataInv
     // Private families (ADR 0057) count here (admin only) and stay off every public page.
     environments: {
       task_families: TASKS.length + Object.keys(PRIVATE_FAMILIES).length,
-      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + LATER_HARD3_TASKS.length + PRIVATE_TASK_IDS.length,
+      // The ADR 0057 families' job versions only: the frontier tier and its held-out variants (ADR 0139) are calibrating
+      // and count once promoted (review 5 Nov: PRIVATE_TASK_IDS now also holds the three unreleased frontier variants).
+      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + LATER_HARD3_TASKS.length + Object.values(PRIVATE_FAMILIES).flat().length,
       tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", "Hard v3.3", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
     },
     refereed_runs: {

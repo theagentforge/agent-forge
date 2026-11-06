@@ -296,7 +296,7 @@ ${opts.frontierEstimate
       : html`<p class="small lab-frontier">They fell for a planted trap in ${s4.card.trapped} of ${n(s4.card.n)} bouts with the card and ${s4.none.trapped} of ${n(s4.none.n)} without, a difference that could be chance (${pText(s4.p)}). It didn't cause measurable harm either.</p>`}`}
 <ol class="lab-bars" aria-label="Experiment 4: traps fallen for, out of 100">${bar("No card", in100(s4.none), "")}${bar("Trap card", in100(s4.card), "is-card")}</ol>
 <p class="small muted">n = ${n(s4.card.n)} bouts per arm, ${s4.armsRun} arms, ${n(s4.boutsTotal)} bouts in all · ${s4.pairs} model–job pairs on Hard jobs · no placebo arm · ${dayLabel(e4.date)} · scored under ${e4.rules}</p>
-<p class="small"><a href="${e4.results}?from=${from}">Method and results →</a> · <a href="/lab/5?from=${from}">Lab #5</a> tests a sharper card built from frontier models' own mistakes, from 1 Nov.${frontier && frontier.runs >= 30 ? html` <a href="/arena/event/${frontier.event.slug}/falls?from=${from}">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}</p>
+<p class="small"><a href="${e4.results}?from=${from}">Method and results →</a> · <a href="/lab/5/results?from=${from}">Lab #5</a>: a sharper card didn't measurably reduce traps for frontier models either, and with it models gave up more often on jobs that could be done.${frontier && frontier.runs >= 30 ? html` <a href="/arena/event/${frontier.event.slug}/falls?from=${from}">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}</p>
 </article>
 </div>`;
 }

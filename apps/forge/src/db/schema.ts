@@ -1111,9 +1111,113 @@ export const toolDescriptionHistory = sqliteTable(
     firstSeen: integer("first_seen").notNull(),
     lastSeen: integer("last_seen").notNull(),
     carried: integer("carried", { mode: "boolean" }).notNull().default(false),
+    /**
+     * ADR 0134: where the row came from, never mixed. `nightly`: a House sighting (first_seen = when we first saw it);
+     * `carried`: copied in by migration 0038; `backfill`: the tool-history backfill installed an older published
+     * version (first_seen = that version's publish date from the registry, observed_at = when we ran it).
+     */
+    origin: text("origin").notNull().default("nightly"),
+    /** When we actually ran the server and read this set (for nightly and carried rows, the same as first_seen). */
+    observedAt: integer("observed_at"),
   },
-  (t) => [uniqueIndex("tool_description_history_key").on(t.toolId, t.version, t.descriptionSha256), index("tool_description_history_seen").on(t.lastSeen), index("tool_description_history_server").on(t.server, t.version)],
+  (t) => [
+    uniqueIndex("tool_description_history_origin_key").on(t.toolId, t.version, t.descriptionSha256, t.origin),
+    index("tool_description_history_seen").on(t.lastSeen),
+    index("tool_description_history_server").on(t.server, t.version),
+  ],
 );
+
+/**
+ * ADR 0134: the servers the tool-history backfill covers, frozen when it starts: the latest nightly top-500 roster
+ * (npm) and the PyPI servers the weekly sweep has seen start (the nightly run is npm only). `enumerated_at` is set once
+ * the registry's version list has been read.
+ */
+export const toolHistoryServers = sqliteTable("tool_history_servers", {
+  /** npm:<package> or pypi:<package>, as the House tester names it */
+  server: text("server").primaryKey(),
+  registry: text("registry").notNull(),
+  package: text("package").notNull(),
+  /** The tool page this server's history rows hang on (null when the site has no page for it). */
+  toolId: text("tool_id"),
+  /** top500_nightly | weekly_sweep_pypi */
+  source: text("source").notNull(),
+  rank: integer("rank").notNull(),
+  /** ok | not_found */
+  status: text("status"),
+  enumeratedAt: integer("enumerated_at"),
+  /** Stable versions published since the backfill's start date, as listed by the registry */
+  versionsListed: integer("versions_listed"),
+  addedAt: integer("added_at").notNull(),
+});
+
+/**
+ * ADR 0134: the backfill queue, one row per server + published version. pending → done | failed (with a failure class
+ * from failure-classes/v1) | excluded (prerelease, over the per-server cap, or no tool page). Resumable: a version
+ * stays pending until a run answers for it; one offered three times with no answer is closed as test_error.
+ */
+export const toolHistoryQueue = sqliteTable(
+  "tool_history_queue",
+  {
+    server: text("server").notNull(),
+    version: text("version").notNull(),
+    /** The version's publish date from registry metadata (npm `time`, PyPI earliest upload-time). */
+    publishedAt: integer("published_at").notNull(),
+    status: text("status").notNull(),
+    /** failed: a failure class; excluded: prerelease | over_cap | no_tool_page */
+    reason: text("reason"),
+    /** The House tester's raw outcome for this version */
+    outcome: text("outcome"),
+    attempts: integer("attempts").notNull().default(0),
+    offeredAt: integer("offered_at"),
+    observedAt: integer("observed_at"),
+    toolsCount: integer("tools_count"),
+    descriptionSha256: text("description_sha256"),
+    enqueuedAt: integer("enqueued_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.server, t.version] }), index("tool_history_queue_status").on(t.status, t.attempts)],
+);
+
+/**
+ * ADR 0134: tool-definition drift, derived from tool_description_history (all origins): one row per consecutive pair of
+ * observed definition sets of one tool, oldest first. Recomputed per tool when its history changes; it is an analysis,
+ * not the record (the record is the history table).
+ */
+export const toolDefinitionDrift = sqliteTable(
+  "tool_definition_drift",
+  {
+    toolId: text("tool_id").notNull(),
+    seq: integer("seq").notNull(),
+    server: text("server").notNull(),
+    fromVersion: text("from_version").notNull(),
+    toVersion: text("to_version").notNull(),
+    fromSha256: text("from_sha256").notNull(),
+    toSha256: text("to_sha256").notNull(),
+    fromPublishedAt: integer("from_published_at"),
+    toPublishedAt: integer("to_published_at"),
+    /** none, or ";"-joined: tool_added, tool_removed, description_changed, schema_changed */
+    changeClass: text("change_class").notNull(),
+    toolsAdded: integer("tools_added").notNull(),
+    toolsRemoved: integer("tools_removed").notNull(),
+    descriptionsChanged: integer("descriptions_changed").notNull(),
+    schemasChanged: integer("schemas_changed").notNull(),
+    majorBump: integer("major_bump", { mode: "boolean" }).notNull(),
+    zeroMajor: integer("zero_major", { mode: "boolean" }).notNull(),
+    sameVersion: integer("same_version", { mode: "boolean" }).notNull(),
+    /** Backfill versions between the two that didn't start (nothing known about their definitions) */
+    untestedBetween: integer("untested_between").notNull(),
+    /** Scanner rule ids the new text of added or changed tools matched that the old text of those tools didn't */
+    newTextRules: text("new_text_rules", { mode: "json" }).notNull().$type<string[]>(),
+    computedAt: integer("computed_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.toolId, t.seq] })],
+);
+
+/** ADR 0134: what each tool's drift rows were computed from, so an unchanged history isn't recomputed. */
+export const toolDriftState = sqliteTable("tool_drift_state", {
+  toolId: text("tool_id").primaryKey(),
+  print: text("print").notNull(),
+  computedAt: integer("computed_at").notNull(),
+});
 
 /**
  * The House tester's result for each server on each night, per family (top500_nightly | weekly_sweep), so the two
@@ -1137,7 +1241,8 @@ export const houseResults = sqliteTable(
     probedAt: integer("probed_at").notNull(),
     origin: text("origin").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.family, t.night, t.server] })],
+  // ADR 0141: one server's rows across nights (GET /api/v1/history/{server}) without scanning every night.
+  (t) => [primaryKey({ columns: [t.family, t.night, t.server] }), index("house_results_server").on(t.server, t.night)],
 );
 
 /** One row per metric per UTC day, written once by the daily cron for the day just ended. Never backfilled. */

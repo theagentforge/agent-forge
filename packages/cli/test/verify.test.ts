@@ -61,7 +61,7 @@ const verifyJson = async (args: string[], t = io()) => {
 
 /** A replay signed like the site signs one, by `origin` with key `priv`. */
 async function signed(doc: any, priv: ReturnType<typeof pkcs8>, kid: string, origin: string, result = doc.result, kind: "arena" | "fixture" = "arena") {
-  const body = await sealBody(sha, { keyId: kid, origin, kind, runId: doc.id, model: "some-model", rules: "rules 0.6", taskVersion: "Normal 1.0", log: doc.log, result, signedAt: Date.parse("2026-10-28T00:00:00Z") });
+  const body = await sealBody(sha, { keyId: kid, origin, kind, runId: doc.id, model: "some-model", rules: String(result.rules), taskVersion: "Normal 1.0", log: doc.log, result, signedAt: Date.parse("2026-10-28T00:00:00Z") });
   const seal: ReplaySeal = { ...body, signature: `ed25519:${sign(null, Buffer.from(sealMessage(body), "utf8"), priv).toString("base64url")}` };
   return { ...doc, result, replay: await replayBlock(sha, doc.log, seal) };
 }

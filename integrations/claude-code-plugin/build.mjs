@@ -10,9 +10,15 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "..", "..", "apps", "forge", "public", "plugins");
-// The complete production plugin as plain files, for directories that install from a Git folder (the Claude plugin
-// directory reads the public mirror). Same bytes as the production zip's contents; CI checks it like the zips.
-const distDir = join(here, "release", "forge");
+// Two editions (ADR 0142, 6 Nov). The Claude plugin directory refuses command hooks from organizations it hasn't
+// verified, and it reads only the folder we submitted (release/forge), so that folder is the DIRECTORY edition: no
+// hooks, no scripts, just the MCP servers, the skill and the commands (source: directory/, plus shared files from
+// plugin/). The FULL edition, with the hooks, is what our own marketplace serves as zips; release/forge-full holds the
+// same bytes as the production zip's contents as plain files, for anyone reading the public mirror. CI checks all three.
+const distDir = join(here, "release", "forge-full");
+const directoryDir = join(here, "release", "forge");
+// Files the directory edition takes unchanged from the full edition's source.
+const DIRECTORY_SHARED = [".claude-plugin/icon.png", "LICENSE", "commands/gauntlet.md", "commands/sprint.md"];
 const check = process.argv.includes("--check");
 const ENVS = { staging: "https://staging.theagentforge.io", production: "https://theagentforge.io" };
 // Local-time midnight on purpose: zip stores times in local DOS fields (fflate reads getFullYear/getHours), so a UTC
@@ -41,6 +47,9 @@ const HOOK_HEADERS = {
   "session-start": "SessionStart: add the trap card; once a week send skill fingerprints to <origin>/api/v1/watch.",
 };
 
+const mcpJson = (origin) =>
+  Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` }, "forge-gauntlet": { type: "http", url: `${origin}/mcp/gauntlet` } } }, null, 2) + "\n");
+
 const hooks = {};
 for (const name of ["pre-install", "strain", "session-start"]) {
   const r = await build({
@@ -68,12 +77,12 @@ for (const name of ["pre-install", "strain", "session-start"]) {
   hooks[`hooks/${name}.mjs`] = r.outputFiles[0].contents;
 }
 
-function walk(dir) {
+function walk(dir, top = dir) {
   const out = {};
   for (const f of readdirSync(dir).sort()) {
     const p = join(dir, f);
-    if (statSync(p).isDirectory()) Object.assign(out, walk(p));
-    else out[relative(join(here, "plugin"), p).split("\\").join("/")] = readFileSync(p);
+    if (statSync(p).isDirectory()) Object.assign(out, walk(p, top));
+    else out[relative(top, p).split("\\").join("/")] = readFileSync(p);
   }
   return out;
 }
@@ -91,7 +100,7 @@ for (const [env, origin] of Object.entries(ENVS)) {
     // The anonymous read-only address first, so the tools work straight after install with no sign-in (as /connect
     // says); the signed-in address alongside, for filing the field reports the Stop hook drafts. It asks for GitHub
     // sign-in only when it's first used. The Gauntlet's no-sign-in server is for /theagentforge:gauntlet (OA-04).
-    ".mcp.json": Buffer.from(JSON.stringify({ mcpServers: { forge: { type: "http", url: `${origin}/mcp/public` }, "forge-reports": { type: "http", url: `${origin}/mcp` }, "forge-gauntlet": { type: "http", url: `${origin}/mcp/gauntlet` } } }, null, 2) + "\n"),
+    ".mcp.json": mcpJson(origin),
   };
   const entries = Object.fromEntries(
     Object.keys(files)
@@ -108,6 +117,13 @@ for (const [env, origin] of Object.entries(ENVS)) {
 outputs["manifest.json"] = Buffer.from(JSON.stringify(manifest, null, 2) + "\n");
 const dist = outputs.__dist;
 delete outputs.__dist;
+
+// The directory edition: its own manifest, README, REVIEWERS.md and skill, the shared files, and the production
+// MCP servers. Nothing else: no hooks, no forge.json (only the hooks read it).
+const directory = { ...walk(join(here, "directory")), ".mcp.json": mcpJson(ENVS.production) };
+for (const f of DIRECTORY_SHARED) directory[f] = base[f];
+const directoryVersion = JSON.parse(directory[".claude-plugin/plugin.json"].toString()).version;
+if (`${directoryVersion}-full` !== version) throw new Error(`Edition versions out of step: directory ${directoryVersion}, full ${version}`);
 
 /** Files in a folder, relative paths to bytes (empty if the folder doesn't exist). */
 function readTree(dir) {
@@ -138,9 +154,12 @@ if (check) {
       stale.push(`${file} (missing)`);
     }
   }
-  const have = readTree(distDir);
-  const distStale = Object.keys(dist).length !== Object.keys(have).length || Object.entries(dist).some(([k, v]) => !have[k] || !Buffer.from(v).equals(have[k]));
-  if (distStale) stale.push("release/forge");
+  const treeStale = (want, dir) => {
+    const have = readTree(dir);
+    return Object.keys(want).length !== Object.keys(have).length || Object.entries(want).some(([k, v]) => !have[k] || !Buffer.from(v).equals(have[k]));
+  };
+  if (treeStale(dist, distDir)) stale.push("release/forge-full");
+  if (treeStale(directory, directoryDir)) stale.push("release/forge");
   if (stale.length) {
     console.error(`Plugin build is out of date (${stale.join(", ")}). Run: pnpm --filter @forge/claude-code-plugin build`);
     process.exit(1);
@@ -152,10 +171,12 @@ if (check) {
   const keep = new Set(legacyFiles.map((l) => l.file));
   for (const f of readdirSync(outDir)) if (!keep.has(f)) rmSync(join(outDir, f), { recursive: true, force: true });
   for (const [f, b] of Object.entries(outputs)) writeFileSync(join(outDir, f), b);
-  rmSync(distDir, { recursive: true, force: true });
-  for (const [f, b] of Object.entries(dist)) {
-    mkdirSync(dirname(join(distDir, f)), { recursive: true });
-    writeFileSync(join(distDir, f), b);
+  for (const [dir, files] of [[distDir, dist], [directoryDir, directory]]) {
+    rmSync(dir, { recursive: true, force: true });
+    for (const [f, b] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, f)), { recursive: true });
+      writeFileSync(join(dir, f), b);
+    }
   }
   console.log(`Built ${Object.keys(manifest.files).map((e) => manifest.files[e].file).join(", ")}`);
 }

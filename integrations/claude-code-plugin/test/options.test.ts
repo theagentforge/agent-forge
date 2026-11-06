@@ -30,7 +30,7 @@ describe("plugin settings", () => {
 
   it("are not read through a computed environment name in the built hooks", () => {
     for (const hook of ["pre-install", "strain", "session-start"]) {
-      const js = readFileSync(join(root, "release", "forge", "hooks", `${hook}.mjs`), "utf8");
+      const js = readFileSync(join(root, "release", "forge-full", "hooks", `${hook}.mjs`), "utf8");
       expect(js).not.toMatch(/process\.env\[`/);
       expect(js).not.toMatch(/CLAUDE_PLUGIN_OPTION_\$\{/);
     }
@@ -63,7 +63,7 @@ describe("plugin identity (ADR 0121 rename)", () => {
   });
 
   it("keeps the User-Agent the Worker counts as the plugin client, in the source and the built hooks", () => {
-    for (const f of ["src/hooks/pre-install.ts", "src/hooks/session-start.ts", "release/forge/hooks/pre-install.mjs", "release/forge/hooks/session-start.mjs"]) {
+    for (const f of ["src/hooks/pre-install.ts", "src/hooks/session-start.ts", "release/forge-full/hooks/pre-install.mjs", "release/forge-full/hooks/session-start.mjs"]) {
       expect(readFileSync(join(root, f), "utf8"), f).toContain('"theagentforge-claude-plugin"');
     }
   });

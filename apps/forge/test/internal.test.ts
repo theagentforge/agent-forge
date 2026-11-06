@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import * as t from "../src/db/schema";
 import { agentFunnel, isDirectoryClient } from "../src/services/agent-funnel";
 import { getDb } from "../src/services/db";
-import { internalCaller, internalClient, internalFromMcpBody, internalOf } from "../src/services/internal";
+import { internalCaller, internalClient, internalFromMcpBody, internalFromUrl, internalOf } from "../src/services/internal";
 import { recordCheck, sourceHash } from "../src/services/proof";
 import { aiAgentCounters, discoveryCounters, humanCounters, mcpCounters, visitCounters } from "../src/services/usage";
 import { fetchWorker } from "./helpers";
@@ -123,6 +123,22 @@ describe("end to end", () => {
     expect(await sourceRows("198.51.100.73")).toHaveLength(0);
     expect(await sourceRows("198.51.100.74")).toHaveLength(1);
     expect(await counter("internal:scout:checks")).toBe(before + 1);
+  });
+
+  it("public MCP: our own connectors tagged in the address (?forge_internal=house) count as House, never as outside use", async () => {
+    expect(internalFromUrl("https://x.test/mcp/public?forge_internal=house")).toBe("house");
+    expect(internalFromUrl("https://x.test/mcp/public?forge_internal=made-up")).toBe("other");
+    expect(internalFromUrl("https://x.test/mcp/public")).toBeNull();
+    const before = await counter("internal:house:sessions");
+    const res = await fetchWorker("/mcp/public?forge_internal=house", {
+      method: "POST",
+      headers: { Host: host, "CF-Connecting-IP": "198.51.100.79", "content-type": "application/json", accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-ai-house-k7", version: "1" } } }),
+    });
+    expect(res.status).toBe(200);
+    await settle();
+    expect(await clientRows("claude-ai-house-k7")).toHaveLength(0);
+    expect(await counter("internal:house:sessions")).toBe(before + 1);
   });
 
   it("public MCP: a tagged session adds no client name; a tagged forge_check adds no check source; normal ones do", async () => {

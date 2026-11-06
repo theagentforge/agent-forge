@@ -4,6 +4,7 @@ import { getDb } from "./db";
 import { descriptionHistory } from "./house-tools";
 import { copyKvNights, FAMILIES, type HouseFamily } from "./house-results";
 import { DATASET_LICENCE, LICENCE_ID } from "./provenance";
+import { BACKFILL_SINCE, DRIFT_HEADER, driftTick, EXCLUDED_REASONS, MAX_VERSIONS, TOOL_HISTORY_HEADER, toolHistoryPath, toolHistoryRows } from "./tool-history";
 
 // ADR 0129 (build plan 5 Nov, P0 items 1 and 2; Boardy's census ticket): the census dataset at /dataset/census.
 //
@@ -174,7 +175,7 @@ export async function measureDay(env: Env, day: string): Promise<MetricValue[]> 
   const out: MetricValue[] = [];
   for (const [key, counts] of await houseCounts(env, day, day)) out.push(...houseValues(key.split("|")[0] as HouseFamily, counts));
   const desc = await one(
-    sql`SELECT count(*) AS sets, coalesce(sum(descriptions_count), 0) AS descs, coalesce(sum(CASE WHEN coalesce(json_extract(counts, '$.high'), 0) > 0 THEN 1 ELSE 0 END), 0) AS high FROM tool_description_history WHERE last_seen >= ${start} AND last_seen < ${end}`,
+    sql`SELECT count(*) AS sets, coalesce(sum(descriptions_count), 0) AS descs, coalesce(sum(CASE WHEN coalesce(json_extract(counts, '$.high'), 0) > 0 THEN 1 ELSE 0 END), 0) AS high FROM tool_description_history WHERE origin != 'backfill' AND last_seen >= ${start} AND last_seen < ${end}`,
   );
   if (Number(desc.sets) > 0) out.push({ metric: "tool_descriptions.scanned", value: Number(desc.descs) }, { metric: "tool_descriptions.high_risk_matches", value: Number(desc.high) });
   const skills = await one(sql`SELECT sum(CASE WHEN first_seen < ${end} THEN 1 ELSE 0 END) AS total, sum(CASE WHEN first_seen >= ${start} AND first_seen < ${end} THEN 1 ELSE 0 END) AS new FROM skill_scans`);
@@ -307,7 +308,7 @@ async function partPrints(env: Env, version: string) {
     const start = dayStart(`${m}-01`);
     const end = monthEnd(m);
     const [d] = (await db.all(
-      sql`SELECT count(*) AS n, coalesce(sum(min(last_seen, ${end})), 0) AS l, coalesce(sum(max(first_seen, ${start})), 0) AS f FROM tool_description_history WHERE first_seen < ${end} AND last_seen >= ${start}`,
+      sql`SELECT count(*) AS n, coalesce(sum(min(last_seen, ${end})), 0) AS l, coalesce(sum(max(first_seen, ${start})), 0) AS f FROM tool_description_history WHERE origin != 'backfill' AND first_seen < ${end} AND last_seen >= ${start}`,
     )) as { n: number; l: number; f: number }[];
     prints.set(historyPath(m), await sha256Hex(`${parts.get(m)!.join(",")}|${d?.n ?? 0}:${d?.l ?? 0}:${d?.f ?? 0}`));
   }
@@ -365,6 +366,11 @@ export async function buildCensusFiles(env: Env, version: string, keep: (path: s
     }
     files[path] = csv(SERVER_HISTORY_HEADER, history);
   }
+  // ADR 0134: the tool-definition history (forward and backfilled, origin on every row) and its drift. Hashes and
+  // change classes only; the tool text itself is buyer-only (an admin download). Rebuilt each day (small files).
+  const th = await toolHistoryRows(env);
+  for (const [month, rows] of [...th.months].sort((a, b) => (a[0] < b[0] ? -1 : 1))) if (month <= version.slice(0, 7)) files[toolHistoryPath(month)] = csv(TOOL_HISTORY_HEADER, rows);
+  files["drift.csv"] = csv(DRIFT_HEADER, th.drift);
   files["schema.json"] = JSON.stringify(censusSchema(version, firstDates(series)), null, 1) + "\n";
   return { files, kept, prints };
 }
@@ -392,6 +398,43 @@ export function censusSchema(version: string, first: Record<string, string | nul
           failure_class: `The outcome's class in ${TAXONOMY_VERSION}; empty when it installed`,
           tool_count: "Tools listed (empty when it listed none)",
           description_sha256: "sha256 (hex) of the tool-description set seen for that server and version on that night; empty when it didn't list tools or before descriptions were captured",
+        },
+      },
+      "tool-history/<YYYY-MM>.csv": {
+        format: "CSV, one row per tool-definition set seen per server version (tools/list), one file per UTC month of the version's publish date (or of when we saw it, when the publish date isn't known). Hashes only: the tool text is not in the public files.",
+        fields: {
+          server: "The tool's id on the site (npm:<package>, pypi:<package> or the repository it resolves to)",
+          package: "npm:<package> or pypi:<package> for servers in the backfill set; empty otherwise",
+          version: "The published version",
+          published_at: "When the registry says the version was published (npm time, PyPI earliest upload); empty when not known",
+          observed_at: "When the House tester actually ran that version and read its tools/list",
+          origin: `nightly (seen by the nightly or weekly House run), carried (the one current row each server had on 5 Nov 2026, copied in), or backfill (an older version installed later, from ${BACKFILL_SINCE}). A backfill row's published_at is the registry's date, never a date we saw it`,
+          tools_count: "Tools listed",
+          description_sha256: "sha256 (hex) of the set's names, descriptions and input schemas as scanned",
+          change_class: "Against the server's previous observed set: first, none, or tool_added; tool_removed; description_changed; schema_changed (joined by ;). not_yet_computed until the daily drift step has read it",
+          failure_class: `For a backfill version that didn't start: its class in ${TAXONOMY_VERSION} (the other fields are empty)`,
+        },
+        coverage: `Backfill: stable versions published since ${BACKFILL_SINCE} of the latest nightly top-500 servers (npm) and up to 100 PyPI servers the weekly sweep has seen start, at most the newest ${MAX_VERSIONS} per server. Not tested: ${Object.entries(EXCLUDED_REASONS).map(([k, v]) => `${k} (${v})`).join("; ")}`,
+      },
+      "drift.csv": {
+        format: "CSV, one row per consecutive pair of observed tool-definition sets of a server whose definitions changed",
+        fields: {
+          server: "As in tool-history",
+          package: "As in tool-history",
+          from_version: "The earlier version",
+          to_version: "The later version (equal to from_version when the definitions changed without a version change)",
+          from_published_at: "Publish date of from_version, where known",
+          to_published_at: "Publish date of to_version, where known",
+          change_class: "tool_added; tool_removed; description_changed; schema_changed (joined by ;)",
+          tools_added: "Tools in the later set only",
+          tools_removed: "Tools in the earlier set only",
+          descriptions_changed: "Tools in both whose description text differs",
+          schemas_changed: "Tools in both whose input schema differs",
+          major_bump: "true when the two versions' major numbers differ (semver; for PyPI the first release number), in either direction: pairs follow publish order, so a backport to an older major published after a newer one counts as a major change",
+          zero_major: "true when both versions are 0.x, where semver allows any change in a minor release",
+          same_version: "true when the definitions changed with no version change",
+          untested_between: "Versions published between the two that didn't start, so their definitions are unknown",
+          new_text_rules: "Skill-scanner rule ids (joined by ;) matched by the new text of added or changed tools and not by those tools' earlier text. A rule id names a pattern for a person to read, not a finding about the server",
         },
       },
       "roster/<date>.csv": { format: "CSV, the night's top-500 roster", fields: { rank: "Rank by last week's downloads", server: "npm:<package> or pypi:<package>", version: "Version tested", weekly_downloads: "Downloads in the week before, as the registry reported them", outcome: "The night's raw outcome" } },
@@ -529,6 +572,12 @@ export async function censusTick(env: Env, now = Date.now()) {
     } catch (e) {
       out.snapshot = { error: String(e).slice(0, 120) };
     }
+  // ADR 0134: drift for tools whose definition history changed, before the day's files are built.
+  try {
+    out.drift = await driftTick(env, now);
+  } catch (e) {
+    out.drift = { error: String(e).slice(0, 120) };
+  }
   try {
     out.publish = await publishCensus(env, now);
   } catch (e) {

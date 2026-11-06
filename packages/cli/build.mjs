@@ -4,7 +4,7 @@
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 
-export const PRIVATE_STUB = `export const PRIVATE_TASKS = []; export const PRIVATE_TRAP_CATALOG = []; export const HELDOUT_PANEL_VERSION = "none"; export const HELDOUT_SEEDS = {};`;
+export const PRIVATE_STUB = `export const PRIVATE_TASKS = []; export const FRONTIER_PRIVATE_TASKS = []; export const PRIVATE_TRAP_CATALOG = []; export const HELDOUT_PANEL_VERSION = "none"; export const HELDOUT_SEEDS = {};`;
 
 export const noPrivate = {
   name: "no-private-arena",

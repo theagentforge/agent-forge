@@ -38,3 +38,18 @@ describe("Forge Lab #5, as pre-registered", () => {
     expect((await fetchWorker("/lab/5/arm-e-card-v1.1.txt")).status).toBe(200);
   });
 });
+
+describe("Lab #5 results are published (6 Nov 2026)", () => {
+  it("/lab/5/results shows the write-up and all 360 attempts; the copy is the pre-registered one, with the harm next to it", async () => {
+    const page = await (await fetchWorker("/lab/5/results", { headers: { Accept: "text/html" } })).text();
+    expect(page).toContain("measurably reduce traps for frontier models either");
+    expect(page).toContain("Deviations from the plan");
+    expect(page).toContain("7.5%");
+    const counts = JSON.parse(await (await fetchWorker("/lab/5/results/counts.json")).text()) as { arm: string; n: number }[];
+    expect(counts.reduce((s, r) => s + r.n, 0)).toBe(360);
+    for (const arm of ["none", "card", "card11"]) expect(counts.filter((r) => r.arm === arm).every((r) => r.n === 30)).toBe(true);
+    // H1 didn't hold and H4 failed: no claim that v1.1 helps, and the home line says so.
+    const home = await (await fetchWorker("/", { headers: { Accept: "text/html" } })).text();
+    expect(home).not.toContain("tests a sharper card");
+  });
+});

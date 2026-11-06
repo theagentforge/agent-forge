@@ -133,6 +133,9 @@ describe("Arena pages", () => {
     const j = (await (await fetchWorker(`/arena/run/${runId}.json`)).json()) as { log: unknown[]; frames: unknown[]; signature: string };
     expect(j.log.length).toBeGreaterThan(3);
     expect(j.signature).toMatch(/^hmac-sha256:/);
+    // ADR 0137: the twin carries findings (none here: an honest tap-out springs no trap).
+    expect(j).toMatchObject({ findings: [], findings_withheld: 0, findings_basis: "referee_record_and_trace_only_no_model_text_no_llm" });
+    expect(body).not.toContain('id="h-findings"');
   });
 
   it("the event card names a winner by the published scorecard", async () => {

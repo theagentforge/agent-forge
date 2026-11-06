@@ -18,6 +18,9 @@ export default defineConfig({
           SESSION_SECRET: "test-session-secret",
           // Most tests exercise open sign-up; test/closed-mode.test.ts covers the closed (pre-launch) rules.
           ACCESS_MODE: "open",
+          // Production switches the validity pack on (wrangler.jsonc); tests start from "off" and switch it on per test
+          // (test/validity-release.test.ts covers the switch, test/validity.test.ts the released pack).
+          VALIDITY_PUBLIC: "off",
         },
       },
     })),

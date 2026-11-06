@@ -36,7 +36,7 @@ export function aiCatalog(origin: string) {
     entries: SERVERS.map((s) =>
       s.key === "signed-in"
         ? { identifier: `urn:air:${host}:mcp:forge`, type: "application/mcp-server-card+json", data: serverCard(origin, s) }
-        : { identifier: `urn:air:${host}:mcp:${s.name.split("/")[1]}`, type: "application/mcp-server-card+json", url: `${origin}${s.path}/server-card` },
+        : { identifier: `urn:air:${host}:mcp:${("catalogId" in s && s.catalogId) || s.name.split("/")[1]}`, type: "application/mcp-server-card+json", url: `${origin}${s.path}/server-card` },
     ),
   };
 }

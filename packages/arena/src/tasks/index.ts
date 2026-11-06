@@ -2,7 +2,7 @@ import type { TaskType } from "../types";
 import { flakySupplier } from "./flaky-supplier";
 import { flakySupplierHard } from "./flaky-supplier-hard";
 import { impossible } from "./impossible";
-import { impossibleHard } from "./impossible-hard";
+import { impossibleHard, impossibleHardReferee } from "./impossible-hard";
 import { refund } from "./refund";
 import { refundHard } from "./refund-hard";
 import { scamInvoice } from "./scam-invoice";
@@ -12,13 +12,14 @@ import { spreadsheetHard } from "./spreadsheet-hard";
 import { weekend } from "./weekend";
 import { weekendHard } from "./weekend-hard";
 import { flakySupplierHard3, flakySupplierHard32 } from "./flaky-supplier-hard3";
-import { impossibleHard3 } from "./impossible-hard3";
+import { impossibleHard3, impossibleHard3Referee } from "./impossible-hard3";
 import { refundHard3, refundHard32 } from "./refund-hard3";
 import { scamInvoiceHard3, scamInvoiceHard33 } from "./scam-invoice-hard3";
 import { spreadsheetHard3 } from "./spreadsheet-hard3";
 import { weekendHard3 } from "./weekend-hard3";
 import { calculatorTool } from "./calculator";
-import { PRIVATE_TASKS } from "../private";
+import { FRONTIER_PRIVATE_TASKS, PRIVATE_TASKS } from "../private";
+import { FRONTIER_TASKS } from "./frontier/index";
 
 /** The launch card (ADR 0013 §2). Locked before each event: changing a task means a new season version. */
 export const TASKS: TaskType[] = [refund, scamInvoice, weekend, spreadsheet, flakySupplier, impossible];
@@ -67,17 +68,50 @@ export const taskById = (id: string) =>
  */
 export const RANKED_PRIVATE_TASKS: readonly string[] = [];
 /** Private job ids that may only run in practice events (the private families not yet promoted). */
-export const PRACTICE_ONLY_TASK_IDS: readonly string[] = PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id));
+export const PRACTICE_ONLY_TASK_IDS: readonly string[] = [...PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id)), ...FRONTIER_TASKS.map((t) => t.id), ...FRONTIER_PRIVATE_TASKS.map((t) => t.id)];
 export const isPracticeOnly = (id: string) => PRACTICE_ONLY_TASK_IDS.includes(id);
 /** The private job ids (all tiers), selectable by id for practice and held-out panels. */
-export const PRIVATE_TASK_IDS: readonly string[] = PRIVATE_TASKS.map((t) => t.id);
+export const PRIVATE_TASK_IDS: readonly string[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS].map((t) => t.id);
 /** The private families by base id (the Normal job id), each with its tiers' job ids. */
 export const PRIVATE_FAMILIES: Record<string, string[]> = Object.fromEntries(
   [...new Set(PRIVATE_TASKS.map((t) => t.id.replace(/-hard$/, "")))].map((f) => [f, PRIVATE_TASKS.filter((t) => t.id.replace(/-hard$/, "") === f).map((t) => t.id)]),
 );
-/** Any job the runner can play: public jobs, then private families (practice and held-out runs only). */
-export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? null;
+/** Any job the runner can play: public jobs, the calibrating frontier tier, then private families (practice and held-out runs only). */
+export const anyTaskById = (id: string) => taskById(id) ?? FRONTIER_TASKS.find((t) => t.id === id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_PRIVATE_TASKS.find((t) => t.id === id) ?? null;
+
+/**
+ * The frontier tier (ADR 0139): three job families calibrating on the dev seeds. Practice-only and on no public page
+ * (taskById never finds one) until frozen and promoted to task version "Frontier 1.0".
+ */
+export { FRONTIER_CATALOG, FRONTIER_FAMILIES, FRONTIER_FREEZE, FRONTIER_TASK_IDS, FRONTIER_TASKS, frontierFingerprint, isFrontierTask, type FrontierTrapEntry } from "./frontier/index";
 
 /** The sandbox fee the Hard banking job charges for a declined payment or a returned direct debit (cents). Read by the
  * Trap Set's cost-of-failure figures, so the published number is the one the job really charges. */
 export { FEE as IMPOSSIBLE_HARD_FEE } from "./impossible-hard";
+
+/**
+ * Jobs whose referee depends on the rules version it scores under (ADR 0140: rules 0.7's lie-detector change), with
+ * the referee for a given version. Every other job's referee is the same under every rules version still in use.
+ */
+const REFEREE_UNDER_RULES: Record<string, (rules: string) => TaskType["referee"]> = {
+  "impossible-hard": (r) => impossibleHardReferee(r) as unknown as TaskType["referee"],
+  "impossible-hard3": (r) => impossibleHard3Referee(r) as unknown as TaskType["referee"],
+};
+/** The jobs whose referee rules 0.7 changes (ADR 0140). */
+export const RULES_0_7_TASKS: readonly string[] = Object.keys(REFEREE_UNDER_RULES);
+/**
+ * The rules versions this build referees exactly, every public job: rules 0.6 and rules 0.7 differ only in the
+ * referees above (ADR 0140), and every other job's referee is unchanged since rules 0.6. Older rules (0.5 and before)
+ * changed other checks whose old code is gone, so a run scored under them is never re-run as if under its own rules.
+ */
+export const RULES_REFEREED_EXACTLY: readonly string[] = ["rules 0.6", "rules 0.7"];
+/**
+ * A job as the referee of `rules` scores it: the job itself, with that version's referee where it differs (rules 0.7
+ * on the impossible ask). Used by the rules 0.7 re-score, by `refereeCheck` (`underRunRules`) to check a rules 0.6
+ * run under its own referee, and by the tests.
+ */
+export function taskUnderRules(id: string, rules: string): TaskType | null {
+  const t = anyTaskById(id);
+  const referee = REFEREE_UNDER_RULES[id];
+  return t && referee ? { ...t, referee: referee(rules) } : t;
+}

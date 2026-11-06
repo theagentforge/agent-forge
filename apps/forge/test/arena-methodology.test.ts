@@ -51,9 +51,9 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<h2 id="cite">How to cite</h2>');
     expect(body).toContain("@misc{forgearena2026,");
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/arena/methodology`);
-    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3).");
+    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3).");
     expect(body).toContain('<h2 id="changelog">Changelog</h2>');
-    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "Hard v3.3", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]) expect(body).toContain(`<b>${v}</b>`);
+    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "Hard v3.3", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6", "rules 0.7"]) expect(body).toContain(`<b>${v}</b>`);
     expect(body).toContain("16 Oct 2026");
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
@@ -73,8 +73,8 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     const res = await fetchWorker("/arena/methodology?format=json");
     expect(res.headers.get("Content-Type")).toContain("application/json");
     const j = (await res.json()) as Record<string, unknown> & { catalog: Record<string, unknown>[]; families: Record<string, { reserved: boolean }>; citation: Record<string, string> };
-    expect(Object.keys(j).sort()).toEqual(["catalog", "citation", "contamination", "families", "licence", "name", "rules_history", "rules_version", "task_versions"]);
-    expect(j.rules_version).toBe("rules 0.6");
+    expect(Object.keys(j).sort()).toEqual(["catalog", "citation", "contamination", "families", "licence", "name", "rules_history", "rules_version", "severity", "task_versions"]);
+    expect(j.rules_version).toBe("rules 0.7");
     expect(j.task_versions).toEqual([
       expect.objectContaining({ version: "Normal 1.0", date: "2026-10-15", effective_from: "2026-10-15T00:00:00Z" }),
       expect.objectContaining({ version: "Hard v2", date: "2026-10-16" }),
@@ -93,6 +93,8 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(j.rules_history).toContainEqual({ version: "rules 0.5", date: "2026-10-24", effective_from: "2026-10-24T00:00:00Z", version_read_from: "finish_time" });
     // Rules 0.6 on: each result carries the version of the code that scored it (production ran 0.5 code after 0.6 was built).
     expect(j.rules_history).toContainEqual({ version: "rules 0.6", date: "2026-10-26", effective_from: RULES_0_6_FROM, version_read_from: "result_stamp" });
+    // Rules 0.7 (ADR 0140), in force from 6 Nov 2026, is read from the result stamp too.
+    expect(j.rules_history).toContainEqual(expect.objectContaining({ version: "rules 0.7", date: "2026-11-06", version_read_from: "result_stamp" }));
     expect(j.catalog).toHaveLength(TRAP_CATALOG.length);
     expect(j.catalog[0]).toEqual({
       id: "FA-PAY-001",
@@ -101,10 +103,13 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       provenance: { pattern: expect.any(String), source_title: expect.any(String), source_url: "https://www.ic3.gov/PSA/2024/PSA240911" },
       since: "Normal 1.0",
       traps: ["scam-invoice/wrong_account", "scam-invoice-hard/wrong_account", "scam-invoice-hard3/wrong_account", "scam-invoice-hard3-3/wrong_account"],
+      // ADR 0137: severity and the sandbox cost of failure beside it.
+      severity: expect.objectContaining({ severity: "medium", impact: "money_misdirected", exploitability: "routine", scale: "severity 1.1" }),
+      cost_of_failure: expect.objectContaining({ unit: "usd_cents_sandbox", real_world_loss_estimate: null }),
     });
     expect(j.families.PRM!.reserved).toBe(false);
     expect(j.families.PAY!.reserved).toBe(false);
-    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-11-05" });
+    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-11-06" });
     // Data only: no HTML and no changelog prose in the twin.
     expect(JSON.stringify(j)).not.toMatch(/<[a-z]/i);
     expect(j).not.toHaveProperty("changelog");
@@ -139,5 +144,25 @@ describe("every result shows the versions it ran under", () => {
       ["partial", "FA-AMT-002"],
       ["false_claim", "FA-CLM-001"],
     ]);
+  });
+});
+
+// ADR 0137: the severity scale, its distribution and each trap's rating on the methodology page.
+describe("/arena/methodology severity (ADR 0137)", () => {
+  it("rates every public trap, shows the rubric and the distribution, and cites OWASP", async () => {
+    const j = (await (await fetchWorker("/arena/methodology?format=json")).json()) as { catalog: { id: string; severity: { severity: string } | null; cost_of_failure: unknown }[]; severity: { distribution: Record<string, number>; levels: unknown[]; owasp_agentic_source: { url: string }; part_of_frozen_trap_set: boolean } };
+    expect(j.catalog.every((e) => e.severity && e.cost_of_failure)).toBe(true);
+    const d = j.severity.distribution;
+    expect(d.critical! + d.high! + d.medium! + d.low!).toBe(j.catalog.length);
+    for (const level of ["critical", "high", "medium", "low"]) expect(d[level]).toBe(j.catalog.filter((e) => e.severity!.severity === level).length);
+    expect(j.severity.levels).toHaveLength(4);
+    expect(j.severity.part_of_frozen_trap_set).toBe(false);
+    expect(j.severity.owasp_agentic_source.url).toBe("https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/");
+    const page = await (await fetchWorker("/arena/methodology")).text();
+    expect(page).toContain('id="severity"');
+    expect(page).toContain("OWASP ASI01 Agent Goal Hijack");
+    expect(page).toMatch(/<td data-label="Severity"><b>Critical<\/b>/);
+    expect(page).toContain("No sandbox money moves");
+    expect(page).not.toMatch(/FA-[A-Z]{3}-1\d\d/);
   });
 });

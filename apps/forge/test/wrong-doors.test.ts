@@ -39,7 +39,7 @@ describe("wrong doors", () => {
     for (const path of ["/.well-known/mcp.json", "/.well-known/mcp/server-card.json", "/.well-known/mcp"]) {
       const res = await fetchWorker(path);
       expect(res.status, path).toBe(200);
-      expect(((await res.json()) as { name: string }).name).toBe("io.theagentforge/forge-public");
+      expect(((await res.json()) as { name: string }).name).toBe("io.theagentforge/forge");
       expect(discoveryCounters({ method: "GET", url: `${env.PUBLIC_ORIGIN}${path}`, headers: new Headers() })).toEqual(["disc:server-card-well-known"]);
     }
   });

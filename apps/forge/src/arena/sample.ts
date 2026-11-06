@@ -434,7 +434,8 @@ export async function replayVerifies(env: Env, doc: unknown) {
     const key = await crypto.subtle.importKey("jwk", { kty: k.kty, crv: k.crv, x: k.x }, { name: "Ed25519" }, false, ["verify"]);
     return crypto.subtle.verify({ name: "Ed25519" }, key, unb64(signature.replace(/^ed25519:/, "")), enc.encode(message));
   });
-  const ref = refereeCheck(doc);
+  // Under the rules that scored the bout (rules 0.6 bouts stay checkable once rules 0.7 is in force; ADR 0140).
+  const ref = refereeCheck(doc, { underRunRules: true });
   return c.format === 2 && c.chain === "ok" && c.record === "ok" && c.signature === "ok" && ref.checked && ref.same_verdict === true && ref.faithful === true && ref.rules_of_run === ref.rules_here;
 }
 

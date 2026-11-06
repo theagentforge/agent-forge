@@ -10,8 +10,13 @@
 //    counters), and the "Try it on your agent" commands on a Sprint result page carry `?from=sprint-result` on the
 //    Gauntlet MCP address and the HTTP start, so a run started from them is counted as arriving from a Sprint result.
 
-/** The skill names that may tag their calls (integrations/skill/*). */
-export const TAGGING_SKILLS = ["forge-check-before-install", "forge-run-the-gauntlet"] as const;
+import { day, sourceHash } from "./proof";
+
+/**
+ * The client names that may tag their calls: our Agent Skills (integrations/skill/*) and, from ADR 0135, the Gauntlet
+ * GitHub Action (integrations/gauntlet-action, `?client=gh-action-gauntlet-<version>` on its run start).
+ */
+export const TAGGING_SKILLS = ["forge-check-before-install", "forge-run-the-gauntlet", "gh-action-gauntlet"] as const;
 export type TaggingSkill = (typeof TAGGING_SKILLS)[number];
 const SKILL_TAG = new RegExp(`^(${TAGGING_SKILLS.join("|")})-(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})$`);
 
@@ -37,6 +42,25 @@ export function skillTagKeys(raw: string | null | undefined, endpoint: SkillEndp
   const tag = skillTag(raw);
   return tag ? [skillTagKey(tag.skill, tag.version, endpoint)] : [];
 }
+
+/**
+ * ADR 0135 review: the Gauntlet Action's tag is a fixed public label, so anyone can send it. Counted as is, one address
+ * could add the daily start limit (30) to the "outside runs from the Action" count every day. So its run starts count
+ * at most once a day per runner address, read from the same one-day code the Gauntlet's daily limits use (an HMAC of
+ * the address under a daily salt; the address itself is never stored). GitHub-hosted runners change address, so CI use
+ * still counts about once per run; a self-hosted runner counts once a day: a lower bound, never inflated.
+ */
+export const ACTION_TAG_PREFIX = `${SKILL_TAG_PREFIX}gh-action-gauntlet@`;
+export async function actionTagOncePerSourceDay(env: Pick<Env, "KV" | "SESSION_SECRET">, ip: string, keys: string[], now = Date.now()): Promise<string[]> {
+  if (!keys.some((k) => k.startsWith(ACTION_TAG_PREFIX))) return keys;
+  const d = day(now);
+  const seen = `skilltag-src:${d}:${await sourceHash(env.SESSION_SECRET, d, `gh-action-gauntlet|${ip}`)}`;
+  if (await env.KV.get(seen)) return keys.filter((k) => !k.startsWith(ACTION_TAG_PREFIX));
+  await env.KV.put(seen, "1", { expirationTtl: 2 * 86_400 });
+  return keys;
+}
+/** The Action starts runs over HTTP only, so its tag on an MCP start is never ours and never counted. */
+export const withoutActionTag = (keys: string[]) => keys.filter((k) => !k.startsWith(ACTION_TAG_PREFIX));
 
 /** Item 10: the share link's tag (a page arrival) and the start commands' tag (a run). */
 export const SPRINT_SHARE_FROM = "sprint-share";

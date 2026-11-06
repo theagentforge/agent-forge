@@ -154,7 +154,9 @@ async function verifyOne(doc: unknown, o: { keys: Keys | null; origins: string[]
   } catch {
     r = { format: null, run_id: null, steps: 0, chain: "not_checked", chain_break_at: null, record: "not_checked", record_problems: [], signature: "not_checked", key_id: null, seal: null, unknown_format: null, rescored_rules: null };
   }
-  const ref = refereeCheck(doc);
+  // A run is re-refereed under the rules that scored it when this build still has that referee exactly (rules 0.6 and
+  // later); older runs are re-run under today's referee and reported as such (ADR 0140).
+  const ref = refereeCheck(doc, { underRunRules: true });
   const sameRules = ref.rules_of_run && ref.rules_here ? ref.rules_of_run === ref.rules_here : null;
   const problems = sentence(r);
   if (r.signature === "unknown_key") unableWhy.push(`The key ${r.key_id} isn't in the key set${keySource === "forge_published" ? ` published at ${signedBy}${KEYS_PATH}` : ""}.`);

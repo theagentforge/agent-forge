@@ -12,6 +12,8 @@ name: House tester
 #
 # The plan and probe jobs run untrusted code (the servers) or read untrusted data, and have no secrets and no write
 # permissions. The file job runs no third-party code; it proves who it is with GitHub's OIDC token, which the site checks.
+# Each server (nightly, sweep and requested alike) runs as its own throwaway OS user with a minimal environment
+# (integrations/house/isolate.mjs, ADR 0134 amendment 2): it can't rewrite another server's result or read the job's.
 
 on:
   schedule:
@@ -109,14 +111,23 @@ jobs:
         with:
           name: house-plan
           path: ${{ runner.temp }}
+      # Root-owned under /opt: probe users can run uv but not change it (ADR 0134 amendment 2).
       - name: Install uv for PyPI servers (pinned version, hash-checked)
         if: needs.plan.outputs.mode == 'sweep'
         run: |
-          python3 -m venv "$RUNNER_TEMP/uv-venv"
-          "$RUNNER_TEMP/uv-venv/bin/pip" install --quiet --require-hashes --no-deps -r "$GITHUB_WORKSPACE/integrations/house/uv-requirements.txt"
-          echo "$RUNNER_TEMP/uv-venv/bin" >> "$GITHUB_PATH"
-      - name: Start and handshake MCP servers (sandboxed, no secrets)
+          sudo python3 -m venv /opt/house-uv
+          sudo /opt/house-uv/bin/pip install --quiet --require-hashes --no-deps -r "$GITHUB_WORKSPACE/integrations/house/uv-requirements.txt"
+          echo "/opt/house-uv/bin" >> "$GITHUB_PATH"
+      # Closes the runner's home, workspace, temp folder ($GITHUB_* files) and runner directory to other users, then
+      # checks as a throwaway probe user that none of them, nor the docker socket, is reachable and it can't sudo.
+      - name: Lock the runner's folders away from probe users (and check)
+        env:
+          UVX: ${{ needs.plan.outputs.mode == 'sweep' && '--uvx' || '' }}
+        run: node "$GITHUB_WORKSPACE/integrations/house/isolate.mjs" lockdown $UVX
+      - name: Start and handshake MCP servers (each as its own throwaway user, no secrets)
         working-directory: ${{ runner.temp }}
+        env:
+          HOUSE_ISOLATION: user
         run: node "$GITHUB_WORKSPACE/integrations/house/probe.mjs" run plan.json ${{ matrix.shard }} ${{ needs.plan.outputs.count }}
       - uses: actions/upload-artifact@v4
         with:

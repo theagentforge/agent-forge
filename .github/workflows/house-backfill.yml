@@ -1,0 +1,174 @@
+name: House tool-history backfill
+
+# ADR 0134 (moat audit 5 Nov, gate 1): every stable version published since 2025-09-01 of the servers the nightly
+# House tester covers (the top 500 on npm, plus PyPI servers the weekly sweep has seen start) is installed in the House
+# tester's sandbox, its tools/list read, and stored on the site with origin "backfill" (first_seen = the version's
+# publish date, observed_at = when it ran). A resumable queue on the site: each run takes up to 1,000 pending versions.
+#
+# The plan and probe jobs run untrusted code (the servers) or read untrusted data, and have no secrets and no write
+# permissions. The file job runs no third-party code; it proves who it is with GitHub's OIDC token, which the site
+# checks for this workflow only (a nightly House token can't post here, and this one can't post House reports).
+#
+# Package code on a probe runner can reach that job's artifact token (passwordless sudo, or a later step's environment),
+# so it could upload or replace another shard's artifact or the plan. So each shard is its own job
+# (house-backfill-shard.yml, called ten times rather than a matrix, whose legs could set each other's outputs) and
+# reports its results file's sha256 as that job's output; the plan job reports the plan's. The shards check the plan
+# and the file job checks everything against those outputs, so a package can at worst spoil its own shard. Inside a
+# shard each version runs as its own throwaway OS user (ADR 0134 amendment 2), so it can't spoil its neighbours either.
+
+on:
+  schedule:
+    - cron: "17 11 * * *"
+    - cron: "17 23 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+# One run at a time; a second one waits.
+concurrency:
+  group: house-backfill
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    outputs:
+      plan_sha: ${{ steps.sha.outputs.plan_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Ask the site for the queue and read new version lists from npm and PyPI
+        working-directory: ${{ runner.temp }}
+        run: node "$GITHUB_WORKSPACE/integrations/house/backfill.mjs" plan https://theagentforge.io
+      - name: Fingerprint the plan (the shards and the file job check it)
+        id: sha
+        working-directory: ${{ runner.temp }}
+        run: echo "plan_sha=$(sha256sum plan.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: house-backfill-plan
+          path: ${{ runner.temp }}/plan.json
+          retention-days: 14
+
+  # Ten shards of 100 versions, 4 at a time, at most 75 s each: under 32 minutes. One job each (not a matrix), so each
+  # shard's results_sha output is its own.
+  shard-0:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 0
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-1:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 1
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-2:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 2
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-3:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 3
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-4:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 4
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-5:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 5
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-6:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 6
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-7:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 7
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-8:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 8
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+  shard-9:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/house-backfill-shard.yml
+    with:
+      shard: 9
+      plan_sha: ${{ needs.plan.outputs.plan_sha }}
+
+  file:
+    needs: [plan, shard-0, shard-1, shard-2, shard-3, shard-4, shard-5, shard-6, shard-7, shard-8, shard-9]
+    # Still file what the other shards found if one shard failed.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: house-backfill-plan
+          path: plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: house-backfill-results-*
+          path: results
+      - name: Send version lists and results to the site
+        env:
+          # Job outputs: only the plan job and each shard's own job can set theirs.
+          PLAN_SHA: ${{ needs.plan.outputs.plan_sha }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: node integrations/house/backfill.mjs file https://theagentforge.io plan/plan.json results/*/results.json

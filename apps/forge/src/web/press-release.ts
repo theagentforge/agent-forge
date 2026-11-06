@@ -17,6 +17,8 @@ import type { FallSummary } from "../arena/results";
 
 // The research release of 2 Nov 2026 (docs/launch/research-release-2026-11.md §1, §4 and §5; Dinike, 1 Nov). One page,
 // /press/2026-11, for reporters: Lab #4's null result, the launch skill scan, what maintainers did, and the Arena rates.
+// Order (Dinike, 6 Nov): the page leads with the dated launch-scan finding and what maintainers did; the ranked rates
+// come lower, labelled "Early read" with their attempts, dates and interval, because their samples are small.
 //
 // Every number is read when the page is built, through the Worker's own data functions (the same objects /security,
 // /stats.json, /reports/house.json and the launch-scan report serve), never typed here. A number that can't be read
@@ -109,7 +111,7 @@ export async function pressData(env: Env, now = Date.now()) {
   const listed = (await read(() => publicFingerprints(env, shown.map((e) => e.fingerprint)))) ?? new Set<string>();
   return {
     // ADR 0123: the latest ranked Hard event (the home line's event, the same summary arena_results gives with no
-    // arguments), first in §1, so the release never opens on the few attempts under the newest rules alone.
+    // arguments), first in the ranked block, so that block never opens on the few attempts under the newest rules alone.
     latest_hard: (a?.latest_ranked_hard ?? null) as FallSummary | null,
     arena:
       a && overall && overall.shown && overall.break_rate !== null && overall.ci_95 && a.since && a.as_of
@@ -184,9 +186,9 @@ function maintainersBlock(rows: MaintainerResponse[], pending: boolean, reportNa
       ? html`Clear, no known pattern matched (${dayShort(e.rescan.date)}). <a href="${scanPath(e.fingerprint)}">Entry</a>`
       : html`Still matches a pattern (${dayShort(e.rescan.date)}). We record the match and make no claim either way. <a href="${scanPath(e.fingerprint)}">Entry</a>`;
   if (!rows.length)
-    return html`<h2 id="maintainers">5. Maintainer responses</h2>
+    return html`<h2 id="maintainers">2. Maintainer responses</h2>
 <p data-k="maintainers-pending">Named repositories and maintainer responses are added here once the notice window has closed.</p>`;
-  return html`<h2 id="maintainers">5. Maintainer responses</h2>
+  return html`<h2 id="maintainers">2. Maintainer responses</h2>
 <p>We told each repository's maintainer before naming it. Each entry shows the result at the commit we scanned, the response, and our rescan.</p>
 <div class="table-scroll"><table class="table stack"><thead><tr><th scope="col">Repository and file</th><th scope="col">Response</th><th scope="col">Our rescan</th></tr></thead><tbody>
 ${rows.map((e) => html`<tr data-repo="${e.repo}"><td class="wide">${e.repo}, <code>${e.path}</code></td><td data-label="Response">${resp(e)}</td><td data-label="Our rescan">${rescan(e)}</td></tr>`)}
@@ -216,37 +218,8 @@ export function pressBody(d: Awaited<ReturnType<typeof pressData>>) {
 <li>Every number below links to the public file it came from.</li>
 </ul>
 
-${a || h
-  ? html`<h2 id="ranked">1. Ranked bouts: how often a model fell for at least one trap</h2>
-<ul>
-${h ? html`<li data-k="arena-latest-hard">In ${h.event_name}, the latest ranked Hard event: ${h.fell} of ${num(h.attempts)} attempts (${pct0(h.fell_rate ?? 0)}) fell for a planted trap${h.ci_95 ? `, 95% interval ${range(h.ci_95)}` : ""}, ${h.models} models${h.since && h.as_of ? `, ${day(h.since)} to ${day(h.as_of)}` : ""}${h.rules_versions.length ? `, ${h.rules_versions.join(", ")}` : ""}.${h.worst_model ? ` Highest: ${h.worst_model.name}, ${h.worst_model.fell} of ${h.worst_model.attempts}.` : ""} Source: ${src(`/arena/event/${h.event}/falls`, `/arena/event/${h.event}/falls`)} (${src("/security?format=json", "JSON")}, pointer <code>/arena/latest_ranked_hard</code>).</li>` : ""}
-${a ? html`<li data-k="arena-overall">${h ? "Every ranked event scored under the current rules alone: " : ""}${pct0(a.rate)} of ${num(a.attempts)} ranked attempts fell for at least one trap, 95% interval ${range(a.ci_95)}, ${day(a.since)} to ${day(a.as_of)}${a.rules_version ? `, ${/^rules\b/i.test(a.rules_version) ? a.rules_version : `rules ${a.rules_version}`}` : ""}. Source: ${src("/security#arena", "/security#arena")} (${src("/security?format=json", "JSON")}, pointers <code>/arena/overall</code>, <code>/arena/attempts</code>).</li>` : ""}
-${a?.highest && a.lowest
-  ? html`<li data-k="arena-groups">By kind of job, highest: ${a.highest.name}, ${a.highest.policy_breaks} of ${a.highest.attempts} (${range(a.highest.ci_95!)}). Lowest: ${a.lowest.name}, ${a.lowest.policy_breaks} of ${a.lowest.attempts} (${range(a.lowest.ci_95!)}).${overlap ? " The two intervals overlap: not a clear difference." : ""} Source: ${src("/security#jobs", "/security#jobs")}.</li>`
-  : ""}
-${a?.fall_replay ? html`<li data-k="arena-replay">One refereed replay of a fall: ${src(a.fall_replay, a.fall_replay)}.</li>` : ""}
-</ul>
-<p class="small">Ranked only. Includes the Forge's own test agents. ${src("/stats", "How we count")}</p>`
-  : ""}
-
-${d.gross
-  ? html`<h2 id="gross">2. All bouts, gross (practice and ranked together)</h2>
-<ul><li data-k="gross-bouts">${num(d.gross.bouts_refereed)} bouts refereed, of which ${num(d.gross.ranked_bouts)} ranked${d.gross.ranked_bouts < d.gross.bouts_refereed ? " and the rest practice" : ""}, to ${day(d.gross.as_of)}. Source: ${src("/stats", "/stats")} (${src("/stats.json", "JSON")}).</li></ul>
-<p class="small">These are activity counts, not rates. Includes the Forge's own test agents. ${src("/stats", "How we count")}</p>`
-  : ""}
-
-<h2 id="lab-4">3. Our own fix didn't measurably help frontier models (Forge Lab #4)</h2>
-<ul>
-<li>Our trap card is eight checks pasted into an agent's instructions. We pre-registered a test of it.</li>
-<li data-k="lab4-rates">With the card, frontier models fell for a trap in ${pct1(l.card_rate)} of bouts. Without it: ${pct1(l.no_card_rate)}. ${num(l.bouts)} bouts, ${l.pairs} model–job pairs, ${dayShort(l.from)}–${day(l.to)}.</li>
-<li data-k="lab4-rr">Risk ratio ${l.risk_ratio.toFixed(3)} (95% interval ${l.ci_95[0].toFixed(3)} to ${l.ci_95[1].toFixed(3)}; ${l.p_text}). ${l.significant ? "The card reduced traps." : "That is consistent with no effect: the card didn't measurably reduce traps."}</li>
-${l.legit_work ? html`<li data-k="lab4-legit">No measurable harm either: legitimate work ${l.legit_work.no_card.toFixed(1)}% without the card, ${l.legit_work.card.toFixed(1)}% with it, inside the pre-registered margin.</li>` : ""}
-${l.lab3_fewer !== null ? html`<li data-k="lab3">On small open models (Lab #3) the same card cut traps by ${pct0(l.lab3_fewer)}. That result is for small open models only; frontier models weren't moved.</li>` : ""}
-</ul>
-<p class="small">Source: ${src("/lab/4/results", "/lab/4/results")} · ${src("/lab/4", "plan, published before any run")} · ${src("/security#null-result", "/security#null-result")}. Lab arms are never counted in the ranked rates.</p>
-
 ${s
-  ? html`<h2 id="skill-scan">4. The launch scan of public agent skills (${s.date})</h2>
+  ? html`<h2 id="skill-scan">1. The launch scan of public agent skills (${s.date})</h2>
 <ul>
 <li data-k="scan-rate">In the ${s.date} launch scan, ${s.flagged} of ${num(s.ordinary)} ordinary public skills matched a high-risk pattern: ${s.pct}%.</li>
 <li data-k="scan-review">On hand review of those ${s.flagged}, ${s.real} were real patterns, ${s.false_matches} were false matches, and ${s.signs_of_malice === 0 ? "none" : s.signs_of_malice} showed signs of malice.</li>
@@ -258,6 +231,35 @@ ${s.pipe !== null && s.key_file !== null ? html`<li data-k="scan-habits">The two
   : ""}
 
 ${maintainersBlock(d.maintainers, d.maintainers_pending, d.report_names_repositories)}
+
+<h2 id="lab-4">3. Our own fix didn't measurably help frontier models (Forge Lab #4)</h2>
+<ul>
+<li>Our trap card is eight checks pasted into an agent's instructions. We pre-registered a test of it.</li>
+<li data-k="lab4-rates">With the card, frontier models fell for a trap in ${pct1(l.card_rate)} of bouts. Without it: ${pct1(l.no_card_rate)}. ${num(l.bouts)} bouts, ${l.pairs} model–job pairs, ${dayShort(l.from)}–${day(l.to)}.</li>
+<li data-k="lab4-rr">Risk ratio ${l.risk_ratio.toFixed(3)} (95% interval ${l.ci_95[0].toFixed(3)} to ${l.ci_95[1].toFixed(3)}; ${l.p_text}). ${l.significant ? "The card reduced traps." : "That is consistent with no effect: the card didn't measurably reduce traps."}</li>
+${l.legit_work ? html`<li data-k="lab4-legit">No measurable harm either: legitimate work ${l.legit_work.no_card.toFixed(1)}% without the card, ${l.legit_work.card.toFixed(1)}% with it, inside the pre-registered margin.</li>` : ""}
+${l.lab3_fewer !== null ? html`<li data-k="lab3">On small open models (Lab #3) the same card cut traps by ${pct0(l.lab3_fewer)}. That result is for small open models only; frontier models weren't moved.</li>` : ""}
+</ul>
+<p class="small">Source: ${src("/lab/4/results", "/lab/4/results")} · ${src("/lab/4", "plan, published before any run")} · ${src("/security#null-result", "/security#null-result")}. Lab arms are never counted in the ranked rates.</p>
+
+${a || h
+  ? html`<h2 id="ranked">4. Early read: ranked bouts, how often a model fell for at least one trap</h2>
+<ul>
+${h ? html`<li data-k="arena-latest-hard">Early read: in ${h.event_name}, the latest ranked Hard event: ${h.fell} of ${num(h.attempts)} attempts (${pct0(h.fell_rate ?? 0)}) fell for a planted trap${h.ci_95 ? `, 95% interval ${range(h.ci_95)}` : ""}, ${h.models} models${h.since && h.as_of ? `, ${day(h.since)} to ${day(h.as_of)}` : ""}${h.rules_versions.length ? `, ${h.rules_versions.join(", ")}` : ""}.${h.worst_model ? ` Highest: ${h.worst_model.name}, ${h.worst_model.fell} of ${h.worst_model.attempts}.` : ""} Source: ${src(`/arena/event/${h.event}/falls`, `/arena/event/${h.event}/falls`)} (${src("/security?format=json", "JSON")}, pointer <code>/arena/latest_ranked_hard</code>).</li>` : ""}
+${a ? html`<li data-k="arena-overall">Early read: ${h ? "every ranked event scored under the current rules alone: " : ""}${pct0(a.rate)} of ${num(a.attempts)} ranked attempts fell for at least one trap, 95% interval ${range(a.ci_95)}, ${day(a.since)} to ${day(a.as_of)}${a.rules_version ? `, ${/^rules\b/i.test(a.rules_version) ? a.rules_version : `rules ${a.rules_version}`}` : ""}. Source: ${src("/security#arena", "/security#arena")} (${src("/security?format=json", "JSON")}, pointers <code>/arena/overall</code>, <code>/arena/attempts</code>).</li>` : ""}
+${a?.highest && a.lowest
+  ? html`<li data-k="arena-groups">By kind of job, highest: ${a.highest.name}, ${a.highest.policy_breaks} of ${a.highest.attempts} (${range(a.highest.ci_95!)}). Lowest: ${a.lowest.name}, ${a.lowest.policy_breaks} of ${a.lowest.attempts} (${range(a.lowest.ci_95!)}).${overlap ? " The two intervals overlap: not a clear difference." : ""} Source: ${src("/security#jobs", "/security#jobs")}.</li>`
+  : ""}
+${a?.fall_replay ? html`<li data-k="arena-replay">One refereed replay of a fall: ${src(a.fall_replay, a.fall_replay)}.</li>` : ""}
+</ul>
+<p class="small">Ranked only. Includes the Forge's own test agents. ${src("/stats", "How we count")}</p>`
+  : ""}
+
+${d.gross
+  ? html`<h2 id="gross">5. All bouts, gross (practice and ranked together)</h2>
+<ul><li data-k="gross-bouts">${num(d.gross.bouts_refereed)} bouts refereed, of which ${num(d.gross.ranked_bouts)} ranked${d.gross.ranked_bouts < d.gross.bouts_refereed ? " and the rest practice" : ""}, to ${day(d.gross.as_of)}. Source: ${src("/stats", "/stats")} (${src("/stats.json", "JSON")}).</li></ul>
+<p class="small">These are activity counts, not rates. Includes the Forge's own test agents. ${src("/stats", "How we count")}</p>`
+  : ""}
 
 <h2 id="full-scan">6. The full public skill scan</h2>
 <p data-k="bulk-placeholder">A scan of every public skill file we can lawfully reach is under way. We'll publish its pass when it's measured.</p>

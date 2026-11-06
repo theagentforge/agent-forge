@@ -4,6 +4,8 @@ import { html } from "hono/html";
 import { CURRENT_RULES_PATH, RULES_VERSION, rulesRecord, rulesText, type RulesCount } from "../arena/rules-label";
 import { failureBoard, parseFailTier, trapBoard, type Cell, type Example, type FailTier } from "../arena/failures";
 import { getDb } from "../services/db";
+import { trapHistoryOrNull, trapHistorySection } from "./trap-history";
+import { asPreview, validityAccess } from "./validity-release";
 import { send, site } from "./pages";
 
 // /arena/failures (ADR 0023 §4): the leaderboard by failure mode, and one page per public trap. Ranked bouts only.
@@ -115,8 +117,13 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
   if (!b) return c.notFound();
   const e = b.entry;
   const ex = (x: Example) => ({ run: x.id, model: x.model, task: x.task, finished_at: day(x.finishedAt), url: `/arena/run/${x.id}` });
+  // The dispute and correction history is part of the validity pack: shown only once released, or to an admin as an
+  // uncached preview (web/validity-release.ts).
+  const access = await validityAccess(c);
+  const history = access ? await trapHistoryOrNull(getDb(c.env), c.env.PUBLIC_ORIGIN, e.id) : null;
+  const finish = (res: Response) => (access === "admin_preview" ? asPreview(res) : res);
   if (wantsJson(c))
-    return c.json(
+    return finish(c.json(
       {
         id: e.id,
         family: e.family,
@@ -133,13 +140,14 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
         models: b.models.map((m) => ({ id: m.id, name: m.name, ...cellJson(m.cell)! })),
         recent_falls: b.falls.map(ex),
         recent_catches: b.catches.map(ex),
+        ...(access ? { history } : {}),
         image: `/og/arena/failures/${e.id}.png`,
       },
       200,
       JSON_HEADERS,
-    );
+    ));
   const jobs = [...new Set(e.traps.map((k) => k.split("/")[0]!))];
-  return send(c, {
+  return finish(await send(c, {
     title: `${e.id}: ${e.description}`,
     description: `${TRAP_FAMILIES[e.family].name}. ${b.overall ? `Fell for it in ${b.overall.fell} of ${b.overall.n} ranked attempts.` : "No ranked attempts yet."} Fall rates by model, with n and 95% intervals.`,
     path: `/arena/failures/${e.id}${tierQuery(tier)}`,
@@ -167,8 +175,9 @@ ${b.models.length
 ${exampleList(b.falls, "No model has fallen for it in a ranked bout yet.")}
 <h2>Recent catches</h2>
 ${exampleList(b.catches, "No ranked catches yet.")}
+${trapHistorySection(history)}
 <h2 id="rules">How it's counted</h2>
 ${RULES_TEXT}
 <p class="muted small-print">Cite this trap as "${e.id}, The Forge Arena" with a link to <a href="/arena/methodology#${e.id}">the methodology</a>. <a href="/og/arena/failures/${e.id}.png">Share image</a> · <a href="/arena/failures/${e.id}?format=json">JSON</a></p>`,
-  });
+  }));
 });

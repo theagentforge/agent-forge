@@ -1,4 +1,6 @@
-// Publishes integrations/registry/server.json to the official MCP Registry as io.theagentforge/forge.
+// Publishes the official MCP Registry entries: server.json (io.theagentforge/forge, remotes /mcp/public and /mcp) and
+// server-gauntlet.json (io.theagentforge/forge-gauntlet). One login, two publishes. The Registry allows one entry per
+// remote URL, so /mcp/public has no entry of its own (6 Nov: a separate forge-public was refused).
 // Usage: node integrations/registry/publish.mjs <path to Ed25519 private key PEM>
 // The matching public key is served at https://theagentforge.io/.well-known/mcp-registry-auth (HTTP authentication).
 // Never commit the private key: generate a fresh one per publish (docs/runbooks/mcp-registry.md).
@@ -14,7 +16,8 @@ if (!keyPath) {
   console.error("Usage: node publish.mjs <private-key.pem>");
   process.exit(2);
 }
-const server = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "server.json"), "utf8"));
+const dir = dirname(fileURLToPath(import.meta.url));
+const FILES = ["server.json", "server-gauntlet.json"];
 const key = createPrivateKey(readFileSync(keyPath));
 const timestamp = new Date().toISOString();
 const signed_timestamp = sign(null, Buffer.from(timestamp), key).toString("hex");
@@ -29,10 +32,15 @@ if (!auth.ok) {
   process.exit(1);
 }
 const { registry_token } = await auth.json();
-const res = await fetch(`${REGISTRY}/v0/publish`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json", Authorization: `Bearer ${registry_token}` },
-  body: JSON.stringify(server),
-});
-console.log(res.status, await res.text());
-process.exit(res.ok ? 0 : 1);
+let failed = 0;
+for (const file of FILES) {
+  const server = JSON.parse(readFileSync(join(dir, file), "utf8"));
+  const res = await fetch(`${REGISTRY}/v0/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${registry_token}` },
+    body: JSON.stringify(server),
+  });
+  console.log(file, server.name, server.version, res.status, (await res.text()).slice(0, 300));
+  if (!res.ok) failed++;
+}
+process.exit(failed ? 1 : 0);

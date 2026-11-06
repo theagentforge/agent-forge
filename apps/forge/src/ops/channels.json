@@ -95,6 +95,23 @@
       "note": "Counted only for users who opt in with count-run: true (ADR 0090), so a lower bound."
     },
     {
+      "id": "github-action-gauntlet",
+      "name": "GitHub Action gauntlet (Gauntlet in CI, Marketplace)",
+      "kind": "action",
+      "status": "pending",
+      "listed": null,
+      "review": "2026-12-03",
+      "counted_from": null,
+      "signals": [
+        {
+          "type": "counter",
+          "prefix": "skilltag:gh-action-gauntlet@",
+          "what": "calls"
+        }
+      ],
+      "note": "Run starts tagged ?client=gh-action-gauntlet-<version> (ADR 0135), over HTTP only: at most one a day per runner address (GitHub-hosted runners change address, so about one per CI run; a self-hosted runner once a day), our own repositories' runs left out. A lower bound. Not listed yet: set listed and counted_from when theagentforge/gauntlet is on the Marketplace and the tag is in production."
+    },
+    {
       "id": "clawhub-check-before-install",
       "name": "ClawHub skill forge-check-before-install",
       "kind": "skill",

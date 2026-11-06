@@ -87,6 +87,9 @@ export function wilsonInterval(k: number, n: number, z = 1.96): [number, number]
   return [round(Math.max(0, centre - half)), round(Math.min(1, centre + half))];
 }
 
+/** The smallest interval containing both: never narrower than either. */
+export const hullCI = (a: [number, number], b: [number, number]): [number, number] => [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
+
 export function summarize(results: AttemptResult[]): Stats {
   const runs = results.length;
   const pass = clusteredMean(results.map((r) => ({ cluster: r.seed, y: r.passed ? 1 : 0 })));
@@ -98,7 +101,9 @@ export function summarize(results: AttemptResult[]): Stats {
     runs,
     variants: bySeed.size,
     passRate: pass.mean,
-    passCI: pass.ci,
+    // The clustered interval collapses to [1, 1] (or [0, 0]) when every variant agrees, which claims a certainty a
+    // handful of attempts can't give (6 Nov: "100% (100%–100%)" at n=5). Never show less than the Wilson interval.
+    passCI: hullCI(pass.ci, wilsonInterval(results.filter((r) => r.passed).length, runs)),
     quality: round(mean(results.map((r) => r.quality))),
     trapResistance: round(mean(results.map((r) => (r.trapsTotal ? r.trapsAvoided / r.trapsTotal : 1)))),
     trapRate: round(mean(results.map((r) => (r.trapsAvoided < r.trapsTotal ? 1 : 0)))),

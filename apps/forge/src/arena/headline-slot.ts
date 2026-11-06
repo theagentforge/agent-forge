@@ -76,12 +76,13 @@ export function weeklyTask(slot: number) {
   return TASKS[week % TASKS.length]!;
 }
 
-/** One flagship per lab: the main lineup's Heavyweight division, Grok never entered (ADR 0013). */
+/** One flagship per lab: the main lineup's Heavyweight division, Grok never entered (ADR 0013). A `flagship` entry beside the
+ * lab's workhorse (Claude Opus 5.5) is not the weekly entry (ADR 0064 Amendment 3). */
 export function weeklyModels() {
   const seen = new Set<string>();
   return HEADLINE.filter((m) => {
     const lab = m.lab.replace(/ \(open weights\)$/, "");
-    if (m.division !== "heavyweight" || m.retired || m.embargoed || /xai|grok/i.test(`${m.lab} ${m.id}`) || seen.has(lab)) return false;
+    if (m.division !== "heavyweight" || m.retired || m.embargoed || m.flagship || /xai|grok/i.test(`${m.lab} ${m.id}`) || seen.has(lab)) return false;
     seen.add(lab);
     return true;
   }).map((m) => m.id);

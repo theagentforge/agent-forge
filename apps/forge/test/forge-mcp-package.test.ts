@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SIGNED_IN_TOOLS } from "../src/mcp";
 import { PUBLIC_TOOLS } from "../src/mcp-public";
+import { ARENA_FIRST, MCP_SERVER_VERSION } from "../src/server-info";
 import { AGENT_DIRECTED } from "./wording";
 
 // public-repo/forge-mcp is the MIT connection-files repo (ADR 0031): an Agent Plugins 1.0 package (plugin.json,
@@ -114,6 +115,13 @@ describe("forge-mcp package", () => {
       expect(text, f).not.toMatch(/CLAUDE_PLUGIN_ROOT|hooks\/|strain\.mjs/);
       for (const tool of text.match(/\b(forge|arena)_[a-z_]+\b/g) ?? []) expect(known.has(tool), tool).toBe(true);
     }
+  });
+
+  it("the LobeHub owner manifest (lhm.plugin.json) declares the live server's version, description and endpoint", () => {
+    if (!present) return;
+    const m = JSON.parse(files["lhm.plugin.json"]!) as { identifier: string; version: string; description: string; cloudEndpoint: string; homepage: string };
+    expect(m).toMatchObject({ identifier: "theagentforge-forge", version: MCP_SERVER_VERSION, description: ARENA_FIRST, cloudEndpoint: "https://theagentforge.io/mcp/public" });
+    expect(m.homepage).toMatch(/^https:\/\//);
   });
 
   check("GEMINI.md and the README describe every public tool", () => {

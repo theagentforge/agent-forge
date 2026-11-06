@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import registry from "../../../integrations/registry/server.json";
+import registryGauntlet from "../../../integrations/registry/server-gauntlet.json";
 import { A2A_SKILLS } from "../src/a2a";
 import { PUBLIC_TOOLS, TRAP_CARD_RESOURCE, CHECK_PROMPT, REPORT_PROMPT } from "../src/mcp-public";
 import { MCP_SERVER_VERSION, SERVERS } from "../src/server-info";
@@ -48,6 +49,19 @@ describe("MCP serverInfo matches the Server Cards and the MCP Registry listing",
     }
   });
 
+  it("the forge-gauntlet registry entry matches its live server card; /mcp/public names the registered forge entry", async () => {
+    expect(registry.remotes.map((r) => r.url)).toContain("https://theagentforge.io/mcp/public");
+    for (const [entry, key] of [[registryGauntlet, "gauntlet"]] as const) {
+      const s = SERVERS.find((x) => x.key === key)!;
+      const card = (await (await fetchWorker(`${s.path}/server-card`)).json()) as { name: string; title: string; description: string; version: string; repository: { url: string } };
+      expect(entry).toMatchObject({ name: card.name, title: card.title, description: card.description, version: MCP_SERVER_VERSION });
+      expect(entry.description.length).toBeLessThanOrEqual(100);
+      expect(entry.repository.url).toBe(registry.repository.url);
+      expect(entry.remotes.map((r) => new URL(r.url).pathname)).toEqual([s.path]);
+      expect(entry.websiteUrl).toBe(`https://theagentforge.io${s.websitePath}`);
+    }
+  });
+
   it("the MCP Registry listing has the same version, repository and endpoints", async () => {
     expect(registry.version).toBe(MCP_SERVER_VERSION);
     expect(registry.name).toBe(SERVERS.find((s) => s.key === "signed-in")!.name);
@@ -75,7 +89,7 @@ describe("ARD (/.well-known/ard.json)", () => {
   it("the well-known server card and the skills index are served next to it", async () => {
     const card = await fetchWorker("/.well-known/mcp/server-card.json");
     expect(card.status).toBe(200);
-    expect(((await card.json()) as { name: string; version: string })).toMatchObject({ name: "io.theagentforge/forge-public", version: MCP_SERVER_VERSION });
+    expect(((await card.json()) as { name: string; version: string })).toMatchObject({ name: "io.theagentforge/forge", version: MCP_SERVER_VERSION });
     const skills = (await (await fetchWorker("/.well-known/agent-skills/index.json")).json()) as { $schema: string; skills: unknown[] };
     expect(skills.$schema).toContain("/discovery/0.2.0/");
     expect(skills.skills.length).toBeGreaterThan(0);

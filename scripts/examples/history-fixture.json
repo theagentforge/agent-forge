@@ -1,0 +1,241 @@
+{
+  "contract": "forge.server-history/v1",
+  "contract_version": "1.0.0",
+  "data_kind": "server_history",
+  "server": "npm:@example/notes-mcp",
+  "status": "measured",
+  "data_as_of": "2026-11-06T05:12:00.000Z",
+  "tool_url": "https://theagentforge.io/t/npm%3A%40example%2Fnotes-mcp",
+  "request": {
+    "section": "all",
+    "offset": 0,
+    "limit": 100,
+    "url": "https://theagentforge.io/api/v1/history/npm%3A%40example%2Fnotes-mcp"
+  },
+  "install_outcomes": {
+    "status": "measured",
+    "taxonomy": "failure-classes/v1",
+    "families": {
+      "top500_nightly": {
+        "status": "measured",
+        "tested": 2,
+        "installed": 1,
+        "failed": 1,
+        "failed_by_class": {
+          "install_failed": 0,
+          "no_handshake": 1,
+          "needs_config": 0,
+          "not_on_registry": 0,
+          "no_command": 0,
+          "test_error": 0,
+          "other": 0
+        },
+        "first_date": "2026-11-04",
+        "last_date": "2026-11-05"
+      },
+      "weekly_sweep": {
+        "status": "not_yet_measured",
+        "tested": 0
+      },
+      "backfill": {
+        "status": "measured",
+        "tested": 3,
+        "installed": 2,
+        "failed": 1,
+        "failed_by_class": {
+          "install_failed": 1,
+          "no_handshake": 0,
+          "needs_config": 0,
+          "not_on_registry": 0,
+          "no_command": 0,
+          "test_error": 0,
+          "other": 0
+        },
+        "first_date": "2026-11-05",
+        "last_date": "2026-11-05",
+        "pending": 1,
+        "excluded_by_reason": {
+          "prerelease": 2
+        }
+      }
+    },
+    "total": 5,
+    "offset": 0,
+    "limit": 100,
+    "next": null,
+    "items": [
+      {
+        "date": "2026-11-05",
+        "family": "backfill",
+        "origin": "backfill",
+        "version": "2.0.0",
+        "outcome": "worked",
+        "installed": true,
+        "failure_class": null,
+        "tools_count": 3,
+        "observed_at": "2026-11-05T11:42:00.000Z",
+        "published_at": "2026-03-01T09:00:00.000Z"
+      },
+      {
+        "date": "2026-11-05",
+        "family": "backfill",
+        "origin": "backfill",
+        "version": "1.5.0",
+        "outcome": "failed",
+        "installed": false,
+        "failure_class": "install_failed",
+        "tools_count": null,
+        "observed_at": "2026-11-05T11:41:00.000Z",
+        "published_at": "2026-01-10T09:00:00.000Z"
+      },
+      {
+        "date": "2026-11-05",
+        "family": "backfill",
+        "origin": "backfill",
+        "version": "1.0.0",
+        "outcome": "worked",
+        "installed": true,
+        "failure_class": null,
+        "tools_count": 2,
+        "observed_at": "2026-11-05T11:40:00.000Z",
+        "published_at": "2025-10-01T09:00:00.000Z"
+      },
+      {
+        "date": "2026-11-05",
+        "family": "top500_nightly",
+        "origin": "post",
+        "version": "2.1.0",
+        "outcome": "no_answer",
+        "installed": false,
+        "failure_class": "no_handshake",
+        "tools_count": null,
+        "observed_at": "2026-11-05T04:10:00.000Z",
+        "published_at": null
+      },
+      {
+        "date": "2026-11-04",
+        "family": "top500_nightly",
+        "origin": "post",
+        "version": "2.0.0",
+        "outcome": "worked",
+        "installed": true,
+        "failure_class": null,
+        "tools_count": 3,
+        "observed_at": "2026-11-04T04:08:00.000Z",
+        "published_at": null
+      }
+    ]
+  },
+  "definitions": {
+    "status": "measured",
+    "by_origin": {
+      "backfill": {
+        "sets": 2,
+        "versions": 2
+      },
+      "nightly": {
+        "sets": 1,
+        "versions": 1
+      }
+    },
+    "versions": 2,
+    "total": 3,
+    "offset": 0,
+    "limit": 100,
+    "next": null,
+    "items": [
+      {
+        "version": "2.0.0",
+        "server": "npm:@example/notes-mcp",
+        "origin": "nightly",
+        "description_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tools_count": 3,
+        "descriptions_count": 3,
+        "rules_version": "2026-10-23.1",
+        "first_seen": "2026-11-04T04:08:00.000Z",
+        "published_at": "2026-03-01T09:00:00.000Z",
+        "observed_at": "2026-11-04T04:08:00.000Z",
+        "last_seen": "2026-11-06T05:12:00.000Z"
+      },
+      {
+        "version": "2.0.0",
+        "server": "npm:@example/notes-mcp",
+        "origin": "backfill",
+        "description_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tools_count": 3,
+        "descriptions_count": 3,
+        "rules_version": "2026-10-23.1",
+        "first_seen": "2026-03-01T09:00:00.000Z",
+        "published_at": "2026-03-01T09:00:00.000Z",
+        "observed_at": "2026-11-05T11:42:00.000Z",
+        "last_seen": "2026-11-05T11:42:00.000Z"
+      },
+      {
+        "version": "1.0.0",
+        "server": "npm:@example/notes-mcp",
+        "origin": "backfill",
+        "description_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tools_count": 2,
+        "descriptions_count": 2,
+        "rules_version": "2026-10-23.1",
+        "first_seen": "2025-10-01T09:00:00.000Z",
+        "published_at": "2025-10-01T09:00:00.000Z",
+        "observed_at": "2026-11-05T11:40:00.000Z",
+        "last_seen": "2026-11-05T11:40:00.000Z"
+      }
+    ]
+  },
+  "changes": {
+    "status": "measured",
+    "pairs": 1,
+    "changed": 1,
+    "changed_without_major_bump": 0,
+    "with_new_rule_ids": 1,
+    "computed_at": "2026-11-05T12:00:00.000Z",
+    "total": 1,
+    "offset": 0,
+    "limit": 100,
+    "next": null,
+    "items": [
+      {
+        "seq": 1,
+        "from_version": "1.0.0",
+        "to_version": "2.0.0",
+        "from_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "to_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from_published_at": "2025-10-01T09:00:00.000Z",
+        "to_published_at": "2026-03-01T09:00:00.000Z",
+        "change_classes": [
+          "tool_added",
+          "description_changed"
+        ],
+        "tools_added": 1,
+        "tools_removed": 0,
+        "descriptions_changed": 1,
+        "schemas_changed": 0,
+        "major_bump": true,
+        "zero_major": false,
+        "same_version": false,
+        "untested_between": 1,
+        "new_rule_ids": [
+          "FS-HID-001"
+        ]
+      }
+    ]
+  },
+  "notes": {
+    "families": {},
+    "origins": {},
+    "counts_never_added_across_families": true,
+    "tool_text": "not_in_public_tier",
+    "scope": "install_outcomes: this server id only. definitions and changes: the tool page's definition sets, which can include another npm or PyPI package listed with it in the MCP Registry (each definitions row names its server)",
+    "rule_ids": "scanner rule ids the new text of added or changed tools matched and the old text did not; a match is a pattern to read, not a finding",
+    "docs": "https://theagentforge.io/history-api",
+    "openapi": "https://theagentforge.io/openapi.json"
+  },
+  "licence": {
+    "id": "evaluation-only",
+    "url": "https://theagentforge.io/arena/methodology#licence"
+  },
+  "_fixture": "Illustrative example of contract forge.server-history/v1 for a made-up server (not real data). apps/forge/test/server-history.test.ts checks its fields match a live answer."
+}

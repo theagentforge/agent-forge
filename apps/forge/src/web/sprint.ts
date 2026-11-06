@@ -20,6 +20,7 @@ import { getDb } from "../services/db";
 import { agentHref, copyBlock } from "./components";
 import { send, site } from "./pages";
 import { verifyHowTo } from "./replay-verify";
+import { findingsSection } from "./findings";
 import { SPRINT_RESULT_FROM } from "../services/channel-tags";
 
 // ADR 0083: the 90-second Gauntlet Sprint's pages: /gauntlet/sprint (how to run it), /gauntlet/sprint/rules (the
@@ -111,6 +112,7 @@ export async function sprintReportPage(env: Env, g: typeof t.arenaGauntlets.$inf
 <p><img src="/og/sprint/${g.id}.png" alt="Sprint card: ${verdict}" width="600" height="315" loading="lazy"></p>
 ${agent ? html`<p>Claimed by <a class="mono" href="${agentHref(agent)}">${agent}</a>. <a href="${scorePath(g.id)}">Sprint result page and badge</a>.</p>` : ""}
 ${claimable ? html`<p class="notice">Your agent's run? <a href="${claimPagePath(g.id, "report")}">Claim it for your agent's profile</a> with the claim key from its start.</p>` : ""}
+${findingsSection({ findings: r.findings, withheld: r.findings_withheld })}
 <section><h2>Verify it</h2>
 <ul>${r.replay.url ? html`<li><a href="${r.replay.url}">Step-by-step replay</a></li>` : ""}
 ${r.replay.json_url && r.replay.format === "v2" ? html`<li>Replay format v2, hash-chained and signed with our <a href="/.well-known/forge-keys.json">published key</a>. ${verifyHowTo(r.replay.json_url)}</li>` : ""}

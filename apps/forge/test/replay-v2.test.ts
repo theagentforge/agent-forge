@@ -1,4 +1,4 @@
-import { checkReplay, KEYS_PATH, refereeCheck, TASKS, type KeySet, type VerifySig } from "@forge/arena";
+import { checkReplay, KEYS_PATH, refereeCheck, RULES_VERSION, TASKS, type KeySet, type VerifySig } from "@forge/arena";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,7 +81,7 @@ describe("a new Arena bout is published as replay format v2", () => {
     expect((await processQueue(env, Date.now() + 60_000)).played).toBe(1);
     const [run] = await getDb(env).select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, eventId));
     expect(run!.signature).toMatch(/^hmac-sha256:/); // v1 signature kept alongside
-    expect(run!.replaySeal).toMatchObject({ format: "forge-replay/2", kind: "arena", run_id: run!.id, model: PRACTICE[0]!.id, rules: "rules 0.6" });
+    expect(run!.replaySeal).toMatchObject({ format: "forge-replay/2", kind: "arena", run_id: run!.id, model: PRACTICE[0]!.id, rules: RULES_VERSION });
 
     const doc = (await (await fetchWorker(`/arena/run/${run!.id}.json`)).json()) as any;
     expect(doc.replay.format).toBe("forge-replay/2");
@@ -91,7 +91,7 @@ describe("a new Arena bout is published as replay format v2", () => {
     const ks = (await (await fetchWorker(KEYS_PATH)).json()) as KeySet;
     const r = await checkReplay(doc, sha256Hex, verifierFor(ks));
     expect(r).toMatchObject({ format: 2, chain: "ok", record: "ok", signature: "ok", key_id: ks.keys[0]!.kid });
-    expect(refereeCheck(doc)).toMatchObject({ checked: true, same_verdict: true, faithful: true, rules_of_run: "rules 0.6" });
+    expect(refereeCheck(doc)).toMatchObject({ checked: true, same_verdict: true, faithful: true, rules_of_run: RULES_VERSION });
 
     const bad = structuredClone(doc);
     bad.log[1].args = { tampered: true };

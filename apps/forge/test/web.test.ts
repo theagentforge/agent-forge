@@ -180,7 +180,15 @@ describe("Claude Code plugin marketplace", () => {
     const src = m.plugins[0]!.source;
     expect(src.source).toBe("archive");
     expect(src.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(src.url).toMatch(/\/plugins\/theagentforge-(staging|production)-[0-9.]+-[0-9a-f]{12}\.zip$/);
+    // The exact zip the build wrote for this environment: the full edition's version (ADR 0142), and the first 12
+    // characters of the sha256 the entry pins, so the name can't drift from the bytes or the version it serves.
+    const built = (await import("../public/plugins/manifest.json")).default as unknown as { version: string; files: Record<string, { file: string; sha256: string }> };
+    const envName = src.url.includes("-production-") ? "production" : "staging";
+    expect(src.url.endsWith(`/plugins/${built.files[envName]!.file}`)).toBe(true);
+    expect(built.files[envName]!.file).toBe(`theagentforge-${envName}-${built.version}-${src.sha256.slice(0, 12)}.zip`);
+    expect(src.sha256).toBe(built.files[envName]!.sha256);
+    expect((m.plugins[0] as unknown as { version: string }).version).toBe(built.version);
+    expect(built.version).toMatch(/^\d+\.\d+\.\d+-full$/);
   });
 
   it("lists the plugin as theagentforge, and renames forge to it so existing installs move over (ADR 0121)", async () => {

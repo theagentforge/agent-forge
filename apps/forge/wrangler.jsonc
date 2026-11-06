@@ -31,7 +31,10 @@
     "PRICING_MODE": "keys",
     // ADR 0122: inbound business mail (hello@, partners@, press@, disputes@, ops@) is forwarded to each of these
     // verified destinations. Not a secret. Not set for staging, so the email handler forwards nothing there.
-    "MAIL_FORWARD_TO": "owner-b@example.com,owner-a@example.org"
+    "MAIL_FORWARD_TO": "owner-b@example.com,owner-a@example.org",
+    // ADR 0136 item 6: the validity pack (/benchmark/validity, error record, trap dispute history) is public. Switched on
+    // 6 Nov 2026 after the rules 0.7 re-score was applied and published (Dinike, 6 Nov 10:07 Colombo). Not set for staging.
+    "VALIDITY_PUBLIC": "on"
   },
   // Secrets (set in the Cloudflare dashboard, never in git): GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REPORT_SIGNING_KEY.
   "d1_databases": [

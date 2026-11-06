@@ -47,7 +47,7 @@ describe("report drafts", () => {
   });
 
   it("skips exactly the servers build.mjs ships in the plugin's .mcp.json", () => {
-    const shipped = Object.keys(JSON.parse(readFileSync(join(here, "..", "release", "forge", ".mcp.json"), "utf8")).mcpServers);
+    const shipped = Object.keys(JSON.parse(readFileSync(join(here, "..", "release", "forge-full", ".mcp.json"), "utf8")).mcpServers);
     expect([...shipped].sort()).toEqual([...PLUGIN_SERVERS].sort());
     for (const server of shipped) {
       expect(isForgeServer(server), server).toBe(true);

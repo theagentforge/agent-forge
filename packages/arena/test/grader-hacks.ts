@@ -1,5 +1,6 @@
-import { Attempt, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, type AttemptResult, type Caps, type TaskType } from "../src";
-import { PRIVATE_TASKS } from "../src/private";
+import { Attempt, FRONTIER_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, type AttemptResult, type Caps, type TaskType } from "../src";
+import { FRONTIER_PRIVATE_TASKS, PRIVATE_TASKS } from "../src/private";
+import { FRONTIER_HONEST, FRONTIER_TARGETED } from "./frontier-hacks";
 import { PRIVATE_HONEST, PRIVATE_TARGETED } from "./private/hacks";
 
 // Grader hacking (D2, docs/strategy/acquisition-build-framework.md §3): scripted adversaries, no LLM, that try to reach
@@ -35,7 +36,10 @@ export interface Hack {
 export type Outcome = "blocked" | "blocked_by_tools" | "passed";
 
 /** Every job in packages/arena, every tier (private families included, so a new one can't skip this suite). */
-export const ALL_TASKS: TaskType<any>[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...PRIVATE_TASKS];
+export const ALL_TASKS: TaskType<any>[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
+/** Rows kept out of the published table: the private families and variants, and the frontier tier while it calibrates. */
+export const UNPUBLISHED_TASKS: TaskType<any>[] = [...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
+export const PRIVATE_ROWS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
 export const SEEDS = [1, 2, 3, 1_234_567_891];
 const UNLIMITED: Caps = { turns: 1e9, toolCalls: 1e9, tokens: 1e15, ms: 1e15 };
 
@@ -262,6 +266,8 @@ const HONEST: Record<string, Play> = {
     scamRun(a, k.holds.map((h: any) => h.ref), k.scamEmails.map((e: any) => e.id));
   },
   // Private families (ADR 0057): their references live in test/private/hacks.ts, which stays out of the public mirror.
+  // The frontier tier (ADR 0139): references in test/frontier-hacks.ts.
+  ...FRONTIER_HONEST,
   ...PRIVATE_HONEST,
 };
 
@@ -619,6 +625,7 @@ const TARGETED: Record<string, (h: Honest) => Hack[]> = {
   "refund-hard3-2": refundV32,
   "flaky-supplier-hard3-2": restockV32,
   "scam-invoice-hard3-3": scamV33,
+  ...FRONTIER_TARGETED,
   ...PRIVATE_TARGETED,
 };
 
@@ -668,7 +675,7 @@ export function runTask(task: TaskType<any>): Row {
   return { task, honestPassed, seeds: SEEDS.length, cells, failures };
 }
 
-const TIER = (t: TaskType<any>) => (HARD3_3_TASKS.includes(t) ? "Hard v3.3" : HARD3_2_TASKS.includes(t) ? "Hard v3.2" : HARD3_TASKS.includes(t) ? "Hard v3.1" : HARD_TASKS.includes(t) ? "Hard v2" : PRIVATE_TASKS.includes(t) ? "Private" : "Normal");
+const TIER = (t: TaskType<any>) => (HARD3_3_TASKS.includes(t) ? "Hard v3.3" : HARD3_2_TASKS.includes(t) ? "Hard v3.2" : HARD3_TASKS.includes(t) ? "Hard v3.1" : HARD_TASKS.includes(t) ? "Hard v2" : PRIVATE_ROWS.includes(t) ? "Private" : FRONTIER_TASKS.includes(t) ? "Frontier 1.0" : "Normal");
 
 /** The table for the private families (ADR 0057): same columns, its own heading, kept with them out of the mirror. */
 export function privateMarkdown(rows: Row[]) {

@@ -200,8 +200,9 @@ describe("versions (ADR 0023 §5)", () => {
     expect(taskVersion("scam-invoice-hard3", Date.UTC(2026, 10, 6))).toBe("Hard v3.1");
     expect(taskVersion("refund-hard3", Date.UTC(2026, 9, 27))).toBe("Hard v3.1");
     expect(taskVersion("flaky-supplier-hard3")).toBe("Hard v3.1");
-    expect(RULES_VERSION).toBe("rules 0.6");
-    expect(RULES_HISTORY.at(-1)).toMatchObject({ version: "rules 0.6", date: "2026-10-26", from: "2026-10-26T15:02:35Z" });
+    expect(RULES_VERSION).toBe("rules 0.7");
+    expect(RULES_HISTORY.at(-1)).toMatchObject({ version: "rules 0.7", date: "2026-11-06" });
+    expect(RULES_HISTORY.at(-2)).toMatchObject({ version: "rules 0.6", date: "2026-10-26", from: "2026-10-26T15:02:35Z" });
     // Rules 0.6 on is read from the stamp the code that scored a result wrote, never the clock: production ran rules 0.5
     // code after 0.6 was built, so an unstamped result is 0.5 or older whenever it finished.
     expect(rulesVersionAt(Date.parse("2026-10-26T10:59:59Z"), null)).toBe("rules 0.5");
@@ -225,13 +226,13 @@ describe("versions (ADR 0023 §5)", () => {
 
   it("the citation has title, version, date and URL, as a plain line and BibTeX", () => {
     const c = citation("https://theagentforge.io/");
-    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-11-05", url: "https://theagentforge.io/arena/methodology", version: "rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3" });
-    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.6; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3). 5 Nov 2026. https://theagentforge.io/arena/methodology");
+    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-11-06", url: "https://theagentforge.io/arena/methodology", version: "rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3" });
+    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3). 6 Nov 2026. https://theagentforge.io/arena/methodology");
     expect(c.bibtex).toMatch(/^@misc\{forgearena2026,/);
     expect(c.bibtex).toContain("url          = {https://theagentforge.io/arena/methodology}");
     expect(CHANGELOG.map((x) => x.date)).toEqual([...CHANGELOG.map((x) => x.date)].sort());
-    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6"]));
-    expect(CHANGELOG.filter((x) => x.version.startsWith("rules ")).at(-1)).toMatchObject({ version: "rules 0.6", date: "2026-10-26" });
+    expect(CHANGELOG.map((x) => x.version)).toEqual(expect.arrayContaining(["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6", "rules 0.7"]));
+    expect(CHANGELOG.filter((x) => x.version.startsWith("rules ")).at(-1)).toMatchObject({ version: "rules 0.7", date: "2026-11-06" });
     expect(CHANGELOG.find((x) => x.version === "Hard v3.1")!.change).toMatch(/^Permission-overreach traps\./);
     // Same-day entries are in the order they took effect.
     const order = CHANGELOG.map((x) => x.version);

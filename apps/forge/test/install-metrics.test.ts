@@ -235,7 +235,7 @@ describe("B2-06 review: counting edge cases", () => {
     }
   });
 
-  it("a cached answer can't be replayed past the per-address limit to inflate the counts", async () => {
+  it("a cached answer can't be replayed past the per-address limit to inflate the counts", { timeout: 90_000 }, async () => {
     const addr = "203.0.113.77";
     const q = "/api/v1/check?id=npm:install-metrics-replay";
     const go = () => fetchWorker(q, { headers: { "User-Agent": "theagentforge-claude-plugin", "CF-Connecting-IP": addr } });
@@ -243,12 +243,31 @@ describe("B2-06 review: counting edge cases", () => {
     const start = await settle(() => installTotals(env), (v) => v.by_client.plugin.all_time.checked > 0);
     await new Promise((r) => setTimeout(r, 200));
     const base = (await installTotals(env)).by_client.plugin.all_time.checked;
-    // 90 replays of the cached answer from one address within a minute: every one is answered, at most 60 are counted.
-    for (let i = 0; i < 90; i++) expect((await go()).status).toBe(200);
+    // Replays of the cached answer from one address: every one is answered, at most 60 a limiter window are counted.
+    // The limiter's windows are 60 s aligned to the wall clock (Miniflare, like Cloudflare), so a loop that runs across a
+    // window boundary under load gets a fresh 60 there (this flaked at 87-90 counted). Deterministic now: no request is
+    // sent within 1.5 s of a boundary (so the test's clock and the limiter's agree on each request's window), the
+    // requests are tallied per window, and the loop goes on until the window it ends in has had 90 of them, so the
+    // last window always holds more replays than the limit. The bound is the limit applied per window, which is 60 when
+    // the loop stays in one window (the usual case), and a limiter that stopped capping would always exceed it.
+    const WINDOW = 60_000;
+    const perWindow = new Map<number, number>();
+    for (let inLast = 0; inLast < 90; ) {
+      const left = WINDOW - (Date.now() % WINDOW);
+      if (left < 1_500) await new Promise((r) => setTimeout(r, left + 200));
+      const w = Math.floor(Date.now() / WINDOW);
+      expect((await go()).status).toBe(200);
+      const n = (perWindow.get(w) ?? 0) + 1;
+      perWindow.set(w, n);
+      inLast = w === Math.max(...perWindow.keys()) ? n : 0;
+    }
+    const bound = [...perWindow.values()].reduce((t, n) => t + Math.min(n, 60), 0);
     await new Promise((r) => setTimeout(r, 500));
-    const counted = (await settle(() => installTotals(env), (v) => v.by_client.plugin.all_time.checked >= base + 60)).by_client.plugin.all_time.checked - base;
+    const counted = (await settle(() => installTotals(env), (v) => v.by_client.plugin.all_time.checked >= base + bound)).by_client.plugin.all_time.checked - base;
     expect(start).toBeTruthy();
     expect(counted).toBeGreaterThan(0);
-    expect(counted).toBeLessThanOrEqual(60);
+    expect(Math.max(...perWindow.values())).toBeGreaterThanOrEqual(90);
+    expect(counted).toBeLessThanOrEqual(bound);
+    if (perWindow.size === 1) expect(counted).toBeLessThanOrEqual(60);
   });
 });

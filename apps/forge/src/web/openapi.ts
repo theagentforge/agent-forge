@@ -1,6 +1,7 @@
 import { API_VERSION, SCAN_MAX_BYTES, SCAN_RULES_VERSION, VERSION_PATTERN } from "@forge/shared";
 import { CHECK_LIMIT_PERIOD_S, CHECK_QUERY_HELP, RATE_LIMITED } from "../services/errors";
 import { EXPOSURE_MAX_ITEMS, EXPOSURE_MAX_TEXT } from "../services/exposure";
+import { HISTORY_CACHE_SECONDS, HISTORY_CONTRACT, HISTORY_CONTRACT_VERSION, HISTORY_DEFAULT_LIMIT, HISTORY_DOCS_PATH, HISTORY_MAX_LIMIT, HISTORY_MAX_OFFSET, HISTORY_SECTIONS } from "../services/server-history";
 import { site } from "./pages";
 
 // OpenAPI 3.1 description of the public REST API (acquisition build framework A8): the routes in api.ts that need no
@@ -400,6 +401,65 @@ const schemas = {
     description: "A Gauntlet run: gauntlet_id, the current job (brief, tools, limits) or the report. On start, also a private claim_key (null for a measured re-run), shown only then. See /gauntlet.md.",
     additionalProperties: true,
   },
+  // ADR 0141: contract forge.server-history/v1 (GET /api/v1/history/{server}).
+  ServerHistory: {
+    type: "object",
+    required: ["contract", "contract_version", "data_kind", "server", "status", "data_as_of", "request", "notes", "licence"],
+    properties: {
+      contract: { const: HISTORY_CONTRACT },
+      contract_version: { type: "string", examples: [HISTORY_CONTRACT_VERSION], description: "Semver of the contract: a minor bump only adds fields; removing or renaming one is a new contract (v2)." },
+      data_kind: { const: "server_history" },
+      server: { type: "string", examples: ["npm:@modelcontextprotocol/server-filesystem", "pypi:mcp-server-git"] },
+      status: { enum: ["measured", "not_yet_measured"] },
+      data_as_of: { ...nullable("string"), format: "date-time", description: "The newest timestamp among the rows read (null when nothing is measured)." },
+      tool_url: { ...nullable("string"), format: "uri" },
+      request: { type: "object", properties: { section: { enum: ["all", ...HISTORY_SECTIONS] }, offset: { type: "integer" }, limit: { type: "integer" }, url: { type: "string", format: "uri" } } },
+      install_outcomes: {
+        type: "object",
+        description: "House install outcomes by date and version. Each row carries its family (top500_nightly, weekly_sweep, backfill) and origin; counts are per family and never added across families.",
+        properties: {
+          status: { enum: ["measured", "not_yet_measured"] },
+          taxonomy: { type: "string", examples: ["failure-classes/v1"] },
+          families: { type: "object", additionalProperties: { type: "object", properties: { status: { enum: ["measured", "not_yet_measured", "queued"] }, tested: { type: "integer" }, installed: { type: "integer" }, failed: { type: "integer" }, failed_by_class: { type: "object", additionalProperties: { type: "integer" } }, first_date: { type: "string", format: "date" }, last_date: { type: "string", format: "date" }, pending: { type: "integer" }, excluded_by_reason: { type: "object", additionalProperties: { type: "integer" } } } } },
+          total: { type: "integer" },
+          offset: { type: "integer" },
+          limit: { type: "integer" },
+          next: { ...nullable("string"), format: "uri" },
+          items: { type: "array", items: { type: "object", properties: { date: { type: "string", format: "date" }, family: { enum: ["top500_nightly", "weekly_sweep", "backfill"] }, origin: { enum: ["post", "kv_copy", "backfill"] }, version: nullable("string"), outcome: nullable("string"), installed: { type: "boolean" }, failure_class: nullable("string"), tools_count: nullable("integer"), observed_at: { ...nullable("string"), format: "date-time" }, published_at: { ...nullable("string"), format: "date-time" } } } },
+        },
+      },
+      definitions: {
+        type: "object",
+        description: "Tool-definition sets per version as sha256 and counts (no tool text). first_seen is the publish date for backfill rows and the first sighting otherwise; published_at is the registry's publish date where known; observed_at is when we read it.",
+        properties: {
+          status: { enum: ["measured", "not_yet_measured"] },
+          by_origin: { type: "object", additionalProperties: { type: "object", properties: { sets: { type: "integer" }, versions: { type: "integer" } } } },
+          versions: { type: "integer" },
+          total: { type: "integer" },
+          next: { ...nullable("string"), format: "uri" },
+          items: { type: "array", items: { type: "object", properties: { version: { type: "string" }, server: { type: "string", description: "The House id the set was read from (a tool page can list more than one package)." }, origin: { enum: ["nightly", "carried", "backfill"] }, description_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" }, tools_count: { type: "integer" }, descriptions_count: { type: "integer" }, rules_version: { type: "string" }, first_seen: { type: "string", format: "date-time" }, published_at: { ...nullable("string"), format: "date-time" }, observed_at: { type: "string", format: "date-time" }, last_seen: { type: "string", format: "date-time" } } } },
+        },
+      },
+      changes: {
+        type: "object",
+        description: "Consecutive definition sets compared, newest first. new_rule_ids: scanner rule ids the new text matched that the old did not (ids only; a pattern, not a finding).",
+        properties: {
+          status: { enum: ["measured", "not_yet_measured", "not_yet_computed"] },
+          pairs: { type: "integer" },
+          changed: { type: "integer" },
+          changed_without_major_bump: { type: "integer" },
+          with_new_rule_ids: { type: "integer" },
+          computed_at: { ...nullable("string"), format: "date-time" },
+          total: { type: "integer" },
+          next: { ...nullable("string"), format: "uri" },
+          items: { type: "array", items: { type: "object", properties: { seq: { type: "integer" }, from_version: { type: "string" }, to_version: { type: "string" }, from_sha256: { type: "string" }, to_sha256: { type: "string" }, from_published_at: { ...nullable("string"), format: "date-time" }, to_published_at: { ...nullable("string"), format: "date-time" }, change_classes: { type: "array", items: { enum: ["tool_added", "tool_removed", "description_changed", "schema_changed"] } }, tools_added: { type: "integer" }, tools_removed: { type: "integer" }, descriptions_changed: { type: "integer" }, schemas_changed: { type: "integer" }, major_bump: { type: "boolean" }, zero_major: { type: "boolean" }, same_version: { type: "boolean" }, untested_between: { type: "integer" }, new_rule_ids: { type: "array", items: { type: "string" } } } } },
+        },
+      },
+      notes: { type: "object", additionalProperties: true },
+      licence: { type: "object", properties: { id: { type: "string" }, url: { type: "string", format: "uri" } } },
+    },
+    additionalProperties: true,
+  },
 } as const;
 
 const scanResponses = {
@@ -436,6 +496,7 @@ export function openApiSpec(origin: string) {
       { name: "advisories", description: "Installed package versions matched against OSV advisories." },
       { name: "gauntlet", description: "Six refereed jobs with planted traps.", externalDocs: { url: `${origin}/gauntlet.md` } },
       { name: "requests", description: "Queue a House test of a public npm or PyPI MCP server version (ADR 0131)." },
+      { name: "history", description: `One MCP server's dated record across versions, contract ${HISTORY_CONTRACT} (ADR 0141).`, externalDocs: { url: `${origin}${HISTORY_DOCS_PATH}` } },
       { name: "site", description: "Public counts and service status." },
     ],
     paths: {
@@ -573,6 +634,26 @@ export function openApiSpec(origin: string) {
           summary: "Status and result of a test request",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: { "200": json(ref("TestRequest"), "Status, and the result once tested."), "404": err("not_found."), "429": err("rate_limited.") },
+        },
+      },
+      [`${V}/history/{server}`]: {
+        get: {
+          operationId: "serverHistory",
+          tags: ["history"],
+          summary: "One MCP server's dated record (forge.server-history/v1)",
+          description: `Install outcomes by version and date (per family and origin), tool-definition sha256 per version, and change events between consecutive versions, with data_as_of. Hashes, counts, dates and rule ids only. A server with no rows answers 200 with status not_yet_measured. Edge-cached ${HISTORY_CACHE_SECONDS} s; strong ETag, If-None-Match gives 304. Contract headers X-Forge-Contract and X-Forge-Contract-Version.`,
+          parameters: [
+            { name: "server", in: "path", required: true, description: "npm:name, npm:@scope/name or pypi:name, without a version; URL-encode it (npm%3A%40scope%2Fname). PyPI names are normalised (PEP 503).", schema: { type: "string", maxLength: 230 } },
+            { name: "section", in: "query", required: false, schema: { enum: ["all", ...HISTORY_SECTIONS], default: "all" } },
+            { name: "offset", in: "query", required: false, description: "Rows to skip in one section (needs section).", schema: { type: "integer", minimum: 0, maximum: HISTORY_MAX_OFFSET, default: 0 } },
+            { name: "limit", in: "query", required: false, description: "Rows per section.", schema: { type: "integer", minimum: 1, maximum: HISTORY_MAX_LIMIT, default: HISTORY_DEFAULT_LIMIT } },
+          ],
+          responses: {
+            "200": json(ref("ServerHistory"), "The record (status not_yet_measured when nothing is stored)."),
+            "304": { description: "Not modified (If-None-Match matched the ETag)." },
+            "400": err("invalid_server (not an npm or PyPI id, or has a version) or invalid_query (section, offset or limit)."),
+            "429": rateLimited,
+          },
         },
       },
       [`${V}/gauntlet`]: {

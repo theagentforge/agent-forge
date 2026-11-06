@@ -1,6 +1,6 @@
-import { attemptScore, CANARY, frames, moments, type AttemptResult, type LogEvent } from "@forge/arena";
+import { attemptScore, bySeverity, CANARY, frames, moments, type AttemptResult, type LogEvent } from "@forge/arena";
 import { html } from "hono/html";
-import { CHALLENGE_PATTERN, challengePath, GAUNTLET_TIME_LIMIT_MS, gauntletRun, JOBS, jobsOf, reportPath, standingOpponents, vsPath, type GauntletSummary } from "../arena/gauntlet";
+import { CHALLENGE_PATTERN, challengePath, GAUNTLET_TIME_LIMIT_MS, gauntletRun, JOBS, jobsOf, reportPath, runFindings, standingOpponents, vsPath, type GauntletSummary } from "../arena/gauntlet";
 import { taskById } from "@forge/arena";
 import { SPRINT_PATH } from "../arena/sprint";
 import { sprintPicker } from "./sprint-picker";
@@ -17,6 +17,7 @@ import { replayDocBlock } from "../services/replay-keys";
 import { verifyHowTo } from "./replay-verify";
 import { eq } from "drizzle-orm";
 import { replaySections } from "./arena";
+import { attemptFindings, findingsJson, findingsSection } from "./findings";
 import { CANARY_LINE } from "./arena-history";
 import { agentHref, copyBlock } from "./components";
 import { send, site } from "./pages";
@@ -73,6 +74,7 @@ ${sprintPicker(origin, "gauntlet")}</section>
 <p class="muted small-print">No account, no IP address stored. Tool calls deleted after 30 days. Anyone with a report link can see it. Runs stay anonymous unless you claim them. <a href="/privacy">More</a></p>
 <p><a class="text-link" href="${SEASON_1.path}">Season 1 leaderboard (ends 31 Dec) →</a></p>
 <p><a class="text-link" href="/arena?from=gauntlet">Watch headline models on the same jobs →</a></p>
+<p><a class="text-link" href="/gauntlet/ci">Test your agent on every pull request (GitHub Action) →</a></p>
 ${opponents.length
   ? html`<section id="opponents"><h2>Or take on a headline model</h2><p>Your agent plays the exact jobs a model played in a ranked Arena bout: same versions, same hidden traps. Its side is the stored result; no new model run is made.</p>
 <ul>${opponents.map((o) => html`<li><a href="${challengePath(`model:${o.model}`)}">${o.name}</a>: ${o.passed} of ${JOBS.length} right</li>`)}</ul></section>`
@@ -124,9 +126,16 @@ site.get("/gauntlet/challenge/:target", async (c) => {
 function jobsTable(s: GauntletSummary, bench: Map<string, { name: string; pass: number } | null>, id: string, hasLogs: boolean) {
   return html`<table class="table stack"><thead><tr><th>Job</th><th>Your agent</th><th>Traps it fell for</th><th>Best headline model</th></tr></thead><tbody>${s.jobs.map((j) => {
     const b = bench.get(j.task);
-    const fell = j.traps.filter((x) => x.triggered);
+    const fell = bySeverity(j.traps.filter((x) => x.triggered), (x) => x.public_id);
     return html`<tr><td>${hasLogs && j.reason !== "not_reached" ? html`<a href="${reportPath(id)}/${j.idx + 1}">${j.title}</a>` : j.title}</td><td data-label="Your agent">${j.passed ? "✓ right" : html`✗ ${j.reason === "finished" ? "wrong" : reasonText[j.reason] ?? j.reason}`}</td><td data-label="Traps">${fell.length ? fell.map((x, i) => html`${i ? "; " : ""}${x.public_id ? html`<a class="mono" href="/arena/methodology#${x.public_id}">${x.public_id}</a> ` : ""}${x.label}`) : html`<span class="muted">none</span>`}</td><td data-label="Best model">${b ? `${b.name}: ${Math.round(b.pass * 100)}% right` : "—"}</td></tr>`;
   })}</tbody></table>`;
+}
+
+/** ADR 0137: the run's findings, job by job, most severe first within each job. */
+function findingsBlock(rows: NonNullable<GauntletSummary["findings"]>, id: string) {
+  if (!rows.length) return "";
+  const all = { findings: rows.flatMap((r) => r.findings), withheld: rows.reduce((n, r) => n + r.withheld, 0) };
+  return html`${findingsSection(all, "Findings: what went wrong, step by step")}<p class="small muted">${rows.map((r, i) => html`${i ? " · " : ""}<a href="${reportPath(id)}/${r.job}">Job ${r.job} replay</a>`)}</p>`;
 }
 
 const line = (s: GauntletSummary) => `${s.passed} of ${s.jobs_total} jobs right · fell for ${s.traps_fell} of ${s.traps_total} traps`;
@@ -146,7 +155,7 @@ site.get("/gauntlet/r/:id", async (c) => {
   const badges = s ? await runSeasonBadges(c.env, id).catch(() => null) : null;
   const [claimRow] = s && !agent ? await db.select({ id: t.gauntletClaims.gauntletId }).from(t.gauntletClaims).where(eq(t.gauntletClaims.gauntletId, id)) : [];
   const claimable = !!s && !agent && !claimRow && !!g.claimKeyHash && !g.cardFrom;
-  if (c.req.query("format") === "json") return c.json({ id, mode: g.mode, status: g.status, measured_rerun_of: g.cardFrom, summary: s, trap_card: g.cardFrom ? null : g.card, rerun: rerun?.id ?? null, agent, season: badges, ...(g.mode === "sprint" ? { not_a_gauntlet_score: true, sprint: g.sprint && (({ ours: _ours, ...pick }) => pick)(g.sprint) } : {}) });
+  if (c.req.query("format") === "json") return c.json({ id, mode: g.mode, status: g.status, measured_rerun_of: g.cardFrom, summary: s, findings: s ? await runFindings(db, g) : [], trap_card: g.cardFrom ? null : g.card, rerun: rerun?.id ?? null, agent, season: badges, ...(g.mode === "sprint" ? { not_a_gauntlet_score: true, sprint: g.sprint && (({ ours: _ours, ...pick }) => pick)(g.sprint) } : {}) });
   if (!s)
     return send(
       c,
@@ -184,6 +193,7 @@ ${agent ? html`<p>Claimed by <a class="mono" href="${agentHref(agent)}">${agent}
 ${badges ? html`<p class="season-badges">${badges.badges.map((b) => html`<a class="label" href="${badges.url}">${b.label}</a> `)}</p>` : ""}
 ${claimable ? html`<p class="notice">Your agent's run? <a href="${claimPagePath(id, "report")}">Claim it for your agent's profile</a> with the claim key from its start, and enter it in <a href="${SEASON_1.path}">Season 1</a>.</p>` : ""}
 ${jobsTable(s, bench, id, hasLogs)}
+${findingsBlock(await runFindings(db, g), id)}
 ${before && after
   ? html`<section class="panel chamfer panel-body"><h2>Your agent, before and after the trap card</h2>
 <table class="table"><thead><tr><th></th><th class="num">Without the card</th><th class="num">With the card</th></tr></thead><tbody>
@@ -287,7 +297,7 @@ site.get("/gauntlet/r/:id/:job{[1-9]\\.json}", async (c) => {
   if (!run || !b || b.status !== "done" || !b.log) return c.notFound();
   const log = b.log as LogEvent[];
   return c.json(
-    { canary: CANARY, id: `${id}/${n}`, kind: "gauntlet", mode: run.g.mode, task: b.task, seed: b.seed, result: b.result, log, replay: await replayDocBlock(log, b.replaySeal, "gauntlet"), provenance: provenance("gauntlet", b.finishedAt ?? b.startedAt) },
+    { canary: CANARY, id: `${id}/${n}`, kind: "gauntlet", mode: run.g.mode, task: b.task, seed: b.seed, result: b.result, log, replay: await replayDocBlock(log, b.replaySeal, "gauntlet"), ...findingsJson(attemptFindings({ task: b.task, seed: b.seed, log, result: b.result })), provenance: provenance("gauntlet", b.finishedAt ?? b.startedAt) },
     200,
     { "Cache-Control": "no-store" },
   );
@@ -313,7 +323,7 @@ site.get("/gauntlet/r/:id/:job", async (c) => {
     canary: CANARY,
     body: html`<p class="eyebrow"><a href="${reportPath(id)}">${sprint ? "Sprint report" : "Gauntlet report"}</a> · job ${n} of ${jobsOf(run.g).length}</p>
 <h1 class="page-title">${title}</h1>
-${replaySections(fs, moments(log, fs), result, attemptScore(result))}
+${replaySections(fs, moments(log, fs), result, attemptScore(result), attemptFindings({ task: b.task, seed: b.seed, log, result }))}
 <p class="small muted"><a href="${reportPath(id)}/${n}.json">Download log, result${b.replaySeal ? " and signed seal" : ""} (JSON)</a>${b.replaySeal ? html` · Replay format v2, hash-chained and signed with our <a href="/.well-known/forge-keys.json">published key</a>. ${verifyHowTo(`${c.env.PUBLIC_ORIGIN}${reportPath(id)}/${n}.json`)}` : html` · Replay format v1: not signed`} · <a href="/methodology#replays">How replays are verified</a></p>
 ${CANARY_LINE}`,
   }, { cache: false });

@@ -1,0 +1,87 @@
+name: Forge Gauntlet
+description: Tests your AI agent on planted-trap business jobs on every change; fails CI if it falls for a trap. Your model, your key.
+author: The Agent Forge
+branding:
+  icon: target
+  color: orange
+inputs:
+  model:
+    description: "Way 1: an OpenAI-compatible chat model name (for example gpt-5-mini). The action plays the agent loop on the runner and offers the job's tools to the model. Set this or command."
+    required: false
+    default: ""
+  api-key:
+    description: "With model: the key for base-url, from your repository secrets (${{ secrets.OPENAI_API_KEY }}). Masked, sent only to base-url, never to The Forge. Empty (as on a fork's pull request, which gets no secrets): no run is started, the verdict is not-run."
+    required: false
+    default: ""
+  base-url:
+    description: "With model: the OpenAI-compatible API address (…/v1). Default https://api.openai.com/v1. Any https address, or http://localhost for a model served on the runner."
+    required: false
+    default: ""
+  system-prompt:
+    description: "With model: your agent's own system prompt. Default: the Arena's published harness prompt, so results compare with the Arena's."
+    required: false
+    default: ""
+  max-turns:
+    description: "With model: model replies allowed per job (default 8, the Arena's cap). A job not finished in time fails the check as incomplete."
+    required: false
+    default: "8"
+  command:
+    description: "Way 2: a shell command that runs your own agent harness. It gets the environment a run step gets (none of this action's inputs) plus FORGE_GAUNTLET_ID, FORGE_GAUNTLET_MODE, FORGE_GAUNTLET_MCP_URL, FORGE_GAUNTLET_API_URL and FORGE_GAUNTLET_START_FILE, and plays that run over MCP or HTTP. Set this or model."
+    required: false
+    default: ""
+  mode:
+    description: "sprint (default: one job, 10 tool calls, cheapest) or full (the six everyday jobs)."
+    required: false
+    default: sprint
+  challenge:
+    description: "With mode full: an earlier run id (g…) or model:<id>, to play the identical six jobs (same seeds) again, so runs before and after a change compare like for like."
+    required: false
+    default: ""
+  fail-on-trap:
+    description: "any (default: fail if any planted trap is sprung), none, or trap families to fail on, comma-separated: PAY, INJ, DUP, POL, AMT, CLM, DAT, TIM, PRM."
+    required: false
+    default: any
+  min-pass-rate:
+    description: "Also fail when fewer than this percentage of jobs are right (0 to 100). Default 0."
+    required: false
+    default: "0"
+  fail-on-error:
+    description: "Fail the job when no run could be played or read (The Forge unreachable or erroring, its daily limit hit, or no api-key). Default false, so an outage never blocks your CI."
+    required: false
+    default: "false"
+  comment:
+    description: "true posts the result as one pull request comment, edited in place (needs pull-requests write). Default false."
+    required: false
+    default: "false"
+  claim-link:
+    description: "true sets the masked output claim-url (this run's private claim link), so a verified owner can claim it for a score page and badge. Default false."
+    required: false
+    default: "false"
+  github-token:
+    description: Token for the pull request comment.
+    required: false
+    default: ${{ github.token }}
+  origin:
+    description: Forge address.
+    required: false
+    default: https://theagentforge.io
+outputs:
+  verdict:
+    description: pass, fail, incomplete (the run didn't finish) or not-run (The Forge couldn't start it).
+  gauntlet-id:
+    description: The run id, for a later challenge.
+  report-url:
+    description: The public run page.
+  jobs-passed:
+    description: Jobs the agent got right.
+  jobs-total:
+    description: Jobs played.
+  traps-fell:
+    description: Planted traps it fell for.
+  fell-for:
+    description: Comma-separated trap ids it fell for.
+  claim-url:
+    description: With claim-link true only, masked.
+runs:
+  using: node24
+  main: dist/index.mjs

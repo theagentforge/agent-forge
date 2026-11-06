@@ -29,6 +29,17 @@ import { copyBlock, more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { frozenVersionsBlock } from "./benchmark-versions";
 import { benchmarkDatasetLd } from "./structured-data";
+import { REFEREE_AUDIT, validityGate } from "../arena/error-record";
+import { VALIDITY_PATH } from "../arena/validity";
+import { validityReleased } from "./validity-release";
+
+/** One line pointing to the validity pack (ADR 0136), with the automated audit's figures; nothing without the audit. */
+const validityLine = (env: Env) => {
+  // Only once the validity pack is released (VALIDITY_PUBLIC on); an admin previews it at /benchmark/validity itself.
+  if (!validityReleased(env) || !validityGate(REFEREE_AUDIT).ok) return html``;
+  const o = REFEREE_AUDIT.overall;
+  return html`<p class="small" id="validity"><b>Independent re-grade by code:</b> ${o.agree} of ${o.n} sampled trap verdicts agreed (${REFEREE_AUDIT.sample.runs} replays). <a href="${VALIDITY_PATH}">Referee audit, contamination test, error record and reproducibility kit</a>.</p>`;
+};
 
 // The Forge Trap Set (ADR 0068): /benchmark (page), /benchmark/v1.json (the data), /benchmark/v1/schema.json (the
 // JSON Schema for one trap record) and /benchmark/v1/CITATION.cff. Every number on the page comes from benchmarkData.
@@ -123,7 +134,8 @@ ${tiers.length
       : html`<p class="muted">No ranked results yet.</p>`}
 <p class="small" id="referee"><b>Is the referee right?</b> ${audit.status === "measured"
       ? html`In Forge Lab #6, a pre-registered blind audit, a person agreed with the referee's pass or fail on <b>${pct(audit.agreement)}</b> of ${audit.n} attempts (95% interval ${interval(audit.ci_95)}). The pre-registered bar: ${pct(audit.agreement_bar)}, with the lower bound at least ${pct(audit.lower_bound_floor)}.`
-      : html`<b>Not yet published.</b> Forge Lab #6, a pre-registered blind audit of ${audit.planned_sample} refereed attempts, will report how often a person agrees with the referee (bar: ${pct(audit.agreement_bar)}). Until then the referee's accuracy is not known.`}</p>
+      : html`<b>Not yet published.</b> Forge Lab #6, a pre-registered blind audit of ${audit.planned_sample} refereed attempts, will report how often a person agrees with the referee (bar: ${pct(audit.agreement_bar)}). Until then the referee's accuracy against people is not known.`}</p>
+${validityLine(c.env)}
 ${more(
   "How results are counted",
   html`<p>Ranked public attempts only (no practice, no held-out runs, nothing under notice), under the <a href="/results-policy">results policy</a>: passes of attempts, 95% Wilson intervals, run dates and versions. Normal and Hard jobs are kept apart, and so are rules versions: rows scored under rules older than ${d.rules_version} are shown on their own and marked, because a rules change can change how a trap is scored. Runs re-scored under ${d.rules_version} by replaying their signed logs (played under older rules, with the same job harness) are their own rows too, marked "re-scored from signed logs", and never pooled with runs played under ${d.rules_version}. Each attempt's replay is in <a href="/arena/dataset.json">the dataset</a>.</p>

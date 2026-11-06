@@ -1,6 +1,6 @@
 import { stable } from "./engine";
 import { rescore } from "./rescore";
-import { taskById } from "./tasks/index";
+import { RULES_REFEREED_EXACTLY, taskById, taskUnderRules } from "./tasks/index";
 import type { AttemptResult, LogEvent } from "./types";
 
 // Replay format v2 (ADR 0066, docs/arena/replay-format.md): a run's referee log as a hash chain, closed by a seal that
@@ -329,7 +329,13 @@ export interface RefereeReport {
 }
 
 /** Re-runs the open end-state referee on a published replay's logged actions (public jobs only). */
-export function refereeCheck(doc: unknown): RefereeReport {
+/**
+ * Re-runs a replay's logged actions through the open referee. By default that is the referee in force now. With
+ * `underRunRules`, a run scored under a rules version this build still referees exactly (RULES_REFEREED_EXACTLY) is
+ * re-run under that version's referee, so a published verdict is checked against the rules that produced it; any other
+ * run falls back to the referee in force, and `rules_here` always names the referee actually used.
+ */
+export function refereeCheck(doc: unknown, opts: { underRunRules?: boolean } = {}): RefereeReport {
   const d = (doc && typeof doc === "object" ? doc : {}) as ReplayDoc;
   const result = d.result && typeof d.result === "object" ? (d.result as Partial<AttemptResult> & { rules?: unknown }) : null;
   const seal = isSeal(d.replay?.seal) ? d.replay!.seal : null;
@@ -351,7 +357,8 @@ export function refereeCheck(doc: unknown): RefereeReport {
   if (!log || start?.type !== "start") return { ...empty, why: "the document has no log that begins with a start event" };
   if (!taskById(start.task)) return { ...empty, why: `job ${start.task} isn't a public job, so its referee isn't published` };
   try {
-    const r = rescore({ task: start.task, seed: start.seed, log, result: result ?? null });
+    const own = opts.underRunRules && empty.rules_of_run && RULES_REFEREED_EXACTLY.includes(empty.rules_of_run) ? empty.rules_of_run : null;
+    const r = rescore({ task: start.task, seed: start.seed, log, result: result ?? null }, own ? { task: taskUnderRules(start.task, own)! } : {});
     const diffs: string[] = [];
     if (empty.published.passed !== r.result.passed) diffs.push(`pass/fail: published ${empty.published.passed}, recomputed ${r.result.passed}`);
     if (empty.published.reason !== r.result.reason) diffs.push(`end reason: published ${empty.published.reason}, recomputed ${r.result.reason}`);
@@ -359,7 +366,7 @@ export function refereeCheck(doc: unknown): RefereeReport {
     return {
       ...empty,
       checked: true,
-      rules_here: r.rules,
+      rules_here: own ?? r.rules,
       same_verdict: diffs.length === 0,
       faithful: r.faithful,
       differences: r.mismatch ? [...diffs, r.mismatch] : diffs,

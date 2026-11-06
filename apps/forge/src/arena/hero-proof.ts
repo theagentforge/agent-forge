@@ -6,6 +6,18 @@ import { BELOW_MINIMUM_TEXT, THIRD_PARTY_MINIMUM } from "../services/public-stat
 import { verifiedReplay } from "./fail-card";
 import { isEmbargoed, modelById } from "./lineup";
 import { modelName, notEmbargoed } from "./views";
+import AUDIT_1 from "../seed/validity/referee-audit-1.json";
+
+/**
+ * Runs whose published trap verdict the referee audit found wrong (ADR 0136; referee audit 1, 5 Nov 2026). Such a run
+ * never backs a home headline, whatever its pin, until it is re-scored. Hotfix 5 Nov: the false-claim line had been
+ * shown from run 23f12299, one of the four.
+ */
+export const AUDIT_WRONG_RUNS: ReadonlySet<string> = new Set(
+  (AUDIT_1 as { disagreements: { run: string; resolution?: { outcome?: string } }[] }).disagreements
+    .filter((d) => (d.resolution?.outcome ?? "").startsWith("referee_wrong"))
+    .map((d) => d.run),
+);
 
 // The home headline (W2.1, decision D2 in docs/strategy/boardy-review-2026-10-27.md; ADR 0130, one true headline per
 // visit). A small table of lines, each tied to public catalogue traps. A line may be shown only while one real, public
@@ -137,7 +149,7 @@ type RunRow = { run: { id: string; modelId: string; task: string; finishedAt: nu
 
 /** The facts for one run on one line, or null unless it meets rules 1 and 2 with a public catalogue trap. */
 export function proofOf(r: RunRow, l: HeroLine = FIXED_LINE): HeroProof | null {
-  if (!r.result || !r.log || isEmbargoed(r.run.modelId)) return null;
+  if (!r.result || !r.log || isEmbargoed(r.run.modelId) || AUDIT_WRONG_RUNS.has(r.run.id)) return null;
   const fell = (job: string, trap: string) => job === r.run.task && r.result!.traps.some((x) => x.id === trap && x.triggered);
   const pair = linePairs(l).find(([j, x]) => fell(j, x));
   if (!pair) return null;

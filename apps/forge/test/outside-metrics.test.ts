@@ -28,7 +28,9 @@ const item = (m: OutsideMetrics, key: string) => m.items.find((x) => x.key === k
 
 async function person(kind: "outside" | "house" | "founder", over: Partial<typeof t.humans.$inferInsert> = {}) {
   const humanId = uid("h");
-  const githubId = kind === "founder" ? FOUNDER : 800_000_000 + seq * 7 + Math.floor(Math.random() * 1000);
+  // Unique and deterministic: seq only grows, and this file's range (870M+) is its own. The old seq * 7 + random(1000)
+  // could repeat an id across two calls and break the unique key on githubId under load (review, 6 Nov).
+  const githubId = kind === "founder" ? FOUNDER : 870_000_000 + seq;
   if (kind === "founder") {
     const [f] = await db().select().from(t.humans).where(eq(t.humans.githubId, FOUNDER));
     if (f) return { humanId: f.id, agentId: null };

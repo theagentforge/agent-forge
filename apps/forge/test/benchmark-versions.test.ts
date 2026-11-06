@@ -52,6 +52,7 @@ describe("frozen snapshots", () => {
     "1.0": "d5835388be5ef57222d5f3739b00fe9794bd543e60083fdd9498df29d3cceb71",
     "1.0.1": "e6fb92c0da4f3e69421d04273cbff00c80972b10d1e22ec2c10043bed75ee0b9",
     "1.1": "f9e99c6a8d7cb6994697d27015728ab79c443dff10a0e79afb40edd26b4caff1",
+    "1.2": "9e3a13d8790eb527a8ef9827fd533f426dd4766b3b8ce4200ad506563eb7fe9f",
   };
   it("every snapshot's sha256 equals the one pinned when it was frozen (an edit plus a re-index still fails)", async () => {
     expect(Object.keys(FROZEN_SHA256)).toEqual(SNAPSHOTS.map((s) => s.version));

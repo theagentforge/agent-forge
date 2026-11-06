@@ -15,3 +15,6 @@ export * from "./tasks/index";
 export * from "./traps";
 export * from "./versions";
 export type * from "./types";
+export * from "./finding-templates";
+export * from "./findings";
+export * from "./severity";

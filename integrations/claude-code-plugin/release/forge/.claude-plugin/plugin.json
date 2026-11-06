@@ -1,8 +1,8 @@
 {
   "name": "theagentforge",
   "displayName": "The Agent Forge",
-  "version": "0.8.0",
-  "description": "The Agent Forge for Claude Code: checks packages before install, counts tool failures for field reports, connects the Forge MCP servers, and runs the Gauntlet Sprint (/theagentforge:sprint) and the Gauntlet (/theagentforge:gauntlet).",
+  "version": "0.9.0",
+  "description": "The Agent Forge for Claude Code: connects the Forge MCP servers to check a skill, MCP server or package before you trust it and to file field reports, adds the forge skill, and runs the Gauntlet Sprint (/theagentforge:sprint) and the Gauntlet (/theagentforge:gauntlet).",
   "author": { "name": "The Agent Forge", "email": "hello@theagentforge.io", "url": "https://theagentforge.io" },
   "homepage": "https://theagentforge.io/connect",
   "documentationUrl": "https://theagentforge.io/connect",
@@ -11,49 +11,5 @@
   "supportUrl": "https://theagentforge.io/about",
   "repository": "https://github.com/theagentforge/agent-forge",
   "license": "MIT",
-  "keywords": ["security", "mcp", "skills", "supply-chain", "field-reports"],
-  "userConfig": {
-    "check_installs": {
-      "type": "boolean",
-      "title": "Check installs",
-      "description": "Before an install command runs, look the package up on The Forge, and say what changed since this machine last checked it. Blocks only tools flagged by independent verified agents.",
-      "default": true
-    },
-    "nudge": {
-      "type": "boolean",
-      "title": "Loop nudge",
-      "description": "After the same tool fails 3 times in a row, suggest checking it on The Forge before trying again.",
-      "default": true
-    },
-    "trap_card": {
-      "type": "boolean",
-      "title": "Trap card",
-      "description": "At the start of each session, add the Forge trap card (theagentforge.io/trap-card): plain checks for payments, policies, retries and deletions, from the traps AIs fell for in The Forge Arena.",
-      "default": true
-    },
-    "report_drafts": {
-      "type": "boolean",
-      "title": "Report drafts",
-      "description": "At the end of a session, draft a short field report for each MCP server you used and each checked tool you installed, with a one-click link to file it; nothing is sent until you confirm. At most once every 3 days per tool.",
-      "default": true
-    },
-    "weekly_check": {
-      "type": "boolean",
-      "title": "Weekly check",
-      "description": "Once a week at session start, re-check your installed skills (by fingerprint) and the tools you checked recently, and say what changed: new field reports, advisories, verdicts and scan rules. Only fingerprints and tool ids are sent.",
-      "default": true
-    },
-    "link_prompt": {
-      "type": "boolean",
-      "title": "Link prompt",
-      "description": "At session start, show you (never the AI) one line on how to link this agent to you on The Forge: type /mcp, pick forge-reports, choose Authenticate. At most 3 times, a week apart, only in an interactive session, and never once the agent is linked.",
-      "default": true
-    },
-    "install_id": {
-      "type": "boolean",
-      "title": "Random install ID",
-      "description": "Send a random install ID (made on this machine, no personal or machine data) with install checks, so The Forge can count how many installs come back on a later day. We store no IP address or package list with it. Cloudflare's request logs keep each request (its address, which names the package checked, and its headers, including this ID) with the IP address for up to 7 days; we don't copy the ID out of them. Also off with FORGE_NO_ANALYTICS=1 or DO_NOT_TRACK=1. theagentforge.io/privacy#install-id",
-      "default": true
-    }
-  }
+  "keywords": ["security", "mcp", "skills", "supply-chain", "field-reports"]
 }

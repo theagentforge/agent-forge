@@ -64,3 +64,8 @@ jobs:
         run: python3 -m unittest discover -s integrations/openenv-env/tests -t integrations/openenv-env
       - name: Sample dataset's Python loader runs (B3-07)
         run: python3 -m unittest discover -s apps/forge/test/python -t apps/forge/test/python
+      # Last: it locks this runner's home. Real throwaway users on the runner (GitHub-hosted runners give passwordless
+      # sudo): a malicious fixture must fail to forge results, read the job's secrets or outlive its probe, and an honest
+      # one must still record its tools (ADR 0134 amendment 2).
+      - name: House probe isolation smoke test (real users on this runner)
+        run: node integrations/house/test/isolation-smoke.mjs

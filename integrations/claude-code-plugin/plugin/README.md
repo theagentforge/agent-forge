@@ -11,6 +11,21 @@ In Claude Code:
 /plugin install theagentforge@theagentforge
 ```
 
+### Two editions
+This is the **full edition** (version 0.9.0-full), served only by The Forge's own marketplace above. It has the
+hooks described below. Anthropic's plugin directory lists the **directory edition** (version 0.9.0) instead: the same
+MCP servers and commands, and a skill that asks Claude to call `forge_check` itself, with no hooks, because the
+directory accepts command hooks only from organizations it has verified. If you already use
+`theagentforge@theagentforge` 0.8.0, refresh the listing with `/plugin marketplace update theagentforge`, then update
+the plugin: **Update now** on its page in `/plugin`, or `claude plugin update theagentforge@theagentforge` in your
+shell. (Auto-update is off by default for this marketplace.) Compared with 0.8.0, only this section and the version
+changed.
+
+Install **one edition, not both**. They share the name `theagentforge`, so their commands and MCP servers would
+appear twice, and when both are on, Claude Code runs the hooks of only one copy (it says which in the `/plugin`
+**Errors** tab). If you added the directory edition from Anthropic's plugin directory and want the hooks, turn the
+directory copy off in `/plugin` and keep this one.
+
 ### Upgrading from `forge@theagentforge` (0.7.x and earlier)
 On 29 Oct 2026 the plugin's name changed from `forge` to `theagentforge` (version 0.8.0), because a different plugin
 named `forge` is listed in Anthropic's community marketplace. The marketplace keeps its name, so you don't add it again.

@@ -167,6 +167,8 @@ function historyRow(toolId: string, server: string, p: HouseToolsPayload, now: n
     toolList: p.tools,
     firstSeen: now,
     lastSeen: now,
+    origin: "nightly",
+    observedAt: now,
   };
 }
 
@@ -179,12 +181,26 @@ export async function recordSightings(env: Env, rows: HistoryRow[]) {
   if (!rows.length) return { sightings: 0 };
   const db = getDb(env);
   try {
+    // A set already held as the row carried in on 5 Nov (migration 0038) is that row, seen again: it moves its last_seen,
+    // as it did before origin joined the key (migration 0040), instead of starting a second, "nightly" row for the same
+    // server + version + set (review, 5 Nov).
+    const ids = [...new Set(rows.map((r) => r.toolId))];
+    const carried = new Set(
+      (
+        await db
+          .select({ toolId: t.toolDescriptionHistory.toolId, version: t.toolDescriptionHistory.version, sha: t.toolDescriptionHistory.descriptionSha256 })
+          .from(t.toolDescriptionHistory)
+          .where(and(eq(t.toolDescriptionHistory.origin, "carried"), inArray(t.toolDescriptionHistory.toolId, ids)))
+      ).map((c) => `${c.toolId}|${c.version}|${c.sha}`),
+    );
+    for (const r of rows) if (carried.has(`${r.toolId}|${r.version}|${r.descriptionSha256}`)) r.origin = "carried";
     const stmts = rows.map((r) =>
       db
         .insert(t.toolDescriptionHistory)
         .values(r)
         .onConflictDoUpdate({
-          target: [t.toolDescriptionHistory.toolId, t.toolDescriptionHistory.version, t.toolDescriptionHistory.descriptionSha256],
+          // ADR 0134: the key includes origin, so a nightly sighting never touches a backfill row (or the reverse).
+          target: [t.toolDescriptionHistory.toolId, t.toolDescriptionHistory.version, t.toolDescriptionHistory.descriptionSha256, t.toolDescriptionHistory.origin],
           set: { lastSeen: sql`max(${t.toolDescriptionHistory.lastSeen}, excluded.last_seen)` },
         }),
     );
@@ -196,11 +212,15 @@ export async function recordSightings(env: Env, rows: HistoryRow[]) {
   }
 }
 
-/** Every description set a server + version has shown, oldest first (for the census server history). */
+/**
+ * Every description set a server + version has shown on a House night, oldest first (for the census server history).
+ * Backfill rows (ADR 0134) are left out: their first_seen is a publish date, not a night we saw them.
+ */
 export async function descriptionHistory(env: Env) {
   return getDb(env)
     .select({ server: t.toolDescriptionHistory.server, version: t.toolDescriptionHistory.version, sha256: t.toolDescriptionHistory.descriptionSha256, firstSeen: t.toolDescriptionHistory.firstSeen, lastSeen: t.toolDescriptionHistory.lastSeen })
     .from(t.toolDescriptionHistory)
+    .where(sql`${t.toolDescriptionHistory.origin} != 'backfill'`)
     .orderBy(t.toolDescriptionHistory.server, t.toolDescriptionHistory.version, t.toolDescriptionHistory.firstSeen);
 }
 

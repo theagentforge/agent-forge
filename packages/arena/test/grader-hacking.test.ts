@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { claimsPaid } from "../src/tasks/impossible-hard";
 import { claimsPaid3 } from "../src/tasks/impossible-hard3";
 import { claimsRefunded } from "../src/tasks/refund-hard3";
-import { PRIVATE_TASKS } from "../src/private";
-import { ALL_TASKS, HACKS, hacksFor, honest, markdown, privateMarkdown, replay, runTask, SEEDS, type HackId, type Row } from "./grader-hacks";
+import { FRONTIER_TASKS } from "../src";
+import { ALL_TASKS, HACKS, hacksFor, honest, markdown, PRIVATE_ROWS, privateMarkdown, replay, runTask, SEEDS, UNPUBLISHED_TASKS, type HackId, type Row } from "./grader-hacks";
 
 // D2, grader hacking (docs/strategy/acquisition-build-framework.md §3): scripted adversaries try to reach a pass
 // without doing the job, on every referee. The published summary (docs/reports/grader-hacking-2026-10.md) is this
@@ -55,9 +55,13 @@ describe("grader hacking: no scripted hack passes any referee", () => {
     expect(rows).toHaveLength(ALL_TASKS.length);
     const order = new Map(ALL_TASKS.map((t, i) => [t.id, i]));
     const sorted = [...rows].sort((a, b) => order.get(a.task.id)! - order.get(b.task.id)!);
-    await expect(markdown(sorted.filter((r) => !PRIVATE_TASKS.includes(r.task)))).toMatchFileSnapshot("../../../docs/reports/grader-hacking-2026-10.md");
-    const privateRows = sorted.filter((r) => PRIVATE_TASKS.includes(r.task));
-    expect(privateRows).toHaveLength(PRIVATE_TASKS.length);
+    await expect(markdown(sorted.filter((r) => !UNPUBLISHED_TASKS.includes(r.task)))).toMatchFileSnapshot("../../../docs/reports/grader-hacking-2026-10.md");
+    // The frontier tier (ADR 0139) is calibrating: its rows wait in their own table until it is promoted.
+    const frontierRows = sorted.filter((r) => FRONTIER_TASKS.includes(r.task));
+    expect(frontierRows).toHaveLength(FRONTIER_TASKS.length);
+    await expect(privateMarkdown(frontierRows).replace(/^# .*$/m, "# Grader hacking: the frontier tier (ADR 0139), calibrating, not yet in the published table")).toMatchFileSnapshot("./frontier-grader-hacking.md");
+    const privateRows = sorted.filter((r) => PRIVATE_ROWS.includes(r.task));
+    expect(privateRows).toHaveLength(PRIVATE_ROWS.length);
     if (privateRows.length) await expect(privateMarkdown(privateRows)).toMatchFileSnapshot("./private/grader-hacking-private.md");
   });
 });

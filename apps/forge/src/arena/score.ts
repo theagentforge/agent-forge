@@ -1,4 +1,4 @@
-import { RULES_HISTORY, rulesVersionAt, taskVersion, trapEntry, type TaskVersion } from "@forge/arena";
+import { RULES_HISTORY, rulesAtLeast, rulesVersionAt, taskVersion, trapEntry, type TaskVersion } from "@forge/arena";
 import { and, eq } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
@@ -26,6 +26,13 @@ export const TRAP_SET_LINE = `${TRAP_SET_NAME} v${TRAP_SET.version}`;
  */
 export const trapSetVersionOf = (rules: string, task: TaskVersion) =>
   [...TRAP_SET_VERSIONS].reverse().find((v) => v.rules === rules && v.task_versions.includes(task))?.version ?? null;
+
+/**
+ * True when a run was refereed under rules newer than every Trap Set version's: between a rules release and the
+ * re-score correction that makes the next version (rules 0.7 before Trap Set 1.2; ADR 0140). Such a run is after the
+ * newest version, never "before v1.0" and never relabelled as a version that doesn't exist yet.
+ */
+export const newerThanTrapSet = (rules: string) => TRAP_SET_VERSIONS.every((v) => v.rules !== rules && rulesAtLeast(rules, v.rules));
 
 /** A badge greys out as "expired" this long after the run finished; the score page itself stays. */
 export const SCORE_BADGE_TTL_DAYS = 90;
@@ -146,7 +153,7 @@ export async function gauntletScore(env: Env, id: string, now = Date.now(), opts
     attribution: { claimed_with_run_key: true, player_checked: false, owner_chooses_runs_shown: true },
     finished_at: new Date(finishedAt).toISOString(),
     /** version null: refereed under rules from before The Forge Trap Set v1.0 was cut. */
-    benchmark: { name: TRAP_SET_NAME, version: trapSetVersion, url: `${env.PUBLIC_ORIGIN}${BENCHMARK_PATH}` },
+    benchmark: { name: TRAP_SET_NAME, version: trapSetVersion, url: `${env.PUBLIC_ORIGIN}${BENCHMARK_PATH}`, scored_under_newer_rules: !trapSetVersion && newerThanTrapSet(rules.version) },
     task_version: task,
     rules_version: rules.version,
     rules_version_from: rules.from,
@@ -182,7 +189,7 @@ export type GauntletScore = NonNullable<Awaited<ReturnType<typeof gauntletScore>
  */
 export function scoreBadge(s: Pick<GauntletScore, "gauntlet_score" | "finished_at" | "expired" | "benchmark">) {
   const g = s.gauntlet_score;
-  const set = s.benchmark.version ? `Trap Set v${s.benchmark.version}` : "before Trap Set v1.0";
+  const set = s.benchmark.version ? `Trap Set v${s.benchmark.version}` : s.benchmark.scored_under_newer_rules ? `after Trap Set v${TRAP_SET.version}` : "before Trap Set v1.0";
   const message = `${g.jobs_right}/${g.jobs_total} jobs right · fell for ${g.traps_fell} ${g.traps_fell === 1 ? "trap" : "traps"} · ${s.finished_at.slice(0, 10)} · ${set}${s.expired ? " · expired" : ""}`;
   const color = s.expired ? "#5b6573" : g.jobs_right === g.jobs_total && g.traps_fell === 0 ? "#2e9e6b" : "#c27c0e";
   return { label: "Gauntlet score", message, color };

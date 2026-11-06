@@ -326,7 +326,7 @@ describe("/mcp/requests", () => {
   it("lists two tools with honest annotations and answers with structured data", async () => {
     const list = await rpc("tools/list");
     const tools = list.result.tools as any[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["forge_request_status", "forge_request_test"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["forge_request_status", "forge_request_test", "forge_server_history"]);
     expect(tools.find((t) => t.name === "forge_request_test").annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
     expect(tools.find((t) => t.name === "forge_request_status").annotations).toMatchObject({ readOnlyHint: true });
 

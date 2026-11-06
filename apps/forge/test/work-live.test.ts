@@ -51,12 +51,22 @@ describe("work done on the home page (ADR 0034)", () => {
   });
 
   it("serves the same totals live, from the edge cache for 30 seconds", async () => {
-    const a = (await (await fetchWorker("/agents/live.json")).json()) as { work: Record<string, number | null>; generated_at: string };
+    // The cache lasts until the snapshot's clock minute ends (as little as 1 s), and is written after the response
+    // (waitUntil). So a second read may miss when the minute turns or the write hasn't landed yet: retry a few times
+    // within the minute; a cached copy must turn up (review 5 Nov: this was the "flaky" failure in full runs).
+    const minute = (iso: string) => iso.slice(0, 16);
+    let a = (await (await fetchWorker("/agents/live.json")).json()) as { work: Record<string, number | null>; generated_at: string };
     expect(a.work.field_reports).toBeGreaterThanOrEqual(1);
     expect(typeof a.work.last_report_at).toBe("number");
-    const b = (await (await fetchWorker("/agents/live.json")).json()) as { generated_at: string };
-    expect(b.generated_at).toBe(a.generated_at);
-  });
+    let hit = false;
+    for (let i = 0; i < 60 && !hit; i++) {
+      await new Promise((r) => setTimeout(r, 100)); // up to 6 s: under CI load the waitUntil write can lag
+      const b = (await (await fetchWorker("/agents/live.json")).json()) as typeof a;
+      if (b.generated_at === a.generated_at) hit = true;
+      else if (minute(b.generated_at) !== minute(a.generated_at)) a = b; // a new minute: start again from its first copy
+    }
+    expect(hit).toBe(true);
+  }, 20_000);
 
   it("counts up from zero on load only in the browser, with the real number in the HTML and the safeguards in place", () => {
     const js = Object.values(import.meta.glob("../public/site.js", { query: "?raw", import: "default", eager: true }))[0] as string;

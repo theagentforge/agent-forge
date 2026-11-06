@@ -245,6 +245,19 @@ export async function publicEvent(db: Db, slug: string) {
   return event && event.status !== "planned" ? event : null;
 }
 
+/**
+ * Models with at least one finished, public ranked run (card or guest event, no Lab arm, either tier, past any embargo
+ * and not held). A main-lineup model with none yet (newly added) is left out of public lists and counts (ADR 0064 Am. 3).
+ */
+export async function rankedModelIds(db: Db, now = Date.now()) {
+  const rows = await db
+    .selectDistinct({ model: t.arenaRuns.modelId })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(and(eq(t.arenaRuns.status, "done"), isNotNull(t.arenaRuns.finishedAt), notEmbargoed(now), isNull(t.arenaEvents.arm), inArray(t.arenaEvents.kind, RANKED_KINDS)));
+  return new Set(rows.map((r) => r.model));
+}
+
 /** A ranked event: card or guest, and not a Lab #3 arm (those change the prompt). */
 export const isRankedEvent = (e: { kind: Kind; arm: string | null }) => RANKED_KINDS.includes(e.kind) && !e.arm;
 
