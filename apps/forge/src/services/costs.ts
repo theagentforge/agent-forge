@@ -192,3 +192,65 @@ export async function spendByTask(env: Env, since: number, now: number, ledger: 
     ledger_note: "Moltbook and moderation figures come from a per-day KV ledger written after each call; Arena figures from stored bouts.",
   };
 }
+
+/**
+ * Diligence review (7 Nov 2026): the full model cost of one refereed bout, Anthropic-billed Claude bouts included.
+ * From stored runs only (arena_runs, status "done"): `cost` is each bout's whole model cost, OpenRouter credit plus the
+ * part billed to our Anthropic key through BYOK (`byok_cost`, ADR 0064), or a Workers AI list-price estimate
+ * (`cost_estimated`). Free variants cost $0 and count as bouts. Claude bouts with no Anthropic cost reported are counted
+ * apart: for them the figure is a lower bound. Excludes Cloudflare's plan fee, Moltbook replies and the build.
+ */
+export const COST_PER_BOUT_METHOD =
+  "Refereed bouts = arena_runs with status done (voided attempts left out), finished in the window. Full cost = sum of each bout's stored cost: OpenRouter credit (cost - byok_cost) + Anthropic billed through BYOK (byok_cost) + Workers AI list-price estimates (cost_estimated); free variants count as bouts at $0. Per bout = full cost / bouts. Paid per bout leaves out the Workers AI estimate (billed inside Cloudflare's plan up to its free allowance). Claude bouts since BYOK began (26 Oct 2026) with no Anthropic cost reported are listed: where they exist the figure is a lower bound. Not included: Cloudflare's plan fee, Moltbook replies, the build.";
+
+export interface CostPerBout {
+  window: { from: string; to: string };
+  bouts: number;
+  full_usd: number;
+  per_bout_usd: number | null;
+  paid_per_bout_usd: number | null;
+  split: { openrouter_credit_usd: number; anthropic_byok_usd: number; workers_ai_estimate_usd: number };
+  claude_bouts: number;
+  claude_bouts_without_anthropic_cost: number;
+  bouts_without_cost: number;
+}
+
+export async function costPerBout(env: Env, from: number, now = Date.now()): Promise<CostPerBout> {
+  const ids = claudeByokIds();
+  const claude = ids.length ? inArray(t.arenaRuns.modelId, ids) : sql`0`;
+  const [r] = await getDb(env)
+    .select({
+      bouts: sql<number>`count(*)`,
+      full: sql<number>`coalesce(sum(${t.arenaRuns.cost}), 0)`,
+      wai: sql<number>`coalesce(sum(case when ${t.arenaRuns.costEstimated} then ${t.arenaRuns.cost} else 0 end), 0)`,
+      byok: sql<number>`coalesce(sum(case when ${t.arenaRuns.costEstimated} then 0 else coalesce(${t.arenaRuns.byokCost}, 0) end), 0)`,
+      claude: sql<number>`coalesce(sum(case when ${claude} then 1 else 0 end), 0)`,
+      // Before BYOK began (26 Oct) Claude ran on OpenRouter credit, so only later bouts can lack their Anthropic cost.
+      claudeNoByok: sql<number>`coalesce(sum(case when ${claude} and ${t.arenaRuns.finishedAt} >= ${BYOK_FROM} and coalesce(${t.arenaRuns.byokCost}, 0) = 0 then 1 else 0 end), 0)`,
+      noCost: sql<number>`coalesce(sum(case when ${t.arenaRuns.cost} is null then 1 else 0 end), 0)`,
+    })
+    .from(t.arenaRuns)
+    .where(and(eq(t.arenaRuns.status, "done"), gte(t.arenaRuns.finishedAt, from), lt(t.arenaRuns.finishedAt, now + 1)));
+  const bouts = Number(r?.bouts ?? 0);
+  const full = Number(r?.full ?? 0);
+  const wai = Number(r?.wai ?? 0);
+  const byok = Number(r?.byok ?? 0);
+  const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  return {
+    window: { from: day(from), to: day(now) },
+    bouts,
+    full_usd: r4(full),
+    per_bout_usd: bouts ? r6(full / bouts) : null,
+    paid_per_bout_usd: bouts ? r6((full - wai) / bouts) : null,
+    split: { openrouter_credit_usd: r4(full - wai - byok), anthropic_byok_usd: r4(byok), workers_ai_estimate_usd: r4(wai) },
+    claude_bouts: Number(r?.claude ?? 0),
+    claude_bouts_without_anthropic_cost: Number(r?.claudeNoByok ?? 0),
+    bouts_without_cost: Number(r?.noCost ?? 0),
+  };
+}
+
+/** This month's and all-time cost per refereed bout, dated, with the method. */
+export async function costPerBoutSheet(env: Env, now = Date.now()) {
+  const [month, all] = await Promise.all([costPerBout(env, monthStart(now), now), costPerBout(env, 0, now)]);
+  return { as_of: new Date(now).toISOString(), method: COST_PER_BOUT_METHOD, month, all_time: all };
+}

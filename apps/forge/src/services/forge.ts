@@ -162,7 +162,7 @@ export async function findTool(db: Db, canonicalId: string) {
 
 /**
  * Published advisories for a check (crisis-wave plan P1):
- * - with a version: a malicious-package (MAL-) record for it is "flagged"; any other advisory for it is "under review"
+ * - with a version: a malicious-package record for it (a MAL- id, or a CWE-506 record: services/advisories.ts) is "flagged"; any other advisory for it is "under review"
  *   (shown as caution);
  * - without one: a malicious record for any version is "under review", since the version in use may be the bad one;
  * - never "confirmed_malicious", which stays a human decision.

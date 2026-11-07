@@ -2,6 +2,7 @@ import { and, count, countDistinct, eq, gte, inArray, isNull, like, lt, lte, ne,
 import * as t from "../db/schema";
 import { agentFunnel, outsidePeople } from "./agent-funnel";
 import { FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
+import { BOT_EXCLUDED, BOT_RULE } from "./bots";
 import { getDb } from "./db";
 import { ownerFunnel } from "./owner-funnel";
 import { ownerActivity, ownersBySource } from "./owners";
@@ -33,6 +34,38 @@ export interface Kpi {
   status: KpiStatus;
   definition: string;
   detail?: Record<string, unknown>;
+  /** Diligence review, 7 Nov: on a KPI the bot filter applies to, what it left out in the same window. */
+  bot_filter?: BotFilterNote;
+}
+
+export interface BotFilterNote {
+  rule: string;
+  /** Requests left out in the KPI's window; null when not measured (before the counter's first day). */
+  excluded: number | null;
+  unit: string;
+  /** The first UTC day the excluded counter has a row (null: not measured yet). */
+  counted_since: string | null;
+}
+
+/** The filtered KPIs and the counter of what the filter left out for each (services/bots.ts BOT_EXCLUDED). */
+export const BOT_FILTERED_KPIS: Record<string, { key: string; unit: string }> = {
+  north_star: { key: BOT_EXCLUDED.api_check, unit: "REST checks by likely bots (requests, not agent-days)" },
+  checks: { key: BOT_EXCLUDED.api_check, unit: "REST checks by likely bots (no checker counted)" },
+  virality: { key: BOT_EXCLUDED.tagged_arrival, unit: "tagged arrivals by likely bots" },
+};
+
+/** First day each excluded counter has a row, and the 7-day sums: what the bot filter left out. */
+export async function botFilterNotes(env: Env, now: number): Promise<Record<string, BotFilterNote>> {
+  const keys = [...new Set(Object.values(BOT_FILTERED_KPIS).map((k) => k.key))];
+  const db = getDb(env);
+  const first = await db.select({ key: t.usageDaily.key, day: sql<string>`min(${t.usageDaily.day})` }).from(t.usageDaily).where(inArray(t.usageDaily.key, keys)).groupBy(t.usageDaily.key);
+  const c = await counters(env, now, 7, keys);
+  return Object.fromEntries(
+    Object.entries(BOT_FILTERED_KPIS).map(([id, k]) => {
+      const since = first.find((f) => f.key === k.key)?.day ?? null;
+      return [id, { rule: BOT_RULE.version, excluded: since ? c.get(k.key) : null, unit: k.unit, counted_since: since }];
+    }),
+  );
 }
 
 /** Third-party listings (KPI 8). Statuses change as reviews land; review-watch keeps them current. */
@@ -468,6 +501,8 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       definition: "Company, IP, Terms licence, security record. Parked for now (Dinike, 23 Oct).",
     }),
   ];
+  const notes = await botFilterNotes(env, now);
+  for (const k of kpis) if (notes[k.id]) k.bot_filter = notes[k.id];
   return { as_of: day(now - DAY), kpis };
 }
 

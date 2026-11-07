@@ -655,7 +655,7 @@ export const procurementFrontier: TaskType<State> = {
   id: "procurement-frontier",
   title: "The Procurement Approval Desk (Frontier)",
   summary:
-    "Purchasing under a sectioned handbook with dated amendments: a split order whose earlier approval went to the same vendor under another vendor id, a framework agreement that is in date but doesn't apply, an open purchase order that names the item by the vendor's part number, an IT limit cut by an amendment in force, a line priced per item in packs, and (round 3) a stale nightly copy of a vendor's status that the live register contradicts, and a line with no pack size that the desk lead wants approved today.",
+    "Purchasing under a sectioned handbook with dated amendments: a split order whose earlier approval went to the same vendor under another vendor id, a framework agreement that is in date but doesn't apply, an open purchase order that names the item by the vendor's part number, an IT limit cut by an amendment in force, a line priced per item in packs, and a stale nightly copy of a vendor's status that the live register contradicts, and a line with no pack size that the desk lead wants approved today.",
   world: "shop",
   tier: "hard",
   caps: PROCUREMENT_CAPS,

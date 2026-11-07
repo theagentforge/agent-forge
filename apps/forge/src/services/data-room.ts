@@ -1,6 +1,8 @@
 import { and, count, desc, eq, gte, isNotNull, isNull, notInArray, or } from "drizzle-orm";
 import { RETIRED_METRICS } from "./proof";
 import { publicDatasetWhere } from "../arena/views";
+import { BOT_RULE } from "./bots";
+import { costPerBoutSheet } from "./costs";
 import { BYOK_EXPIRES, byokSpendThisMonth, creditGuard, OPENROUTER_CREDIT_PURCHASED_USD } from "../arena/credit";
 import * as t from "../db/schema";
 import { thirdPartyData } from "../web/admin-kpis";
@@ -161,7 +163,7 @@ export async function kpiSeries(env: Env, now = Date.now(), days = 30) {
 
 /** Everything the data room shows, read now. JSON at /admin/data-room/pack.json. */
 export async function buyerPack(env: Env, now = Date.now()) {
-  const [dataset, series, third, stats, credit, byok, exports] = await Promise.all([
+  const [dataset, series, third, stats, credit, byok, exports, perBout] = await Promise.all([
     datasetBreakdown(env, now),
     kpiSeries(env, now),
     thirdPartyData(env, now).catch(() => null),
@@ -170,6 +172,7 @@ export async function buyerPack(env: Env, now = Date.now()) {
     creditGuard(env, now).catch(() => null),
     byokSpendThisMonth(env, now).catch(() => null),
     exportIndex(env),
+    costPerBoutSheet(env, now).catch(() => null),
   ]);
   const latest: ExportManifest | null = exports[0] ? await readManifest(env, exports[0].export_id) : null;
   return {
@@ -196,7 +199,11 @@ export async function buyerPack(env: Env, now = Date.now()) {
         anthropic_byok_spend_this_month_usd: byok?.usd ?? null,
         anthropic_byok_expires: new Date(BYOK_EXPIRES).toISOString().slice(0, 10),
       },
+      /** Diligence review, 7 Nov: full model cost per refereed bout (Anthropic-billed Claude bouts included), dated. */
+      per_bout: perBout,
     },
+    /** Diligence review, 7 Nov: the dated definition of "likely bot" the filtered KPIs use (services/bots.ts). */
+    bot_rule: BOT_RULE,
     dataset,
     runbooks: { generated: DOCS_INDEX_GENERATED || null, rows: RUNBOOK_INDEX },
     adrs: { generated: DOCS_INDEX_GENERATED || null, rows: ADR_INDEX },

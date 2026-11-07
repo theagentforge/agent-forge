@@ -1,4 +1,4 @@
-import { publicTrapId, TRAP_CATALOG, TRAP_FAMILIES, trapEntry, VERDICT_RUNS, wilsonInterval, type TrapEntry, type TrapFamily } from "@forge/arena";
+import { isFrontierTask, publicTrapId, TRAP_CATALOG, TRAP_FAMILIES, trapEntry, VERDICT_RUNS, wilsonInterval, type TrapEntry, type TrapFamily } from "@forge/arena";
 import type { Db } from "../services/db";
 import { tallyRules } from "./rules-label";
 import { finishedRuns, modelName, tierOf, type Tier } from "./views";
@@ -11,9 +11,10 @@ import { finishedRuns, modelName, tierOf, type Tier } from "./views";
 // attempt's result, and as a fall when the referee marked it sprung. An attempt that ran out of time or moves still
 // counts as present (the referee checks the end state either way); running out is a knockout, never a fall.
 
-export type FailTier = Tier | "all";
-/** `?tier=normal|hard|all`; anything else (or nothing) is all tiers. */
-export const parseFailTier = (q: string | undefined): FailTier => (q === "normal" || q === "hard" ? q : "all");
+/** "frontier": the Frontier jobs, a family inside the Hard tier (ADR 0139), shown on their own. */
+export type FailTier = Tier | "all" | "frontier";
+/** `?tier=normal|hard|frontier|all`; anything else (or nothing) is all tiers. */
+export const parseFailTier = (q: string | undefined): FailTier => (q === "normal" || q === "hard" || q === "frontier" ? q : "all");
 
 /** The order rows are shown in: money traps first, permission overreach last (personal data, Trap Set 1.3, just before it). */
 export const FAMILY_ORDER: TrapFamily[] = ["PAY", "INJ", "POL", "DUP", "CLM", "AMT", "DAT", "TIM", "PRV", "PRM"];
@@ -43,13 +44,14 @@ export const cellOf = (n: number, fell: number): Cell => ({ n, fell, rate: n ? M
 
 /** The public trap entries a tier's jobs can spring (all of them for "all"). */
 export function entriesFor(tier: FailTier): TrapEntry[] {
-  const inTier = (e: TrapEntry) => tier === "all" || e.traps.some((k) => tierOf(k.split("/")[0]!) === tier);
+  const inTier = (e: TrapEntry) => tier === "all" || e.traps.some((k) => (tier === "frontier" ? isFrontierTask(k.split("/")[0]!) : tierOf(k.split("/")[0]!) === tier));
   return FAMILY_ORDER.flatMap((f) => TRAP_CATALOG.filter((e) => e.family === f && inTier(e)));
 }
 
 /** Ranked runs for a tier, newest first. Practice and Lab #3 events are left out by `finishedRuns` itself. */
 export async function rankedRuns(db: Db, tier: FailTier) {
-  const runs = await finishedRuns(db, { kinds: ["card", "guest"], ...(tier === "hard" ? { tier: "hard" } : tier === "all" ? { hard: true } : {}) });
+  const runs = await finishedRuns(db, { kinds: ["card", "guest"], ...(tier === "hard" || tier === "frontier" ? { tier: "hard" } : tier === "all" ? { hard: true } : {}) });
+  if (tier === "frontier") return runs.filter((r) => isFrontierTask(r.summary.task));
   return tier === "all" ? runs : runs.filter((r) => tierOf(r.summary.task) === tier);
 }
 

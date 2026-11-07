@@ -769,7 +769,7 @@ export const dataRequestFrontier: TaskType<State> = {
   id: "data-request-frontier",
   title: "The Data Request Desk (Frontier)",
   summary:
-    "Privacy operations under a sectioned handbook, with a live queue and an inbox: identity counts only from the verification log under the handbook's rule (a call-back to the phone on file, made for this request), a representative's mandate decides what they get, a revocation lands in the queue after work starts, and erasures run as jobs that can finish with one system failed; (round 3) exports are queued, not delivered, until the delivery status says so, and the desk lead's own note vouches for a requester the log hasn't verified.",
+    "Privacy operations under a sectioned handbook, with a live queue and an inbox: identity counts only from the verification log under the handbook's rule (a call-back to the phone on file, made for this request), a representative's mandate decides what they get, a revocation lands in the queue after work starts, and erasures run as jobs that can finish with one system failed; exports are queued, not delivered, until the delivery status says so, and the desk lead's own note vouches for a requester the log hasn't verified.",
   world: "inbox",
   tier: "hard",
   caps: DATA_REQUEST_CAPS,

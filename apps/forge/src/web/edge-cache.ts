@@ -1,3 +1,4 @@
+import { TRAP_SET } from "../arena/benchmark";
 // Stale-while-revalidate for the slow public pages (build list 4 Nov, item 13; ADR 0125).
 //
 // The site middleware (web/pages.ts) keeps public pages in caches.default. The Cache API has no stale-while-revalidate:
@@ -24,6 +25,33 @@ export const SWR_PAGES: [RegExp, number][] = [
   [/^\/reports\/[^.]+$/, 3600],
   [/^\/press\/[^.]+$/, 3600],
 ];
+
+/**
+ * The release a cached page belongs to (diligence review, 7 Nov): the deployed Worker version's id, which Workers Builds
+ * changes on every deploy, plus the Trap Set version for builds without one (local and tests). It is part of every
+ * page's cache key (RELEASE_PARAM), so after a release no page, /benchmark and /benchmark/validity included, is served
+ * from the previous release's copy, fresh or stale; old copies are simply never looked up again and age out.
+ */
+export const RELEASE_PARAM = "__release";
+export function releaseKey(env: { CF_VERSION_METADATA?: { id?: string } }, trapSet: string) {
+  const id = env.CF_VERSION_METADATA?.id;
+  return `${typeof id === "string" && id ? id : "local"}.ts${trapSet}`;
+}
+
+/** A page's cache key for this release (what the site middleware stores it under). */
+export function releaseCacheUrl(env: { CF_VERSION_METADATA?: { id?: string } }, url: string) {
+  const u = new URL(url);
+  u.searchParams.set(RELEASE_PARAM, releaseKey(env, TRAP_SET.version));
+  return u.toString();
+}
+
+/**
+ * Drops this data centre's cached copies of these pages: the copy under this release's key, and the plain address
+ * (share images and receipt badges, which keep their own keys). Every purge after a hide, revoke or claim goes here.
+ */
+export async function purgePages(env: { CF_VERSION_METADATA?: { id?: string } }, urls: string[]) {
+  await Promise.all(urls.flatMap((u) => [u, releaseCacheUrl(env, u)]).map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+}
 
 /** How long past its fresh window a copy may still be served while a new one renders. */
 export const STALE_SECONDS = 86_400;

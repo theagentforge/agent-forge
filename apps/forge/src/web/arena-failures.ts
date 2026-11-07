@@ -1,6 +1,7 @@
 import { PUBLIC_NAME, taskById, TRAP_FAMILIES, VERDICT_RUNS } from "@forge/arena";
 import type { Context } from "hono";
 import { html } from "hono/html";
+import { FRONTIER_LABEL } from "../arena/terms";
 import { CURRENT_RULES_PATH, RULES_VERSION, rulesRecord, rulesText, type RulesCount } from "../arena/rules-label";
 import { failureBoard, parseFailTier, trapBoard, type Cell, type Example, type FailTier } from "../arena/failures";
 import { atLeast, CLAIM_REVIEW_PATH, isLowerBoundTrap, LOWER_BOUND_READING, LOWER_BOUND_TRAPS, LOWER_BOUND_WHY } from "../arena/lower-bound-traps";
@@ -49,7 +50,7 @@ function cellHtml(c: Cell | null, trap: string) {
 
 function tierLinks(path: string, tier: FailTier) {
   const link = (t: FailTier, label: string) => html`<a class="btn chamfer${t === tier ? " primary" : ""}" href="${path}${tierQuery(t)}"${t === tier ? html` aria-current="page"` : ""}>${label}</a>`;
-  return html`<nav class="presets tier-switch" aria-label="Tier">${link("all", "All tiers")}${link("normal", "Normal")}${link("hard", "Hard")}</nav>`;
+  return html`<nav class="presets tier-switch" aria-label="Tier">${link("all", "All tiers")}${link("normal", "Normal")}${link("hard", "Hard")}${link("frontier", FRONTIER_LABEL)}</nav>`;
 }
 
 /** F-01 (ADR 0082): which referee rules scored the attempts on this page, and where the current-rules results are. */
@@ -174,7 +175,7 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
 <dl class="facts">
 <dt>Family</dt><dd>${TRAP_FAMILIES[e.family].name} (${e.family})</dd>
 <dt>Real-world pattern</dt><dd>${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</dd>
-<dt>Since</dt><dd>${e.since}</dd>
+<dt>Since</dt><dd>${e.since === "Frontier 1.0" ? html`<a href="/arena/failures?tier=frontier">${e.since}</a> <span class="muted">(${FRONTIER_LABEL})</span>` : e.since}</dd>
 <dt>Jobs</dt><dd>${jobs.map((j) => html`<a href="/best/${j}">${taskById(j)?.title ?? j}</a>`).reduce((x, y) => html`${x}, ${y}`)}</dd>
 <dt>All models</dt><dd>${b.overall ? html`${rateText(b.overall.rate, e.id)}: fell in ${atLeast(e.id, b.overall.rate) ? "at least " : ""}${b.overall.fell} of ${b.overall.n} ranked attempts (95% ${pct(b.overall.ci[0])}–${pct(b.overall.ci[1])})${b.overall.early ? html` <span class="label">Early read</span>` : ""}` : html`<span class="muted">No ranked attempts yet.</span>`}</dd>
 </dl>

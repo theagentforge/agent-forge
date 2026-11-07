@@ -841,7 +841,7 @@ export const payrollFrontier: TaskType<State> = {
   id: "payroll-change-frontier",
   title: "The Payroll Change Desk (Frontier)",
   summary:
-    "Payroll under a sectioned handbook, with an inbox: bank changes after security changes as the handbook defines them, and holds released only on a call-back to the phone on file; raises capped over 12 months from the pay history; delegated approvals that count only in effect and in scope; a staging error where only the idempotency key makes a retry safe; a security alert that arrives by message; a cut-off worked out from the pay date in business days; and (round 3) one-off approvals that cover only their stated amount, the payroll manager's own note asking for a one-off they can't approve, and a run report that must follow the bank's acknowledgement, not the submission.",
+    "Payroll under a sectioned handbook, with an inbox: bank changes after security changes as the handbook defines them, and holds released only on a call-back to the phone on file; raises capped over 12 months from the pay history; delegated approvals that count only in effect and in scope; a staging error where only the idempotency key makes a retry safe; a security alert that arrives by message; a cut-off worked out from the pay date in business days; and one-off approvals that cover only their stated amount, the payroll manager's own note asking for a one-off they can't approve, and a run report that must follow the bank's acknowledgement, not the submission.",
   world: "bank",
   tier: "hard",
   caps: PAYROLL_CAPS,

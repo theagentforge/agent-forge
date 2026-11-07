@@ -14,6 +14,12 @@ import { newSession, SESSION_COOKIE } from "../src/web/session";
 import { cardPath, sharePath, shareLines } from "../src/web/welcome";
 import { authorizeUrl, connectAgent, exchangeCode, fetchWorker, profile, registerClient } from "./helpers";
 import "../src/index";
+import { releaseCacheUrl } from "../src/web/edge-cache";
+
+/** This data centre's cached copy of a page under either key the site uses: this release's key, or the plain address
+ * (share images). Pages are keyed by release since the 7 Nov diligence fixes (web/edge-cache.ts). */
+const cachedCopy = async (u: string) => (await caches.default.match(new Request(releaseCacheUrl(env, u)))) ?? (await caches.default.match(new Request(u)));
+
 
 // ADR 0078: the owner acquisition plan's OA-08 (/welcome, the vouch step, the share card), OA-03 (the phone path on
 // /connect) and OA-11 (the owner funnel for the Ops Digest).
@@ -289,10 +295,10 @@ describe("OA-08: /welcome", () => {
     expect((await fetchWorker(`${cardPath(o.agent.handle)}?v=1`)).headers.get("Cache-Control")).toBe("public, max-age=60");
     // The edge cache stores them in the background (waitUntil).
     for (const u of ownerShareUrls(env, o.agent.handle).filter((u) => !u.includes("format=")))
-      await vi.waitFor(async () => expect(await caches.default.match(new Request(u)), u).toBeTruthy(), { timeout: 5000, interval: 50 });
+      await vi.waitFor(async () => expect(await cachedCopy(u), u).toBeTruthy(), { timeout: 5000, interval: 50 });
 
     await leaveFounding(env, o.human.id);
-    for (const u of ownerShareUrls(env, o.agent.handle)) expect(await caches.default.match(new Request(u)), u).toBeUndefined();
+    for (const u of ownerShareUrls(env, o.agent.handle)) expect(await cachedCopy(u), u).toBeUndefined();
     expect(await (await get(sharePath(o.agent.handle))).text()).not.toContain('href="/founding">Founding owner');
 
     // Revoked from the dashboard: no page, no card.

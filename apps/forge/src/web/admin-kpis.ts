@@ -3,6 +3,7 @@ import { html } from "hono/html";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
 import { isAdmin } from "../services/identity";
+import { BOT_RULE } from "../services/bots";
 import { dataInventory, growthKpis, PARTNER_STAGES, PARTNERS_KV, CITATIONS_KV, type PartnerContact, type PartnerStage, type Citation, type Kpi } from "../services/kpis";
 import { currentSession, guardPost } from "./dashboard";
 import { send, site } from "./pages";
@@ -283,6 +284,24 @@ function spark(values: number[]) {
   return html`<span class="kpi-spark" aria-hidden="true">${values.map((v) => html`<i style="height:${Math.max(2, Math.round((v / max) * 24))}px"></i>`)}</span>`;
 }
 
+/** Beside a filtered KPI: what the bot filter left out in the same 7 days, or "not measured" before its counter began. */
+export function botCell(b: NonNullable<Kpi["bot_filter"]>, asOf: string) {
+  const partial = b.counted_since && b.counted_since > new Date(Date.parse(`${asOf}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
+  return html`<br><small data-bot-excluded="${b.excluded ?? "not measured"}">Left out by the bot filter (${b.rule}): ${b.excluded === null ? "not measured (counted from the release after 7 Nov 2026)" : html`<b>${b.excluded.toLocaleString("en-US")}</b> ${b.unit}${partial ? ` (counted since ${b.counted_since})` : ""}`}. <a href="#bot-rule">Definition</a></small>`;
+}
+
+/** The dated definition of "likely bot" (services/bots.ts BOT_RULE), as applied now. */
+export function botRulePanel() {
+  const r = BOT_RULE;
+  return html`<h2 id="bot-rule">"Likely bot": the definition (${r.version}, in force since ${r.in_force_since}; written ${r.written})</h2>
+<p><small>Source: ${r.source}. Bots still get every page and answer; only the counters leave them out.</small></p>
+<p><b>Web pages, badges and images</b>: a request is a likely bot when any of these holds.</p>
+<ol>${r.page.map((x) => html`<li><small>${x}</small></li>`)}</ol>
+<p><b>Agent calls</b>:</p><ul>${r.api.map((x) => html`<li><small>${x}</small></li>`)}</ul>
+<p data-k="bot_change_rule"><small><b>If the rule changes:</b> ${r.change_rule}</small></p>
+${r.previous.length ? html`<ul>${r.previous.map((p) => html`<li><small>${p.version} (${p.in_force}): ${p.definition}</small></li>`)}</ul>` : html`<p><small>No earlier version.</small></p>`}`;
+}
+
 site.get("/admin/kpis", async (c) => {
   const s = await currentSession(c);
   if (!s || !(await admin(c, s.session.h))) return c.redirect("/dashboard");
@@ -318,7 +337,7 @@ site.get("/admin/kpis", async (c) => {
 <table class="kpi-table">
 <thead><tr><th>KPI</th><th>Now</th><th>First target</th><th>Second target</th><th>Status</th><th>30-day trend</th></tr></thead>
 <tbody>${kpis.map(
-        (k) => html`<tr class="kpi-${k.status}"><td><b>${k.name}</b><br><small>${k.definition}</small></td><td>${fmt(k.value)} ${k.unit}</td><td>${fmt(k.first)}</td><td>${fmt(k.second)}</td><td>${STATUS_LABEL[k.status]}</td><td>${spark(trend(k.id))}</td></tr>`,
+        (k) => html`<tr class="kpi-${k.status}"><td><b>${k.name}</b><br><small>${k.definition}</small></td><td>${fmt(k.value)} ${k.unit}${k.bot_filter ? botCell(k.bot_filter, as_of) : ""}</td><td>${fmt(k.first)}</td><td>${fmt(k.second)}</td><td>${STATUS_LABEL[k.status]}</td><td>${spark(trend(k.id))}</td></tr>`,
       )}</tbody></table>
 ${credit && byok ? creditPanel(credit, byok) : html`<h2 id="credit">Arena credit (ADR 0064)</h2><p>Couldn't be worked out just now (see the Worker log). The runner pauses new practice and panel bouts on credit-spending models while that's so.</p>`}
 ${landingFunnelPanel(funnel)}
@@ -331,6 +350,7 @@ ${small ? smallRowsPanel(small) : ""}
 ${third ? installReturnsPanel(third.install_returns) : ""}
 ${ownersPanel(kpis.find((k) => k.id === "active_owners"), kpis.find((k) => k.id === "owners_by_source"))}
 ${ownerFunnelPanel(kpis.find((k) => k.id === "verified_owners")?.detail as OwnerFunnel | undefined)}
+${botRulePanel()}
 <details><summary>Detail (JSON)</summary><pre>${JSON.stringify(kpis.map((k) => ({ id: k.id, detail: k.detail ?? null })), null, 2)}</pre></details>
 
 <h2>Dataset inventory</h2>

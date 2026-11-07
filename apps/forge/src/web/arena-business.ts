@@ -1,6 +1,7 @@
 import { PUBLIC_NAME, VERDICT_RUNS } from "@forge/arena";
 import type { Context } from "hono";
 import { html } from "hono/html";
+import { FRONTIER_LABEL } from "../arena/terms";
 import { CURRENT_RULES_PATH } from "../arena/rules-label";
 import { rulesLine } from "./arena-failures";
 import { BUSINESS_RULES, businessBoard, cellJson, MIN_CELL_ATTEMPTS, toCsv, type BizCell, type BusinessBoard } from "../arena/business";
@@ -20,7 +21,7 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const tierQuery = (t: FailTier) => (t === "all" ? "" : `?tier=${t}`);
 const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 export const REPORT_TITLE = "How often do frontier AI agents break business policy?";
-const TIER_NAME: Record<FailTier, string> = { all: "All tiers", normal: "Normal", hard: "Hard" };
+const TIER_NAME: Record<FailTier, string> = { all: "All tiers", normal: "Normal", hard: "Hard", frontier: FRONTIER_LABEL };
 
 /** The structured twin: ids, numbers, codes, links and our own group names. */
 export function businessData(b: BusinessBoard) {

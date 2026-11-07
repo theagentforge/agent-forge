@@ -1,6 +1,6 @@
-import { RULES_HISTORY, rulesAtLeast, TASK_VERSIONS, TRAP_CATALOG, publicTrapId } from "@forge/arena";
+import { anyTaskById, RULES_HISTORY, rulesAtLeast, TASK_VERSIONS, TRAP_CATALOG, publicTrapId } from "@forge/arena";
 import type { AuditResult } from "@forge/arena/audit";
-import { count } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import * as t from "../db/schema";
 import AUDIT_1 from "../seed/validity/referee-audit-1.json";
 import ADJUDICATIONS_1 from "../seed/validity/referee-audit-1-adjudications.json";
@@ -8,7 +8,7 @@ import AUDIT_2 from "../seed/validity/referee-audit-2.json";
 import type { Db } from "../services/db";
 import { TRAP_SET } from "./benchmark";
 import { CORRECTIONS, type Correction } from "./corrections";
-import { finishedRuns } from "./views";
+import { finishedRuns, modelName, notEmbargoed } from "./views";
 
 // The error record (Q2, ADR 0136): a dated log of every correction to the Arena's published results and traps, kept
 // beside the independent referee audit so it reads as a measured error rate, not a self-assessment. Every entry and
@@ -160,16 +160,33 @@ async function disputeCounts(db: Db) {
  * The full re-score behind a published, applied correction, in one plain sentence from its counts (the same counts
  * /results-policy shows). Every published run of the affected jobs was replayed, practice runs included.
  */
-export function fullRescoreText(c: Correction) {
+export function fullRescoreText(c: Correction, publicUnfaithful: readonly { id: string; model: string; task: string }[] = []) {
   const n = c.counts;
   if (!n) return "";
   const s = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
-  const unfaithful = n.unfaithful ? ` ${n.unfaithful} more couldn't be replayed exactly (the job changed since they ran) and weren't re-scored.` : "";
+  // Diligence review, 7 Nov: name every one that is a public run (model, job, short id), so the count can be checked.
+  const named = publicUnfaithful.map((u) => `${modelName(u.model)} on ${anyTaskById(u.task)?.title ?? u.task} (${u.id.slice(0, 8)})`);
+  const unnamed = n.unfaithful - named.length;
+  const list = named.length ? `: ${named.join("; ")}${unnamed > 0 ? `; ${unnamed} more ${unnamed === 1 ? "is not a public run" : "are not public runs"}` : ""}. Each keeps the verdict it was played with` : "";
+  const unfaithful = n.unfaithful ? ` ${n.unfaithful} more couldn't be replayed exactly (the job changed since they ran) and weren't re-scored${list}.` : "";
   const excluded = n.excluded ? ` ${n.excluded} Hard v3 runs played before rules 0.3 used another harness and weren't re-scored.` : "";
   return `The full re-score (correction ${c.id}, ${dayText(c.date)}) replayed every published run of the affected jobs, practice runs included: ${n.changed} of ${n.checked} changed verdict (${n.passToFail} pass to fail, ${n.failToPass} fail to pass), across ${s(n.events, "event")} and ${s(n.models, "model")}.${unfaithful}${excluded}`;
 }
 
 const runUrl = (origin: string, id: string) => `${origin}/arena/run/${id}`;
+
+/** Of a correction's unfaithful runs, those any public surface may show (the same filter as /arena/run/:id). */
+export async function publicUnfaithfulRuns(db: Db, c: Correction, now = Date.now()) {
+  const list = c.unfaithfulRuns ?? [];
+  if (!list.length) return [];
+  const rows = await db
+    .select({ id: t.arenaRuns.id })
+    .from(t.arenaRuns)
+    .innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId))
+    .where(and(inArray(t.arenaRuns.id, list.map((u) => u.id)), notEmbargoed(now)));
+  const ok = new Set(rows.map((r) => r.id));
+  return list.filter((u) => ok.has(u.id));
+}
 const day = (iso: string) => iso.slice(0, 10);
 
 /** Every entry, newest first. Pass `db` for the live parts (applied re-scores, disputes). */
@@ -182,22 +199,25 @@ export async function errorRecord(db: Db, origin: string, audit: AuditResult = R
   // The published, applied corrections: each carries the counts of the full re-score (every published run of the
   // affected jobs, practice runs included), which the ranked-run notes alone don't show.
   const fullRescores = corrections.filter((c) => c.published && c.applied && c.counts);
+  const unfaithfulOf = new Map(await Promise.all(fullRescores.map(async (c) => [c.id, await publicUnfaithfulRuns(db, c).catch(() => [])] as const)));
   for (const [rules, g] of applied) {
     const full = fullRescores.find((c) => c.rules === rules);
+    const uf = full ? (unfaithfulOf.get(full.id) ?? []) : [];
     entries.push({
       date: g.at ? day(g.at) : "unknown",
       kind: "rescore_applied",
       title: `Published runs re-scored under ${rules}`,
-      what: `${g.runs} published ranked run${g.runs === 1 ? "" : "s"} carry a ${rules} re-score note; ${g.changed} changed verdict (${g.passToFail} pass to fail, ${g.failToPass} fail to pass). The signed logs are unchanged; each re-scored result keeps the verdict it had before in its note.${full ? ` ${fullRescoreText(full)}` : ""}`,
+      what: `${g.runs} published ranked run${g.runs === 1 ? "" : "s"} carry a ${rules} re-score note; ${g.changed} changed verdict (${g.passToFail} pass to fail, ${g.failToPass} fail to pass). The signed logs are unchanged; each re-scored result keeps the verdict it had before in its note.${full ? ` ${fullRescoreText(full, uf)}` : ""}`,
       status: "applied",
       traps: RULES_TRAPS[rules] ?? [],
-      runs: g.ids.map((id) => runUrl(origin, id)),
+      runs: [...g.ids, ...uf.map((u) => u.id)].map((id) => runUrl(origin, id)),
       source: full ? `stored re-score notes on published runs (arena_runs.result.rescored); ${origin}/results-policy#${full.id}` : "stored re-score notes on published runs (arena_runs.result.rescored)",
     });
   }
   // A published correction with no ranked-run note still gets its own entry, so the record misses no re-score.
   for (const c of fullRescores.filter((x) => !applied.has(x.rules))) {
-    entries.push({ date: c.date, kind: "rescore_applied", title: `Published runs re-scored under ${c.rules}`, what: fullRescoreText(c), status: "applied", traps: RULES_TRAPS[c.rules] ?? [], runs: [], source: `${origin}/results-policy#${c.id}` });
+    const uf = unfaithfulOf.get(c.id) ?? [];
+    entries.push({ date: c.date, kind: "rescore_applied", title: `Published runs re-scored under ${c.rules}`, what: fullRescoreText(c, uf), status: "applied", traps: RULES_TRAPS[c.rules] ?? [], runs: uf.map((u) => runUrl(origin, u.id)), source: `${origin}/results-policy#${c.id}` });
   }
   const next = nextTrapSetMinor();
   for (const c of corrections.filter((x) => !x.published)) {

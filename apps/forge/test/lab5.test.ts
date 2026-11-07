@@ -52,4 +52,18 @@ describe("Lab #5 results are published (6 Nov 2026)", () => {
     const home = await (await fetchWorker("/", { headers: { Accept: "text/html" } })).text();
     expect(home).not.toContain("tests a sharper card");
   });
+
+  it("the limits say what the missing placebo arm means for the false stops, and pass rate is defined (diligence, 7 Nov)", async () => {
+    const page = (await (await fetchWorker("/lab/5/results", { headers: { Accept: "text/html" } })).text()).replace(/&#39;/g, "'").replace(/\s+/g, " ");
+    expect(page).not.toContain("It wasn't needed in the end");
+    expect(page).toContain("So the rise in false stops can't be put down to what the checklist says rather than to adding instructions of any kind. That comparison is the next lab.");
+    // "Pass rate" stays: it is the referee's pass, not 1 − trap rate, so "No trap sprung" would be a different number.
+    expect(page).toContain("It isn't 1 minus the trap rate");
+    const counts = (await import("../../../lab/005-trap-card-v11-frontier/counts.json")).default as { arm: string; model: string; task: string; n: number; trapped: number; passed: number }[];
+    expect(counts.some((r) => r.passed !== r.n - r.trapped)).toBe(true);
+    const ml = counts.find((r) => r.arm === "card11" && r.model === "mistral-large-4" && r.task === "weekend-hard")!;
+    expect([ml.trapped, ml.passed]).toEqual([8, 19]);
+    // The pre-registered figures are unchanged.
+    for (const f of ["36.7%", "41.7%", "7.5%", "3.3%", "73% → 63%", "Holm p = 1.0", "+9.0 points"]) expect(page).toContain(f);
+  });
 });

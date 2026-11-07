@@ -29,8 +29,15 @@ export interface OsvPackage {
 
 export interface Advisory {
   id: string;
-  /** "malicious": an OpenSSF MAL- record (a published malicious package). "vulnerability": GHSA, PYSEC, CVE… */
+  /**
+   * "malicious": a malicious-package record. Either an OpenSSF MAL- record, or a record (GHSA…) whose own
+   * database_specific.cwe_ids lists CWE-506, "Embedded Malicious Code" (event-stream's GHSA-mh6f-8j2x-4483, the
+   * flatmap-stream injection of 2018). OSV's distinction is kept: such a record is never flattened to "vulnerability".
+   * "vulnerability": any other GHSA, PYSEC, CVE…
+   */
   kind: "malicious" | "vulnerability";
+  /** Set only when `kind` is "malicious" because of CWE-506 rather than a MAL- id: which of OSV's fields says so. */
+  malicious_by?: "cwe_506";
   aliases: string[];
   /** True when OSV matched this exact version; null when no version was asked about. */
   affects_version: boolean | null;
@@ -82,7 +89,17 @@ type OsvVuln = {
   aliases?: unknown;
   published?: unknown;
   modified?: unknown;
+  /** Read for one identifier only: cwe_ids (CWE-506 marks embedded malicious code). Never any free text. */
+  database_specific?: { cwe_ids?: unknown };
   affected?: { package?: { ecosystem?: unknown; name?: unknown }; ranges?: { events?: { fixed?: unknown }[] }[] }[];
+};
+
+/** CWE-506, "Embedded Malicious Code": the CWE GitHub's advisory database gives records of malicious code. */
+export const MALICIOUS_CODE_CWE = "CWE-506";
+const CWE_RE = /^CWE-\d{1,5}$/;
+const cweIds = (v: OsvVuln) => {
+  const ids = v.database_specific && typeof v.database_specific === "object" ? v.database_specific.cwe_ids : null;
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string" && CWE_RE.test(x)).slice(0, 20) : [];
 };
 
 /** One OSV record, reduced to identifiers. Null when it isn't a well-formed record about this package. */
@@ -94,9 +111,12 @@ export function parseOsvVuln(v: OsvVuln, pkg: OsvPackage, version: string | null
   const fixed = [
     ...new Set(affected.flatMap((a) => (a.ranges ?? []).flatMap((r) => (r.events ?? []).map((e) => e.fixed))).filter(validVersion)),
   ].slice(0, 10);
+  const malId = v.id.startsWith("MAL-") || aliases.some((a) => a.startsWith("MAL-"));
+  const cwe506 = !malId && cweIds(v).includes(MALICIOUS_CODE_CWE);
   return {
     id: v.id,
-    kind: v.id.startsWith("MAL-") || aliases.some((a) => a.startsWith("MAL-")) ? "malicious" : "vulnerability",
+    kind: malId || cwe506 ? "malicious" : "vulnerability",
+    ...(cwe506 ? { malicious_by: "cwe_506" as const } : {}),
     aliases,
     affects_version: version ? true : null,
     fixed,
@@ -195,7 +215,7 @@ async function vulnById(env: Pick<Env, "KV">, id: string, fetcher: typeof fetch)
     if (!res.ok) return null;
     const v = (await res.json()) as OsvVuln;
     // Keep only the fields parseOsvVuln reads, so no free text is ever stored.
-    const slim: OsvVuln = { id: v.id, aliases: v.aliases, published: v.published, modified: v.modified, affected: (v.affected ?? []).map((a) => ({ package: a.package, ranges: (a.ranges ?? []).map((r) => ({ events: (r.events ?? []).map((e) => ({ fixed: e.fixed })) })) })) };
+    const slim: OsvVuln = { id: v.id, aliases: v.aliases, published: v.published, modified: v.modified, database_specific: { cwe_ids: cweIds(v) }, affected: (v.affected ?? []).map((a) => ({ package: a.package, ranges: (a.ranges ?? []).map((r) => ({ events: (r.events ?? []).map((e) => ({ fixed: e.fixed })) })) })) };
     await env.KV.put(key, JSON.stringify(slim), { expirationTtl: OSV_CACHE_SECONDS }).catch(() => {});
     return slim;
   } catch {

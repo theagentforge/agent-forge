@@ -7,6 +7,8 @@ import {
   buildCensusFiles,
   frozenPath,
   buildSeries,
+  CENSUS_GAPS,
+  censusSchema,
   CENSUS_STATEMENT,
   censusTick,
   FAILURE_CLASSES,
@@ -186,6 +188,36 @@ describe("Census series", () => {
     expect(v("top500_nightly.failed.install_failed", "2024-06-05")).toBe(1);
     expect(series.every((r) => METRICS.some((m) => m.metric === r.metric))).toBe(true);
     expect(METRICS.every((m) => m.metric.split(".")[0] === m.family)).toBe(true);
+  });
+
+  it("1–4 Nov 2026 (lean mode stopped storing skill scans) are 'not measured' rows, never 0, in series.csv/json and schema.json", async () => {
+    const db = getDb(env);
+    // A file stored before the gap and one after; nothing on 1–4 Nov, as on production.
+    await db.insert(t.skillScans).values({ fingerprint: `sha256:${"c".repeat(64)}`, verdict: "clear", findings: [], counts: {}, rulesVersion: "r", bytes: 1, firstSeen: ms("2026-10-31T05:00:00Z"), lastSeen: ms("2026-10-31T05:00:00Z") });
+    await db.insert(t.skillScans).values({ fingerprint: `sha256:${"d".repeat(64)}`, verdict: "clear", findings: [], counts: {}, rulesVersion: "r", bytes: 1, firstSeen: ms("2026-11-05T05:00:00Z"), lastSeen: ms("2026-11-05T05:00:00Z") });
+    expect(CENSUS_GAPS[0]).toMatchObject({ from: "2026-11-01", to: "2026-11-04", metrics: ["skill_files.new", "skill_files.scanned_total"] });
+    const series = await buildSeries(env, "2026-11-06");
+    const gap = series.filter((r) => r.metric === "skill_files.new" && r.date_utc >= "2026-11-01" && r.date_utc <= "2026-11-04");
+    expect(gap.map((r) => r.date_utc)).toEqual(["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"]);
+    for (const m of ["skill_files.new", "skill_files.scanned_total"])
+      for (const d of ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"]) {
+        const row = series.find((r) => r.metric === m && r.date_utc === d)!;
+        expect(row.value, `${m} ${d}`).toBeNull();
+        expect(row.method).toMatch(/^not measured: Lean mode stopped storing skill scans/);
+      }
+    expect(series.find((r) => r.metric === "skill_files.new" && r.date_utc === "2026-11-05")?.value).toBe(1);
+    // A series built before the gap has no gap rows.
+    expect((await buildSeries(env, "2026-10-31")).some((r) => r.value === null)).toBe(false);
+    const { files } = await buildCensusFiles(env, "2026-11-06");
+    const csvGap = files["series.csv"]!.split("\n").filter((l) => l.startsWith("skill_files.new,2026-11-0") && l.split(",")[1]! <= "2026-11-04");
+    expect(csvGap).toHaveLength(4);
+    for (const l of csvGap) expect(l).toMatch(/^skill_files\.new,2026-11-0[1-4],,files,"?not measured: /);
+    expect(files["series.csv"]).not.toMatch(/^skill_files\.(new|scanned_total),2026-11-0[1-4],0,/m);
+    const json = JSON.parse(files["series.json"]!) as { rows: { metric: string; date_utc: string; value: number | null }[] };
+    expect(json.rows.filter((r) => r.date_utc >= "2026-11-01" && r.date_utc <= "2026-11-04" && r.metric.startsWith("skill_files.")).every((r) => r.value === null)).toBe(true);
+    const schema = JSON.parse(files["schema.json"]!) as ReturnType<typeof censusSchema>;
+    expect(schema.gaps).toEqual([{ from: "2026-11-01", to: "2026-11-04", metrics: ["skill_files.new", "skill_files.scanned_total"], status: "not measured", note: CENSUS_GAPS[0].note }]);
+    expect(firstDates(series)["skill_files.new"]! < "2026-11-01").toBe(true);
   });
 
   it("server history carries the description set seen that night, and the roster is per night", async () => {

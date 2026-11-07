@@ -50,6 +50,9 @@
     { "binding": "OAUTH_KV", "id": "94048d82434c4722814bbba93f945f01" }
   ],
   "ai": { "binding": "AI" },
+  // The deployed version's id (Workers Builds sets one per deploy): part of the HTML edge-cache key, so a release
+  // never serves the previous release's cached pages (web/edge-cache.ts releaseKey).
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "ratelimits": [
     { "name": "CHECK_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
     { "name": "REPORT_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
@@ -82,6 +85,7 @@
         { "binding": "OAUTH_KV", "id": "1b8c90be869945aaac1506e624f942b7" }
       ],
       "ai": { "binding": "AI" },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "ratelimits": [
         { "name": "CHECK_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
         { "name": "REPORT_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },

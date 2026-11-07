@@ -13,6 +13,7 @@ interface __BaseEnv_Env {
 	KEY_TEAM_LIMITER: RateLimit;
 	KEY_VOLUME_LIMITER: RateLimit;
 	AI: Ai;
+	CF_VERSION_METADATA: WorkerVersionMetadata;
 	ASSETS: Fetcher;
 	ENVIRONMENT: "staging" | "production";
 	PUBLIC_ORIGIN: "https://staging.theagentforge.io" | "https://theagentforge.io";
@@ -37,6 +38,7 @@ declare namespace Cloudflare {
 		KEY_TEAM_LIMITER: RateLimit;
 		KEY_VOLUME_LIMITER: RateLimit;
 		AI: Ai;
+		CF_VERSION_METADATA: WorkerVersionMetadata;
 		ASSETS: Fetcher;
 		ENVIRONMENT: "staging";
 		PUBLIC_ORIGIN: "https://staging.theagentforge.io";

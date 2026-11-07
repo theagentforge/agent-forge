@@ -1,10 +1,11 @@
-import { PASS_FAIL_FALL } from "../arena/terms";
+import { FRONTIER_EXPLAINER, FRONTIER_LABEL, FRONTIER_RANKED_NOTE, PASS_FAIL_FALL } from "../arena/terms";
 import { rulesFields } from "../arena/rules-label";
 import {
   CANARY,
   condensedSeconds,
   DIVISIONS,
   familyOf,
+  isFrontierTask,
   formatWeights,
   frames,
   FRONTIER_PUBLIC_TASKS,
@@ -87,6 +88,7 @@ function scoreTable(rows: { name: string; href?: string; stats: Stats; consisten
 
 /** ADR 0021: what the Hard tier is, in one line. */
 export const HARD_EXPLAINER = "The same six jobs at real-world volume: a week of invoices, a 300-row sheet, a three-city trip. One slip fails the job.";
+
 
 /** Normal | Hard, as plain links (no script). Normal is the default and has no query string. */
 function tierSwitch(path: string, tier: Tier) {
@@ -505,7 +507,7 @@ site.get("/best", async (c) => {
     body: html`${tier === "hard" ? html`<p class="eyebrow">Hard tier</p>` : ""}<h1 class="page-title">Which AI for which job?</h1><p class="lead">${tier === "hard" ? HARD_EXPLAINER : TAGLINE}</p>
 ${tierSwitch("/best", tier)}
 <ul class="task-grid">${tasks.map((t) => html`<li><a href="/best/${t.id}"><b>${t.title}</b><span>${t.summary}</span></a></li>`)}</ul>
-${tier === "hard" ? html`<h2 id="h-frontier">Frontier jobs (task version Frontier 1.0)</h2><p class="muted small">Three desks with a binding handbook, a paginated queue and messages that arrive during the shift. Each trap's rate is measured on fresh ranked seeds (<a href="/arena/methodology#frontier-tier">method</a>).</p>
+${tier === "hard" ? html`<h2 id="h-frontier">${FRONTIER_LABEL} (task version Frontier 1.0)</h2><p class="muted small">Three desks with a binding handbook, a paginated queue and messages that arrive during the shift. Each trap's rate is measured on fresh ranked seeds (<a href="/arena/methodology#frontier-tier">method</a>).</p>
 <ul class="task-grid" id="frontier-jobs">${FRONTIER_PUBLIC_TASKS.map((t) => html`<li><a href="/best/${t.id}"><b>${t.title}</b><span>${t.summary}</span></a></li>`)}</ul>` : ""}
 <section aria-labelledby="h-explore">
 <h2 id="h-explore">Where each AI ranks, by job</h2>
@@ -558,6 +560,9 @@ site.get("/best/:task", async (c) => {
   const ranked = rankModels(rows, w);
   const title = titleHolder(rows);
   const variant = task.make(1);
+  const frontier = isFrontierTask(task.id);
+  // The Normal job this Hard job scales up, when there is one (a Frontier job has none: familyOf gives its own id).
+  const normal = familyOf(task.id) !== task.id ? taskById(familyOf(task.id)) : undefined;
   if (json(c))
     return c.json({
       task: { id: task.id, title: task.title, summary: task.summary, traps: task.traps },
@@ -573,15 +578,17 @@ site.get("/best/:task", async (c) => {
     description: `${task.summary} Ranked from refereed bouts.`,
     path: `/best/${task.id}`,
     image: `/og/best/${task.id}.png`,
-    body: html`<p class="eyebrow">Task guide${task.tier === "hard" ? " · Hard tier" : ""}${practice ? " · practice data only (not ranked)" : ""}</p>
+    body: html`<p class="eyebrow">Task guide${frontier ? ` · ${FRONTIER_LABEL}` : task.tier === "hard" ? " · Hard tier" : ""}${practice ? (frontier ? ` · ${FRONTIER_RANKED_NOTE}` : " · practice data only (not ranked)") : ""}</p>
 <h1 class="page-title">${task.title}: which AI should you use?</h1>
 <p class="lead">${task.summary}</p>
 ${(() => {
   const q = questionForTask(task.id);
   return q ? html`<p class="small">In one answer, with dates and sample sizes: <a href="${answerPagePath(q)}">${q.question}</a></p>` : "";
 })()}
-${task.tier === "hard" ? html`<p class="muted">${HARD_EXPLAINER} <a href="/best?tier=hard">All Hard jobs</a> · <a href="/best/${familyOf(task.id)}">Normal version</a></p>` : ""}
-<p>Title: ${title.holder ? html`<b>${title.holder.name}</b>` : title.contested ? html`<b>contested</b> <span class="muted">(no model is clearly ahead yet)</span>` : html`<b>vacant</b>`}</p>
+${frontier
+  ? html`<p class="muted">${FRONTIER_EXPLAINER} <a href="/best?tier=hard#h-frontier">All Frontier jobs</a> · <a href="/arena/failures?tier=frontier">Their traps</a></p>`
+  : task.tier === "hard" ? html`<p class="muted">${HARD_EXPLAINER} <a href="/best?tier=hard">All Hard jobs</a>${normal ? html` · <a href="/best/${normal.id}">Normal version</a>` : ""}</p>` : ""}
+<p>Title: ${title.holder ? html`<b>${title.holder.name}</b>` : title.contested ? html`<b>contested</b> <span class="muted">(no model is clearly ahead yet)</span>` : html`no title holder yet <span class="muted">(${practice ? "awarded from ranked runs only" : "no model is clearly ahead"})</span>`}</p>
 ${rows.length ? html`${paretoChart(rows)}
 <section><h2>Your champion</h2>
 <p class="presets">${Object.entries(PRESETS).map(([k, p]) => html`<a class="btn chamfer${formatWeights(p.weights) === wKey ? " primary" : ""}" href="/best/${task.id}?w=${k}">${p.label}</a> `)}</p>

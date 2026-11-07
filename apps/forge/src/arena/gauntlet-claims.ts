@@ -1,3 +1,4 @@
+import { purgePages } from "../web/edge-cache";
 import { and, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { trapEntry } from "@forge/arena";
 import * as t from "../db/schema";
@@ -36,7 +37,7 @@ export async function newClaimKey() {
  */
 async function purgeAgentPage(env: Env, handle: string) {
   const base = `${env.PUBLIC_ORIGIN}${agentHref(handle)}`;
-  await Promise.all([base, `${base}?format=json`, `${base}?format=md`].map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+  await purgePages(env, [base, `${base}?format=json`, `${base}?format=md`]);
   // The per-agent badge shows the latest shown run, so a claim, hide or show changes it (ADR 0093).
   await purgeAgentBadge(env, handle);
 }

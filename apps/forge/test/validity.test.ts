@@ -316,8 +316,9 @@ describe("per-trap history", () => {
   it("FA-CLM-001's page shows its corrections and its audit line", async () => {
     const page = await (await fetchWorker("/arena/failures/FA-CLM-001")).text();
     expect(page).toContain("Dispute and correction history");
-    const row = REFEREE_AUDIT.per_public_trap.find((r) => r.public_trap_id === "FA-CLM-001")!;
-    expect(page).toContain(`agreed with the published verdict on ${row.agree} of ${row.n} sampled verdicts`);
+    // Audit 2's census line since the 7 Nov diligence fixes (was audit 1's sample).
+    const row = REFEREE_AUDIT_2.per_public_trap.find((r) => r.public_trap_id === "FA-CLM-001")!;
+    expect(page).toContain(`agreed with the published verdict on ${row.agree} of ${row.n} verdicts for this trap, every ranked public replay`);
     const json = await (await fetchWorker("/arena/failures/FA-CLM-001?format=json")).json<any>();
     expect(json.history.audit.verdicts_checked).toBe(row.n);
     expect(json.history.entries.some((e: any) => e.kind === "audit_disagreement")).toBe(true);

@@ -1,5 +1,5 @@
 import { and, gte, like, sql } from "drizzle-orm";
-import { isLikelyBot } from "./bots";
+import { BOT_EXCLUDED, isLikelyBot } from "./bots";
 import * as t from "../db/schema";
 import { getDb } from "./db";
 import { type InternalComponent, internalCaller, internalClient, internalKey } from "./internal";
@@ -224,7 +224,13 @@ export function visitCounters(req: { method: string; url: string; headers: Heade
   // Our own probes (services/internal.ts) stay in the gross page views only, like everything else, and nowhere else.
   if (internalCaller(req.headers)) return ["visit:all"];
   // ADR 0124: crawlers, scripts and fake browsers (services/bots.ts) count in the gross total only.
-  if (isLikelyBot(req)) return ["visit:all", "visit:crawler"];
+  if (isLikelyBot(req)) {
+    // The arrivals a bot would have added from a tagged link (the virality KPI), counted apart so the KPI page can
+    // show what the filter left out.
+    const q = new URL(req.url).searchParams;
+    const tagged = !!(q.get("from") ?? q.get("ref") ?? q.get("utm_source")) && sourceLabel(req.headers.get("referer"), origin) !== "internal";
+    return ["visit:all", "visit:crawler", ...(tagged ? [BOT_EXCLUDED.tagged_arrival] : [])];
+  }
   // People opening /connect, from anywhere (our own pages included): the step before an AI connects.
   const connect = new URL(req.url).pathname === "/connect" ? ["visit:connect"] : [];
   const source = sourceLabel(req.headers.get("referer"), origin);

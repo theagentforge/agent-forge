@@ -1,3 +1,4 @@
+import { purgePages } from "../web/edge-cache";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { promotePendingClaims } from "../arena/gauntlet-claims";
@@ -289,7 +290,7 @@ async function purgeFoundingPages(env: Env, humanId: string) {
     const base = `${env.PUBLIC_ORIGIN}${agentHref(a.handle)}`;
     urls.push(base, `${base}?format=json`, `${base}?format=md`, ...ownerShareUrls(env, a.handle));
   }
-  await Promise.all(urls.map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+  await purgePages(env, urls);
 }
 
 /**
@@ -318,8 +319,8 @@ export function ownerShareUrls(env: Pick<Env, "PUBLIC_ORIGIN">, handle: string) 
   return [page, `${page}?format=json`, `${page}?format=md`, `${env.PUBLIC_ORIGIN}/og/owner/${encodeURIComponent(handle)}.png`];
 }
 
-export async function purgeOwnerShare(env: Pick<Env, "PUBLIC_ORIGIN">, handle: string) {
-  await Promise.all(ownerShareUrls(env, handle).map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+export async function purgeOwnerShare(env: Pick<Env, "PUBLIC_ORIGIN" | "CF_VERSION_METADATA">, handle: string) {
+  await purgePages(env, ownerShareUrls(env, handle));
 }
 
 /** True when a person's row shows a public Founding owner label: opted in, outside, verified, number 1–100. */

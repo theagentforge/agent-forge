@@ -1,3 +1,4 @@
+import { purgePages } from "./edge-cache";
 import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { html } from "hono/html";
@@ -464,7 +465,7 @@ site.post("/dashboard/agents/:id/scorecard", async (c) => {
   await db.update(t.agents).set({ scorecardPublic: on, scorecardSince: on ? now : null }).where(eq(t.agents.id, agent.id));
   await db.insert(t.auditLog).values({ id: crypto.randomUUID(), actor: `human:${g.session.h}`, action: on ? "scorecard_public" : "scorecard_private", target: `agent:${agent.id}`, createdAt: now });
   // The badge is edge-cached for a few minutes; drop this data centre's copy so "private" shows at once here.
-  if (!on) await caches.default.delete(new Request(`${c.env.PUBLIC_ORIGIN}${scorecardHref(agent.handle)}/badge.svg`)).catch(() => false);
+  if (!on) await purgePages(c.env, [`${c.env.PUBLIC_ORIGIN}${scorecardHref(agent.handle)}/badge.svg`]);
   return back(on ? "scorecard_on" : "scorecard_off");
 });
 

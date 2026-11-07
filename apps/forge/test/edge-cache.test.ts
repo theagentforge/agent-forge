@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CACHE_STATE, edgeCacheStats, forStore, lockKey, readStored, refreshStale, RENDERED_AT, STALE_SECONDS, swrFreshSeconds } from "../src/web/edge-cache";
+import { TRAP_SET } from "../src/arena/benchmark";
+import { CACHE_STATE, edgeCacheStats, forStore, lockKey, readStored, refreshStale, RELEASE_PARAM, releaseKey, RENDERED_AT, STALE_SECONDS, swrFreshSeconds } from "../src/web/edge-cache";
 import { SESSION_COOKIE } from "../src/web/session";
 import { fetchWorker, ORIGIN } from "./helpers";
 import "../src/index";
@@ -15,7 +16,13 @@ const PERSON = { "User-Agent": FIREFOX, "Sec-Fetch-Mode": "navigate", "Sec-Fetch
 let n = 0;
 /** A fresh cache key for each test: the home page ignores an unknown parameter. */
 const homeUrl = (tag: string) => `/?swr=${tag}-${++n}`;
-const stored = (path: string) => caches.default.match(new Request(`${ORIGIN}${path}`));
+/** The cache key the middleware uses for a page: its address plus the release it was rendered by. */
+const keyUrl = (path: string) => {
+  const u = new URL(`${ORIGIN}${path}`);
+  u.searchParams.set(RELEASE_PARAM, releaseKey(env, TRAP_SET.version));
+  return u.toString();
+};
+const stored = (path: string) => caches.default.match(new Request(keyUrl(path)));
 const renderedAt = async (path: string) => Number((await stored(path))?.headers.get(RENDERED_AT) ?? NaN);
 /** Waits for a copy rendered at `at` or later (vi.waitFor moves the faked clock on by its interval while it waits). */
 const waitStored = (path: string, at: number) => vi.waitFor(async () => expect(await renderedAt(path)).toBeGreaterThanOrEqual(at), { timeout: 15_000, interval: 50 });
@@ -24,7 +31,7 @@ const count = async (key: string) =>
 const settle = () => new Promise((r) => setTimeout(r, 300));
 /** A planted copy in the cache, as the middleware stores one, rendered at `at`. */
 const plant = (path: string, fresh: number, at: number, body = "planted copy") =>
-  caches.default.put(new Request(`${ORIGIN}${path}`), forStore(new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" } }), fresh, at));
+  caches.default.put(new Request(keyUrl(path)), forStore(new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" } }), fresh, at));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -208,5 +215,30 @@ describe("only 200s are cached (ADR 0125)", () => {
     expect(await res.text()).toBe("planted copy");
     await vi.waitFor(async () => expect(await stored(gone)).toBeUndefined(), { timeout: 10_000, interval: 50 });
     expect((await fetchWorker(gone)).status).toBe(404);
+  });
+});
+
+describe("a release never serves the previous release's pages (diligence review, 7 Nov)", () => {
+  it("the cache key carries the deployed version id and the Trap Set version", () => {
+    expect(releaseKey({ CF_VERSION_METADATA: { id: "v-123" } }, "1.3")).toBe("v-123.ts1.3");
+    expect(releaseKey({}, "1.3")).toBe("local.ts1.3");
+    expect(releaseKey({ CF_VERSION_METADATA: { id: "v-124" } }, "1.3")).not.toBe(releaseKey({ CF_VERSION_METADATA: { id: "v-123" } }, "1.3"));
+  });
+
+  it("/benchmark: a copy stored under another release is never served, fresh or stale; this release's copy is", async () => {
+    const path = `/benchmark?rel=${++n}`;
+    // The previous release's fresh copy, under its own key.
+    const old = new URL(`${ORIGIN}${path}`);
+    old.searchParams.set(RELEASE_PARAM, "previous-release.ts1.2");
+    await caches.default.put(new Request(old.toString()), forStore(new Response("previous release", { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" } }), 300, T0 - 1000));
+    const res = await fetchWorker(path);
+    expect(res.headers.get(CACHE_STATE)).toBeNull();
+    expect(await res.text()).not.toBe("previous release");
+    // A visitor can't ask for the old copy by naming its release.
+    const forged = await fetchWorker(`${path}&${RELEASE_PARAM}=previous-release.ts1.2`);
+    expect(await forged.text()).not.toBe("previous release");
+    // This release's own copy is stored and served.
+    await waitStored(path, T0);
+    expect((await fetchWorker(path)).headers.get(CACHE_STATE)).toBe("fresh");
   });
 });

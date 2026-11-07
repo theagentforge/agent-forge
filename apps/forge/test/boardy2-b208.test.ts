@@ -13,6 +13,12 @@ import { TRAP_TARGETS, trapTargetLine, trapTargetText } from "../src/web/benchma
 import { sitemapPaths } from "../src/web/answers";
 import { connectApprovedAgent, fetchWorker, seedShownOwners } from "./helpers";
 import "../src/index";
+import { releaseCacheUrl } from "../src/web/edge-cache";
+
+/** This data centre's cached copy of a page under either key the site uses: this release's key, or the plain address
+ * (share images). Pages are keyed by release since the 7 Nov diligence fixes (web/edge-cache.ts). */
+const cachedCopy = async (u: string) => (await caches.default.match(new Request(releaseCacheUrl(env, u)))) ?? (await caches.default.match(new Request(u)));
+
 
 // B2-08 (agent index), B2-13 (paid pilots on /teams) and B2-10's public part (trap target on /benchmark); ADR 0092.
 
@@ -169,9 +175,9 @@ describe("B2-08 review (ADR 0093): privacy of the index and the per-agent badge"
     const b = `/arena/agent/${h}/score.svg`;
     expect((await get(b)).status).toBe(200);
     // Put in the edge cache (after the response, so wait for it).
-    await vi.waitFor(async () => expect(await caches.default.match(new Request(`${env.PUBLIC_ORIGIN}${b}`))).toBeTruthy(), { timeout: 5000, interval: 50 });
+    await vi.waitFor(async () => expect(await cachedCopy(`${env.PUBLIC_ORIGIN}${b}`)).toBeTruthy(), { timeout: 5000, interval: 50 });
     await setClaimHidden(env, owner.human.id, run.gauntlet_id, true);
-    expect(await caches.default.match(new Request(`${env.PUBLIC_ORIGIN}${b}`))).toBeUndefined();
+    expect(await cachedCopy(`${env.PUBLIC_ORIGIN}${b}`)).toBeUndefined();
     expect((await get(b)).status).toBe(404);
   });
 
@@ -182,7 +188,7 @@ describe("B2-08 review (ADR 0093): privacy of the index and the per-agent badge"
     await claimRun(env, owner.human.id, owner.agent.id, run.claim_key);
     const b = `/arena/agent/${h}/score.svg`;
     expect((await get(b)).status).toBe(200);
-    await vi.waitFor(async () => expect(await caches.default.match(new Request(`${env.PUBLIC_ORIGIN}${b}`))).toBeTruthy(), { timeout: 5000, interval: 50 });
+    await vi.waitFor(async () => expect(await cachedCopy(`${env.PUBLIC_ORIGIN}${b}`)).toBeTruthy(), { timeout: 5000, interval: 50 });
     // What the dashboard's revoke route does: the row, then this data centre's cached badge.
     await getDb(env).update(t.agents).set({ status: "revoked" }).where(eq(t.agents.id, owner.agent.id));
     await purgeAgentBadge(env, h);

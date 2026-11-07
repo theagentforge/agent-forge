@@ -211,11 +211,34 @@ export async function writeDailySnapshot(env: Env, now = Date.now()) {
 export interface SeriesRow {
   metric: string;
   date_utc: string;
-  value: number;
+  /** null: not measured that day (CENSUS_GAPS). Never 0 for a day nothing was recorded. */
+  value: number | null;
   unit: string;
   method: string;
   kind: MetricKind;
 }
+
+/**
+ * Days a census metric wasn't recorded. Lean mode (ADR 0027) was on from 1 Nov until the afternoon of 4 Nov 2026
+ * (docs/STATUS.md, 4 Nov) and, besides the usage counters (not in this dataset; services/outside-metrics.ts
+ * COUNTER_GAPS), it stopped storing skill scans (services/scans.ts scanAndRecord) and the bulk scans. So skill files
+ * first scanned on those days were not recorded: each gap day is a "not measured" row (empty value), never a count,
+ * and the cumulative total after the gap leaves out files scanned only during it.
+ */
+export const NOT_MEASURED = "not measured";
+export const CENSUS_GAPS = [
+  {
+    from: "2026-11-01",
+    to: "2026-11-04",
+    metrics: ["skill_files.new", "skill_files.scanned_total"],
+    note: "Lean mode stopped storing skill scans from 1 to 4 Nov 2026, so skill files first scanned on these days were not recorded; totals after 4 Nov leave out files scanned only then.",
+  },
+] as const;
+const gapDays = (g: (typeof CENSUS_GAPS)[number]) => {
+  const out: string[] = [];
+  for (let d = dayStart(g.from); d <= dayStart(g.to); d += DAY) out.push(utcDay(d));
+  return out;
+};
 
 /** The long-format series through `through`: snapshot rows, then stored dated records for days without a snapshot. */
 export async function buildSeries(env: Env, through: string): Promise<SeriesRow[]> {
@@ -244,13 +267,21 @@ export async function buildSeries(env: Env, through: string): Promise<SeriesRow[
     put({ metric: new_.metric, date_utc: d.day, value: Number(d.n), unit: new_.unit, method: new_.derived!, kind: new_.kind });
     put({ metric: total_.metric, date_utc: d.day, value: total, unit: total_.unit, method: total_.derived!, kind: total_.kind });
   }
+  // Gap days: one "not measured" row per affected metric and day, replacing whatever stored records show for it.
+  for (const g of CENSUS_GAPS)
+    for (const day of gapDays(g))
+      if (day <= through)
+        for (const metric of g.metrics) {
+          const def = BY_METRIC.get(metric)!;
+          rows.set(`${metric}|${day}`, { metric, date_utc: day, value: null, unit: def.unit, method: `${NOT_MEASURED}: ${g.note}`, kind: def.kind });
+        }
   const order = new Map(METRICS.map((m, i) => [m.metric, i]));
   return [...rows.values()].sort((a, b) => (order.get(a.metric) ?? 999) - (order.get(b.metric) ?? 999) || a.metric.localeCompare(b.metric) || a.date_utc.localeCompare(b.date_utc));
 }
 
 /** The first date each metric has a value (null: not yet measured). */
 export const firstDates = (series: SeriesRow[]) =>
-  Object.fromEntries(METRICS.map((m) => [m.metric, series.filter((r) => r.metric === m.metric).reduce<string | null>((a, r) => (a === null || r.date_utc < a ? r.date_utc : a), null)]));
+  Object.fromEntries(METRICS.map((m) => [m.metric, series.filter((r) => r.metric === m.metric && r.value !== null).reduce<string | null>((a, r) => (a === null || r.date_utc < a ? r.date_utc : a), null)]));
 
 const cell = (v: unknown) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -384,8 +415,9 @@ export function censusSchema(version: string, first: Record<string, string | nul
     generated_from: "Stored data only. Days before a metric's first measured date are absent, never zero-filled. Gross numbers only.",
     licence: DATASET_LICENCE,
     licence_id: LICENCE_ID,
+    gaps: CENSUS_GAPS.map((g) => ({ from: g.from, to: g.to, metrics: [...g.metrics], status: NOT_MEASURED, note: g.note })),
     files: {
-      "series.csv": { format: "CSV, long format, one row per metric per UTC day", fields: { metric: "Metric id (see metrics)", date_utc: "YYYY-MM-DD, UTC", value: "Number", unit: "What the number counts", method: "How this row was measured", kind: "daily (that day only) or cumulative (everything up to the end of that day)" } },
+      "series.csv": { format: "CSV, long format, one row per metric per UTC day", fields: { metric: "Metric id (see metrics)", date_utc: "YYYY-MM-DD, UTC", value: `Number; empty (null in series.json) when ${NOT_MEASURED} that day (see gaps), never 0`, unit: "What the number counts", method: `How this row was measured, or "${NOT_MEASURED}: <why>"`, kind: "daily (that day only) or cumulative (everything up to the end of that day)" } },
       "series.json": { format: "JSON: { version, rows: [same fields as series.csv] }" },
       "server-history/<YYYY-MM>.csv": {
         format: "CSV, one row per server per night per family, one file per UTC month (a complete month's file changes only if its stored rows do)",

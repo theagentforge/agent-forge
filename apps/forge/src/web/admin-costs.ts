@@ -4,7 +4,7 @@ import { html } from "hono/html";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
 import { isAdmin } from "../services/identity";
-import { monthlyCosts } from "../services/costs";
+import { costPerBoutSheet, monthlyCosts, type CostPerBout } from "../services/costs";
 import { freeLaneUsage } from "../arena/free-lane";
 import { currentSession } from "./dashboard";
 import { send, site } from "./pages";
@@ -37,6 +37,17 @@ export function bulkScanLine(b: BulkProgress): string {
     .join(" ");
 }
 
+const usd4 = (n: number | null) => (n === null ? "not yet measured" : `$${n.toFixed(4)}`);
+const cpbRow = (label: string, x: CostPerBout) =>
+  html`<tr data-cpb="${label}"><td><b>${label}</b><br><small>${x.window.from} to ${x.window.to}</small></td><td><b>${usd4(x.per_bout_usd)}</b> a bout<br><small>paid lanes only: ${usd4(x.paid_per_bout_usd)}</small></td><td>${x.bouts.toLocaleString("en-US")} refereed bouts, ${usd(x.full_usd)} in all: OpenRouter credit ${usd(x.split.openrouter_credit_usd)}, Anthropic (BYOK) ${usd(x.split.anthropic_byok_usd)}, Workers AI estimate ${usd(x.split.workers_ai_estimate_usd)}. ${x.claude_bouts} Claude bouts${x.claude_bouts_without_anthropic_cost ? html`; <b>${x.claude_bouts_without_anthropic_cost} since 26 Oct without an Anthropic cost reported, so this is a lower bound</b>` : ""}${x.bouts_without_cost ? html`; ${x.bouts_without_cost} bouts with no cost stored` : ""}.</td></tr>`;
+
+/** Diligence review, 7 Nov: full model cost per refereed bout, Anthropic-billed Claude bouts included. Internal only. */
+export function costPerBoutPanel(s: Awaited<ReturnType<typeof costPerBoutSheet>>) {
+  return html`<h2 id="cost-per-bout">Full cost per refereed bout</h2>
+<p><small>Computed ${s.as_of} from stored runs. ${s.method}</small></p>
+<table class="kpi-table"><thead><tr><th>Window</th><th>Per bout</th><th>Detail</th></tr></thead><tbody>${cpbRow("This month", s.month)}${cpbRow("All time", s.all_time)}</tbody></table>`;
+}
+
 site.get("/admin/costs", async (c) => {
   const s = await currentSession(c);
   if (!s) return c.redirect("/dashboard");
@@ -45,7 +56,8 @@ site.get("/admin/costs", async (c) => {
   const k = await monthlyCosts(c.env);
   const f = await freeLaneUsage(c.env);
   const b = await bulkScanProgress(c.env);
-  if (c.req.query("format") === "json") return c.json({ ...k, free_lane: f, bulk_scan: b }, 200, { "Cache-Control": "no-store" });
+  const cpb = await costPerBoutSheet(c.env);
+  if (c.req.query("format") === "json") return c.json({ ...k, free_lane: f, bulk_scan: b, cost_per_bout: cpb }, 200, { "Cache-Control": "no-store" });
   const n = (x: number) => x.toLocaleString("en-US");
   const a = k.anthropic_byok;
   const bt = k.by_task;
@@ -66,6 +78,7 @@ ${k.pause.notes.length ? html`<p class="notice warn">${k.pause.notes.join(" ")} 
 <tr><td><b>Workers AI</b> (Cloudflare)</td><td>${usd(k.workers_ai.estimated_month_usd)} (estimate)</td><td>${k.workers_ai.bouts_month} bouts this month, priced from list prices; billed with Cloudflare.</td></tr>
 <tr><td><b>GitHub Actions</b></td><td>not measured here</td><td><a href="${k.github_actions.billing_url}" rel="noopener">GitHub billing and usage</a> (spending cap set there).</td></tr>
 </tbody></table>
+${costPerBoutPanel(cpb)}
 <h2 id="by-task">Model spend by task, ${k.month}</h2>
 <p>Where the model money goes (ADR 0113). "Anthropic" is the Claude credit on our own key; "credit" is OpenRouter's prepaid credit; neurons are Workers AI (10,000 a day free, then $0.011 per 1,000).</p>
 <table class="kpi-table"><thead><tr><th>Task</th><th>This month</th><th>Detail</th></tr></thead><tbody>

@@ -1,3 +1,4 @@
+import { purgePages } from "../web/edge-cache";
 import { and, desc, eq, gte, inArray, isNull, lt } from "drizzle-orm";
 import * as t from "../db/schema";
 import { outsidePeople } from "../services/agent-funnel";
@@ -242,7 +243,7 @@ export async function enteredRuns(db: Db, ids: string[]) {
 /** The season page is edge-cached for a minute: drop this data centre's copies after a change (elsewhere within the minute). */
 export async function purgeSeasonPage(env: Env) {
   const base = `${env.PUBLIC_ORIGIN}${SEASON_1.path}`;
-  await Promise.all([base, `${base}?format=json`, `${base}?format=md`, `${base}.json`].map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+  await purgePages(env, [base, `${base}?format=json`, `${base}?format=md`, `${base}.json`]);
 }
 
 export interface SnapshotEntry {

@@ -27,7 +27,7 @@ import { storeRun, storeSweep } from "./services/house-report";
 import { storeToolLists } from "./services/house-tools";
 import { checkKind, recordCheck } from "./services/proof";
 import { houseInstall, INSTALL_ID_HEADER, recordInstallId } from "./services/install-ids";
-import { isLikelyBot } from "./services/bots";
+import { BOT_EXCLUDED, isLikelyBot } from "./services/bots";
 import { installClient, installCounters, isSkillScanOutcome, parseAnswer, recordInstallCheck, SKILL_SCAN_OUTCOMES } from "./services/install-metrics";
 import { internalCaller, internalKey, internalOf } from "./services/internal";
 import type { AgentProps } from "./services/props";
@@ -80,7 +80,8 @@ publicApi.get("/api/v1/check", async (c) => {
     const allowed = keyed ? Promise.resolve(true) : c.env.CHECK_LIMITER.limit({ key: `skilltag-count:${ip}` }).then((r) => r.success, () => false);
     c.executionCtx.waitUntil(allowed.then((ok) => (ok ? bump(c.env, tagged) : undefined)).catch(() => {}));
   };
-  if (!isLikelyBot(c.req.raw, "api")) {
+  if (isLikelyBot(c.req.raw, "api")) c.executionCtx.waitUntil(bump(c.env, [BOT_EXCLUDED.api_check]).catch(() => {}));
+  else {
     c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal }));
     c.executionCtx.waitUntil(recordToolCheck(c.env, parsed.data, Date.now(), { userAgent: c.req.header("User-Agent"), internal, channel: "api" }));
   }

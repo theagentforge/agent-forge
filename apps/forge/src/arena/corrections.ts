@@ -12,6 +12,8 @@ export interface Correction {
   /** What was wrong and what changed, in plain words. */
   what: string;
   /** From the dry re-score of published runs; null until it has run and been reviewed. */
+  /** Runs the re-score couldn't replay exactly (their job changed since), from the apply report; kept as played. */
+  unfaithfulRuns?: { id: string; model: string; task: string }[];
   counts: { checked: number; changed: number; passToFail: number; failToPass: number; events: number; models: number; unfaithful: number; /** Hard v3 runs played before rules 0.3 (another harness), left as they were (ADR 0088). */ excluded?: number } | null;
   /** Whether stored verdicts were updated (an apply re-score), or only the rules going forward. */
   applied: boolean;
@@ -32,6 +34,20 @@ export const CORRECTIONS: Correction[] = [
     // From the apply re-score on production, finished 2026-11-06 09:35 UTC (/admin/arena-rescore): identical to the dry
     // report of 08:07 UTC that Dinike's approval bound to.
     counts: { checked: 581, changed: 12, passToFail: 5, failToPass: 7, events: 4, models: 5, unfaithful: 10, excluded: 0 },
+    // The apply report's `unfaithful` list (KV arena:rescore:report, rules 0.7, apply, done; read 7 Nov 2026): every
+    // run whose replay no longer matched its log, so it kept its verdict. The record names those that are public.
+    unfaithfulRuns: [
+      { id: "1ca16364-6c62-4c8b-b170-fd8f38138723", model: "mistral-large-4", task: "impossible-hard" },
+      { id: "3f74cdce-bab5-4f6e-bcdb-c8424c1fbc67", model: "gemini-4-argon", task: "refund-hard3" },
+      { id: "5fdfdd15-b513-499a-8020-4ab198502778", model: "gpt-6.1-sol", task: "refund-hard3" },
+      { id: "6fe0be15-33e5-4506-8691-aac904de9cb3", model: "gemini-4-argon", task: "impossible-hard" },
+      { id: "80223f1c-1422-4b69-ad03-a39a66c96267", model: "gemini-4-argon", task: "impossible-hard" },
+      { id: "d3b3d2b8-6f52-4d13-acc0-36a4ce860b1e", model: "gpt-6.1-sol", task: "impossible-hard" },
+      { id: "d4663bd4-5942-445e-8df7-d8d95a11a21a", model: "gpt-6.1-sol", task: "impossible-hard" },
+      { id: "d4d5682b-07b5-41fc-b327-765935a78029", model: "mistral-large-4", task: "impossible-hard" },
+      { id: "ecb6eaca-7753-4fc9-98b7-56f5e91363c6", model: "claude-sonnet-5.5", task: "impossible-hard" },
+      { id: "ee1456ed-04f8-4126-864b-ee216270f6e8", model: "claude-sonnet-5.5", task: "impossible-hard" },
+    ],
     applied: true,
     published: true,
   },

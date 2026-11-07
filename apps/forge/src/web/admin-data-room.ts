@@ -84,6 +84,12 @@ ${Object.entries(p.kpis.outside_only.splits).map(([k, v]) => html`<tr data-k="ou
 ${s.days.length ? html`<details><summary>Show the series (${s.series.length} rows)</summary><div class="scroll-x"><table class="kpi-table"><thead><tr><th>Metric</th><th>Basis</th>${s.days.map((d) => html`<th>${d.slice(5)}</th>`)}</tr></thead><tbody>
 ${s.series.map((r) => html`<tr data-basis="${r.basis}"><td>${r.label}</td><td>${r.basis}</td>${r.values.map((v) => html`<td>${v === null ? "–" : v.toLocaleString("en-US")}</td>`)}</tr>`)}</tbody></table></div></details>` : html`<p>No daily snapshots yet: not yet measured.</p>`}
 
+<h3 id="bot-rule">"Likely bot" (${p.bot_rule.version}, in force since ${p.bot_rule.in_force_since}; written ${p.bot_rule.written})</h3>
+<p class="small">The filtered KPIs (agent-days, checks, arrivals from shared links) leave these out; /admin/kpis shows the excluded count beside each. Source: ${p.bot_rule.source}.</p>
+<ol class="small">${p.bot_rule.page.map((x) => html`<li>${x}</li>`)}</ol>
+<ul class="small">${p.bot_rule.api.map((x) => html`<li>${x}</li>`)}</ul>
+<p class="small" data-k="bot_change_rule"><b>If the rule changes:</b> ${p.bot_rule.change_rule}</p>
+
 <h2 id="costs">3. Costs and dependencies</h2>
 <p class="small">Credit rows read ${p.costs.credit.generated_at} from ${p.costs.credit.source}.</p>
 <table class="kpi-table"><tbody>
@@ -91,6 +97,12 @@ ${s.series.map((r) => html`<tr data-basis="${r.basis}"><td>${r.label}</td><td>${
 <tr><td>OpenRouter credit left (estimate) · guard</td><td>${p.costs.credit.openrouter_left_usd === null ? "not yet measured" : `$${p.costs.credit.openrouter_left_usd.toFixed(2)}`} · ${p.costs.credit.openrouter_guard ?? "–"}</td></tr>
 <tr><td>Anthropic BYOK spend this month (estimate)</td><td>${p.costs.credit.anthropic_byok_spend_this_month_usd === null ? "not yet measured" : `$${p.costs.credit.anthropic_byok_spend_this_month_usd.toFixed(2)}`}; credits expire <b>${p.costs.credit.anthropic_byok_expires}</b></td></tr>
 </tbody></table>
+${p.costs.per_bout ? html`<h3 id="cost-per-bout">Full cost per refereed bout (computed ${p.costs.per_bout.as_of})</h3>
+<table class="kpi-table"><tbody>${(["month", "all_time"] as const).map((w) => {
+  const x = p.costs.per_bout![w];
+  return html`<tr data-k="cost_per_bout_${w}"><td>${w === "month" ? "This month" : "All time"} (${x.window.from} to ${x.window.to})</td><td><b>${x.per_bout_usd === null ? "not yet measured" : `$${x.per_bout_usd.toFixed(4)}`}</b> a bout over ${x.bouts.toLocaleString("en-US")} bouts ($${x.full_usd.toFixed(2)}: OpenRouter credit $${x.split.openrouter_credit_usd.toFixed(2)}, Anthropic BYOK $${x.split.anthropic_byok_usd.toFixed(2)}, Workers AI estimate $${x.split.workers_ai_estimate_usd.toFixed(2)})${x.claude_bouts_without_anthropic_cost ? `; ${x.claude_bouts_without_anthropic_cost} Claude bouts without an Anthropic cost reported, so a lower bound` : ""}</td></tr>`;
+})}</tbody></table>
+<p class="small">Method: ${p.costs.per_bout.method}</p>` : ""}
 ${p.costs.rows.length ? html`<div class="scroll-x"><table class="kpi-table"><thead><tr><th>Provider</th><th>What</th><th>Cost</th><th>Ends</th><th>If it stops</th><th>Source</th></tr></thead><tbody>
 ${p.costs.rows.map((r) => html`<tr><td><b>${r.provider}</b></td><td>${r.what}</td><td>${r.cost}</td><td>${r.expires ?? "–"}</td><td><small>${r.if_it_stops}</small></td><td><small>${r.source}</small></td></tr>`)}</tbody></table></div>` : ""}
 

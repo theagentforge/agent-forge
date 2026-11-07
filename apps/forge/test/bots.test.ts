@@ -87,7 +87,8 @@ describe("isLikelyBot", () => {
 
   it("drives the visit counters and likelyPerson", () => {
     const visit = (headers: Record<string, string>) => ({ method: "GET", url: `${ORIGIN}/arena?from=x`, headers: h({ referer: "https://t.co/x", ...headers }) });
-    expect(visitCounters(visit({ "user-agent": FIREFOX }), ORIGIN)).toEqual(["visit:all", "visit:crawler"]);
+    // A bot's tagged arrival from outside is also counted as left out by the filter (diligence review, 7 Nov).
+    expect(visitCounters(visit({ "user-agent": FIREFOX }), ORIGIN)).toEqual(["visit:all", "visit:crawler", "bot:excluded:tagged_arrival"]);
     expect(visitCounters(visit({ "user-agent": FIREFOX, ...NAV }), ORIGIN)).toContain("visit:arrivals");
     expect(likelyPerson({ headers: h({ "user-agent": CHROME }) })).toBe(false);
     expect(likelyPerson({ headers: h({ "user-agent": CHROME, ...NAV }) })).toBe(true);

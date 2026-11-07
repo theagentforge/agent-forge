@@ -83,7 +83,8 @@ describe("validity pack release switch", () => {
     expect(await page.text()).toContain("Dispute and correction history");
     expect(page.headers.get("Cache-Control")).toBe("private, no-store");
     const json = await (await get("/arena/failures/FA-CLM-001?format=json", OFF, { Cookie: adminCookie })).json<any>();
-    expect(json.history.audit.audit_id).toBe("referee-audit-1");
+    // Trap lines read from referee audit 2 (every ranked public replay) since the 7 Nov diligence fixes.
+    expect(json.history.audit.audit_id).toBe("referee-audit-2");
   });
 
   it("on: every path is public and cacheable, /benchmark links to it and trap pages show their history", async () => {

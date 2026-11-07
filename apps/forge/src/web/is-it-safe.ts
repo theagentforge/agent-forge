@@ -61,6 +61,8 @@ export type StatusBasis =
 export interface PackageAdvisory {
   id: string;
   kind: Advisory["kind"];
+  /** Present when OSV's record marks malicious code by CWE-506 rather than by a MAL- id (services/advisories.ts). */
+  malicious_by?: Advisory["malicious_by"];
   aliases: string[];
   /** True when OSV matched it to the version this answer is about; null when that version isn't known. */
   affects_version: boolean | null;
@@ -182,7 +184,7 @@ export async function packageAnswer(env: Env, ecosystem: PackageEcosystem, name:
     ...rest.map((a) => ({ a, affects: onVersion ? false : null })),
   ]
     .slice(0, 25)
-    .map(({ a, affects }) => ({ id: a.id, kind: a.kind, aliases: a.aliases, affects_version: affects, fixed: a.fixed, published: a.published, url: a.url, ...(a.exploited_in_wild ? { exploited_in_wild: true } : {}) }));
+    .map(({ a, affects }) => ({ id: a.id, kind: a.kind, ...(a.malicious_by ? { malicious_by: a.malicious_by } : {}), aliases: a.aliases, affects_version: affects, fixed: a.fixed, published: a.published, url: a.url, ...(a.exploited_in_wild ? { exploited_in_wild: true } : {}) }));
   const anyTotal = anyVersion?.total ?? (!onVersion && ps ? ps.total : null);
 
   // Field reports on this exact version, and on every version (counted in the database, held reports left out).
@@ -244,6 +246,25 @@ const plural = (x: number, one: string, many = `${one}s`) => `${n(x)} ${x === 1 
 const day = (iso: string) => dayLabel(iso.slice(0, 10));
 const word = (x: number | null, one: string, many: string) => (x === 1 ? one : many);
 
+/** Published advisories for the package, any version (0 when none or not known). */
+const historyCount = (a: PackageAnswer) => Math.max(a.advisories.any_version ?? 0, a.advisories.list.length);
+
+/** The status in words on the page (diligence review, 7 Nov): never a bare "clear" over a package's advisory history. */
+export const NO_MATCH_STATUS = "No advisory matches this version";
+export function statusLabel(a: PackageAnswer): string {
+  if (a.security_status === "clear" && historyCount(a) > 0) return NO_MATCH_STATUS;
+  return a.security_status === "confirmed_malicious" ? "confirmed malicious" : a.security_status;
+}
+
+/** The question a page asks: about one exact version, the one the page is about. */
+export const pageQuestion = (a: Pick<PackageAnswer, "tool_id" | "version">) => `Is ${a.tool_id}${a.version ? ` ${a.version}` : ""} safe to install?`;
+
+/** OSV's record type in words. A CWE-506 record is shown as malicious code, never as a vulnerability. */
+export function advisoryKind(x: Pick<PackageAdvisory, "kind" | "malicious_by">): string {
+  if (x.kind !== "malicious") return "vulnerability";
+  return x.malicious_by === "cwe_506" ? "malicious-code record (CWE-506: embedded malicious code)" : "malicious-package record";
+}
+
 /** The one-paragraph answer, date first. Counts, versions and sources only; never a safety promise. */
 export function answerSentence(a: PackageAnswer): string {
   const reg = ECOSYSTEM_LABEL[a.ecosystem];
@@ -269,7 +290,7 @@ export function answerSentence(a: PackageAnswer): string {
       out.push(`${plural(f.on_version, "field report")} on ${a.version}: ${f.outcomes.worked} worked, ${f.outcomes.partial} partly, ${f.outcomes.failed} failed, from ${plural(f.people, "person", "people")} (${f.verified_people} verified).`);
     else out.push(`No field reports on ${a.version} yet${f.all_versions ? ` (${plural(f.all_versions, "report")} on other versions)` : ""}.`);
   }
-  out.push(`Security status: ${a.security_status === "confirmed_malicious" ? "confirmed malicious" : a.security_status}.`);
+  out.push(`Security status: ${statusLabel(a)}.`);
   return out.join(" ");
 }
 
@@ -280,15 +301,19 @@ export function statusMeaning(a: PackageAnswer): string {
     case "confirmed_by_review":
       return `Confirmed malicious: a person at the Forge reviewed the evidence on ${v} and confirmed it.`;
     case "malicious_record_on_version":
-      return `Flagged: a published malicious-package record (OSV) matches ${v}. A flag is evidence to read, and the record is linked below.`;
+      return `Flagged: a published OSV record of malicious code matches ${v}. A flag is evidence to read, and the record is linked below.`;
     case "advisory_on_version":
       return `Caution: ${plural(a.advisories.matching_version ?? 0, "published advisory", "published advisories")} (OSV) ${a.advisories.matching_version === 1 ? "matches" : "match"} ${v}. Each is linked below with its fixed versions, if any.`;
     case "malicious_record_some_version":
-      return "Caution: a malicious-package record exists for some version of this package, and the version in use couldn't be read here, so it may be the affected one.";
+      return "Caution: a published OSV record of malicious code exists for some version of this package, and the version in use couldn't be read here, so it may be the affected one.";
     case "forge_reports":
       return `${a.security_status === "flagged" ? "Flagged" : "Caution"}: field reports or a review on the Forge raised a security concern about ${a.version ? v : "a version of this package"}. The tool page has the reports and the status history.`;
-    case "no_match_on_version":
+    case "no_match_on_version": {
+      const h = historyCount(a);
+      if (h > 0)
+        return `${NO_MATCH_STATUS}: ${plural(h, "published advisory", "published advisories")} (OSV) for ${a.package} ${h === 1 ? "exists" : "exist"}, and none matched ${v}; no field report flagged it, as of ${day(a.advisories.checked_at ?? a.as_of)}. Each is listed below. ${CLEAR_MEANING}`;
       return `Clear: no published advisory (OSV) matched ${v} and no field report flagged it, as of ${day(a.advisories.checked_at ?? a.as_of)}. ${CLEAR_MEANING}`;
+    }
     case "version_unavailable":
       return "Unknown: the registry didn't answer, so the version an install would get couldn't be checked. Unknown is not clear.";
     case "advisories_unavailable":
@@ -301,13 +326,12 @@ const forgeOrg = (origin: string) => ({ "@type": "Organization", name: "The Agen
 function renderPage(c: Ctx, a: PackageAnswer) {
   const origin = c.env.PUBLIC_ORIGIN;
   const path = packagePagePath(a.ecosystem, a.package);
-  const question = `Is ${a.package} safe to install?`;
+  const question = pageQuestion(a);
   const answer = answerSentence(a);
   const reg = ECOSYSTEM_LABEL[a.ecosystem];
   const adv = a.advisories;
   const f = a.field_reports;
   const stat = (value: string, label: string) => html`<div class="stat"><b>${value}</b><span>${label}</span></div>`;
-  const kind = (k: Advisory["kind"]) => (k === "malicious" ? "malicious-package record" : "vulnerability");
   return send(
     c,
     {
@@ -345,7 +369,7 @@ ${stat(n(f.on_version), `${word(f.on_version, "field report", "field reports")}$
 </div>
 
 <section aria-labelledby="status"><h2 id="status">What the status means</h2>
-<p>Security status: <strong>${a.security_status === "confirmed_malicious" ? "confirmed malicious" : a.security_status}</strong> · Forge verdict: ${verdictChip(a.verdict)}</p>
+<p>Security status: <strong>${statusLabel(a)}</strong> · Forge verdict: ${verdictChip(a.verdict)}</p>
 <p>${statusMeaning(a)}</p>
 <p class="small muted">Advisories are matched to one exact version. An advisory can only be matched once it is published, and field reports need 5 people, at least 2 verified, before a version gets a Forge Score (<a href="/methodology">methodology</a>).</p>
 ${a.other_versions_flagged.length ? html`<p class="notice warn">Other versions under review or flagged on the Forge: ${a.other_versions_flagged.slice(0, 5).map((o, i) => html`${i ? ", " : ""}${o.version} (${o.security_status})`)}.</p>` : ""}
@@ -357,7 +381,7 @@ ${!adv.checked
   : adv.list.length
     ? html`<table class="table stack"><thead><tr><th scope="col">Advisory</th><th scope="col">Kind</th><th scope="col">${a.version ? `Matches ${a.version}` : "Matches the version"}</th><th scope="col">Fixed in</th><th scope="col">Published</th></tr></thead>
 <tbody>${adv.list.map(
-        (x) => html`<tr><td class="wide"><a class="mono" href="${x.url}" rel="nofollow noopener">${x.id}</a>${x.aliases.length ? html` <span class="muted small">${x.aliases.slice(0, 3).join(", ")}</span>` : ""}</td><td data-label="Kind">${kind(x.kind)}${x.exploited_in_wild ? html` · <strong>exploited in the wild</strong> (CISA KEV)` : ""}</td><td data-label="Matches">${x.affects_version === null ? "not known" : x.affects_version ? "yes" : "no"}</td><td data-label="Fixed in">${x.fixed.length ? x.fixed.join(", ") : "—"}</td><td data-label="Published">${x.published ? x.published.slice(0, 10) : "—"}</td></tr>`,
+        (x) => html`<tr><td class="wide"><a class="mono" href="${x.url}" rel="nofollow noopener">${x.id}</a>${x.aliases.length ? html` <span class="muted small">${x.aliases.slice(0, 3).join(", ")}</span>` : ""}</td><td data-label="Kind">${advisoryKind(x)}${x.exploited_in_wild ? html` · <strong>exploited in the wild</strong> (CISA KEV)` : ""}</td><td data-label="Matches">${x.affects_version === null ? "not known" : x.affects_version ? "yes" : "no"}</td><td data-label="Fixed in">${x.fixed.length ? x.fixed.join(", ") : "—"}</td><td data-label="Published">${x.published ? x.published.slice(0, 10) : "—"}</td></tr>`,
       )}</tbody></table>
 ${(adv.any_version ?? 0) > adv.list.length ? html`<p class="small muted">${n((adv.any_version ?? 0) - adv.list.length)} more on <a href="${adv.list_url}" rel="nofollow noopener">OSV</a>.</p>` : ""}`
     : html`<p>No published advisory for ${a.package} on OSV, any version, as of ${day(adv.checked_at ?? a.as_of)}.</p>`}

@@ -53,7 +53,8 @@ import { isLikelyBot } from "../services/bots";
 import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
-import { forStore, isRefresh, readStored, refreshStale, swrFreshSeconds } from "./edge-cache";
+import { TRAP_SET } from "../arena/benchmark";
+import { forStore, isRefresh, readStored, refreshStale, RELEASE_PARAM, releaseKey, swrFreshSeconds } from "./edge-cache";
 import { readCookie, SESSION_COOKIE } from "./session";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
@@ -258,6 +259,11 @@ site.use("*", async (c, next) => {
     const line = res.headers.get(HERO_LINE_HEADER);
     if (home && line && !refresh && !bot && !ours && !wantsJson(c) && !markdown && res.status === 200) c.executionCtx.waitUntil(bump(c.env, [heroShownKey(line)]).catch(() => {}));
   };
+  // Every cached page is keyed by the release it was rendered by (edge-cache.ts releaseKey). A visitor's own value is
+  // never trusted.
+  // Share images and receipt badges keep their own `?v=` keys: re-drawing every image after each release would cost the
+  // CPU lean mode was switched on to save.
+  if (!isLongCached(c.req.path)) url.searchParams.set(RELEASE_PARAM, releaseKey(c.env, TRAP_SET.version));
   const key = new Request(url.toString(), { method: "GET" });
   // V6: README badge embeds, counted on cache hits too (only badges actually served, never a 404). Bots never count.
   // ADR 0069: Gauntlet score badges are counted apart (badge:score_serve), so the maintainer badge KPI stays tools-only.

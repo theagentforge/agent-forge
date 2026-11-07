@@ -41,7 +41,10 @@ Provider returned error". It was re-run on the same seed and model, as the plan 
 | Mistral Large 4 × The Flaky Supplier (Hard) | 11 of 30 | 10 of 30 | 9 of 30 | 60% → 60% | 95.8% → 94.8% | 0.78 |
 | Mistral Large 4 × The Weekend Planner (Hard) | 8 of 30 | 6 of 30 | 8 of 30 | 73% → 63% | 95.3% → 85.1% | 1.0 |
 
-30 attempts in every cell. Per-pair tests are reported, not used for the decision (the plan says so).
+30 attempts in every cell. Per-pair tests are reported, not used for the decision (the plan says so). Pass rate is the
+referee's pass: the attempt finished, sprang no trap and passed every critical checkpoint. It isn't 1 minus the trap rate, because an attempt that sprang no trap
+can still miss a checkpoint or stop (for example Mistral Large 4 × The Weekend Planner with v1.1: 8 of 30 fell for a trap,
+19 of 30 passed).
 
 What the table shows:
 - **Three of four pairs moved slightly in v1.1's direction,** by one or two attempts in 30, and one didn't move. None
@@ -95,7 +98,8 @@ either."** Next to it: **"With the sharper card, models also said 'can't be done
 - **4 pairs, 2 models, one version of each, through OpenRouter.** With 120 attempts per arm, the lab had about 60% power
   to detect a cut by a third. A smaller real effect could be missed. The interval (35% fewer to 20% more traps) is the
   honest summary.
-- **No placebo arm.** It wasn't needed in the end, since there was no effect to attribute to added text.
+- **No placebo arm.** So the rise in false stops can't be put down to what the checklist says rather than to adding
+  instructions of any kind. That comparison is the next lab.
 
 ## What this means
 Across Labs #3, #4 and #5:

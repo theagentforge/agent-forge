@@ -177,7 +177,9 @@ ${a.disagreements.length
 </section>
 
 <section id="error-record"><h2>3. Error record</h2>
-<p>Every correction to the Arena's published results and traps, dated. It is shown only together with referee audit ${a.audit_id.replace("referee-audit-", "")} above (${a.overall.agree} of ${a.overall.n} verdicts agreed, ${a.sample.runs} replays sampled), so it reads as a measured error rate.</p>
+<p data-error-record-intro>Every correction to the Arena's published results and traps, dated. ${a2
+  ? html`It is shown only together with referee audit ${a2.audit_id.replace("referee-audit-", "")} above (${a2.date}: ${a2.overall.agree.toLocaleString("en-US")} of ${a2.overall.n.toLocaleString("en-US")} verdicts agreed, every one of the ${a2.sample.runs.toLocaleString("en-US")} public ranked replays checked), so it reads as a measured error rate.`
+  : html`It is shown only together with referee audit ${a.audit_id.replace("referee-audit-", "")} above (${a.overall.agree} of ${a.overall.n} verdicts agreed, ${a.sample.runs} replays sampled), so it reads as a measured error rate.`}</p>
 <ol class="runs" data-error-record>${d.error_record.entries.map((e) => html`<li${entryAnchor(e) ? html` id="${entryAnchor(e)}"` : ""}><b>${e.date}</b> · ${e.title} <span class="label">${e.status.replace(/_/g, " ")}</span><br><span class="small">${e.what}</span>${e.runs.length ? html` <span class="small">${e.runs.map((u) => html`<a href="${u}">${u.split("/").at(-1)!.slice(0, 8)}</a> `)}</span>` : ""}${e.traps.length ? html` <span class="small muted">${e.traps.map((t) => html`<a href="/arena/failures/${t}">${t}</a> `)}</span>` : ""}</li>`)}</ol>
 <p class="small muted">Files: <a href="${ERROR_RECORD_JSON_PATH}">error record (JSON)</a>, <a href="${ERROR_RECORD_CSV_PATH}">CSV</a>. Each trap's own history is on its page under <a href="/arena/failures">failure modes</a>.</p>
 </section>

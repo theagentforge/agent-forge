@@ -1,3 +1,4 @@
+import { purgePages } from "../web/edge-cache";
 import { RULES_HISTORY, rulesAtLeast, rulesVersionAt, taskVersion, trapEntry, type TaskVersion } from "@forge/arena";
 import { and, eq } from "drizzle-orm";
 import * as t from "../db/schema";
@@ -207,7 +208,7 @@ export const scoreBadgeHtml = (origin: string, id: string) => `<a href="${origin
 export async function purgeScoreBadge(env: Env, id: string) {
   const base = `${env.PUBLIC_ORIGIN}/badge/score/${id}`;
   const urls = [`${base}.svg`, `${base}.json`].flatMap((u) => [u, `${u}?format=json`, `${u}?format=md`]);
-  await Promise.all(urls.map((u) => caches.default.delete(new Request(u)).catch(() => false)));
+  await purgePages(env, urls);
 }
 
 /** The per-agent badge (B2-08, ADR 0092): the agent's latest badge-eligible shown run. */
@@ -217,9 +218,9 @@ export const agentScoreBadgePath = (handle: string) => `/arena/agent/${encodeURI
  * Drops this data centre's cached per-agent badge (edge-cached 5 minutes by the page cache, keyed by Accept type too)
  * after a claim, hide, show or revoke, so a hidden run or a revoked agent stops showing here at once (ADR 0093).
  */
-export async function purgeAgentBadge(env: Pick<Env, "PUBLIC_ORIGIN">, handle: string) {
+export async function purgeAgentBadge(env: Pick<Env, "PUBLIC_ORIGIN" | "CF_VERSION_METADATA">, handle: string) {
   const u = `${env.PUBLIC_ORIGIN}${agentScoreBadgePath(handle)}`;
-  await Promise.all([u, `${u}?format=json`, `${u}?format=md`].map((x) => caches.default.delete(new Request(x)).catch(() => false)));
+  await purgePages(env, [u, `${u}?format=json`, `${u}?format=md`]);
 }
 
 /**

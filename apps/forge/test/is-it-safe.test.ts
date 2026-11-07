@@ -4,7 +4,9 @@ import { osvPackageFor } from "../src/services/advisories";
 import { registryTransport } from "../src/services/registry";
 import { canonicalPackageName, isListedPackage, TOP_NPM, TOP_PACKAGE_PATHS, TOP_PYPI } from "../src/services/top-packages";
 import { sitemapPaths } from "../src/web/answers";
-import { CLEAR_MEANING, packageAnswer, type PackageAnswer } from "../src/web/is-it-safe";
+import { advisoryKind, CLEAR_MEANING, NO_MATCH_STATUS, packageAnswer, type PackageAnswer } from "../src/web/is-it-safe";
+import { parseOsvVuln } from "../src/services/advisories";
+import eventStreamOsv from "./fixtures/osv/ghsa-event-stream.json";
 import { LIMITED_PAGE } from "../src/web/pages";
 import { getDb } from "../src/services/db";
 import { fetchWorker } from "./helpers";
@@ -33,7 +35,7 @@ function registry(latest: Record<string, string>) {
 const offline = registryTransport.fetch;
 afterEach(async () => {
   registryTransport.fetch = offline;
-  for (const id of ["npm:express", "npm:lodash", "pypi:litellm", "npm:left-pad", "npm:@modelcontextprotocol/sdk", "pypi:requests"]) await env.KV.delete(`reglatest:${id}`);
+  for (const id of ["npm:express", "npm:event-stream", "npm:lodash", "pypi:litellm", "npm:left-pad", "npm:@modelcontextprotocol/sdk", "pypi:requests"]) await env.KV.delete(`reglatest:${id}`);
 });
 
 /** The page without the one sentence that names "safe" in order to deny it. */
@@ -57,7 +59,7 @@ describe("the package list", () => {
 });
 
 describe("package answers", () => {
-  it("clear: the latest release has no advisory; older versions' advisories are counted apart, with the Forge's wording", async () => {
+  it("no match on the latest release, with an older advisory: the status says so, never a bare clear, with the Forge's wording", async () => {
     registry({ "npm:lodash": "4.17.21" });
     const a = (await packageAnswer(env, "npm", "lodash"))!;
     expect(a).toMatchObject({ listed: true, version: "4.17.21", version_source: "registry_latest", security_status: "clear", status_basis: "no_match_on_version", verdict: "insufficient" });
@@ -66,10 +68,12 @@ describe("package answers", () => {
     const res = await get("/is-it-safe/npm/lodash");
     expect(res.status).toBe(200);
     const page = await res.text();
-    expect(page).toContain("<title>Is lodash safe to install?");
+    expect(page).toContain("<title>Is npm:lodash 4.17.21 safe to install?");
     expect(page).toContain("the latest release of lodash on npm is 4.17.21");
     expect(page).toContain("No published advisory (OSV) matches 4.17.21; 1 more affects older versions only");
-    expect(page).toContain("Clear: no published advisory (OSV) matched 4.17.21");
+    expect(page).toContain("No advisory matches this version: 1 published advisory (OSV) for lodash exists, and none matched 4.17.21");
+    expect(page).toContain(`Security status: <strong>${NO_MATCH_STATUS}</strong>`);
+    expect(page).not.toContain("Security status: <strong>clear</strong>");
     expect(page).toContain(CLEAR_MEANING);
     expect(page).toContain("npx @theagentforge/cli check npm:lodash@4.17.21");
     expect(page).toContain('href="https://osv.dev/list?ecosystem=npm&amp;q=lodash"');
@@ -93,10 +97,61 @@ describe("package answers", () => {
     expect(litellm).toMatchObject({ security_status: "flagged", status_basis: "malicious_record_on_version", verdict: "flagged" });
     expect(litellm.advisories.malicious_records).toBe(1);
     const lp = await (await get("/is-it-safe/pypi/litellm")).text();
-    expect(lp).toContain("Flagged: a published malicious-package record (OSV) matches 1.107.0");
+    expect(lp).toContain("Flagged: a published OSV record of malicious code matches 1.107.0");
     expect(lp).toContain("malicious-package record");
     expect(lp).not.toMatch(/confirmed malicious|Ignore previous/i);
     expect(claims(lp)).not.toMatch(NO_SAFE_CLAIM);
+  });
+
+  it("event-stream: OSV's GHSA-mh6f-8j2x-4483 (CWE-506) stays a malicious-code record, never 'vulnerability'; 4.0.1 isn't matched", async () => {
+    // The real record (fixtures/osv/README.md): no MAL- id, database_specific.cwe_ids ["CWE-506"], affects 3.3.6 only.
+    const rec = parseOsvVuln(eventStreamOsv.vulns[0] as Parameters<typeof parseOsvVuln>[0], { ecosystem: "npm", name: "event-stream" }, "3.3.6")!;
+    expect(rec).toMatchObject({ id: "GHSA-mh6f-8j2x-4483", kind: "malicious", malicious_by: "cwe_506", aliases: [], fixed: ["4.0.0"] });
+    expect(JSON.stringify(rec)).not.toMatch(/flatmap|considered malicious|downgrade/i);
+    expect(advisoryKind(rec)).toBe("malicious-code record (CWE-506: embedded malicious code)");
+    registry({ "npm:event-stream": "4.0.1" });
+    const a = (await packageAnswer(env, "npm", "event-stream"))!;
+    expect(a).toMatchObject({ version: "4.0.1", security_status: "clear", status_basis: "no_match_on_version" });
+    expect(a.advisories).toMatchObject({ matching_version: 0, other_versions: 1, any_version: 1, malicious_records: 1 });
+    expect(a.advisories.list[0]).toMatchObject({ id: "GHSA-mh6f-8j2x-4483", kind: "malicious", malicious_by: "cwe_506", affects_version: false });
+    const page = await (await get("/is-it-safe/npm/event-stream")).text();
+    expect(page).toContain("<title>Is npm:event-stream 4.0.1 safe to install?");
+    expect(page).toContain('<h1 class="page-title">Is npm:event-stream 4.0.1 safe to install?</h1>');
+    expect(page).toContain(`Security status: <strong>${NO_MATCH_STATUS}</strong>`);
+    expect(page).toContain("Security status: No advisory matches this version.");
+    expect(page).toContain("No advisory matches this version: 1 published advisory (OSV) for event-stream exists, and none matched 4.0.1");
+    expect(page).toContain('<td data-label="Kind">malicious-code record (CWE-506: embedded malicious code)</td>');
+    expect(page).not.toContain('<td data-label="Kind">vulnerability</td>');
+    expect(page).toContain(CLEAR_MEANING);
+    expect(page).not.toMatch(/Security status: <strong>clear<\/strong>|confirmed malicious/);
+    expect(claims(page)).not.toMatch(NO_SAFE_CLAIM);
+  });
+
+  it("express: two vulnerabilities on older versions only are listed as vulnerabilities, under the no-match status", async () => {
+    registry({ "npm:express": "5.3.0" });
+    const a = (await packageAnswer(env, "npm", "express"))!;
+    expect(a).toMatchObject({ version: "5.3.0", security_status: "clear", status_basis: "no_match_on_version" });
+    expect(a.advisories).toMatchObject({ matching_version: 0, other_versions: 2, any_version: 2, malicious_records: 0 });
+    expect(a.advisories.list.map((x) => [x.id, x.kind, x.affects_version])).toEqual([
+      ["GHSA-rv95-896h-c2vc", "vulnerability", false],
+      ["GHSA-qw6h-vgh9-j6wx", "vulnerability", false],
+    ]);
+    expect(a.advisories.list.every((x) => !("malicious_by" in x))).toBe(true);
+    const page = await (await get("/is-it-safe/npm/express")).text();
+    expect(page).toContain("<title>Is npm:express 5.3.0 safe to install?");
+    expect(page).toContain(`Security status: <strong>${NO_MATCH_STATUS}</strong>`);
+    expect(page).toContain("No advisory matches this version: 2 published advisories (OSV) for express exist, and none matched 5.3.0");
+    expect(page.match(/<td data-label="Kind">vulnerability<\/td>/g)).toHaveLength(2);
+    expect(page).toContain(CLEAR_MEANING);
+    expect(claims(page)).not.toMatch(NO_SAFE_CLAIM);
+  });
+
+  it("a package with no advisory history at all keeps the plain clear status", async () => {
+    registry({ "npm:left-pad": "1.3.0" });
+    const page = await (await get("/is-it-safe/npm/left-pad")).text();
+    expect(page).toContain("Security status: <strong>clear</strong>");
+    expect(page).toContain("Clear: no published advisory (OSV) matched 1.3.0");
+    expect(page).toContain(CLEAR_MEANING);
   });
 
   it("unknown: a listed package whose registry doesn't answer still has a page, saying unknown, never clear", async () => {
@@ -115,7 +170,7 @@ describe("package answers", () => {
     registry({ "npm:@modelcontextprotocol/sdk": "1.20.0", "pypi:requests": "2.32.5" });
     const sdk = await get("/is-it-safe/npm/@modelcontextprotocol/sdk");
     expect(sdk.status).toBe(200);
-    expect(await sdk.text()).toContain("Is @modelcontextprotocol/sdk safe to install?");
+    expect(await sdk.text()).toContain("Is npm:@modelcontextprotocol/sdk 1.20.0 safe to install?");
     const req = await get("/is-it-safe/pypi/requests");
     expect(req.status).toBe(200);
     expect(await req.text()).toContain("the latest release of requests on PyPI is 2.32.5");
@@ -142,7 +197,7 @@ describe("package answers", () => {
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain('name="robots" content="noindex, follow"');
-    expect(page).toContain("Is left-pad safe to install?");
+    expect(page).toContain("Is npm:left-pad 1.3.0 safe to install?");
     expect((await sitemapPaths(getDb(env))).some((r) => r.path === "/is-it-safe/npm/left-pad")).toBe(false);
   });
 
@@ -178,7 +233,7 @@ describe("package answers", () => {
     expect(md.status).toBe(200);
     expect(md.headers.get("Content-Type")).toBe("text/markdown; charset=utf-8");
     const text = await md.text();
-    expect(text).toContain("# Is lodash safe to install?");
+    expect(text).toContain("# Is npm:lodash 4.17.21 safe to install?");
     expect(text).toContain(`url: ${O}/is-it-safe/npm/lodash.md`);
     expect(claims(text)).not.toMatch(NO_SAFE_CLAIM);
     const page = await (await get("/is-it-safe/npm/lodash")).text();
