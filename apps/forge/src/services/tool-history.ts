@@ -430,14 +430,19 @@ export async function driftRows(toolId: string, server: string, obs: Observation
 }
 
 /** What a tool's drift is computed from: its history rows and its answered queue rows. */
-const printSql = sql`count(*) || ':' || max(h.first_seen) || ':' || coalesce(max(h.observed_at), 0) || ':' ||
-  (SELECT count(*) FROM tool_history_queue q JOIN tool_history_servers s ON s.server = q.server WHERE s.tool_id = h.tool_id AND q.status IN ('done', 'failed'))`;
+// The print's last part is the tool's count of done/failed queue rows. 7 Nov: it was a correlated subquery per tool, and
+// D1 drove it from the queue's status index, so each tick read ~30M rows (7,470 tools x ~2,000 queue rows). Counting
+// once per tool in a grouped join gives the same value (0 when a tool has none) for about the table sizes in rows.
+const queueCounts = sql`(SELECT s.tool_id AS tool_id, count(*) AS n FROM tool_history_queue q JOIN tool_history_servers s ON s.server = q.server
+  WHERE q.status IN ('done', 'failed') AND s.tool_id IS NOT NULL GROUP BY s.tool_id)`;
+const printSql = sql`count(*) || ':' || max(h.first_seen) || ':' || coalesce(max(h.observed_at), 0) || ':' || coalesce(max(qc.n), 0)`;
 
 /** Recomputes drift for up to `limit` tools whose history changed (servers in the backfill set first). */
 export async function driftTick(env: Env, now = Date.now(), limit = 50) {
   const db = getDb(env);
   const todo = (await db.all(
-    sql`SELECT h.tool_id AS tool_id, ${printSql} AS print FROM tool_description_history h GROUP BY h.tool_id
+    sql`SELECT h.tool_id AS tool_id, ${printSql} AS print FROM tool_description_history h LEFT JOIN ${queueCounts} qc ON qc.tool_id = h.tool_id
+        GROUP BY h.tool_id
         HAVING print IS NOT (SELECT print FROM tool_drift_state d WHERE d.tool_id = h.tool_id)
         ORDER BY (h.tool_id IN (SELECT tool_id FROM tool_history_servers WHERE tool_id IS NOT NULL)) DESC, h.tool_id LIMIT ${limit}`,
   )) as { tool_id: string; print: string }[];

@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { html } from "hono/html";
 import { CURRENT_RULES_PATH, RULES_VERSION, rulesRecord, rulesText, type RulesCount } from "../arena/rules-label";
 import { failureBoard, parseFailTier, trapBoard, type Cell, type Example, type FailTier } from "../arena/failures";
+import { atLeast, CLAIM_REVIEW_PATH, isLowerBoundTrap, LOWER_BOUND_READING, LOWER_BOUND_TRAPS, LOWER_BOUND_WHY } from "../arena/lower-bound-traps";
 import { getDb } from "../services/db";
 import { trapHistoryOrNull, trapHistorySection } from "./trap-history";
 import { asPreview, validityAccess } from "./validity-release";
@@ -16,6 +17,7 @@ const wantsJson = (c: Ctx) => c.req.query("format") === "json" || (c.req.header(
 const JSON_HEADERS = { "Cache-Control": "public, max-age=300", Vary: "Accept", "X-Content-Type-Options": "nosniff" };
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const LOWER_BOUND_LIST = LOWER_BOUND_TRAPS.join(" and ");
 const tierQuery = (t: FailTier) => (t === "all" ? "" : `?tier=${t}`);
 
 /** The counting rule, as data for the JSON twins (AGENTS.md rule 7). */
@@ -32,9 +34,17 @@ export const FAILURE_RULES = {
 
 const cellJson = (c: Cell | null) => (c ? { n: c.n, fell: c.fell, rate: c.rate, ci_95: c.ci, early_read: c.early } : null);
 
-function cellHtml(c: Cell | null) {
+/** A rate as shown: "at least 4%" for the traps whose rate is a lower bound (lower-bound-traps.ts), else "4%". */
+const rateText = (x: number, trap: string) => (atLeast(trap, x) ? `at least ${pct(x)}` : pct(x));
+
+/** The note under a lower-bound trap's figures, linking to the claim-trap class review. */
+const lowerBoundNote = (trap: string, linkReview: boolean, rate?: number) =>
+  // At 100% the rate can't be higher, so the note would be false there.
+  isLowerBoundTrap(trap) && !(rate !== undefined && rate >= 1) ? html`<p class="small" data-lower-bound><b>This fall rate is a lower bound.</b> ${LOWER_BOUND_WHY}${linkReview ? html` See the <a href="${CLAIM_REVIEW_PATH}">claim-trap class review</a> in the validity pack.` : ""}</p>` : "";
+
+function cellHtml(c: Cell | null, trap: string) {
   if (!c) return html`<td class="muted" title="No ranked attempt with this trap yet">–</td>`;
-  return html`<td title="Fell for it in ${c.fell} of ${c.n} attempts where it was present"><b>${pct(c.rate)}</b> <span class="muted">${c.fell} of ${c.n}</span><br><span class="small muted">n=${c.n} · 95% ${pct(c.ci[0])}–${pct(c.ci[1])}</span>${c.early ? html` <span class="label" title="Fewer than ${VERDICT_RUNS} attempts: a first look, not a verdict">Early read</span>` : ""}</td>`;
+  return html`<td title="Fell for it in ${c.fell} of ${c.n} attempts where it was present${atLeast(trap, c.rate) ? `. A lower bound: ${LOWER_BOUND_WHY}` : ""}"><b>${rateText(c.rate, trap)}</b> <span class="muted">${c.fell} of ${c.n}</span><br><span class="small muted">n=${c.n} · 95% ${pct(c.ci[0])}–${pct(c.ci[1])}</span>${c.early ? html` <span class="label" title="Fewer than ${VERDICT_RUNS} attempts: a first look, not a verdict">Early read</span>` : ""}</td>`;
 }
 
 function tierLinks(path: string, tier: FailTier) {
@@ -71,13 +81,15 @@ site.get("/arena/failures", async (c) => {
         families: board.families.map((f) => ({
           family: f.family,
           name: f.name,
-          traps: f.rows.map((r) => ({ id: r.entry.id, description: r.entry.description, since: r.entry.since, url: `/arena/failures/${r.entry.id}`, cells: Object.fromEntries(Object.entries(r.cells).map(([m, x]) => [m, cellJson(x)])) })),
+          traps: f.rows.map((r) => ({ id: r.entry.id, description: r.entry.description, since: r.entry.since, url: `/arena/failures/${r.entry.id}`, ...(isLowerBoundTrap(r.entry.id) ? { rate_reading: LOWER_BOUND_READING } : {}), cells: Object.fromEntries(Object.entries(r.cells).map(([m, x]) => [m, cellJson(x)])) })),
         })),
       },
       200,
       JSON_HEADERS,
     );
   const cols = board.models;
+  // The review is part of the validity pack: linked only once the pack is released (this page is cached, so no preview).
+  const reviewLinked = (await validityAccess(c)) === "public";
   return send(c, {
     title: `${PUBLIC_NAME}: failure modes`,
     description: "Which AI model falls for which trap: fall rates by failure mode, with n, 95% intervals and links to every bout.",
@@ -96,9 +108,10 @@ ${cols.length ? "" : html`<p class="empty">No ranked bouts in this tier yet. Cel
 <thead><tr><th scope="col">Trap</th>${cols.map((m) => html`<th scope="col">${m.name}</th>`)}</tr></thead>
 ${board.families.map(
       (f) => html`<tbody><tr class="fam"><th scope="rowgroup" colspan="${cols.length + 1}">${f.name} <span class="muted small">(${f.family})</span></th></tr>
-${f.rows.map((r) => html`<tr id="${r.entry.id}"><th scope="row"><a href="/arena/failures/${r.entry.id}${tierQuery(tier)}"><code>${r.entry.id}</code></a><br><span class="small muted">${r.entry.description}</span></th>${cols.map((m) => cellHtml(r.cells[m.id] ?? null))}</tr>`)}</tbody>`,
+${f.rows.map((r) => html`<tr id="${r.entry.id}"><th scope="row"><a href="/arena/failures/${r.entry.id}${tierQuery(tier)}"><code>${r.entry.id}</code></a><br><span class="small muted">${r.entry.description}</span></th>${cols.map((m) => cellHtml(r.cells[m.id] ?? null, r.entry.id))}</tr>`)}</tbody>`,
     )}
 </table></div>
+<p class="small" data-lower-bound>${LOWER_BOUND_LIST} rates are lower bounds, marked "at least" where above 0%: the referee reads the agent's free-text messages for those traps and can miss a false claim phrased in a way the rule doesn't cover${reviewLinked ? html` (<a href="${CLAIM_REVIEW_PATH}">claim-trap class review</a>)` : ""}.</p>
 <p class="muted small-print">Trap IDs, descriptions and real-world sources are in the <a href="/arena/methodology#catalog">trap catalogue</a>. Every run is in <a href="/arena/dataset.json">the dataset</a>. Lab and model names identify what was tested; ${PUBLIC_NAME} is not affiliated with any lab.</p>`,
   });
 });
@@ -136,6 +149,7 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
         rules: FAILURE_RULES,
         rules_versions: rulesRecord(b.rulesVersions),
         current_rules_results: CURRENT_RULES_PATH,
+        ...(isLowerBoundTrap(e.id) ? { rate_reading: LOWER_BOUND_READING } : {}),
         overall: cellJson(b.overall),
         models: b.models.map((m) => ({ id: m.id, name: m.name, ...cellJson(m.cell)! })),
         recent_falls: b.falls.map(ex),
@@ -149,7 +163,7 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
   const jobs = [...new Set(e.traps.map((k) => k.split("/")[0]!))];
   return finish(await send(c, {
     title: `${e.id}: ${e.description}`,
-    description: `${TRAP_FAMILIES[e.family].name}. ${b.overall ? `Fell for it in ${b.overall.fell} of ${b.overall.n} ranked attempts.` : "No ranked attempts yet."} Fall rates by model, with n and 95% intervals.`,
+    description: `${TRAP_FAMILIES[e.family].name}. ${b.overall ? `Fell for it in ${atLeast(e.id, b.overall.rate) ? "at least " : ""}${b.overall.fell} of ${b.overall.n} ranked attempts.` : "No ranked attempts yet."} Fall rates by model, with n and 95% intervals.`,
     path: `/arena/failures/${e.id}${tierQuery(tier)}`,
     nav: "arena",
     image: `/og/arena/failures/${e.id}.png`,
@@ -162,14 +176,15 @@ site.get("/arena/failures/:id{[A-Za-z]+-[A-Za-z]+-[0-9]+}", async (c) => {
 <dt>Real-world pattern</dt><dd>${e.provenance.pattern}. ${e.provenance.source ? html`<a href="${e.provenance.source.url}" rel="noopener">${e.provenance.source.title}</a>` : html`<span class="muted">No single public source.</span>`}</dd>
 <dt>Since</dt><dd>${e.since}</dd>
 <dt>Jobs</dt><dd>${jobs.map((j) => html`<a href="/best/${j}">${taskById(j)?.title ?? j}</a>`).reduce((x, y) => html`${x}, ${y}`)}</dd>
-<dt>All models</dt><dd>${b.overall ? html`${pct(b.overall.rate)}: fell in ${b.overall.fell} of ${b.overall.n} ranked attempts (95% ${pct(b.overall.ci[0])}–${pct(b.overall.ci[1])})${b.overall.early ? html` <span class="label">Early read</span>` : ""}` : html`<span class="muted">No ranked attempts yet.</span>`}</dd>
+<dt>All models</dt><dd>${b.overall ? html`${rateText(b.overall.rate, e.id)}: fell in ${atLeast(e.id, b.overall.rate) ? "at least " : ""}${b.overall.fell} of ${b.overall.n} ranked attempts (95% ${pct(b.overall.ci[0])}–${pct(b.overall.ci[1])})${b.overall.early ? html` <span class="label">Early read</span>` : ""}` : html`<span class="muted">No ranked attempts yet.</span>`}</dd>
 </dl>
+${lowerBoundNote(e.id, Boolean(access), b.overall?.rate)}
 ${rulesLine(b.rulesVersions)}
 ${tierLinks(`/arena/failures/${e.id}`, tier)}
 <h2>By model</h2>
 ${b.models.length
   ? html`<div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col" class="num">Fall rate</th><th scope="col" class="num">Fell</th><th scope="col" class="num">n</th><th scope="col" class="num">95% interval</th><th scope="col">Status</th></tr></thead>
-<tbody>${b.models.map((m) => html`<tr><td class="wide">${m.name}</td><td class="num" data-label="Fall rate">${pct(m.cell.rate)}</td><td class="num" data-label="Fell">${m.cell.fell}</td><td class="num" data-label="n">${m.cell.n}</td><td class="num" data-label="95% interval">${pct(m.cell.ci[0])}–${pct(m.cell.ci[1])}</td><td data-label="Status">${m.cell.early ? html`<span class="label">Early read</span>` : html`<span class="label">Verdict</span>`}</td></tr>`)}</tbody></table></div>`
+<tbody>${b.models.map((m) => html`<tr><td class="wide">${m.name}</td><td class="num" data-label="Fall rate">${rateText(m.cell.rate, e.id)}</td><td class="num" data-label="Fell">${m.cell.fell}</td><td class="num" data-label="n">${m.cell.n}</td><td class="num" data-label="95% interval">${pct(m.cell.ci[0])}–${pct(m.cell.ci[1])}</td><td data-label="Status">${m.cell.early ? html`<span class="label">Early read</span>` : html`<span class="label">Verdict</span>`}</td></tr>`)}</tbody></table></div>`
   : html`<p class="empty">No ranked attempt with this trap yet.</p>`}
 <h2>Recent falls</h2>
 ${exampleList(b.falls, "No model has fallen for it in a ranked bout yet.")}

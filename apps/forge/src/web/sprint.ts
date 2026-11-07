@@ -17,6 +17,7 @@ import {
 } from "../arena/sprint";
 import type * as t from "../db/schema";
 import { getDb } from "../services/db";
+import { atLeast, LOWER_BOUND_TRAPS, LOWER_BOUND_WHY } from "../arena/lower-bound-traps";
 import { agentHref, copyBlock } from "./components";
 import { send, site } from "./pages";
 import { verifyHowTo } from "./replay-verify";
@@ -86,9 +87,9 @@ site.get(SPRINT_RULES_PATH, async (c) => {
 ${d.inputs.jobs.map((j) => html`<tr><td>${sprintJobTitle(j.task)}</td><td class="num" data-label="Bouts">${j.bouts}</td><td class="num" data-label="Seconds">${j.median_seconds ?? "—"}</td><td class="num" data-label="Calls">${j.median_tool_calls ?? "—"}</td><td data-label="Status">${j.status === "not_yet_measured" ? "not yet measured (stays in)" : j.status}</td></tr>`)}
 </tbody></table>
 <table class="table stack"><thead><tr><th>Trap</th><th>Job</th><th class="num">Fell</th><th class="num">Attempts</th><th class="num">Fall rate</th></tr></thead><tbody>
-${d.inputs.ranking.map((r) => html`<tr><td><a class="mono" href="/benchmark#${r.trap}">${r.trap}</a></td><td data-label="Job">${sprintJobTitle(r.task)}</td><td class="num" data-label="Fell">${r.fell}</td><td class="num" data-label="Attempts">${r.attempts}</td><td class="num" data-label="Fall rate">${r.measured ? pct(r.fall_rate) : "not yet measured"}</td></tr>`)}
+${d.inputs.ranking.map((r) => html`<tr><td><a class="mono" href="/benchmark#${r.trap}">${r.trap}</a></td><td data-label="Job">${sprintJobTitle(r.task)}</td><td class="num" data-label="Fell">${r.fell}</td><td class="num" data-label="Attempts">${r.attempts}</td><td class="num" data-label="Fall rate">${r.measured ? `${atLeast(r.trap, r.fall_rate ?? 0) ? "at least " : ""}${pct(r.fall_rate)}` : "not yet measured"}</td></tr>`)}
 </tbody></table>
-<p class="small muted">Data: ${d.inputs.data}. Practice rates are early reads, not verdicts; they only decide which trap is featured. <a href="${SPRINT_PATH}">About the Sprint</a> · <a href="${SPRINT_RULES_PATH}.json">JSON</a></p>`,
+<p class="small muted">Data: ${d.inputs.data}. Practice rates are early reads, not verdicts; they only decide which trap is featured. ${LOWER_BOUND_TRAPS.join(" and ")} rates are lower bounds: ${LOWER_BOUND_WHY} <a href="${SPRINT_PATH}">About the Sprint</a> · <a href="${SPRINT_RULES_PATH}.json">JSON</a></p>`,
   });
 });
 

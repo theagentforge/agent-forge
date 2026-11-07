@@ -3,9 +3,11 @@ import { anyTaskById, Attempt, CANARY, RULES_VERSION, type AttemptResult } from 
 import type { AuditResult } from "@forge/arena/audit";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CORRECTIONS } from "../src/arena/corrections";
-import { disagreementStatuses, errorRecord, nextTrapSetMinor, REFEREE_AUDIT, trapHistory, validityGate } from "../src/arena/error-record";
+import { disagreementStatuses, errorRecord, fullRescoreText, nextTrapSetMinor, REFEREE_AUDIT, REFEREE_AUDIT_2, REFEREE_AUDIT_ADJUDICATIONS, trapHistory, validityGate } from "../src/arena/error-record";
+import { atLeast, LOWER_BOUND_TRAPS, LOWER_BOUND_WHY } from "../src/arena/lower-bound-traps";
+import { PASS_FAIL_FALL } from "../src/arena/terms";
 import { TRAP_SET } from "../src/arena/benchmark";
-import { disagreementsCsv, headlines, pooledGap, validityData } from "../src/arena/validity";
+import { censusHeadline, CHECKER_INDEPENDENCE, claimReviewText, CONTAMINATION_NEEDS, disagreementsCsv, headlines, pooledGap, reproduceBreakdown, validityData } from "../src/arena/validity";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { signReport } from "../src/services/signing";
@@ -78,6 +80,8 @@ describe("the publish gate", () => {
   });
 });
 
+const decode = (x: string) => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+
 describe("/benchmark/validity", () => {
   let data: any;
   beforeAll(async () => {
@@ -126,10 +130,85 @@ describe("/benchmark/validity", () => {
   });
 
   it("counts applied re-scores and disputes from the database", () => {
-    const applied = data.error_record.entries.find((e: any) => e.kind === "rescore_applied");
+    const applied = data.error_record.entries.find((e: any) => e.kind === "rescore_applied" && e.title.endsWith("rules 0.5"));
     expect(applied.what).toMatch(/1 published ranked run carry a rules 0.5 re-score note; 1 changed verdict \(1 pass to fail, 0 fail to pass\)/);
     expect(applied.runs).toContain(`${ORIGIN}/arena/run/${rescoredId}`);
     expect(data.error_record.disputes).toMatchObject({ rejected: 1, about_traps_or_arena_verdicts: 0 });
+  });
+
+  it("states the full rules 0.7 re-score (practice runs included) from the published correction's counts", async () => {
+    const c = CORRECTIONS.find((x) => x.id === "2026-11-rules-0.7-payee-claims")!;
+    const full = data.error_record.entries.find((e: any) => e.kind === "rescore_applied" && e.title.endsWith("rules 0.7"));
+    // No ranked run in the test database carries a rules 0.7 note, so the correction gets an entry of its own.
+    expect(full).toMatchObject({ date: "2026-11-06", status: "applied", source: `${ORIGIN}/results-policy#${c.id}` });
+    expect(full.what).toBe(fullRescoreText(c));
+    expect(full.what).toContain("replayed every published run of the affected jobs, practice runs included: 12 of 581 changed verdict (5 pass to fail, 7 fail to pass), across 4 events and 5 models.");
+    // Read from the counts, never typed in: other counts give other words.
+    const other = { ...c, counts: { ...c.counts!, checked: 10, changed: 1, passToFail: 1, failToPass: 0, events: 1, models: 1, unfaithful: 0 } };
+    expect(fullRescoreText(other)).toContain("1 of 10 changed verdict (1 pass to fail, 0 fail to pass), across 1 event and 1 model.");
+    // When ranked runs carry the same rules' notes, one entry gives both: the ranked notes, then the full re-score.
+    const as05 = { ...c, id: "test-0.5", rules: "rules 0.5" };
+    const { entries } = await errorRecord(getDb(env), ORIGIN, REFEREE_AUDIT, [as05]);
+    const both = entries.filter((e) => e.kind === "rescore_applied" && e.title.endsWith("rules 0.5"));
+    expect(both).toHaveLength(1);
+    expect(both[0]!.what).toMatch(/^1 published ranked run carry a rules 0\.5 re-score note; 1 changed verdict/);
+    expect(both[0]!.what).toContain("The full re-score (correction test-0.5, 6 Nov 2026) replayed every published run of the affected jobs, practice runs included: 12 of 581");
+  });
+
+  it("says the checker is independent of the referee's code, not of the written rules", async () => {
+    const page = decode(await (await fetchWorker("/benchmark/validity")).text());
+    expect(CHECKER_INDEPENDENCE).toBe("The checker is independent of the referee's code, not of the written rules: both were written from the same rules, so where a rule itself is ambiguous they can agree and both be wrong (see the claim-trap class review below).");
+    expect(page.split(CHECKER_INDEPENDENCE).length - 1).toBe(2); // audit 2's method and audit 1's
+    expect(page).toContain('id="claim-review"');
+    for (const x of claimReviewText()) expect(page).toContain(x);
+    // The reading was done by the audit agent, not a person (referee-audit-2-claims.json census_read.what); never claim a human check.
+    expect(claimReviewText().join(" ")).toContain("the audit agent (an AI model working with code, not a person) read every message");
+    expect(claimReviewText().join(" ")).not.toMatch(/a person read|by a person|human read/i);
+    const bench = decode(await (await fetchWorker("/benchmark")).text());
+    expect(bench).toContain("Independent of the referee's code, not of the written rules.");
+  });
+
+  it("names the runs behind each reproduce shortfall and links each to its error-record entry", async () => {
+    const b = reproduceBreakdown(REFEREE_AUDIT);
+    expect(b.worlds_identical + b.worlds_differ_job_code_changed.length).toBe(b.runs);
+    const v = b.verdicts_differ;
+    expect(b.verdicts_identical + v.audit_disagreements.length + v.job_code_changed.length + v.not_yet_explained.length).toBe(b.runs);
+    expect(b.worlds_differ_job_code_changed.map((x) => `${x.run.slice(0, 8)} ${x.task}`)).toEqual(["4e17d51a spreadsheet-hard3", "a37e9ca5 spreadsheet-hard3"]);
+    expect(v.audit_disagreements.map((x) => x.run.slice(0, 8))).toEqual(["026e2a39", "67336c42"]);
+    expect(v.job_code_changed.map((x) => x.run.slice(0, 8))).toEqual(["4e17d51a"]);
+    expect(v.not_yet_explained.map((x) => x.run.slice(0, 8))).toEqual(["663bd9c2", "b254576e"]);
+    const page = decode(await (await fetchWorker("/benchmark/validity")).text());
+    expect(page).toContain("<h2>4. Reproduce a public run</h2>");
+    expect(page).not.toContain("Reproduce any public run");
+    expect(page).toContain("In referee audit 1's 120 sampled replays: the world and every tool output were rebuilt identically for 118 of 120; the other 2 are replays of spreadsheet-hard3 whose job's code changed after they were played (<a href=\"#er-reproduce_difference-4e17d51a\">4e17d51a</a>, <a href=\"#er-reproduce_difference-a37e9ca5\">a37e9ca5</a>).");
+    expect(page).toContain("The referee re-run gave the identical verdict for 115 of 120; of the other 5, 2 are audit disagreements, where the referee in force at the audit already gave the corrected verdict (<a href=\"#er-audit_disagreement-026e2a39\">026e2a39</a>, <a href=\"#er-audit_disagreement-67336c42\">67336c42</a>), 1 is among the replays whose job's code changed (<a href=\"#er-reproduce_difference-4e17d51a\">4e17d51a</a>), and 2 score a task-completion checkpoint differently today with the same pass/fail and no change to the job's world, which is not yet explained (<a href=\"#er-reproduce_difference-663bd9c2\">663bd9c2</a>, <a href=\"#er-reproduce_difference-b254576e\">b254576e</a>).");
+    // Every anchor linked from the reproduce section exists in the error record.
+    const reproduce = page.slice(page.indexOf('id="reproduce"'));
+    const anchors = [...reproduce.matchAll(/href="#(er-[^"]+)"/g)].map((m) => m[1]!);
+    expect(anchors.length).toBeGreaterThan(5);
+    for (const a of anchors) expect(page, a).toContain(`id="${a}"`);
+    // The unexplained checkpoint differences promise no date.
+    const open = data.error_record.entries.filter((e: any) => e.kind === "reproduce_difference" && e.status === "open");
+    expect(open.map((e: any) => e.runs[0].split("/").at(-1).slice(0, 8)).sort()).toEqual(["663bd9c2", "b254576e"]);
+    for (const e of open) expect(e.what).toMatch(/Open: not yet explained\.$/);
+    expect(page).not.toMatch(/to be explained before/);
+    expect(data.reproducibility.differences.map((x: any) => x.audit_id)).toEqual(["referee-audit-2", "referee-audit-1"]);
+  });
+
+  it("defines pass, fail and fall once, on the validity page and the event pages", async () => {
+    expect(PASS_FAIL_FALL).toBe("Pass or fail is the job's result. A fall is an attempt that sprang at least one planted trap. Every fall fails the job, but a fail need not be a fall: an attempt can also fail by getting the job wrong or by running out of time or moves.");
+    const count = (x: string) => x.split(PASS_FAIL_FALL).length - 1;
+    expect(count(decode(await (await fetchWorker("/benchmark/validity")).text()))).toBe(1);
+    const event = decode(await (await fetchWorker("/arena/event/validity-test-event")).text());
+    expect(count(event)).toBe(1);
+    expect(event).toContain("Attempts that fell for a trap");
+    expect(count(decode(await (await fetchWorker("/arena/event/validity-test-event/falls")).text()))).toBe(1);
+  });
+
+  it("says what the at-ceiling contamination comparison needs, with no promised date", async () => {
+    expect(CONTAMINATION_NEEDS).toBe("To mean something it needs held-out runs on jobs models sometimes fail, such as the harder job families being added for the Trap Set; no date is set for those runs.");
+    const page = decode(await (await fetchWorker("/benchmark/validity")).text());
+    expect(page).toContain(`<b>Both sides pass every attempt, so this comparison can't show a difference yet.</b> ${CONTAMINATION_NEEDS}`);
   });
 
   it("compares public and held-out seeds with intervals, and says when both sides are at ceiling", () => {
@@ -173,8 +252,6 @@ describe("audit 1's disagreements: frozen figures, today's status", () => {
   const CORRECTION = "2026-11-rules-0.7-payee-claims";
   const HEADLINE_2 =
     "Every one of the 4 disagreements in that audit was read in its log: in 4 the published verdict was wrong, and in 0 the checker was wrong. All 4 are now fixed (2 by rules 0.6, 2 by rules 0.7) and their published verdicts were re-scored from the signed logs on 6 Nov 2026 (correction 2026-11-rules-0.7-payee-claims).";
-  const decode = (x: string) => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
-
   it("keeps the audit's own figures as frozen and dates them", () => {
     expect(REFEREE_AUDIT.overall).toMatchObject({ agree: 530, n: 534 });
     expect(REFEREE_AUDIT.adjudicated).toMatchObject({ referee_wrong_open: 2, referee_wrong_fixed_later: 2, checker_wrong: 0 });
@@ -218,7 +295,8 @@ describe("audit 1's disagreements: frozen figures, today's status", () => {
     }
     expect(dis.filter((e) => e.what.includes("At the audit (5 Nov 2026) it was referee wrong open.")).length).toBe(2);
     const data = await (await fetchWorker("/benchmark/validity.json")).json<any>();
-    expect(data.headlines[1]).toBe(HEADLINE_2);
+    // Audit 2's census headline leads (7 Nov); audit 1's headlines follow it, so its second is now the third.
+    expect(data.headlines[2]).toBe(HEADLINE_2);
     // The JSON keeps the frozen resolutions (free-text notes are left out of JSON, as everywhere).
     expect(data.referee_audit.disagreements.map((x: any) => x.resolution.outcome)).toEqual(REFEREE_AUDIT.disagreements.map((x) => x.resolution!.outcome));
     expect(data.referee_audit.disagreements_now.map((x: any) => x.status_now)).toEqual(["fixed_and_rescored", "fixed_and_rescored", "fixed_and_rescored", "fixed_and_rescored"]);
@@ -249,5 +327,97 @@ describe("per-trap history", () => {
   it("a trap with no correction says so", async () => {
     const { entries } = await errorRecord(getDb(env), ORIGIN);
     expect(trapHistory(entries, "FA-POL-013").entries.filter((e) => e.kind === "audit_disagreement")).toEqual([]);
+  });
+});
+
+describe("referee audit 2 (the census) leads the page", () => {
+  const CENSUS =
+    "Referee audit 2 (6 Nov 2026) re-graded every public ranked replay on that day, 375 runs and not a sample, with the same independent checker: it agreed with the published referee verdict on 1,433 of 1,437 trap verdicts (99.7%; 95% interval 99.2%–99.9%). Its only 4 disagreements are the 4 that audit 1 found, where the published verdict was wrong. All are now fixed, and the published verdicts were re-scored from the signed logs on 6 Nov 2026 (correction 2026-11-rules-0.7-payee-claims). Re-run under rules 0.7, the rules in force since 6 Nov 2026, the referee agreed with the checker on 1,437 of 1,437.";
+
+  it("builds its headline from the census file's own figures", () => {
+    expect(validityGate(REFEREE_AUDIT_2)).toEqual({ ok: true });
+    expect(REFEREE_AUDIT_2.overall).toMatchObject({ agree: 1433, n: 1437 });
+    expect(REFEREE_AUDIT_2.sample.runs).toBe(REFEREE_AUDIT_2.frame.runs);
+    expect(censusHeadline()).toBe(CENSUS);
+    // Its 4 disagreements are audit 1's 4, each fixed and re-scored today.
+    const st = disagreementStatuses(REFEREE_AUDIT_2, REFEREE_AUDIT_ADJUDICATIONS);
+    expect(st.map((x) => x.status_now)).toEqual(["fixed_and_rescored", "fixed_and_rescored", "fixed_and_rescored", "fixed_and_rescored"]);
+    // Without the published correction the headline says they aren't all re-scored.
+    expect(censusHeadline(REFEREE_AUDIT_2, REFEREE_AUDIT, disagreementStatuses(REFEREE_AUDIT_2, REFEREE_AUDIT_ADJUDICATIONS, []))).toContain("0 of the 4 are now fixed and re-scored; 4 are not yet.");
+  });
+
+  it("shows the census first, with audit 1 underneath as the first pass on a sample", async () => {
+    const page = decode(await (await fetchWorker("/benchmark/validity")).text());
+    const census = page.indexOf(CENSUS);
+    const label = page.indexOf("Referee audit 1, the first pass, on a sample, that found the 4 errors:");
+    const a1 = page.indexOf("At the time of the audit (5 Nov 2026)");
+    expect(census).toBeGreaterThan(0);
+    expect(label).toBeGreaterThan(census);
+    expect(a1).toBeGreaterThan(label);
+    expect(page.indexOf('id="referee-audit-2"')).toBeLessThan(page.indexOf('id="referee-audit"'));
+    expect(page).toContain("Referee audit 1 (2026-11-05): the first pass, on a sample, that found the 4 errors</h2>");
+    for (const f of ["/benchmark/validity/referee-audit-2.json", "/benchmark/validity/referee-audit-2-per-trap.csv", "/benchmark/validity/referee-audit-2-disagreements.csv"]) expect(page).toContain(`href="${f}"`);
+    const data = await (await fetchWorker("/benchmark/validity.json")).json<any>();
+    expect(data.headlines[0]).toBe(CENSUS);
+    expect(data.referee_audit_2).toMatchObject({ audit_id: "referee-audit-2", same_disagreements_as: "referee-audit-1", overall: { agree: 1433, n: 1437 } });
+    expect(data.claim_review).toEqual({ traps_read_from_free_text: ["FA-CLM-001", "FA-CLM-003"], fall_rates_are_lower_bounds: true, figures_published: false });
+    const bench = decode(await (await fetchWorker("/benchmark")).text());
+    expect(bench).toContain("1,433 of 1,437 trap verdicts agreed, across every public ranked replay (375 runs, 2026-11-06)");
+  });
+
+  it("serves the census files as frozen, with public runs only", async () => {
+    const res = await fetchWorker("/benchmark/validity/referee-audit-2.json");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe(`${JSON.stringify(REFEREE_AUDIT_2, null, 1)}\n`);
+    expect(text).not.toMatch(SHOWS_EMBARGOED);
+    expect(REFEREE_AUDIT_2.frame.definition).toMatch(/public seeds only, no held event, no embargoed model, no private job/);
+    for (const p of ["/benchmark/validity/referee-audit-2-per-trap.csv", "/benchmark/validity/referee-audit-2-disagreements.csv"]) {
+      const r = await fetchWorker(p);
+      expect(r.status, p).toBe(200);
+      const body = await r.text();
+      expect(body.split("\n")[1], p).toMatch(/^referee-audit-2,/);
+      expect(body, p).not.toMatch(SHOWS_EMBARGOED);
+    }
+    // Nothing of the claim-trap review's private files is served.
+    expect((await fetchWorker("/benchmark/validity/referee-audit-2-claims.json")).status).toBe(404);
+  });
+});
+
+describe("FA-CLM-001 and FA-CLM-003: fall rates shown as lower bounds", () => {
+  it("covers exactly the two false payment-claim traps that read free text, and never says at least 100%", () => {
+    expect([...LOWER_BOUND_TRAPS]).toEqual(["FA-CLM-001", "FA-CLM-003"]);
+    expect([atLeast("FA-CLM-001", 0.375), atLeast("FA-CLM-003", 0), atLeast("FA-CLM-001", 1), atLeast("FA-CLM-002", 0.5)]).toEqual([true, false, false, false]);
+  });
+
+  it("their trap pages say at least, with the reason, and link the review; other traps don't", async () => {
+    for (const id of LOWER_BOUND_TRAPS) {
+      const page = decode(await (await fetchWorker(`/arena/failures/${id}`)).text());
+      expect(page, id).toContain(`<b>This fall rate is a lower bound.</b> ${LOWER_BOUND_WHY} See the <a href="/benchmark/validity#claim-review">claim-trap class review</a> in the validity pack.`);
+      const json = await (await fetchWorker(`/arena/failures/${id}?format=json`)).json<any>();
+      expect(json.rate_reading, id).toBe("lower_bound_referee_reads_free_text_and_can_miss_false_claims");
+      if (json.overall && json.overall.rate > 0 && json.overall.rate < 1) expect(page, id).toContain(`at least ${Math.round(json.overall.rate * 100)}%: fell in at least ${json.overall.fell} of ${json.overall.n}`);
+      // At 0% the rate reads plainly ("at least 0 of 59" is nonsense); the lower-bound note above still applies.
+      if (json.overall && json.overall.rate === 0) expect(page, id).not.toMatch(/at least 0/);
+    }
+    const other = decode(await (await fetchWorker("/arena/failures/FA-CLM-002")).text());
+    expect(other).not.toContain("This fall rate is a lower bound.");
+    expect(other).not.toMatch(/at least \d+%/);
+    expect((await (await fetchWorker("/arena/failures/FA-CLM-002?format=json")).json<any>()).rate_reading).toBeUndefined();
+  });
+
+  it("the failure board marks only their rows, and says why", async () => {
+    const page = decode(await (await fetchWorker("/arena/failures?tier=hard")).text());
+    expect(page).toContain(`FA-CLM-001 and FA-CLM-003 rates are lower bounds, marked "at least" where above 0%: the referee reads the agent's free-text messages for those traps`);
+    const json = await (await fetchWorker("/arena/failures?tier=hard&format=json")).json<any>();
+    const rows = json.families.flatMap((f: any) => f.traps);
+    expect(rows.filter((r: any) => r.rate_reading).map((r: any) => r.id).sort()).toEqual(rows.map((r: any) => r.id).filter((id: string) => LOWER_BOUND_TRAPS.includes(id)).sort());
+    // Where a lower-bound row has a measured cell, the board shows it as "at least"; every other cell stays bare.
+    for (const r of rows) {
+      const cells = Object.values(r.cells).filter(Boolean) as any[];
+      if (!cells.length) continue;
+      const row = page.slice(page.indexOf(`<tr id="${r.id}">`), page.indexOf("</tr>", page.indexOf(`<tr id="${r.id}">`)));
+      expect(row.includes("<b>at least "), r.id).toBe(LOWER_BOUND_TRAPS.includes(r.id) && cells.some((x) => x.rate > 0 && x.rate < 1));
+    }
   });
 });

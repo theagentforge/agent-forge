@@ -135,12 +135,17 @@ export const tools = sqliteTable("tools", {
 });
 
 /** Other ids that refer to the same tool (e.g. its npm package, GitHub repo and MCP Registry name). */
-export const toolAliases = sqliteTable("tool_aliases", {
-  alias: text("alias").primaryKey(),
-  toolId: text("tool_id")
-    .notNull()
-    .references(() => tools.id),
-});
+export const toolAliases = sqliteTable(
+  "tool_aliases",
+  {
+    alias: text("alias").primaryKey(),
+    toolId: text("tool_id")
+      .notNull()
+      .references(() => tools.id),
+  },
+  // 7 Nov: lookups by tool_id scanned all ~51k rows (179M rows read a day on production).
+  (t) => [index("tool_aliases_tool").on(t.toolId)],
+);
 
 export const toolVersions = sqliteTable(
   "tool_versions",
@@ -1132,7 +1137,9 @@ export const toolDescriptionHistory = sqliteTable(
  * (npm) and the PyPI servers the weekly sweep has seen start (the nightly run is npm only). `enumerated_at` is set once
  * the registry's version list has been read.
  */
-export const toolHistoryServers = sqliteTable("tool_history_servers", {
+export const toolHistoryServers = sqliteTable(
+  "tool_history_servers",
+  {
   /** npm:<package> or pypi:<package>, as the House tester names it */
   server: text("server").primaryKey(),
   registry: text("registry").notNull(),
@@ -1148,7 +1155,10 @@ export const toolHistoryServers = sqliteTable("tool_history_servers", {
   /** Stable versions published since the backfill's start date, as listed by the registry */
   versionsListed: integer("versions_listed"),
   addedAt: integer("added_at").notNull(),
-});
+  },
+  // 7 Nov: driftTick's per-tool subquery looked servers up by tool_id with no index (~8M rows read a run).
+  (t) => [index("tool_history_servers_tool").on(t.toolId)],
+);
 
 /**
  * ADR 0134: the backfill queue, one row per server + published version. pending → done | failed (with a failure class

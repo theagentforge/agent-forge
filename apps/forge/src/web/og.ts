@@ -17,6 +17,7 @@ import { stampOf } from "./duel";
 import { labTotals } from "./home-wire";
 import { EXPERIMENTS } from "./experiments";
 import { rulesSpan } from "../arena/rules-label";
+import { atLeast } from "../arena/lower-bound-traps";
 import { PLAY, robotSvg, stampWord, svgAt } from "../../public/gauntlet.js";
 import { failCard, verifiedReplay, type CardKind } from "../arena/fail-card";
 import { trapBoard } from "../arena/failures";
@@ -538,11 +539,13 @@ site.get("/og/trap-card.png", (c) =>
 export function failureCardLines(b: NonNullable<Awaited<ReturnType<typeof trapBoard>>>) {
   const o = b.overall;
   const worst = b.models[0];
+  // FA-CLM-001/003: a lower bound (lower-bound-traps.ts).
+  const lb = o ? atLeast(b.entry.id, o.rate) : false;
   return {
     label: `FAILURE MODE · ${b.entry.id}`,
     family: TRAP_FAMILIES[b.entry.family].name,
     headline: b.entry.description,
-    stat: o ? `Fell for it in ${o.fell} of ${o.n} ranked attempts (${Math.round(o.rate * 100)}%) · ${b.models.length} ${b.models.length === 1 ? "model" : "models"}${o.early ? " · Early read" : ""}` : "No ranked attempts yet",
+    stat: o ? `Fell for it in ${lb ? "at least " : ""}${o.fell} of ${o.n} ranked attempts (${Math.round(o.rate * 100)}%) · ${b.models.length} ${b.models.length === 1 ? "model" : "models"}${o.early ? " · Early read" : ""}` : "No ranked attempts yet",
     /** F-01: the rules that scored these attempts. */
     rules: rulesSpan(b.rulesVersions),
     worst: worst && worst.cell.fell ? `Highest so far: ${worst.name}, ${worst.cell.fell} of ${worst.cell.n}` : null,

@@ -1,3 +1,4 @@
+import { legalNextInForce } from "../src/web/legal";
 import { env } from "cloudflare:workers";
 import { grossNumbers } from "../src/services/public-stats";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,7 +97,9 @@ describe("public site", () => {
   it.each(["/terms", "/privacy"])("%s is the approved version, not a draft", async (path) => {
     const { body } = await page(path);
     expect(body).toContain("Dinike Jayamaha");
-    expect(body).toContain(path === "/privacy" ? "Version 1.1" : "Version 1.0");
+    // Terms 1.1 / Privacy 1.2 (approved 23 Oct) switch on by themselves on 7 Nov 2026 (web/legal.ts NEXT_LEGAL).
+    const next = legalNextInForce();
+    expect(body).toContain(path === "/privacy" ? (next ? "Version 1.2 · in force from 7 November 2026" : "Version 1.1") : next ? "Version 1.1 · in force from 7 November 2026" : "Version 1.0");
     const text = body.split('class="prose"')[1]?.split("</div>")[0] ?? "";
     expect(text).not.toMatch(/draft|\[/i);
   });

@@ -1,3 +1,4 @@
+import { PASS_FAIL_FALL } from "../arena/terms";
 import { rulesFields } from "../arena/rules-label";
 import {
   CANARY,
@@ -275,6 +276,7 @@ site.get("/arena/event/:slug", async (c) => {
     body: html`<p class="eyebrow">${card.event.kind === "practice" ? "Practice · not ranked" : SEASON.name}</p>
 <h1 class="page-title">${card.event.name}</h1>
 <p class="small"><a href="/arena/event/${card.event.slug}/falls">Attempts that fell for a trap</a></p>
+<p class="small muted" data-terms>${PASS_FAIL_FALL}</p>
 ${data ? html`<p class="muted">Every attempt, one row each: <a href="${files}.csv" download>CSV</a> · <a href="${files}.json">JSON</a>. ${DATASET_LICENCE}</p>` : ""}
 ${card.bouts.map(
   (b) => html`<section><div class="section-head"><h2>${b.task.title}</h2><a class="more" href="/best/${b.task.id}">Task guide</a></div>
@@ -325,6 +327,7 @@ site.get("/arena/event/:slug/falls", async (c) => {
     body: html`<p class="eyebrow"><a href="${path}">${event.name}</a> · Traps sprung</p>
 <h1 class="page-title">${falls.length} of ${runs.length} attempts fell for a trap</h1>
 <p class="lead">Each attempt where the referee found a planted trap sprung in ${event.name}. Running out of time or moves isn't counted as a fall.</p>
+<p class="small muted" data-terms>${PASS_FAIL_FALL}</p>
 ${falls.length
   ? html`<ul class="runs">${falls.map((f) => html`<li><a href="/arena/run/${f.id}">${modelName(f.model)} · ${taskById(f.task)?.title ?? f.task} · variant ${f.seed} · attempt ${f.attempt}</a> <span class="outcome o-failed">⚠ ${f.traps.map((x) => x.label).join("; ")}</span>${f.traps.filter((x) => x.public_id).map((x) => html` <a class="muted" href="/arena/failures/${x.public_id}">${x.public_id}</a>`)}</li>`)}</ul>`
   : html`<p class="empty">No trap sprung in this event.</p>`}

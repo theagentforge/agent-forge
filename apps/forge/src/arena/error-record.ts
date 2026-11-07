@@ -4,6 +4,7 @@ import { count } from "drizzle-orm";
 import * as t from "../db/schema";
 import AUDIT_1 from "../seed/validity/referee-audit-1.json";
 import ADJUDICATIONS_1 from "../seed/validity/referee-audit-1-adjudications.json";
+import AUDIT_2 from "../seed/validity/referee-audit-2.json";
 import type { Db } from "../services/db";
 import { TRAP_SET } from "./benchmark";
 import { CORRECTIONS, type Correction } from "./corrections";
@@ -17,6 +18,13 @@ import { finishedRuns } from "./views";
 // present, complete and every disagreement in it is resolved.
 
 export const REFEREE_AUDIT: AuditResult = AUDIT_1 as unknown as AuditResult;
+/**
+ * Referee audit 2 (ADR 0136 Amendment 1): the census, every public ranked replay on 6 Nov 2026, same checker and method.
+ * Published on the validity page from 7 Nov (Dinike). Its frame holds public runs only (public seeds, no held event, no
+ * embargoed model, no private job). Its 4 disagreements are audit 1's 4, so their status today is read from audit 1's
+ * adjudications.
+ */
+export const REFEREE_AUDIT_2: AuditResult = AUDIT_2 as unknown as AuditResult;
 
 type Outcome = NonNullable<AuditResult["disagreements"][number]["resolution"]>["outcome"];
 /**
@@ -148,30 +156,51 @@ async function disputeCounts(db: Db) {
   return { open: get("open"), upheld: get("resolved"), rejected: get("rejected"), about_traps_or_arena_verdicts: trapLinked };
 }
 
+/**
+ * The full re-score behind a published, applied correction, in one plain sentence from its counts (the same counts
+ * /results-policy shows). Every published run of the affected jobs was replayed, practice runs included.
+ */
+export function fullRescoreText(c: Correction) {
+  const n = c.counts;
+  if (!n) return "";
+  const s = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  const unfaithful = n.unfaithful ? ` ${n.unfaithful} more couldn't be replayed exactly (the job changed since they ran) and weren't re-scored.` : "";
+  const excluded = n.excluded ? ` ${n.excluded} Hard v3 runs played before rules 0.3 used another harness and weren't re-scored.` : "";
+  return `The full re-score (correction ${c.id}, ${dayText(c.date)}) replayed every published run of the affected jobs, practice runs included: ${n.changed} of ${n.checked} changed verdict (${n.passToFail} pass to fail, ${n.failToPass} fail to pass), across ${s(n.events, "event")} and ${s(n.models, "model")}.${unfaithful}${excluded}`;
+}
+
 const runUrl = (origin: string, id: string) => `${origin}/arena/run/${id}`;
 const day = (iso: string) => iso.slice(0, 10);
 
 /** Every entry, newest first. Pass `db` for the live parts (applied re-scores, disputes). */
-export async function errorRecord(db: Db, origin: string, audit: AuditResult = REFEREE_AUDIT): Promise<{ entries: ErrorEntry[]; disputes: Awaited<ReturnType<typeof disputeCounts>> }> {
+export async function errorRecord(db: Db, origin: string, audit: AuditResult = REFEREE_AUDIT, corrections: readonly Correction[] = CORRECTIONS): Promise<{ entries: ErrorEntry[]; disputes: Awaited<ReturnType<typeof disputeCounts>> }> {
   const entries: ErrorEntry[] = [];
   for (const r of RULES_HISTORY.filter((x) => Object.hasOwn(RULES_TRAPS, x.version))) {
     entries.push({ date: r.date, kind: "rules_change", title: `Referee rules changed: ${r.version}`, what: r.change, status: "applied", traps: RULES_TRAPS[r.version] ?? [], runs: [], source: `${origin}/benchmark/changelog` });
   }
   const applied = await appliedRescores(db);
+  // The published, applied corrections: each carries the counts of the full re-score (every published run of the
+  // affected jobs, practice runs included), which the ranked-run notes alone don't show.
+  const fullRescores = corrections.filter((c) => c.published && c.applied && c.counts);
   for (const [rules, g] of applied) {
+    const full = fullRescores.find((c) => c.rules === rules);
     entries.push({
       date: g.at ? day(g.at) : "unknown",
       kind: "rescore_applied",
       title: `Published runs re-scored under ${rules}`,
-      what: `${g.runs} published ranked run${g.runs === 1 ? "" : "s"} carry a ${rules} re-score note; ${g.changed} changed verdict (${g.passToFail} pass to fail, ${g.failToPass} fail to pass). The signed logs are unchanged; each re-scored result keeps the verdict it had before in its note.`,
+      what: `${g.runs} published ranked run${g.runs === 1 ? "" : "s"} carry a ${rules} re-score note; ${g.changed} changed verdict (${g.passToFail} pass to fail, ${g.failToPass} fail to pass). The signed logs are unchanged; each re-scored result keeps the verdict it had before in its note.${full ? ` ${fullRescoreText(full)}` : ""}`,
       status: "applied",
       traps: RULES_TRAPS[rules] ?? [],
       runs: g.ids.map((id) => runUrl(origin, id)),
-      source: "stored re-score notes on published runs (arena_runs.result.rescored)",
+      source: full ? `stored re-score notes on published runs (arena_runs.result.rescored); ${origin}/results-policy#${full.id}` : "stored re-score notes on published runs (arena_runs.result.rescored)",
     });
   }
+  // A published correction with no ranked-run note still gets its own entry, so the record misses no re-score.
+  for (const c of fullRescores.filter((x) => !applied.has(x.rules))) {
+    entries.push({ date: c.date, kind: "rescore_applied", title: `Published runs re-scored under ${c.rules}`, what: fullRescoreText(c), status: "applied", traps: RULES_TRAPS[c.rules] ?? [], runs: [], source: `${origin}/results-policy#${c.id}` });
+  }
   const next = nextTrapSetMinor();
-  for (const c of CORRECTIONS.filter((x) => !x.published)) {
+  for (const c of corrections.filter((x) => !x.published)) {
     const r = RULES_HISTORY.find((x) => x.version === c.rules);
     entries.push({
       date: r?.date ?? c.date,
@@ -223,7 +252,7 @@ export async function errorRecord(db: Db, origin: string, audit: AuditResult = R
       date: audit.date,
       kind: "reproduce_difference",
       title: `Reproduce check: today's referee scores a ${v.task} run differently in part`,
-      what: `Re-run on the recorded trace, the referee in force now differs from the published result: ${v.differences.filter((x) => !x.startsWith("replayed event")).join("; ")}. Pass/fail ${v.differences.some((x) => x.startsWith("pass/fail")) ? "differs" : "is the same"}. Open: to be explained before the next Trap Set version.`,
+      what: `Re-run on the recorded trace, the referee in force now differs from the published result: ${v.differences.filter((x) => !x.startsWith("replayed event")).join("; ")}. Pass/fail ${v.differences.some((x) => x.startsWith("pass/fail")) ? "differs" : "is the same"}. Open: not yet explained.`,
       status: "open",
       traps: v.differences.flatMap((x) => {
         const m = /^trap (\S+):/.exec(x);

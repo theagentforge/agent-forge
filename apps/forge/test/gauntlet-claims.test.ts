@@ -8,7 +8,7 @@ import { getDb } from "../src/services/db";
 import { sha256Hex } from "../src/services/digest";
 import { growthStats } from "../src/services/growth";
 import { growthKpis } from "../src/services/kpis";
-import { GAUNTLET_CLAIM_SENTENCE } from "../src/web/legal";
+import { GAUNTLET_CLAIM_SENTENCE, NEXT_LEGAL, legalNextInForce } from "../src/web/legal";
 import { newSession, SESSION_COOKIE } from "../src/web/session";
 import { connectAgent, connectApprovedAgent, fetchWorker } from "./helpers";
 import "../src/index";
@@ -183,6 +183,8 @@ describe("claim this run (ADR 0048)", () => {
     expect(GAUNTLET_CLAIM_SENTENCE).toBe(CLAIM_NOTICE);
     const privacy = await page("/privacy");
     expect(privacy).toContain(GAUNTLET_CLAIM_SENTENCE.replace(/'/g, "&#39;"));
-    expect(privacy).toContain("a sentence on claiming a Gauntlet run");
+    // Before 7 Nov 2026 the page announced the change; from then the sentence is in force without a "From" marker.
+    if (legalNextInForce()) expect(privacy).not.toContain(`From ${NEXT_LEGAL.date}`);
+    else expect(privacy).toContain("a sentence on claiming a Gauntlet run");
   });
 });

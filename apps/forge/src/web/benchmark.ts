@@ -29,7 +29,7 @@ import { copyBlock, more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { frozenVersionsBlock } from "./benchmark-versions";
 import { benchmarkDatasetLd } from "./structured-data";
-import { REFEREE_AUDIT, validityGate } from "../arena/error-record";
+import { REFEREE_AUDIT, REFEREE_AUDIT_2, validityGate } from "../arena/error-record";
 import { VALIDITY_PATH } from "../arena/validity";
 import { validityReleased } from "./validity-release";
 
@@ -38,7 +38,13 @@ const validityLine = (env: Env) => {
   // Only once the validity pack is released (VALIDITY_PUBLIC on); an admin previews it at /benchmark/validity itself.
   if (!validityReleased(env) || !validityGate(REFEREE_AUDIT).ok) return html``;
   const o = REFEREE_AUDIT.overall;
-  return html`<p class="small" id="validity"><b>Independent re-grade by code:</b> ${o.agree} of ${o.n} sampled trap verdicts agreed (${REFEREE_AUDIT.sample.runs} replays). <a href="${VALIDITY_PATH}">Referee audit, contamination test, error record and reproducibility kit</a>.</p>`;
+  const n = (x: number) => x.toLocaleString("en-US");
+  // Audit 2 (every public ranked replay) leads once it passes the gate; audit 1's sample figures otherwise.
+  const census = validityGate(REFEREE_AUDIT_2).ok ? REFEREE_AUDIT_2 : null;
+  const figures = census
+    ? `${n(census.overall.agree)} of ${n(census.overall.n)} trap verdicts agreed, across every public ranked replay (${n(census.frame.runs)} runs, ${census.date})`
+    : `${o.agree} of ${o.n} sampled trap verdicts agreed (${REFEREE_AUDIT.sample.runs} replays)`;
+  return html`<p class="small" id="validity"><b>Independent re-grade by code:</b> ${figures}. Independent of the referee's code, not of the written rules. <a href="${VALIDITY_PATH}">Referee audits, contamination test, error record and reproducibility kit</a>.</p>`;
 };
 
 // The Forge Trap Set (ADR 0068): /benchmark (page), /benchmark/v1.json (the data), /benchmark/v1/schema.json (the

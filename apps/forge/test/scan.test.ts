@@ -1,3 +1,4 @@
+import { legalNextInForce } from "../src/web/legal";
 import { SCAN_RULES } from "@forge/shared";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
@@ -146,14 +147,15 @@ describe("the launch scan dataset (ADR 0026)", () => {
 });
 
 describe("the Privacy Policy covers scans and Gauntlet runs (issue #108, approved 19 Oct)", () => {
-  it("lists both, at version 1.1, while the Terms stay at 1.0", async () => {
+  it("lists both, at version 1.1 (1.2 from 7 Nov 2026), while the Terms stay at 1.0 (1.1 from 7 Nov 2026)", async () => {
+    const next = legalNextInForce();
     const privacy = await (await fetchWorker("/privacy", { headers: { Accept: "text/html" } })).text();
-    expect(privacy).toContain("Version 1.1 · in force from 19 October 2026");
+    expect(privacy).toContain(next ? "Version 1.2 · in force from 7 November 2026" : "Version 1.1 · in force from 19 October 2026");
     expect(privacy).toContain("Skill scans (no account)");
     expect(privacy).toContain("Never the pasted text");
     expect(privacy).toContain("Gauntlet runs (no account)");
     const terms = await (await fetchWorker("/terms", { headers: { Accept: "text/html" } })).text();
-    expect(terms).toContain("Version 1.0");
+    expect(terms).toContain(next ? "Version 1.1 · in force from 7 November 2026" : "Version 1.0");
   });
 });
 

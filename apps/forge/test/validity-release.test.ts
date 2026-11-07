@@ -19,6 +19,9 @@ const PATHS = [
   "/benchmark/validity/referee-audit-1.json",
   "/benchmark/validity/referee-audit-1-per-trap.csv",
   "/benchmark/validity/referee-audit-1-disagreements.csv",
+  "/benchmark/validity/referee-audit-2.json",
+  "/benchmark/validity/referee-audit-2-per-trap.csv",
+  "/benchmark/validity/referee-audit-2-disagreements.csv",
   "/benchmark/validity/error-record.json",
   "/benchmark/validity/error-record.csv",
 ];
@@ -94,13 +97,20 @@ describe("validity pack release switch", () => {
     expect(await (await get("/arena/failures/FA-CLM-001?released=1", ON)).text()).toContain("Dispute and correction history");
   });
 
-  it("referee audit 2 (ADR 0136 Amendment 1) is served nowhere: 404 off, on and for an admin, and no page names it", async () => {
-    for (const f of ["referee-audit-2.json", "referee-audit-2-adjudications.json", "referee-audit-2-claims.json", "referee-audit-2-claims-corpus.json"])
+  it("the claim-trap review's files (ADR 0136 Amendment 1) are served nowhere: 404 off, on and for an admin, and no page names them", async () => {
+    for (const f of ["referee-audit-2-adjudications.json", "referee-audit-2-claims.json", "referee-audit-2-claims-corpus.json"])
       for (const [e, headers] of [[OFF, {}], [ON, {}], [OFF, { Cookie: adminCookie }]] as [Env, Record<string, string>][]) {
         const res = await get(`/benchmark/validity/${f}`, e, headers);
         expect(res.status, f).toBe(404);
       }
     for (const [e, headers] of [[ON, {}], [OFF, { Cookie: adminCookie }]] as [Env, Record<string, string>][])
-      expect(await (await get("/benchmark/validity.json?a2=1", e, headers)).text()).not.toMatch(/referee-audit-2|claim-review/);
+      expect(await (await get("/benchmark/validity.json?a2=1", e, headers)).text()).not.toMatch(/referee-audit-2-claims|claim-review\.ts|corpus/);
+  });
+
+  it("referee audit 2's census files (published 7 Nov) follow the release switch: 404 off, 200 on", async () => {
+    for (const f of ["referee-audit-2.json", "referee-audit-2-per-trap.csv", "referee-audit-2-disagreements.csv"]) {
+      expect((await get(`/benchmark/validity/${f}?census-off=1`, OFF)).status, f).toBe(404);
+      expect((await get(`/benchmark/validity/${f}?on=1`, ON)).status, f).toBe(200);
+    }
   });
 });
