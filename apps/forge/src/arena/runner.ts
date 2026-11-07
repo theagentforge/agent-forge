@@ -1,4 +1,4 @@
-import { anyTaskById, Attempt, attemptScore, heldOutSeeds, isAnyHeldOutSeed, isDevSplitSeed, isPracticeOnly, RULES_VERSION, SEASON, taskVersion, twistById, type AttemptCheckpoint, type Caps, type AttemptResult, type LogEvent } from "@forge/arena";
+import { anyTaskById, Attempt, attemptScore, FRONTIER_FREEZE, heldOutSeeds, isFrontierTask, isAnyHeldOutSeed, isDevSplitSeed, isPracticeOnly, RULES_VERSION, SEASON, taskVersion, twistById, type AttemptCheckpoint, type Caps, type AttemptResult, type LogEvent } from "@forge/arena";
 import { and, asc, eq, gte, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as t from "../db/schema";
@@ -679,6 +679,11 @@ export const planSchema = z.strictObject({
   })
   .refine((p) => p.kind === "practice" || !p.tasks.some(isPracticeOnly), {
     message: "Private job families run in practice events only until promoted (ADR 0057)",
+  })
+  // ADR 0139 protocol 1 (Amendment 5): the frontier calibration seeds (900001 to 900010) never rank a frontier job, in
+  // any ranked kind (a card already needs seeds of 1,000,000 or more; a guest event doesn't).
+  .refine((p) => p.kind === "practice" || !p.tasks.some(isFrontierTask) || !p.seeds.some((s) => (FRONTIER_FREEZE.devSeeds as readonly number[]).includes(s)), {
+    message: "The frontier calibration seeds (900001 to 900010) run in practice events only (ADR 0139)",
   });
 
 /**

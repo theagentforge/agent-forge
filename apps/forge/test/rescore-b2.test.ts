@@ -278,7 +278,9 @@ describe("Trap Set 1.1 and 1.2", () => {
   it("is 1.1 (Hard v3.3) until the re-score correction is applied and published; then the next minor, 1.2, dated, with a changelog line", () => {
     // Published 6 Nov with the production apply counts (src/arena/corrections.ts): the live set is 1.2, dated that day.
     const live = trapSetVersions();
-    expect(live.map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2"]);
+    // Trap Set 1.3 (Frontier 1.0; ADR 0139 Amendment 5) follows 1.2 with its rules.
+    expect(live.map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2", "1.3"]);
+    expect(live[4]).toMatchObject({ date: "2026-11-07", rules: "rules 0.7", task_versions: [...live[3]!.task_versions, "Frontier 1.0"] });
     expect(live[3]).toMatchObject({ date: "2026-11-06", rules: "rules 0.7", task_versions: live[2]!.task_versions });
     expect(live[3]!.change).toContain("581 published runs replayed from their signed logs, 12 changed verdict");
     // Until the correction is applied, published and counted, there is no 1.2.
@@ -286,7 +288,9 @@ describe("Trap Set 1.1 and 1.2", () => {
     expect(trapSetVersions([{ ...applied, published: false }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
     expect(trapSetVersions([{ ...applied, counts: null }]).map((v) => v.version)).toEqual(["1.0", "1.0.1", "1.1"]);
     const v = trapSetVersions([applied]);
-    expect(v.map((x) => x.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2"]);
+    // 1.3 exists only after 1.2, and is never dated before it.
+    expect(v.map((x) => x.version)).toEqual(["1.0", "1.0.1", "1.1", "1.2", "1.3"]);
+    expect(v[4]!.date).toBe("2026-11-09");
     // 1.2 is scored under the correction's rules (rules 0.7, in force once it is applied; ADR 0140).
     expect(v[3]).toMatchObject({ date: "2026-11-09", rules: applied.rules, task_versions: v[2]!.task_versions });
     expect(applied.rules).toBe("rules 0.7");

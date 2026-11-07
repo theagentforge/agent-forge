@@ -1,4 +1,4 @@
-import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, trapEntry, type AttemptResult } from "@forge/arena";
+import { FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, trapEntry, type AttemptResult } from "@forge/arena";
 import { TRAP_CARD_VERSION, TRAP_CHECKS } from "@forge/shared";
 import type * as schema from "../db/schema";
 import type { Db } from "../services/db";
@@ -74,7 +74,7 @@ export async function trapsData(db: Db, f: TrapsFilter = {}, origin = ""): Promi
   const headline = ev ? (f.event!.kind === "practice" ? [] : ev) : (await finishedRuns(db, { kinds: ["card", "guest"], ...q })).filter((r) => tierOf(r.summary.task) === tier);
   const runs = ev ?? (headline.length ? headline : (await finishedRuns(db, { kinds: ["practice"], ...q })).filter((r) => tierOf(r.summary.task) === tier));
   const mine = f.model ? runs.filter((r) => r.summary.model === f.model) : runs;
-  const pool = tier === "hard" ? [...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].filter((t) => mine.some((r) => r.summary.task === t.id)) : TASKS;
+  const pool = tier === "hard" ? [...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS].filter((t) => mine.some((r) => r.summary.task === t.id)) : TASKS;
   const tasks = pool.filter((t) => !f.task || t.id === f.task).map((task) => {
     const results: AttemptResult[] = mine.filter((r) => r.summary.task === task.id).map((r) => r.result);
     return {

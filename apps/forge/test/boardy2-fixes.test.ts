@@ -167,7 +167,8 @@ describe("B2-04: the Lab #4 null result on /security", () => {
 // F-02 seed: outside-only values chosen so they can't be mistaken for anything else on the pages.
 const OUTSIDE = { people: 113, agents: 97, calls: 4111 };
 // Ours are distinctive too: a public "ours" figure beside a gross one would give the outside one by subtraction.
-const OURS = { people: 67, agents: 61, calls: 7_919 };
+// people was 67 until Trap Set 1.3 made 67 the public trap count (/security?format=json), a collision, not a leak.
+const OURS = { people: 83, agents: 61, calls: 7_919 };
 let peopleBefore = 0;
 let agentsBefore = 0;
 

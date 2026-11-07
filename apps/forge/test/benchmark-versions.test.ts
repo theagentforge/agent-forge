@@ -1,4 +1,4 @@
-import { CANARY, CANARY_GUID, heldOutSeeds, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
+import { CANARY, CANARY_GUID, FRONTIER_FREEZE, heldOutSeeds, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
 import { describe, expect, it } from "vitest";
 import { TRAP_SET, TRAP_SET_1_1_CORRECTION, TRAP_SET_VERSIONS, trapSetVersions } from "../src/arena/benchmark";
 import {
@@ -37,8 +37,9 @@ describe("frozen snapshots", () => {
   it("a version bump without a snapshot fails the release check (1.2 once the re-score is applied; ADR 0132)", () => {
     const applied = CORRECTIONS.map((c) => (c.id === TRAP_SET_1_1_CORRECTION ? { ...c, published: true, applied: true, counts: { checked: 10, changed: 1, passToFail: 1, failToPass: 0, events: 1, models: 1 } } : c));
     const bumped = trapSetVersions(applied as typeof CORRECTIONS);
-    expect(bumped.at(-1)!.version).toBe("1.2");
-    expect(missingSnapshots(bumped)).toEqual(snapshotOf("1.2") ? [] : ["1.2"]);
+    // 1.3 (Frontier 1.0, ADR 0139 Amendment 5) follows 1.2 since 7 Nov.
+    expect(bumped.map((v) => v.version).slice(-2)).toEqual(["1.2", "1.3"]);
+    expect(missingSnapshots(bumped)).toEqual(["1.2", "1.3"].filter((v) => !snapshotOf(v)));
   });
 
   it("no snapshot's bytes have changed since it was frozen", async () => {
@@ -53,6 +54,7 @@ describe("frozen snapshots", () => {
     "1.0.1": "e6fb92c0da4f3e69421d04273cbff00c80972b10d1e22ec2c10043bed75ee0b9",
     "1.1": "f9e99c6a8d7cb6994697d27015728ab79c443dff10a0e79afb40edd26b4caff1",
     "1.2": "9e3a13d8790eb527a8ef9827fd533f426dd4766b3b8ce4200ad506563eb7fe9f",
+    "1.3": "49b015b3917f670e3e95b839176acee6f74c0e5420b4450d48e966aa9da07411",
   };
   it("every snapshot's sha256 equals the one pinned when it was frozen (an edit plus a re-index still fails)", async () => {
     expect(Object.keys(FROZEN_SHA256)).toEqual(SNAPSHOTS.map((s) => s.version));
@@ -89,6 +91,13 @@ describe("frozen snapshots", () => {
     expect(v11.snapshot).toMatchObject({ kind: "frozen", original_bytes: true, made_on: "2026-11-05" });
     expect(v11.counts.traps).toBe(45);
     expect(v11.traps.filter((t: any) => t.since === "Hard v3.3").map((t: any) => t.id)).toEqual(["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]);
+    // Trap Set 1.3 (ADR 0139 Amendment 5): Frontier 1.0's 22 traps, frozen the day they were promoted, from the
+    // promotion commit; no held-out variant, private id or calibration note in it.
+    const v13 = parseSnapshot(snapshotOf("1.3")!);
+    expect(v13.snapshot).toMatchObject({ kind: "frozen", original_bytes: true, made_on: "2026-11-07", from_commit: "56349f03941df8cfb6197feecee5fbaac7c4ccd8" });
+    expect(v13.counts).toMatchObject({ traps: 67, families: 10, jobs: 9, tasks: 24 });
+    expect(v13.traps.filter((t: any) => t.since === "Frontier 1.0").map((t: any) => t.id)).toEqual([...FRONTIER_FREEZE.traps].sort());
+    expect(snapshotOf("1.3")!.text).not.toMatch(/-frontier-x|Round [123]: /);
   });
 
   it("the current version's snapshot matches the code: a trap change without a version bump fails here", () => {

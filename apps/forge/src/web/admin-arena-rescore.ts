@@ -1,4 +1,4 @@
-import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, RULES_0_6_TASKS, RULES_VERSION, TASKS } from "@forge/arena";
+import { FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, RULES_0_6_TASKS, RULES_VERSION, TASKS } from "@forge/arena";
 import { eq, inArray } from "drizzle-orm";
 import { html } from "hono/html";
 import * as t from "../db/schema";
@@ -22,7 +22,7 @@ const page = { title: "Re-score report", description: "Which stored runs the cur
 /** The dry job this page starts: every event, published runs only, the jobs whose referee rules 0.6 changed. */
 export const RULES_0_6_DRY_JOB: RescoreJob = { events: [ALL_EVENTS], mode: "dry", tasks: [...RULES_0_6_TASKS], publicOnly: true };
 /** Every public job (Normal, Hard v2, Hard v3.1, Hard v3.2, Hard v3.3): the F-04 dry run's scope, and the one B2-01 applies. */
-export const PUBLIC_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((x) => x.id);
+export const PUBLIC_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS].map((x) => x.id);
 export const ALL_PUBLIC_DRY_JOB: RescoreJob = { events: [ALL_EVENTS], mode: "dry", tasks: PUBLIC_TASK_IDS, publicOnly: true };
 
 async function admin(c: Parameters<typeof currentSession>[0], humanId: string) {

@@ -168,7 +168,10 @@ describe("the dataset inventory (ADR 0040)", () => {
     expect(after.refereed_runs.with_trap_fall - before.refereed_runs.with_trap_fall).toBe(2);
     expect(after.calibration.per_task.find((x) => x.task === "inv-task")).toEqual({ task: "inv-task", n: 6, pass_rate: 50 });
     // The four private families (ADR 0057) count here, admin only; the public mirror has none.
-    expect(after.environments).toMatchObject({ task_families: 6 + Object.keys(PRIVATE_FAMILIES).length, job_versions: 21 + Object.values(PRIVATE_FAMILIES).flat().length });
+    // Trap Set 1.3 (ADR 0139 Amendment 5): the three frontier families join the public count (was 6 families, 21 job
+    // versions); their held-out variants don't.
+    expect(after.environments).toMatchObject({ task_families: 9 + Object.keys(PRIVATE_FAMILIES).length, job_versions: 24 + Object.values(PRIVATE_FAMILIES).flat().length });
+    expect(after.environments.tiers).toContain("Frontier 1.0");
     expect(after.controls).toEqual(DATA_CONTROLS);
     expect(Object.keys(dataSnapshotValues(after))).toContain("data_trap_falls");
   });

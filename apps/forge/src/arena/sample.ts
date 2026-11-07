@@ -505,7 +505,7 @@ export function sampleSchema(origin: string, spec: SampleSpec = SAMPLE_V1) {
     ],
     properties: {
       record_id: str,
-      trap_id: { type: "string", pattern: "^FA-(PAY|INJ|DUP|POL|AMT|CLM|DAT|TIM|PRM)-0\\d{2}$" },
+      trap_id: { type: "string", pattern: `^FA-(${Object.keys(TRAP_FAMILIES).join("|")})-0\\d{2}$` },
       trap_version: str,
       trap_kind: { type: "object", additionalProperties: false, required: ["family", "name"], properties: { family: { enum: Object.keys(TRAP_FAMILIES) }, name: str } },
       ruleset_version: { enum: [...SAMPLE_RULES] },

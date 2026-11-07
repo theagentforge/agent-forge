@@ -1,4 +1,4 @@
-import { CANARY, PRACTICE_ONLY_TASK_IDS, RULES_VERSION, taskVersion, type AttemptResult } from "@forge/arena";
+import { CANARY, isPrivateCalibrationRun, PRACTICE_ONLY_TASK_IDS, RULES_VERSION, taskVersion, type AttemptResult } from "@forge/arena";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "../services/db";
@@ -28,21 +28,21 @@ type Notice = typeof t.arenaEventNotices.$inferSelect;
 /** The earliest publication instant for a pack sent at `packSentAt` (ms). */
 export const earliestPublication = (packSentAt: number) => packSentAt + NOTICE_DAYS * DAY_MS;
 
-/** The runs a pack and a publication cover: finished, not held out, no embargoed model, no private job family. */
+/** The runs a pack and a publication cover: finished, not held out, no embargoed model, no private job family, no frontier calibration run. */
 async function packRows(db: Db, eventId: string) {
   const rows = await db.select().from(t.arenaRuns).where(and(eq(t.arenaRuns.eventId, eventId), eq(t.arenaRuns.status, "done"), eq(t.arenaRuns.heldOut, false))).orderBy(asc(t.arenaRuns.id));
-  return rows.filter((r) => !EMBARGOED_MODEL_IDS.includes(r.modelId) && !PRACTICE_ONLY_TASK_IDS.includes(r.task));
+  return rows.filter((r) => !EMBARGOED_MODEL_IDS.includes(r.modelId) && !PRACTICE_ONLY_TASK_IDS.includes(r.task) && !isPrivateCalibrationRun(r.task, r.seed));
 }
 
 /** The current digest of an event's pack runs without reading their logs (for the admin list and "Mark full pack sent"). */
 export async function packDigest(db: Db, eventId: string) {
   const rows = (
     await db
-      .select({ id: t.arenaRuns.id, passed: t.arenaRuns.passed, result: t.arenaRuns.result, signature: t.arenaRuns.signature, replaySeal: t.arenaRuns.replaySeal, modelId: t.arenaRuns.modelId, task: t.arenaRuns.task })
+      .select({ id: t.arenaRuns.id, passed: t.arenaRuns.passed, result: t.arenaRuns.result, signature: t.arenaRuns.signature, replaySeal: t.arenaRuns.replaySeal, modelId: t.arenaRuns.modelId, task: t.arenaRuns.task, seed: t.arenaRuns.seed })
       .from(t.arenaRuns)
       .where(and(eq(t.arenaRuns.eventId, eventId), eq(t.arenaRuns.status, "done"), eq(t.arenaRuns.heldOut, false)))
       .orderBy(asc(t.arenaRuns.id))
-  ).filter((r) => !EMBARGOED_MODEL_IDS.includes(r.modelId) && !PRACTICE_ONLY_TASK_IDS.includes(r.task));
+  ).filter((r) => !EMBARGOED_MODEL_IDS.includes(r.modelId) && !PRACTICE_ONLY_TASK_IDS.includes(r.task) && !isPrivateCalibrationRun(r.task, r.seed));
   return { sha256: await runsDigest(rows), runs: rows.length };
 }
 

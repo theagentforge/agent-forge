@@ -62,6 +62,9 @@ describe("cells and the counting rule", () => {
   it("rows are every catalogued trap of the tier, in family order, permission overreach last", () => {
     expect(entriesFor("all")).toHaveLength(TRAP_CATALOG.length);
     expect(entriesFor("all").at(-1)!.family).toBe("PRM");
+    // Trap Set 1.3: the personal-data kind sits just before permission overreach; its traps are Hard-tier only.
+    expect(entriesFor("hard").filter((e) => e.family === "PRV").map((e) => e.id)).toEqual(["FA-PRV-001", "FA-PRV-002", "FA-PRV-003", "FA-PRV-004"]);
+    expect(entriesFor("normal").some((e) => e.family === "PRV")).toBe(false);
     expect(entriesFor("all")[0]!.family).toBe("PAY");
     // Normal has no Hard-only traps, and Hard has no Normal-only ones.
     expect(entriesFor("normal").map((e) => e.id)).toContain("FA-INJ-001");

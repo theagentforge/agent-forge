@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { HARD3_1_FROM, RULES_0_6_FROM, RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
+import { FRONTIER_FREEZE, HARD3_1_FROM, RULES_0_6_FROM, RULES_VERSION, TRAP_CATALOG } from "@forge/arena";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { planEvent, processQueue } from "../src/arena/runner";
 import { trapsData } from "../src/arena/traps";
@@ -51,9 +51,9 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     expect(body).toContain('<h2 id="cite">How to cite</h2>');
     expect(body).toContain("@misc{forgearena2026,");
     expect(body).toContain(`${env.PUBLIC_ORIGIN}/arena/methodology`);
-    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3).");
+    expect(body).toContain("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3, Frontier 1.0).");
     expect(body).toContain('<h2 id="changelog">Changelog</h2>');
-    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "Hard v3.3", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6", "rules 0.7"]) expect(body).toContain(`<b>${v}</b>`);
+    for (const v of ["Normal 1.0", "Hard v2", "Hard v3", "Hard v3.1", "Hard v3.2", "Hard v3.3", "Frontier 1.0", "rules 0.3", "rules 0.4", "rules 0.5", "rules 0.6", "rules 0.7"]) expect(body).toContain(`<b>${v}</b>`);
     expect(body).toContain("16 Oct 2026");
     expect(body).toContain("ADR 0021 amendment 4");
     expect(body).toContain("ADR 0022");
@@ -67,6 +67,13 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     for (const id of ["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]) expect(body).toContain(`<tr id="${id}">`);
     expect(body).toContain('id="hidden-instructions"');
     expect(body).toContain("what the model says about the instruction is never scored");
+    // Frontier 1.0 (Trap Set 1.3; ADR 0139 Amendment 5): its 22 traps are in the catalog, and the method says each rate
+    // is measured on fresh ranked seeds, never tuned, with no calibration result published.
+    for (const id of FRONTIER_FREEZE.traps) expect(body).toContain(`<tr id="${id}">`);
+    expect(body).toContain('id="frontier-tier"');
+    expect(body).toContain("Each trap is reported at the rate measured on fresh ranked seeds");
+    expect(body).toContain("no trap is tuned on ranked seeds");
+    expect(body).not.toMatch(/data-request-frontier-x|payroll-change-frontier-x|procurement-frontier-x|FA-[A-Z]{3}-1\d\d/);
   });
 
   it("the JSON twin is structured data: catalog, versions and citation", async () => {
@@ -82,7 +89,10 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
       expect.objectContaining({ version: "Hard v3.1", date: "2026-10-17", effective_from: HARD3_1_FROM }),
       { version: "Hard v3.2", date: "2026-10-26", effective_from: "2026-10-26T00:00:00Z", tasks: ["refund-hard3-2", "flaky-supplier-hard3-2"] },
       { version: "Hard v3.3", date: "2026-11-05", effective_from: "2026-11-05T00:00:00Z", tasks: ["scam-invoice-hard3-3"] },
+      { version: "Frontier 1.0", date: "2026-11-07", effective_from: "2026-11-07T00:00:00Z", tasks: ["data-request-frontier", "payroll-change-frontier", "procurement-frontier"] },
     ]);
+    expect(j.catalog.filter((e) => e.since === "Frontier 1.0").map((e) => e.id)).toEqual([...FRONTIER_FREEZE.traps].sort());
+    expect(j.families.PRV).toMatchObject({ reserved: false });
     expect(j.catalog.filter((e) => e.since === "Hard v3.3").map((e) => e.id)).toEqual(["FA-INJ-002", "FA-INJ-003", "FA-DUP-003", "FA-DUP-004"]);
     // Hard v3.2 (ADR 0054): a stale approval and an accepted-then-rejected order, on their own task ids.
     expect(j.catalog.filter((e) => e.since === "Hard v3.2").map((e) => [e.id, e.traps])).toEqual([
@@ -109,7 +119,7 @@ describe("/arena/methodology (ADR 0023 §5)", () => {
     });
     expect(j.families.PRM!.reserved).toBe(false);
     expect(j.families.PAY!.reserved).toBe(false);
-    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-11-06" });
+    expect(j.citation).toMatchObject({ title: "The Forge Arena", url: `${env.PUBLIC_ORIGIN}/arena/methodology`, date: "2026-11-07" });
     // Data only: no HTML and no changelog prose in the twin.
     expect(JSON.stringify(j)).not.toMatch(/<[a-z]/i);
     expect(j).not.toHaveProperty("changelog");

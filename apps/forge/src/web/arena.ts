@@ -7,6 +7,7 @@ import {
   familyOf,
   formatWeights,
   frames,
+  FRONTIER_PUBLIC_TASKS,
   HARD_TASKS,
   moments,
   OFFICIAL_WEIGHTS,
@@ -504,6 +505,8 @@ site.get("/best", async (c) => {
     body: html`${tier === "hard" ? html`<p class="eyebrow">Hard tier</p>` : ""}<h1 class="page-title">Which AI for which job?</h1><p class="lead">${tier === "hard" ? HARD_EXPLAINER : TAGLINE}</p>
 ${tierSwitch("/best", tier)}
 <ul class="task-grid">${tasks.map((t) => html`<li><a href="/best/${t.id}"><b>${t.title}</b><span>${t.summary}</span></a></li>`)}</ul>
+${tier === "hard" ? html`<h2 id="h-frontier">Frontier jobs (task version Frontier 1.0)</h2><p class="muted small">Three desks with a binding handbook, a paginated queue and messages that arrive during the shift. Each trap's rate is measured on fresh ranked seeds (<a href="/arena/methodology#frontier-tier">method</a>).</p>
+<ul class="task-grid" id="frontier-jobs">${FRONTIER_PUBLIC_TASKS.map((t) => html`<li><a href="/best/${t.id}"><b>${t.title}</b><span>${t.summary}</span></a></li>`)}</ul>` : ""}
 <section aria-labelledby="h-explore">
 <h2 id="h-explore">Where each AI ranks, by job</h2>
 <form class="inline-form explore" method="get" action="/best#h-explore">${tier === "hard" ? html`<input type="hidden" name="tier" value="hard">` : ""}

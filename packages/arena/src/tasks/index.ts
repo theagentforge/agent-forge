@@ -58,17 +58,34 @@ export const HARD3_2_TASKS: TaskType[] = ([refundHard32, flakySupplierHard32] as
 export const HARD3_3_TASKS: TaskType[] = ([scamInvoiceHard33] as TaskType[]).map(hard3);
 /** Every Hard job after v3.1, newest version last (v3.2, v3.3): new task ids beside the v3.1 jobs. */
 export const LATER_HARD3_TASKS: TaskType[] = [...HARD3_2_TASKS, ...HARD3_3_TASKS];
-/** A public job by id (Normal, Hard v2, Hard v3, v3.2, v3.3). Private families are never found here, so no public page shows one. */
+/**
+ * The frontier tier's three jobs (ADR 0139), promoted to the public catalog as task version "Frontier 1.0" with Trap Set
+ * 1.3 (Amendment 5; Dinike, 7 Nov 16:24 Colombo). Filed in the Hard tier (each job is `tier: "hard"`), so they stay out
+ * of the Normal card's pages and rankings. Their calibration runs (dev seeds, below 1,000,000) are still never public
+ * (`isPrivateCalibrationRun`), and their held-out `-x` variants stay private and practice-only.
+ */
+export const FRONTIER_PUBLIC_TASKS: TaskType[] = FRONTIER_TASKS;
+/** A public job by id (Normal, Hard v2, Hard v3, v3.2, v3.3, Frontier 1.0). Private families are never found here, so no public page shows one. */
 export const taskById = (id: string) =>
-  TASKS.find((t) => t.id === id) ?? HARD_TASKS.find((t) => t.id === id) ?? HARD3_TASKS.find((t) => t.id === id) ?? LATER_HARD3_TASKS.find((t) => t.id === id) ?? null;
+  TASKS.find((t) => t.id === id) ?? HARD_TASKS.find((t) => t.id === id) ?? HARD3_TASKS.find((t) => t.id === id) ?? LATER_HARD3_TASKS.find((t) => t.id === id) ?? FRONTIER_PUBLIC_TASKS.find((t) => t.id === id) ?? null;
 
 /**
  * Private families promoted to ranked events (ADR 0057). Empty: a family joins only after calibration on the practice
  * ladder and Dinike's yes. Until then its runs are practice-only and hidden from every public surface.
  */
 export const RANKED_PRIVATE_TASKS: readonly string[] = [];
-/** Private job ids that may only run in practice events (the private families not yet promoted). */
-export const PRACTICE_ONLY_TASK_IDS: readonly string[] = [...PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id)), ...FRONTIER_TASKS.map((t) => t.id), ...FRONTIER_PRIVATE_TASKS.map((t) => t.id)];
+/**
+ * Private job ids that may only run in practice events (the private families not yet promoted, and the frontier tier's
+ * held-out `-x` variants). The three public frontier jobs left this list on promotion (ADR 0139 Amendment 5).
+ */
+export const PRACTICE_ONLY_TASK_IDS: readonly string[] = [...PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id)), ...FRONTIER_PRIVATE_TASKS.map((t) => t.id)];
+/**
+ * A frontier calibration run (ADR 0139 protocol 1 and 6): a public frontier job played on a seed below the Season minimum
+ * (the calibration seeds 900001 to 900010, or any other hand-picked seed). Its results are internal and never published
+ * as results, so every public read drops it, before and after promotion. Ranked frontier results use fresh draws of at
+ * least 1,000,000.
+ */
+export const isPrivateCalibrationRun = (task: string, seed: number) => FRONTIER_TASKS.some((t) => t.id === task) && seed < 1_000_000;
 export const isPracticeOnly = (id: string) => PRACTICE_ONLY_TASK_IDS.includes(id);
 /** The private job ids (all tiers), selectable by id for practice and held-out panels. */
 export const PRIVATE_TASK_IDS: readonly string[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS].map((t) => t.id);
@@ -76,12 +93,12 @@ export const PRIVATE_TASK_IDS: readonly string[] = [...PRIVATE_TASKS, ...FRONTIE
 export const PRIVATE_FAMILIES: Record<string, string[]> = Object.fromEntries(
   [...new Set(PRIVATE_TASKS.map((t) => t.id.replace(/-hard$/, "")))].map((f) => [f, PRIVATE_TASKS.filter((t) => t.id.replace(/-hard$/, "") === f).map((t) => t.id)]),
 );
-/** Any job the runner can play: public jobs, the calibrating frontier tier, then private families (practice and held-out runs only). */
-export const anyTaskById = (id: string) => taskById(id) ?? FRONTIER_TASKS.find((t) => t.id === id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_PRIVATE_TASKS.find((t) => t.id === id) ?? null;
+/** Any job the runner can play: public jobs (the frontier tier among them since its promotion), then private families (practice and held-out runs only). */
+export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_PRIVATE_TASKS.find((t) => t.id === id) ?? null;
 
 /**
- * The frontier tier (ADR 0139): three job families calibrating on the dev seeds. Practice-only and on no public page
- * (taskById never finds one) until frozen and promoted to task version "Frontier 1.0".
+ * The frontier tier (ADR 0139): three job families, calibrated on the dev seeds, frozen on 7 Nov and promoted the same day
+ * (Dinike's yes, 16:24 Colombo) to task version "Frontier 1.0" in Trap Set 1.3 (Amendment 5).
  */
 export { FRONTIER_CATALOG, FRONTIER_FAMILIES, FRONTIER_FREEZE, FRONTIER_TASK_IDS, FRONTIER_TASKS, frontierFingerprint, isFrontierTask, type FrontierTrapEntry } from "./frontier/index";
 

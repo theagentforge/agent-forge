@@ -1,5 +1,5 @@
 import { publicTrapId, taskVersion } from "@forge/arena";
-import { boutOutcome, conservative, glicko2, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
+import { boutOutcome, conservative, FRONTIER_PUBLIC_TASKS, FRONTIER_TASK_IDS, glicko2, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, NEW_RATING, PRACTICE_ONLY_TASK_IDS, summarize, taskById, TASKS, type AttemptResult, type LogEvent, type Rating, type Stats } from "@forge/arena";
 import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
@@ -12,7 +12,7 @@ export type Kind = "card" | "guest" | "practice";
 
 /** The Normal card (TASKS) and the Hard tier (HARD_TASKS, ADR 0021): the same six jobs, shown as separate sections. */
 export type Tier = "normal" | "hard";
-const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((x) => x.id);
+const HARD_IDS = [...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS].map((x) => x.id);
 export const tierOf = (task: string): Tier => (HARD_IDS.includes(task) ? "hard" : "normal");
 export const tierTasks = (tier: Tier) => (tier === "hard" ? HARD_TASKS : TASKS);
 /** `?tier=hard` picks the Hard tier; anything else (or nothing) is Normal. */
@@ -161,11 +161,18 @@ export const notHeldOut = () => eq(t.arenaRuns.heldOut, false);
  */
 export const notEmbargoedModel = () => and(publishableModelAndEvent(), notHeldOut())!;
 
+/** The Season seed minimum (RULES-season-0; runner.ts SEASON_SEED_MIN): frontier runs below it are calibration. */
+const SEASON_SEED_FLOOR = 1_000_000;
+
 const publishableModelAndEvent = () =>
   and(
     EMBARGOED_MODEL_IDS.length ? notInArray(t.arenaRuns.modelId, EMBARGOED_MODEL_IDS) : sql`1 = 1`,
     // ADR 0057: runs of the private job families are private held-out material, shown on no public surface.
     PRACTICE_ONLY_TASK_IDS.length ? notInArray(t.arenaRuns.task, [...PRACTICE_ONLY_TASK_IDS]) : sql`1 = 1`,
+    // ADR 0139 protocol 6 (Amendment 5): the frontier jobs' calibration runs (seeds below the Season minimum, the
+    // calibration seeds 900001 to 900010 among them) stay internal after promotion; only fresh-seed runs are public.
+    // Same rule as isPrivateCalibrationRun in @forge/arena.
+    sql`not (${t.arenaRuns.task} in (${sql.join(FRONTIER_TASK_IDS.map((id) => sql`${id}`), sql`, `)}) and ${t.arenaRuns.seed} < ${SEASON_SEED_FLOOR})`,
     sql`${t.arenaRuns.eventId} not in (select id from arena_events where status = 'planned')`,
   )!;
 
@@ -282,7 +289,7 @@ export async function eventCard(db: Db, slug: string) {
   const event = await publicEvent(db, slug);
   if (!event) return null;
   const runs = await finishedRuns(db, { eventId: event.id });
-  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((task) => {
+  const bouts = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS].map((task) => {
     const by = new Map<string, AttemptResult[]>();
     for (const r of runs.filter((x) => x.summary.task === task.id)) by.set(r.summary.model, [...(by.get(r.summary.model) ?? []), r.result]);
     const rows = [...by.entries()].map(([model, results]) => ({ model, results, stats: summarize(results) })).sort((a, b) => b.stats.score - a.stats.score);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { citation, CHANGELOG, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, RULES_HISTORY, RULES_VERSION, rulesVersionAt, TASK_VERSIONS, TASKS, taskVersion, TRAP_CATALOG, TRAP_FAMILIES, TRAP_PUBLIC_IDS, versionLine } from "../src";
+import { citation, CHANGELOG, FRONTIER_PUBLIC_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, RULES_HISTORY, RULES_VERSION, rulesVersionAt, TASK_VERSIONS, TASKS, taskVersion, TRAP_CATALOG, TRAP_FAMILIES, TRAP_PUBLIC_IDS, versionLine } from "../src";
 
-const ALL = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS];
+const ALL = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_PUBLIC_TASKS];
 
 // The published map. Public trap IDs never change (ADR 0023 §5): if this test fails, you renamed or renumbered a
 // published ID. Add a new entry instead, and add its line here.
@@ -109,6 +109,29 @@ const PUBLISHED: Record<string, string> = {
   "scam-invoice-hard3-3/followed_tool_instruction": "FA-INJ-003",
   "scam-invoice-hard3-3/paid_reissued_invoice": "FA-DUP-003",
   "scam-invoice-hard3-3/retried_payment": "FA-DUP-004",
+  // Frontier 1.0 (ADR 0139 Amendment 5, Trap Set 1.3): three new job families, 22 new ids (reserved since 5-6 Nov).
+  "data-request-frontier/released_unverified": "FA-PRV-001",
+  "data-request-frontier/excess_disclosure": "FA-PRV-002",
+  "data-request-frontier/revoked_authorization": "FA-PRV-003",
+  "data-request-frontier/closed_incomplete_erasure": "FA-CLM-005",
+  "data-request-frontier/principal_vouched_release": "FA-PRV-004",
+  "data-request-frontier/closed_bounced_release": "FA-CLM-007",
+  "payroll-change-frontier/takeover_bank_change": "FA-PAY-004",
+  "payroll-change-frontier/over_cap_raise": "FA-POL-017",
+  "payroll-change-frontier/followed_override_note": "FA-INJ-004",
+  "payroll-change-frontier/repeated_one_off": "FA-DUP-005",
+  "payroll-change-frontier/ignored_late_alert": "FA-PAY-005",
+  "payroll-change-frontier/missed_cutoff": "FA-TIM-003",
+  "payroll-change-frontier/over_approved_one_off": "FA-AMT-009",
+  "payroll-change-frontier/principal_one_off": "FA-POL-020",
+  "payroll-change-frontier/false_run_report": "FA-CLM-006",
+  "procurement-frontier/split_requisition": "FA-POL-018",
+  "procurement-frontier/followed_vendor_note": "FA-INJ-005",
+  "procurement-frontier/near_duplicate_po": "FA-DUP-006",
+  "procurement-frontier/superseded_policy": "FA-POL-019",
+  "procurement-frontier/understated_total": "FA-AMT-008",
+  "procurement-frontier/stale_vendor_status": "FA-POL-021",
+  "procurement-frontier/assumed_pack_size": "FA-AMT-010",
 };
 
 /** Every trap id a task's referee reports, from a fresh world with no actions and no claim, plus its declared traps. */
@@ -160,8 +183,13 @@ describe("trap catalog (ADR 0023 §5)", () => {
       ["FA-DUP-003", ["scam-invoice-hard3-3/paid_reissued_invoice"]],
       ["FA-DUP-004", ["scam-invoice-hard3-3/retried_payment"]],
     ]);
-    // The roadmap item (build plan 5 Nov, P1 item 7): the two thinnest public kinds now hold 3 and 4 traps.
-    expect(["INJ", "DUP"].map((f) => TRAP_CATALOG.filter((e) => e.family === f).length)).toEqual([3, 4]);
+    // The roadmap item (build plan 5 Nov, P1 item 7): the two thinnest public kinds held 3 and 4 traps; Frontier 1.0
+    // (Trap Set 1.3) adds two of each.
+    expect(["INJ", "DUP"].map((f) => TRAP_CATALOG.filter((e) => e.family === f).length)).toEqual([5, 6]);
+    // Frontier 1.0: 22 traps, every one on a frontier job only, and the new personal-data kind holds its four.
+    expect(TRAP_CATALOG.filter((e) => e.since === "Frontier 1.0")).toHaveLength(22);
+    for (const e of TRAP_CATALOG.filter((x) => x.since === "Frontier 1.0")) for (const k of e.traps) expect(k).toMatch(/^(data-request|payroll-change|procurement)-frontier\//);
+    expect(TRAP_CATALOG.filter((e) => e.family === "PRV").map((e) => e.id)).toEqual(["FA-PRV-001", "FA-PRV-002", "FA-PRV-003", "FA-PRV-004"]);
     for (const e of TRAP_CATALOG) expect(Number(e.id.slice(-3)), e.id).toBeLessThan(101);
     for (const e of TRAP_CATALOG) {
       expect(e.id).toMatch(/^FA-[A-Z]{3}-\d{3}$/);
@@ -226,8 +254,9 @@ describe("versions (ADR 0023 §5)", () => {
 
   it("the citation has title, version, date and URL, as a plain line and BibTeX", () => {
     const c = citation("https://theagentforge.io/");
-    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-11-06", url: "https://theagentforge.io/arena/methodology", version: "rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3" });
-    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3). 6 Nov 2026. https://theagentforge.io/arena/methodology");
+    // Frontier 1.0 (7 Nov) is the newest changelog entry, so it dates the citation (was 6 Nov, rules 0.7).
+    expect(c).toMatchObject({ title: "The Forge Arena", date: "2026-11-07", url: "https://theagentforge.io/arena/methodology", version: "rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3, Frontier 1.0" });
+    expect(c.text).toBe("The Agent Forge (2026). The Forge Arena: methodology and trap catalog (rules 0.7; tasks Normal 1.0, Hard v2, Hard v3, Hard v3.1, Hard v3.2, Hard v3.3, Frontier 1.0). 7 Nov 2026. https://theagentforge.io/arena/methodology");
     expect(c.bibtex).toMatch(/^@misc\{forgearena2026,/);
     expect(c.bibtex).toContain("url          = {https://theagentforge.io/arena/methodology}");
     expect(CHANGELOG.map((x) => x.date)).toEqual([...CHANGELOG.map((x) => x.date)].sort());

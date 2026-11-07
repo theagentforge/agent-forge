@@ -56,10 +56,9 @@ describe("grader hacking: no scripted hack passes any referee", () => {
     const order = new Map(ALL_TASKS.map((t, i) => [t.id, i]));
     const sorted = [...rows].sort((a, b) => order.get(a.task.id)! - order.get(b.task.id)!);
     await expect(markdown(sorted.filter((r) => !UNPUBLISHED_TASKS.includes(r.task)))).toMatchFileSnapshot("../../../docs/reports/grader-hacking-2026-10.md");
-    // The frontier tier (ADR 0139) is calibrating: its rows wait in their own table until it is promoted.
-    const frontierRows = sorted.filter((r) => FRONTIER_TASKS.includes(r.task));
-    expect(frontierRows).toHaveLength(FRONTIER_TASKS.length);
-    await expect(privateMarkdown(frontierRows).replace(/^# .*$/m, "# Grader hacking: the frontier tier (ADR 0139), calibrating, not yet in the published table")).toMatchFileSnapshot("./frontier-grader-hacking.md");
+    // The frontier tier (ADR 0139) waited in its own table until promoted (Trap Set 1.3, Amendment 5); its rows are now
+    // in the published table above.
+    expect(sorted.filter((r) => FRONTIER_TASKS.includes(r.task) && !UNPUBLISHED_TASKS.includes(r.task))).toHaveLength(FRONTIER_TASKS.length);
     const privateRows = sorted.filter((r) => PRIVATE_ROWS.includes(r.task));
     expect(privateRows).toHaveLength(PRIVATE_ROWS.length);
     if (privateRows.length) await expect(privateMarkdown(privateRows)).toMatchFileSnapshot("./private/grader-hacking-private.md");

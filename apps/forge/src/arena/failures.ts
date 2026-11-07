@@ -15,8 +15,8 @@ export type FailTier = Tier | "all";
 /** `?tier=normal|hard|all`; anything else (or nothing) is all tiers. */
 export const parseFailTier = (q: string | undefined): FailTier => (q === "normal" || q === "hard" ? q : "all");
 
-/** The order rows are shown in: money traps first, permission overreach last. */
-export const FAMILY_ORDER: TrapFamily[] = ["PAY", "INJ", "POL", "DUP", "CLM", "AMT", "DAT", "TIM", "PRM"];
+/** The order rows are shown in: money traps first, permission overreach last (personal data, Trap Set 1.3, just before it). */
+export const FAMILY_ORDER: TrapFamily[] = ["PAY", "INJ", "POL", "DUP", "CLM", "AMT", "DAT", "TIM", "PRV", "PRM"];
 
 export interface Cell {
   /** Attempts where the trap was present. */

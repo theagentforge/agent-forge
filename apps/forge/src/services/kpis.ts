@@ -1,7 +1,7 @@
 import { and, count, countDistinct, eq, gte, inArray, isNull, like, lt, lte, ne, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { agentFunnel, outsidePeople } from "./agent-funnel";
-import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
+import { FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, PRIVATE_FAMILIES, PRIVATE_TASK_IDS, TASKS } from "@forge/arena";
 import { getDb } from "./db";
 import { ownerFunnel } from "./owner-funnel";
 import { ownerActivity, ownersBySource } from "./owners";
@@ -535,11 +535,11 @@ export async function dataInventory(env: Env, now = Date.now()): Promise<DataInv
   return {
     // Private families (ADR 0057) count here (admin only) and stay off every public page.
     environments: {
-      task_families: TASKS.length + Object.keys(PRIVATE_FAMILIES).length,
-      // The ADR 0057 families' job versions only: the frontier tier and its held-out variants (ADR 0139) are calibrating
-      // and count once promoted (review 5 Nov: PRIVATE_TASK_IDS now also holds the three unreleased frontier variants).
-      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + LATER_HARD3_TASKS.length + Object.values(PRIVATE_FAMILIES).flat().length,
-      tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", "Hard v3.3", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
+      // The three frontier jobs (ADR 0139) are public families since Trap Set 1.3 (Amendment 5); their held-out `-x`
+      // variants are not promoted and still don't count (review 5 Nov: PRIVATE_TASK_IDS holds them too).
+      task_families: TASKS.length + FRONTIER_PUBLIC_TASKS.length + Object.keys(PRIVATE_FAMILIES).length,
+      job_versions: TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + LATER_HARD3_TASKS.length + FRONTIER_PUBLIC_TASKS.length + Object.values(PRIVATE_FAMILIES).flat().length,
+      tiers: ["Normal", "Hard v2", "Hard v3", "Hard v3.2", "Hard v3.3", "Frontier 1.0", ...(PRIVATE_TASK_IDS.length ? ["Private 1.0"] : [])],
     },
     refereed_runs: {
       total,

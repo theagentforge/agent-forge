@@ -1,4 +1,4 @@
-import { CANARY, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, rulesVersionAt, summarize, taskVersion, TASKS, wilsonInterval, type AttemptResult } from "@forge/arena";
+import { CANARY, FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, rulesVersionAt, summarize, taskVersion, TASKS, wilsonInterval, type AttemptResult } from "@forge/arena";
 import type * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { csvCell } from "./business";
@@ -15,7 +15,7 @@ import { consistency, DATASET_LICENCE, finishedRuns, isKnockout, isRankedEvent, 
 // premiere and Lab #3 arms never appear.
 
 /** Every task in catalog order: Normal, Hard v2, Hard v3, Hard v3.2, Hard v3.3. A tier or event lists only jobs with runs. */
-export const ALL_TASKS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS];
+export const ALL_TASKS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS];
 const ORDER = new Map(ALL_TASKS.map((x, i) => [x.id, i]));
 
 export type Run = Awaited<ReturnType<typeof finishedRuns>>[number];

@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { Attempt, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, taskById, TRAP_CATALOG, wilsonInterval, type AttemptResult, type EndReason } from "@forge/arena";
+import { Attempt, FRONTIER_PUBLIC_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, publicTrapId, TASKS, taskById, TRAP_CATALOG, wilsonInterval, type AttemptResult, type EndReason } from "@forge/arena";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ALL_TASK_IDS, BUSINESS_GROUPS, businessBoard, cellFrom, CSV_HEADER, groupOfTask, groupOfTrap, groupsOfRun, MIN_CELL_ATTEMPTS } from "../src/arena/business";
 import * as t from "../src/db/schema";
@@ -80,7 +80,7 @@ describe("the business groups", () => {
     const listed = BUSINESS_GROUPS.flatMap((g) => g.tasks);
     expect(new Set(listed).size).toBe(listed.length);
     expect([...listed].sort()).toEqual([...ALL_TASK_IDS].sort());
-    expect(ALL_TASK_IDS).toHaveLength(TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + HARD3_2_TASKS.length + HARD3_3_TASKS.length);
+    expect(ALL_TASK_IDS).toHaveLength(TASKS.length + HARD_TASKS.length + HARD3_TASKS.length + HARD3_2_TASKS.length + HARD3_3_TASKS.length + FRONTIER_PUBLIC_TASKS.length);
     for (const id of ALL_TASK_IDS) expect(groupOfTask(id), id).not.toBeNull();
   });
 
@@ -94,7 +94,15 @@ describe("the business groups", () => {
   });
 
   it("groups are the fixed business tasks, and traps land where a business would file them", () => {
-    expect(BUSINESS_GROUPS.map((g) => g.id)).toEqual(["refunds", "payments", "bookings", "stock", "records", "truthful_done", "permissions"]);
+    // Trap Set 1.3 (Frontier 1.0) adds privacy, payroll and purchasing before the two cross-cutting groups.
+    expect(BUSINESS_GROUPS.map((g) => g.id)).toEqual(["refunds", "payments", "bookings", "stock", "records", "privacy", "payroll", "purchasing", "truthful_done", "permissions"]);
+    expect(groupOfTask("data-request-frontier")).toBe("privacy");
+    expect(groupOfTask("payroll-change-frontier")).toBe("payroll");
+    expect(groupOfTask("procurement-frontier")).toBe("purchasing");
+    expect(groupOfTrap("FA-PRV-001")).toBe("privacy");
+    expect(groupOfTrap("FA-CLM-007")).toBe("truthful_done");
+    // A held-out variant is never in a group (it is on no public page).
+    expect(groupOfTask("data-request-frontier-x")).toBeNull();
     expect(groupOfTrap("FA-POL-001")).toBe("refunds");
     expect(groupOfTrap("FA-PAY-002")).toBe("payments");
     expect(groupOfTrap("FA-TIM-002")).toBe("bookings");

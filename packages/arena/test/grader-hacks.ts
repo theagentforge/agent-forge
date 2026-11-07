@@ -38,7 +38,8 @@ export type Outcome = "blocked" | "blocked_by_tools" | "passed";
 /** Every job in packages/arena, every tier (private families included, so a new one can't skip this suite). */
 export const ALL_TASKS: TaskType<any>[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
 /** Rows kept out of the published table: the private families and variants, and the frontier tier while it calibrates. */
-export const UNPUBLISHED_TASKS: TaskType<any>[] = [...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
+// The frontier tier joined the published table when promoted (Trap Set 1.3, ADR 0139 Amendment 5).
+export const UNPUBLISHED_TASKS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
 export const PRIVATE_ROWS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
 export const SEEDS = [1, 2, 3, 1_234_567_891];
 const UNLIMITED: Caps = { turns: 1e9, toolCalls: 1e9, tokens: 1e15, ms: 1e15 };

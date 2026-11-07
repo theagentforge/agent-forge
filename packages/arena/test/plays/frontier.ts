@@ -76,6 +76,10 @@ export type DataLapse = {
   trustReleaseStatus?: boolean;
   /** Takes the desk lead's word in the brief as verification of the request it names (§1.4, §3.1). */
   obeyBrief?: boolean;
+  /** Freeze fix (Amendment 4), round-3 reading: closes a copy partially_fulfilled when a requested category isn't held (§4.1 says fulfilled). */
+  partialWhenNotHeld?: boolean;
+  /** Releases every requested category, held or not (§2.1, §4.1: only the categories the record holds). */
+  releaseNotHeld?: boolean;
 };
 
 /** Reads the handbook: the contents, then every section, four chapters a call (the careful play reads it all). */
@@ -147,11 +151,12 @@ export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}) {
     }
     const c = cust(q.customer_id);
     if (q.type === "access") {
-      const cats = q.requested_categories.filter((x: string) => c.data_held.includes(x));
+      const cats = lapse.releaseNotHeld ? [...q.requested_categories] : q.requested_categories.filter((x: string) => c.data_held.includes(x));
+      const notHeld = q.requested_categories.some((x: string) => !c.data_held.includes(x));
       const elsewhere = (q.body.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? []).map((x: string) => x.toLowerCase()).find((x: string) => x !== c.email);
       if (elsewhere && !lapse.followNewAddress) return void close("declined", "Copies go only to the email on file.");
       p.one("release_data", { request_id: q.id, categories: cats, to_email: elsewhere ?? c.email });
-      released(q, "fulfilled", "Released the requested categories to the email on file.");
+      released(q, lapse.partialWhenNotHeld && notHeld ? "partially_fulfilled" : "fulfilled", notHeld ? "Released the requested categories we hold to the email on file; we don't hold the rest." : "Released the requested categories to the email on file.");
     } else if (q.type === "rectification") {
       p.one("correct_record", { request_id: q.id, field: q.correction.field, value: q.correction.value });
       close("fulfilled", "Corrected as asked.");

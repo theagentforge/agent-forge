@@ -1,4 +1,4 @@
-import { LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, playedUnderAt, publicTrapId, rulesVersionAt, TASKS, VERDICT_RUNS } from "@forge/arena";
+import { FRONTIER_PUBLIC_TASKS, LATER_HARD3_TASKS, HARD3_TASKS, HARD_TASKS, playedUnderAt, publicTrapId, rulesVersionAt, TASKS, VERDICT_RUNS } from "@forge/arena";
 import type { Db } from "../services/db";
 import { rankedRuns, type FailTier } from "./failures";
 import { outward, wilson } from "./holdout";
@@ -15,7 +15,7 @@ import { isKnockout, modelName } from "./views";
 // - An attempt that ran out of time, tokens, turns or tool calls is a knockout (ADR 0021): it's left out of n and of
 //   the break rate and counted on its own, even if a trap had sprung before it ran out (the failure board shows those).
 
-export type BusinessGroupId = "refunds" | "payments" | "bookings" | "stock" | "records" | "truthful_done" | "permissions";
+export type BusinessGroupId = "refunds" | "payments" | "bookings" | "stock" | "records" | "privacy" | "payroll" | "purchasing" | "truthful_done" | "permissions";
 
 export interface BusinessGroup {
   id: BusinessGroupId;
@@ -73,12 +73,35 @@ export const BUSINESS_GROUPS: BusinessGroup[] = [
     tasks: v("spreadsheet"),
     traps: ["FA-DAT-001", "FA-DAT-002", "FA-DAT-003"],
   },
+  // Frontier 1.0 (ADR 0139 Amendment 5, Trap Set 1.3): three new job families, one group each. Their false-success
+  // traps (FA-CLM-005 to 007) go to truthful "done" with the others.
+  {
+    id: "privacy",
+    name: "Personal data requests",
+    summary: "Identity checks before disclosure, a representative's mandate, revoked authorizations",
+    tasks: FRONTIER_PUBLIC_TASKS.filter((t) => t.id === "data-request-frontier").map((t) => t.id),
+    traps: ["FA-PRV-001", "FA-PRV-002", "FA-PRV-003", "FA-PRV-004"],
+  },
+  {
+    id: "payroll",
+    name: "Payroll changes",
+    summary: "Bank changes after an account takeover, raise caps, delegated and voided approvals, cut-offs and one-off amounts",
+    tasks: FRONTIER_PUBLIC_TASKS.filter((t) => t.id === "payroll-change-frontier").map((t) => t.id),
+    traps: ["FA-PAY-004", "FA-PAY-005", "FA-POL-017", "FA-POL-020", "FA-INJ-004", "FA-DUP-005", "FA-TIM-003", "FA-AMT-009"],
+  },
+  {
+    id: "purchasing",
+    name: "Purchasing approvals",
+    summary: "Split purchases, framework claims in a quote, near-duplicate orders, superseded limits, line totals and vendor status",
+    tasks: FRONTIER_PUBLIC_TASKS.filter((t) => t.id === "procurement-frontier").map((t) => t.id),
+    traps: ["FA-POL-018", "FA-POL-019", "FA-POL-021", "FA-INJ-005", "FA-DUP-006", "FA-AMT-008", "FA-AMT-010"],
+  },
   {
     id: "truthful_done",
     name: "Truthful \"done\"",
     summary: "Telling a payee, a customer or the user something was done when it wasn't",
     tasks: [],
-    traps: ["FA-CLM-001", "FA-CLM-002", "FA-CLM-003", "FA-CLM-004"],
+    traps: ["FA-CLM-001", "FA-CLM-002", "FA-CLM-003", "FA-CLM-004", "FA-CLM-005", "FA-CLM-006", "FA-CLM-007"],
   },
   {
     id: "permissions",
@@ -89,8 +112,8 @@ export const BUSINESS_GROUPS: BusinessGroup[] = [
   },
 ];
 
-/** Every Arena task id the groups must cover (Normal, Hard v2, Hard v3, Hard v3.2 and Hard v3.3). */
-export const ALL_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS].map((t) => t.id);
+/** Every Arena task id the groups must cover (Normal, Hard v2, Hard v3, Hard v3.2, Hard v3.3 and Frontier 1.0). */
+export const ALL_TASK_IDS = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS, ...FRONTIER_PUBLIC_TASKS].map((t) => t.id);
 
 const TRAP_GROUP = new Map(BUSINESS_GROUPS.flatMap((g) => g.traps.map((id) => [id, g.id] as const)));
 const TASK_GROUP = new Map(BUSINESS_GROUPS.flatMap((g) => g.tasks.map((id) => [id, g.id] as const)));

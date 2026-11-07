@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { Attempt, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, taskById, type AttemptResult, type TaskType } from "@forge/arena";
+import { Attempt, FRONTIER_PUBLIC_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, taskById, type AttemptResult, type TaskType } from "@forge/arena";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { failCard, taskFamily, trapTemplate, TRAP_TEMPLATES } from "../src/arena/fail-card";
 import { planEvent, processQueue } from "../src/arena/runner";
@@ -9,7 +9,7 @@ import "../src/index";
 // Fail cards (ADR 0023 §1): text only from templates keyed to referee events, one template per trap id of every job,
 // the PNG route, and the bout page's Share block.
 
-const ALL_TASKS: TaskType[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS];
+const ALL_TASKS: TaskType[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_PUBLIC_TASKS];
 
 /** Every trap id a task can report: the ones named in advance, and the ones its referee actually returns. */
 function trapIds(task: TaskType) {
@@ -28,10 +28,11 @@ const card = (r: AttemptResult, o: { practice?: boolean; model?: string } = {}) 
   failCard({ runId: "1a2b3c4d-0000-4000-8000-000000000000", modelName: o.model ?? "Gemini 4 Argon", result: r, taskTitle: taskById(r.task)!.title, practice: o.practice ?? false, finishedAt: Date.UTC(2026, 9, 16, 12) });
 
 describe("trap templates", () => {
-  it("every trap id of every task (Normal, Hard v2, Hard v3, Hard v3.2, Hard v3.3) has a template", () => {
+  it("every trap id of every task (Normal, Hard v2, Hard v3, Hard v3.2, Hard v3.3, Frontier 1.0) has a template", () => {
     const missing = ALL_TASKS.flatMap((task) => trapIds(task).filter((id) => !trapTemplate(task.id, id)).map((id) => `${task.id}/${id}`));
     expect(missing).toEqual([]);
-    expect(ALL_TASKS.length).toBe(21);
+    // 21 public jobs before Trap Set 1.3; Frontier 1.0 adds three.
+    expect(ALL_TASKS.length).toBe(24);
   });
 
   it("Hard v3.2 ids share their job family's templates (ADR 0054)", () => {

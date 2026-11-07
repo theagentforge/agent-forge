@@ -5,6 +5,7 @@ import v1_0 from "./v1.0.json.txt";
 import v1_0_1 from "./v1.0.1.json.txt";
 import v1_1 from "./v1.1.json.txt";
 import v1_2 from "./v1.2.json.txt";
+import v1_3 from "./v1.3.json.txt";
 
 export interface SnapshotEntry {
   version: string;
@@ -22,4 +23,5 @@ export const SNAPSHOTS: SnapshotEntry[] = [
   { version: "1.0.1", sha256: "e6fb92c0da4f3e69421d04273cbff00c80972b10d1e22ec2c10043bed75ee0b9", text: text(v1_0_1) },
   { version: "1.1", sha256: "f9e99c6a8d7cb6994697d27015728ab79c443dff10a0e79afb40edd26b4caff1", text: text(v1_1) },
   { version: "1.2", sha256: "9e3a13d8790eb527a8ef9827fd533f426dd4766b3b8ce4200ad506563eb7fe9f", text: text(v1_2) },
+  { version: "1.3", sha256: "49b015b3917f670e3e95b839176acee6f74c0e5420b4450d48e966aa9da07411", text: text(v1_3) },
 ];

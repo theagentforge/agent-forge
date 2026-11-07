@@ -119,11 +119,11 @@ describe("/benchmark/validity", () => {
       const pending = (await errorRecord(getDb(env), ORIGIN)).entries.filter((e) => e.kind === "rescore_pending");
       expect(pending).toHaveLength(1);
       expect(pending[0]).toMatchObject({ date: "2026-11-30", title: "Re-score under rules 0.8 not yet applied", status: "pending", runs: [] });
-      // The version it lands in is the next minor after the newest Trap Set version (1.2 today), never a typed-in one.
-      expect(TRAP_SET.version).toBe("1.2");
-      expect(nextTrapSetMinor()).toBe("1.3");
-      expect(pending[0]!.what).toContain("It is to be applied with the next Trap Set version (1.3), with its counts published then.");
-      expect(pending[0]!.what).not.toContain("(1.2)");
+      // The version it lands in is the next minor after the newest Trap Set version (1.3 since 7 Nov), never a typed-in one.
+      expect(TRAP_SET.version).toBe("1.3");
+      expect(nextTrapSetMinor()).toBe("1.4");
+      expect(pending[0]!.what).toContain("It is to be applied with the next Trap Set version (1.4), with its counts published then.");
+      expect(pending[0]!.what).not.toContain("(1.3)");
     } finally {
       CORRECTIONS.splice(CORRECTIONS.indexOf(draft), 1);
     }

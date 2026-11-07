@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { DEV_SPLIT, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly } from "@forge/arena";
+import { DEV_SPLIT, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly, PRIVATE_TASK_IDS } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { isClaudeByok } from "../src/arena/credit";
@@ -47,10 +47,18 @@ describe("frontier calibration plan, round 1", () => {
     for (const task of FRONTIER_TASK_IDS) expect(freeLaneRunRefusal({ task, seed: 900_001 }, { kind: "practice", status: "planned" })).not.toBeNull();
   });
 
-  it("a ranked event can't include a frontier job while it calibrates", () => {
-    for (const id of FRONTIER_TASK_IDS) expect(isPracticeOnly(id)).toBe(true);
-    const card = { ...plans[1], slug: "frontier-ranked-too-early", kind: "card", seeds: [1_500_000_001] };
-    expect(planSchema.safeParse(card).success).toBe(false);
+  it("since promotion (Amendment 5) a ranked event may list the frontier jobs, but never on a calibration seed", () => {
+    // Was: refused while calibrating (isPracticeOnly true). Promoted on Dinike's yes, 7 Nov 16:24 Colombo.
+    for (const id of FRONTIER_TASK_IDS) expect(isPracticeOnly(id)).toBe(false);
+    const card = { ...plans[1], slug: "frontier-ranked-fresh", kind: "card", seeds: [1_500_000_001] };
+    expect(planSchema.safeParse(card).success).toBe(true);
+    // Every calibration seed stays practice-only, in a card (below the Season minimum) and in a guest event too.
+    for (const seed of FRONTIER_FREEZE.devSeeds)
+      for (const kind of ["card", "guest"]) expect(planSchema.safeParse({ ...card, kind, seeds: [seed] }).success, `${kind} ${seed}`).toBe(false);
+    // The held-out variants stay practice-only. They exist only in the private repo (the public mirror stubs private
+    // families out), so the check runs where they exist; the private repo is the one that's released.
+    if (PRIVATE_TASK_IDS.includes("data-request-frontier-x"))
+      expect(planSchema.safeParse({ ...card, tasks: ["data-request-frontier-x"] }).success).toBe(false);
   });
 
   it("queues 114 held bouts", async () => {
