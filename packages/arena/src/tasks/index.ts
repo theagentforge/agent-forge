@@ -20,6 +20,7 @@ import { weekendHard3 } from "./weekend-hard3";
 import { calculatorTool } from "./calculator";
 import { FRONTIER_PRIVATE_TASKS, PRIVATE_TASKS } from "../private";
 import { FRONTIER_TASKS } from "./frontier/index";
+import { FRONTIER_1_1_TASKS } from "./frontier/v1-1";
 
 /** The launch card (ADR 0013 §2). Locked before each event: changing a task means a new season version. */
 export const TASKS: TaskType[] = [refund, scamInvoice, weekend, spreadsheet, flakySupplier, impossible];
@@ -76,16 +77,17 @@ export const taskById = (id: string) =>
 export const RANKED_PRIVATE_TASKS: readonly string[] = [];
 /**
  * Private job ids that may only run in practice events (the private families not yet promoted, and the frontier tier's
- * held-out `-x` variants). The three public frontier jobs left this list on promotion (ADR 0139 Amendment 5).
+ * held-out `-x` variants), then the Frontier 1.1 jobs while they calibrate (ADR 0144). The three public frontier jobs left
+ * this list on promotion (ADR 0139 Amendment 5).
  */
-export const PRACTICE_ONLY_TASK_IDS: readonly string[] = [...PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id)), ...FRONTIER_PRIVATE_TASKS.map((t) => t.id)];
+export const PRACTICE_ONLY_TASK_IDS: readonly string[] = [...PRIVATE_TASKS.map((t) => t.id).filter((id) => !RANKED_PRIVATE_TASKS.includes(id)), ...FRONTIER_PRIVATE_TASKS.map((t) => t.id), ...FRONTIER_1_1_TASKS.map((t) => t.id)];
 /**
  * A frontier calibration run (ADR 0139 protocol 1 and 6): a public frontier job played on a seed below the Season minimum
  * (the calibration seeds 900001 to 900010, or any other hand-picked seed). Its results are internal and never published
  * as results, so every public read drops it, before and after promotion. Ranked frontier results use fresh draws of at
  * least 1,000,000.
  */
-export const isPrivateCalibrationRun = (task: string, seed: number) => FRONTIER_TASKS.some((t) => t.id === task) && seed < 1_000_000;
+export const isPrivateCalibrationRun = (task: string, seed: number) => [...FRONTIER_TASKS, ...FRONTIER_1_1_TASKS].some((t) => t.id === task) && seed < 1_000_000;
 export const isPracticeOnly = (id: string) => PRACTICE_ONLY_TASK_IDS.includes(id);
 /** The private job ids (all tiers), selectable by id for practice and held-out panels. */
 export const PRIVATE_TASK_IDS: readonly string[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS].map((t) => t.id);
@@ -94,12 +96,14 @@ export const PRIVATE_FAMILIES: Record<string, string[]> = Object.fromEntries(
   [...new Set(PRIVATE_TASKS.map((t) => t.id.replace(/-hard$/, "")))].map((f) => [f, PRIVATE_TASKS.filter((t) => t.id.replace(/-hard$/, "") === f).map((t) => t.id)]),
 );
 /** Any job the runner can play: public jobs (the frontier tier among them since its promotion), then private families (practice and held-out runs only). */
-export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_PRIVATE_TASKS.find((t) => t.id === id) ?? null;
+export const anyTaskById = (id: string) => taskById(id) ?? PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_PRIVATE_TASKS.find((t) => t.id === id) ?? FRONTIER_1_1_TASKS.find((t) => t.id === id) ?? null;
 
 /**
  * The frontier tier (ADR 0139): three job families, calibrated on the dev seeds, frozen on 7 Nov and promoted the same day
  * (Dinike's yes, 16:24 Colombo) to task version "Frontier 1.0" in Trap Set 1.3 (Amendment 5).
  */
+/** Frontier 1.1 (ADR 0144): new task versions of the three frontier jobs, calibrating, practice-only, on no public page. */
+export { FRONTIER_1_1_CARRIED, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_1_1_TASK_IDS, FRONTIER_1_1_TASKS, frontier11Fingerprint, isFrontier11Task, type Frontier11TrapEntry } from "./frontier/v1-1";
 export { FRONTIER_CATALOG, FRONTIER_FAMILIES, FRONTIER_FREEZE, FRONTIER_TASK_IDS, FRONTIER_TASKS, frontierFingerprint, isFrontierTask, type FrontierTrapEntry } from "./frontier/index";
 
 /** The sandbox fee the Hard banking job charges for a declined payment or a returned direct debit (cents). Read by the

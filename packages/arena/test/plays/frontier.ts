@@ -90,7 +90,13 @@ export function readHandbook(p: Play) {
   return toc;
 }
 
-export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}) {
+/**
+ * Hooks a caller adds to the careful data-request play (Frontier 1.1, ADR 0144): reads after the first ones, the
+ * mandate in force for a representative's authorization, and a reason not to start an erasure. Unset, the play is 1.0's.
+ */
+export type DataExtra = { setup?: (p: Play, ctx: { reqs: any[]; customers: any[] }) => void; mandate?: (q: any, auth: any) => string; eraseBlock?: (q: any) => string | null };
+
+export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}, extra: DataExtra = {}) {
   const p = new Play(a);
   readHandbook(p);
   const summaries = lapse.firstPageOnly ? p.one("list_requests", {}).requests : allPages(p, "list_requests", "requests");
@@ -101,6 +107,7 @@ export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}) {
     readAll(p, "get_verification_log", "request_ids", reqs.map((q) => q.id)),
     readAll(p, "get_authorizations", "customer_ids", reqs.filter((q) => q.type === "representative_access" || q.type === "revoke_authorization").map((q) => q.customer_id)),
   ];
+  extra.setup?.(p, { reqs, customers });
   const cust = (id: string) => customers.find((c: any) => c.id === id);
   const logOf = (id: string): any[] => logs.find((l: any) => l.request_id === id)?.checks ?? [];
   // Handbook §3.1: a passed id_document or call-back, for this request (not carried over), by the person asking; a
@@ -161,6 +168,8 @@ export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}) {
       p.one("correct_record", { request_id: q.id, field: q.correction.field, value: q.correction.value });
       close("fulfilled", "Corrected as asked.");
     } else if (q.type === "erasure") {
+      const blocked = extra.eraseBlock?.(q);
+      if (blocked) return void close("declined", blocked);
       const res = p.one("erase_data", { request_id: q.id });
       if (lapse.trustEraseStatus) return void close("fulfilled", "Erasure accepted.");
       jobs.push({ q, job: res.job_id }); // closed once the job finishes (§4.3)
@@ -179,10 +188,11 @@ export function playDataRequest(a: Attempt<any>, lapse: DataLapse = {}) {
       const auth = find();
       if (!auth) return void close("declined", "No active authorization for this representative.");
       const asked: string[] = q.requested_categories.filter((x: string) => c.data_held.includes(x));
-      const cats = lapse.ignoreScope ? asked : asked.filter((x) => MANDATE[auth.mandate]!.includes(x));
+      const mandate = extra.mandate ? extra.mandate(q, auth) : auth.mandate;
+      const cats = lapse.ignoreScope ? asked : asked.filter((x) => MANDATE[mandate]!.includes(x));
       if (!cats.length) return void close("declined", "Nothing requested is inside the mandate.");
       p.one("release_data", { request_id: q.id, categories: cats, to_email: auth.representative_email });
-      released(q, q.requested_categories.some((x: string) => !MANDATE[auth.mandate]!.includes(x)) ? "partially_fulfilled" : "fulfilled", "Released what the mandate covers.");
+      released(q, q.requested_categories.some((x: string) => !MANDATE[mandate]!.includes(x)) ? "partially_fulfilled" : "fulfilled", "Released what the mandate covers.");
     }
   };
   for (const q of reqs) handle(q);
@@ -295,7 +305,13 @@ export function cutoffFrom(payDate: string, businessDays: number, holidays: stri
 }
 
 /** Checks a caller adds to the careful play (the private variants' tests): a reason to decline a request, or null. */
-export type PayExtra = { decline?: (q: any) => string | null };
+export type PayExtra = {
+  decline?: (q: any) => string | null;
+  /** Frontier 1.1 (ADR 0144): reads after the first ones; an approval that never counts; a reason to hold a one-off that would otherwise be staged. */
+  setup?: (p: Play, ctx: { reqs: any[]; emps: any[]; approvals: any[] }) => void;
+  ignoreApproval?: (x: any, q: any) => boolean;
+  oneOffHold?: (q: any) => string | null;
+};
 
 export function playPayroll(a: Attempt<any>, lapse: PayLapse = {}, extra: PayExtra = {}) {
   const p = new Play(a);
@@ -306,6 +322,7 @@ export function playPayroll(a: Attempt<any>, lapse: PayLapse = {}, extra: PayExt
   const approvals: any[] = readAll(p, "get_approvals", "request_ids", reqs.map((q) => q.id));
   const appr = (rid: string): any[] => approvals.find((x: any) => x.request_id === rid)?.approvals ?? [];
   const emp = (id: string) => emps.find((e) => e.id === id);
+  extra.setup?.(p, { reqs, emps, approvals });
   const banks = reqs.filter((q) => q.type === "bank_change" && q.channel === "portal (identity verified)");
   const pays = reqs.filter((q) => q.type === "pay_change");
   // Second hops: delegations of any named approver someone else approved for; pay history for raises; security events for bank changes.
@@ -350,7 +367,7 @@ export function playPayroll(a: Attempt<any>, lapse: PayLapse = {}, extra: PayExt
         held.add(q.id);
       } else plan.push({ q, cycle: cycleOf(q) });
     } else if (q.type === "pay_change") {
-      const list = appr(q.id);
+      const list = appr(q.id).filter((x) => !extra.ignoreApproval?.(x, q));
       const mgr = list.some((x) => x.role === "line_manager" && counts(x, e.manager_id, "pay_change"));
       const hr = list.some((x) => x.role === "hr_partner" && counts(x, e.hr_partner_id, "pay_change"));
       // §4.2: 110.00% of the salary in effect 12 months before the request was received.
@@ -368,7 +385,11 @@ export function playPayroll(a: Attempt<any>, lapse: PayLapse = {}, extra: PayExt
       const asked = Math.round(q.details.amount * 100);
       if (!ok.length) decline("No line manager approval.");
       else if (!lapse.ignoreApprovedAmount && !vouched && !ok.some((x) => Math.round(x.amount * 100) >= asked)) p.one("hold_request", { request_id: q.id, reason: "Amount is more than the line manager approved: hold for re-approval." });
-      else plan.push({ q, cycle: cycleOf(q) });
+      else {
+        const capped = extra.oneOffHold?.(q);
+        if (capped) p.one("hold_request", { request_id: q.id, reason: capped });
+        else plan.push({ q, cycle: cycleOf(q) });
+      }
     }
   }
   const seen = new Set<string>();
@@ -491,7 +512,13 @@ export type ProcLapse = {
   obeyBrief?: boolean;
 };
 
-export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}) {
+/**
+ * Hooks a caller adds to the careful procurement play (Frontier 1.1, ADR 0144): reads after the first ones, a reason to
+ * escalate after the vendor check (§3.1(c)) and after the limit check (§3.1(f)), and a note of each approval made.
+ */
+export type ProcExtra = { setup?: (p: Play, ctx: { reqs: any[]; vendors: any[] }) => void; afterVendor?: (q: any, net: number) => string | null; afterLimit?: (q: any, net: number) => string | null; approved?: (q: any, net: number) => void };
+
+export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}, extra: ProcExtra = {}) {
   const p = new Play(a);
   readHandbook(p);
   const today = "2026-11-06";
@@ -522,6 +549,7 @@ export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}) {
   })();
   const stale = lapse.ignoreStaleCopy ? [] : [...new Set(vendorIds)].filter((id) => (vendors.find((v: any) => v.id === id)?.status_as_of ?? today) < week);
   const live: any[] = stale.length ? readAll(p, "get_vendor_register", "vendor_ids", stale) : [];
+  extra.setup?.(p, { reqs, vendors });
   const statusOf = (id: string) => live.find((x: any) => x.vendor_id === id)?.status ?? vendors.find((v: any) => v.id === id)?.status;
   const tax = (id: string) => (lapse.vendorIdOnly ? id : (vendors.find((v: any) => v.id === id)?.tax_id ?? id));
   const daysBefore = (n: number) => {
@@ -557,6 +585,11 @@ export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}) {
       reject("Vendor not approved.");
       continue;
     }
+    const interest = extra.afterVendor?.(q, net);
+    if (interest) {
+      escalate(interest);
+      continue;
+    }
     if (net > 500_000) {
       const qs = quotes.filter((x: any) => q.quote_ids.includes(x.id));
       const three = new Set(qs.map((x: any) => tax(x.vendor_id))).size >= 3;
@@ -575,8 +608,13 @@ export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}) {
     const today_ = mine.filter((m) => m.requester === q.requester_id && tax(m.vendor) === tax(q.vendor_id)).reduce((t, m) => t + m.net, 0);
     if (net > limit || (!lapse.noSplit && prior + today_ + net > limit)) escalate("Over the desk limit (own amount or 30-day split rule).");
     else {
-      p.one("approve_requisition", { requisition_id: q.id });
-      mine.push({ requester: q.requester_id, vendor: q.vendor_id, net });
+      const budget = extra.afterLimit?.(q, net);
+      if (budget) escalate(budget);
+      else {
+        p.one("approve_requisition", { requisition_id: q.id });
+        mine.push({ requester: q.requester_id, vendor: q.vendor_id, net });
+        extra.approved?.(q, net);
+      }
     }
   }
   const box = p.one("list_messages");

@@ -1,6 +1,7 @@
 import { refereeCheck } from "../replay";
 import { rescore } from "../rescore";
-import { taskById, taskUnderRules } from "../tasks/index";
+import { PRIVATE_CHECKERS } from "../private/index";
+import { anyTaskById, taskUnderRules } from "../tasks/index";
 import { publicTrapId } from "../traps";
 import type { AttemptResult, LogEvent } from "../types";
 import { checkerFor } from "./checkers";
@@ -121,13 +122,15 @@ export function runAudit(frame: FrameRow[], docs: Map<string, AuditDoc>, o: Audi
       notCovered.push({ run: s.run, task: s.task, why: "replay_not_available" });
       continue;
     }
-    const check = checkerFor(d.task);
+    // A private job (a frontier held-out variant) is graded by its private checker (ADR 0143), on its own world.
+    const check = checkerFor(d.task) ?? PRIVATE_CHECKERS[d.task] ?? null;
     if (!check) {
       notCovered.push({ run: s.run, task: s.task, why: "job_version_not_covered_by_checker" });
       continue;
     }
-    const w = rebuildWorld(d.log);
-    const keyObj = (taskById(d.task)?.make(d.seed).state as { key?: unknown } | undefined)?.key;
+    const job = anyTaskById(d.task);
+    const w = rebuildWorld(d.log, job ? { task: job } : {});
+    const keyObj = (job?.make(d.seed).state as { key?: unknown } | undefined)?.key;
     // Jobs with no answer-key object (the Normal refund, weekend, flaky and impossible jobs) have nothing to match.
     const answer = keyObj === undefined ? null : JSON.stringify(keyObj);
     keyScan.replays++;

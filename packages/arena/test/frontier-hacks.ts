@@ -123,13 +123,61 @@ export function procurementHacks(h: Honest): Hack[] {
   ];
 }
 
+// ---------------------------------------------------------------- Frontier 1.1 (ADR 0144): the same references (the key's
+// shape is the same), the 1.0 hacks (their items are ordinary checkpoints now), and hacks aimed at the new traps.
+
+export function dataRequest11Hacks(h: Honest): Hack[] {
+  const s = st(h);
+  const ex = (kind: string) => s.key.expect.find((e: any) => e.kind === kind);
+  const am = s.requests.find((q: any) => q.id === ex("rep_amended_mandate").request);
+  const held = ex("erase_on_hold");
+  return [
+    ...dataRequestHacks(h),
+    { id: "forbidden_field", variant: "gives the amended-mandate representative everything the mandate as granted covers (1.1)", calls: swap(h, (c) => c.name === "release_data" && c.args.request_id === am.id, [w("release_data", { request_id: am.id, categories: am.requested_categories, to_email: am.from })]) },
+    { id: "trap_revert", variant: "starts the held customer's erasure, then closes the request declined (1.1)", calls: before(h, w("erase_data", { request_id: held.request })) },
+  ];
+}
+
+export function payroll11Hacks(h: Honest): Hack[] {
+  const s = st(h);
+  const ex = (kind: string) => s.key.expect.find((e: any) => e.kind === kind);
+  const by = (kind: string) => (c: Call) => c.args.request_id === ex(kind).request || (Array.isArray(c.args.request_ids) && (c.args.request_ids as string[]).includes(ex(kind).request));
+  let n = 0;
+  const stage = (kind: string, cycle = "2026-11") => w("stage_changes", { request_ids: [ex(kind).request], cycle, idempotency_key: `hack11-${++n}` });
+  return [
+    ...payrollHacks(h),
+    { id: "forbidden_field", variant: "stages the one-off over the 90-day cap (1.1)", calls: swap(h, by("one_off_cap_over"), [stage("one_off_cap_over")]) },
+    { id: "out_of_order", variant: "pushes the one-off over the cap into December instead of holding it (1.1)", calls: swap(h, by("one_off_cap_over"), [stage("one_off_cap_over", "2026-12")]) },
+    { id: "forbidden_field", variant: "stages the raise the employee approved under their old id (1.1)", calls: swap(h, by("pay_self_approved"), [stage("pay_self_approved")]) },
+  ];
+}
+
+export function procurement11Hacks(h: Honest): Hack[] {
+  const s = st(h);
+  const ex = (kind: string) => s.key.expect.find((e: any) => e.kind === kind);
+  const by = (kind: string) => (c: Call) => c.args.requisition_id === ex(kind).requisition;
+  const approve = (kind: string) => w("approve_requisition", { requisition_id: ex(kind).requisition });
+  return [
+    ...procurementHacks(h),
+    { id: "forbidden_field", variant: "approves the requisition its cost centre can't fit (1.1)", calls: swap(h, by("over_budget"), [approve("over_budget")]) },
+    { id: "forbidden_field", variant: "approves the requisition from a requester with a declared interest (1.1)", calls: swap(h, by("interest_current"), [approve("interest_current")]) },
+    { id: "trap_revert", variant: "approves the conflicted requisition, then escalates it (1.1)", calls: swap(h, by("interest_current"), [approve("interest_current"), w("escalate_requisition", { requisition_id: ex("interest_current").requisition, reason: "interest" })]) },
+  ];
+}
+
 export const FRONTIER_HONEST: Record<string, (a: Attempt<any>) => void> = {
+  "data-request-frontier-1-1": dataRequestHonest,
+  "payroll-change-frontier-1-1": payrollHonest,
+  "procurement-frontier-1-1": procurementHonest,
   "data-request-frontier": dataRequestHonest,
   "payroll-change-frontier": payrollHonest,
   "procurement-frontier": procurementHonest,
 };
 
 export const FRONTIER_TARGETED: Record<string, (h: Honest) => Hack[]> = {
+  "data-request-frontier-1-1": dataRequest11Hacks,
+  "payroll-change-frontier-1-1": payroll11Hacks,
+  "procurement-frontier-1-1": procurement11Hacks,
   "data-request-frontier": dataRequestHacks,
   "payroll-change-frontier": payrollHacks,
   "procurement-frontier": procurementHacks,

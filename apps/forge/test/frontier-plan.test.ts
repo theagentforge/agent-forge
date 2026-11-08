@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { DEV_SPLIT, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly, PRIVATE_TASK_IDS } from "@forge/arena";
+import { DEV_SPLIT, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_1_1_TASK_IDS, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly, PRIVATE_TASK_IDS } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { isClaudeByok } from "../src/arena/credit";
@@ -11,7 +11,8 @@ import { getDb } from "../src/services/db";
 import plans from "../../../docs/data/frontier-calibration-r1.json";
 import plansR2 from "../../../docs/data/frontier-calibration-r2.json";
 import plansR3 from "../../../docs/data/frontier-calibration-r3.json";
-import { CAL_PLANS, CLAUDE_POOL, FRONTIER_POOL, MIN_N } from "../src/arena/frontier-calibration";
+import plansV11 from "../../../docs/data/frontier-1-1-calibration.json";
+import { CAL_PLANS, CLAUDE_POOL, FRONTIER_POOL, MIN_N, trapTable, V11_ROUND } from "../src/arena/frontier-calibration";
 
 // The frontier tier's round-1 calibration plan (ADR 0139), a ready-to-run `arena:plan` value the coordinator queues:
 // held practice events on the dev seeds only, several models (never one), the three frontier jobs.
@@ -180,5 +181,55 @@ describe("frontier calibration plans from round 2 on name no Workers AI model (D
     }
     // Round 1 did name them, which is why the decision is needed and why only round 1 is exempt.
     expect(plans.flatMap((p) => p.models).filter((m) => modelById(m)?.route.kind === "workers-ai").sort()).toEqual(["gemma-4-26b", "glm-5.3-flash"]);
+  });
+});
+
+// ADR 0144: Frontier 1.1's one calibration round, written before any run (not queued here): held practice, Claude on our
+// own key, the first six calibration seeds, the three 1.1 jobs, Opus split so its second half waits for the spend check.
+describe("frontier 1.1 calibration plan", () => {
+  it("planSchema accepts every part: held practice, calibration seeds only, the three 1.1 jobs, Claude on our own key", () => {
+    expect(plansV11.map((p) => p.slug)).toEqual(["frontier-cal-v1-1-haiku", "frontier-cal-v1-1-sonnet", "frontier-cal-v1-1-opus-a", "frontier-cal-v1-1-opus-b"]);
+    for (const raw of plansV11) {
+      const p = planSchema.parse(raw);
+      expect(p).toMatchObject({ kind: "practice", hold: true, attempts: 1 });
+      expect(isPlainPractice(p)).toBe(false);
+      expect(p.tasks).toEqual([...FRONTIER_1_1_TASK_IDS]);
+      for (const s of p.seeds) expect(FRONTIER_1_1_FREEZE.calibrationSeeds).toContain(s);
+      for (const m of p.models) {
+        expect((CLAUDE_POOL as readonly string[]).includes(m), m).toBe(true);
+        expect(isClaudeByok(modelById(m)!)).toBe(true);
+      }
+    }
+    // Practice-only while calibrating: a ranked event can't list a 1.1 job.
+    for (const id of FRONTIER_1_1_TASK_IDS) expect(isPracticeOnly(id)).toBe(true);
+    expect(planSchema.safeParse({ ...plansV11[0], slug: "v11-ranked", kind: "card", seeds: [1_500_000_001] }).success).toBe(false);
+    const seedsOf = (m: string) => plansV11.filter((p) => p.models.includes(m)).flatMap((p) => p.seeds).sort();
+    for (const m of CLAUDE_POOL) expect(seedsOf(m)).toEqual([...FRONTIER_1_1_FREEZE.calibrationSeeds]);
+    // The admin read-out knows the plans.
+    for (const p of plansV11) expect(CAL_PLANS[p.slug]).toBeDefined();
+  });
+
+  it("the read-out's 1.1 round reports every 1.1 trap (FA-POL-018 carried) under the ship-or-drop rule, never a band decision", () => {
+    const table = trapTable([], V11_ROUND);
+    expect(table.map((x) => x.trap).sort()).toEqual(["FA-POL-018", ...FRONTIER_1_1_CATALOG.map((e) => e.id)].sort());
+    for (const x of table) expect(x.decision).toBe("not_measured");
+    const done = (model: string, trap: string, fell: boolean) => ({ id: `${model}-${trap}-${fell}`, eventId: "e", modelId: model, task: "procurement-frontier-1-1", seed: 900_001, attemptNo: 1, status: "done", heldOut: false, result: { reason: "finished", traps: [{ id: trap, triggered: fell }] } });
+    const rows = [done("claude-opus-5.5", "over_budget", false), done("claude-sonnet-5.5", "over_budget", true)];
+    const row = trapTable(rows as never, V11_ROUND).find((x) => x.trap === "FA-POL-022")!;
+    expect(row.frontier_pool).toMatchObject({ fell: 1, n: 2 });
+    expect(row.decision).toBe("ship_or_drop");
+  });
+
+  it("queues 54 held bouts", async () => {
+    const db = getDb(env);
+    let total = 0;
+    for (const raw of plansV11) {
+      const id = await planEvent(env, planSchema.parse({ ...raw, slug: `${raw.slug}-check` }));
+      const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, id));
+      total += runs.length;
+      await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, id));
+      await db.delete(t.arenaEvents).where(eq(t.arenaEvents.id, id));
+    }
+    expect(total).toBe(3 * 6 * 3);
   });
 });

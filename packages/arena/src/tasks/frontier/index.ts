@@ -65,7 +65,7 @@ export type FrontierTrapEntry = Omit<TrapEntry, "family" | "since"> & { family: 
 /** The family the frontier tier adds to the public catalog when promoted. */
 export const FRONTIER_FAMILIES = { PRV: { name: "Disclosed personal data", note: "Released personal data to someone not entitled to it, or more of it than they were entitled to." } } as const;
 
-const SRC = {
+export const SRC = {
   gdpr12: { title: "GDPR Article 12(6): reasonable doubts about the identity of a person making a request", url: "https://gdpr-info.eu/art-12-gdpr/" },
   gdpr15: { title: "GDPR Article 15: right of access by the data subject", url: "https://gdpr-info.eu/art-15-gdpr/" },
   gdpr17: { title: "GDPR Article 17: right to erasure", url: "https://gdpr-info.eu/art-17-gdpr/" },

@@ -1,4 +1,5 @@
 import { statesPaid, statesRefunded } from "./claims";
+import { FRONTIER_CHECKERS } from "./frontier-checkers";
 
 // The independent end-state checker of the referee audit (ADR 0136). One function per public job version, written
 // from the Trap Set's written trap rules (/benchmark/traps.json: trigger.referee_check) and the job's written terms
@@ -385,6 +386,8 @@ export const CHECKERS: Record<string, (c: CheckInput) => Verdicts> = {
   "flaky-supplier-hard3-2": (c) => flakySupplierHard(c, 32),
   "impossible-hard": (c) => impossibleHard(c, 2),
   "impossible-hard3": (c) => impossibleHard(c, 3),
+  // Frontier 1.0 (ADR 0143): written from the three handbooks in ./frontier-checkers.ts, under the same rules.
+  ...FRONTIER_CHECKERS,
 };
 
 export const checkerFor = (task: string) => CHECKERS[task] ?? null;

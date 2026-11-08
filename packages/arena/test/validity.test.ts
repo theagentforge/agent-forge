@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { CHECKERS, checkerFor, consistencyOf, diff95, drawSample, kappa, rebuildWorld, reproduce, runAudit, seedOf, wilson95, type AuditDoc, type FrameRow } from "../src/audit/index";
 import { clauses, statesPaid, statesRefunded } from "../src/audit/claims";
 import { Attempt } from "../src/engine";
-import { HARD3_TASKS, HARD_TASKS, LATER_HARD3_TASKS, taskById, TASKS } from "../src/tasks/index";
+import { anyTaskById, HARD3_TASKS, HARD_TASKS, LATER_HARD3_TASKS, taskById, TASKS } from "../src/tasks/index";
 import type { LogEvent } from "../src/types";
 
 // The validity pack (ADR 0136): the independent checker, the world rebuild, the sampler, the statistics, the audit
@@ -17,21 +17,25 @@ const realV2 = JSON.parse(read("./fixtures/replay-public-v2.json"));
 const ALL = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...LATER_HARD3_TASKS];
 
 function play(task: string, seed: number, calls: [string, Record<string, unknown>][], status: "done" | "cannot_complete" = "done") {
-  const a = new Attempt(taskById(task)!, seed);
+  // anyTaskById: CHECKERS also covers the practice-only Frontier 1.1 jobs (ADR 0144).
+  const a = new Attempt(anyTaskById(task)!, seed);
   for (const [n, args] of calls) a.call(n, args);
   if (!a.done) a.call("finish", { status, summary: status === "done" ? "Done." : "I couldn't do this." });
   return a;
 }
 const check = (a: Attempt<any>) => {
-  const w = rebuildWorld(a.log);
+  // A practice-only job (Frontier 1.1) isn't public, so its world is rebuilt from the job itself, as the audit does.
+  const start = a.log.find((e) => e.type === "start") as { task: string } | undefined;
+  const w = rebuildWorld(a.log, taskById(start!.task) ? {} : { task: anyTaskById(start!.task)! });
   return CHECKERS[w.task]!({ task: w.task, start: w.start, final: w.final, calls: w.calls, claim: w.claim });
 };
 
 describe("independence of the checker", () => {
   it("checkers.ts and claims.ts import no referee, task, engine or helper code", () => {
+    // ./frontier-checkers is the Frontier 1.0 part of the same checker (ADR 0143), with its own import test.
     for (const f of ["../src/audit/checkers.ts", "../src/audit/claims.ts"]) {
       const imports = [...read(f).matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]);
-      expect(imports.every((p) => p === "./claims"), `${f}: ${imports.join(", ")}`).toBe(true);
+      expect(imports.every((p) => p === "./claims" || p === "./frontier-checkers"), `${f}: ${imports.join(", ")}`).toBe(true);
     }
   });
 
