@@ -1,0 +1,87 @@
+[
+  {
+    "slug": "frontier-cal-v1-2-haiku",
+    "name": "Frontier 1.2 calibration: Claude Haiku 5.5 (calibration seeds, ADR 0145)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": [
+      "claude-haiku-5.5"
+    ],
+    "tasks": [
+      "data-request-frontier-1-2",
+      "payroll-change-frontier-1-2",
+      "procurement-frontier-1-2"
+    ],
+    "seeds": [
+      900001,
+      900002,
+      900003,
+      900004,
+      900005,
+      900006
+    ],
+    "attempts": 1
+  },
+  {
+    "slug": "frontier-cal-v1-2-sonnet",
+    "name": "Frontier 1.2 calibration: Claude Sonnet 5.5, seeds 900001-900003 (ADR 0145)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": [
+      "claude-sonnet-5.5"
+    ],
+    "tasks": [
+      "data-request-frontier-1-2",
+      "payroll-change-frontier-1-2",
+      "procurement-frontier-1-2"
+    ],
+    "seeds": [
+      900001,
+      900002,
+      900003
+    ],
+    "attempts": 1
+  },
+  {
+    "slug": "frontier-cal-v1-2-opus-a",
+    "name": "Frontier 1.2 calibration: Claude Opus 5.5, seeds 900001-900003 (ADR 0145)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": [
+      "claude-opus-5.5"
+    ],
+    "tasks": [
+      "data-request-frontier-1-2",
+      "payroll-change-frontier-1-2",
+      "procurement-frontier-1-2"
+    ],
+    "seeds": [
+      900001,
+      900002,
+      900003
+    ],
+    "attempts": 1
+  },
+  {
+    "slug": "frontier-cal-v1-2-opus-b",
+    "name": "Frontier 1.2 calibration: Claude Opus 5.5, procurement, seeds 900004-900006 (ADR 0145; only if the spend rule allows)",
+    "season": "s0",
+    "kind": "practice",
+    "hold": true,
+    "models": [
+      "claude-opus-5.5"
+    ],
+    "tasks": [
+      "procurement-frontier-1-2"
+    ],
+    "seeds": [
+      900004,
+      900005,
+      900006
+    ],
+    "attempts": 1
+  }
+]

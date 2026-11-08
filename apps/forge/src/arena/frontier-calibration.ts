@@ -1,9 +1,10 @@
-import { FRONTIER_1_1_CARRIED, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_CATALOG, FRONTIER_FREEZE, isFrontier11Task, isFrontierTask, publicTrapId, type AttemptResult, type LogEvent } from "@forge/arena";
+import { FRONTIER_1_1_CARRIED, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_1_2_CARRIED, FRONTIER_1_2_CATALOG, FRONTIER_1_2_FREEZE, isFrontier12Task, FRONTIER_CATALOG, FRONTIER_FREEZE, isFrontier11Task, isFrontierTask, publicTrapId, type AttemptResult, type LogEvent } from "@forge/arena";
 import { and, asc, eq, inArray, like } from "drizzle-orm";
 import roundOne from "../../../../docs/data/frontier-calibration-r1.json";
 import roundTwo from "../../../../docs/data/frontier-calibration-r2.json";
 import roundThree from "../../../../docs/data/frontier-calibration-r3.json";
 import v11 from "../../../../docs/data/frontier-1-1-calibration.json";
+import v12 from "../../../../docs/data/frontier-1-2-calibration.json";
 import * as t from "../db/schema";
 import type { Db } from "../services/db";
 import { outward, wilson } from "./holdout";
@@ -24,7 +25,7 @@ export const MIN_N = 16;
 /** The target band for the pooled fall rate (ADR 0139 protocol 3), inclusive. */
 export const BAND = { low: 0.2, high: 0.6 } as const;
 /** The round plans as queued (the exact `arena:plan` values), to say what each event should hold. */
-export const CAL_PLANS: Record<string, { models: string[]; tasks: string[]; seeds: number[]; attempts: number }> = Object.fromEntries([...roundOne, ...roundTwo, ...roundThree, ...v11].map((p) => [p.slug, p]));
+export const CAL_PLANS: Record<string, { models: string[]; tasks: string[]; seeds: number[]; attempts: number }> = Object.fromEntries([...roundOne, ...roundTwo, ...roundThree, ...v11, ...v12].map((p) => [p.slug, p]));
 
 export type BandDecision = "not_measured" | "below_band" | "in_band" | "above_band" | "spans_boundary" | "insufficient_n" | "near_band" | "caps_review" | "fairness_review" | "ship_or_drop";
 /** Amendment 2 rule 5: a job whose frontier-pool bouts are more than this share knockouts has its caps reviewed first. */
@@ -42,7 +43,7 @@ export const BAND_ACTION: Record<BandDecision, string> = {
   near_band: "no change: the rate is outside the band but the interval reaches into it; carries to the next round with pooled counts if the job is unchanged",
   caps_review: "no change: more than 25% of this job's frontier-pool bouts were knockouts; review its caps as a bug before deciding any of its traps (Amendment 2 rule 5)",
   fairness_review: "no change yet: every Claude model falls on it (all-Claude lower bound over 80%); review the trap for fairness before softening it (Amendment 2 rule 5)",
-  ship_or_drop: "Frontier 1.1, one round (ADR 0144; ADR 0139 Amendment 3's rule): read every fall's log, then ship the trap labelled at its measured rate or drop it; Dinike decides per trap. n is below Amendment 2's minimum by design, so no band decision is made",
+  ship_or_drop: "Frontier 1.1 and 1.2, one round each (ADR 0144, ADR 0145; ADR 0139 Amendment 3's rule): read every fall's log, then ship the trap labelled at its measured rate or drop it; Dinike decides per trap. n is below Amendment 2's minimum by design, so no band decision is made",
 };
 
 /**
@@ -101,13 +102,17 @@ const calRate = (fell: number, n: number): CalRate => ({ fell, n, rate: n ? Math
 type Row = Pick<typeof t.arenaRuns.$inferSelect, "id" | "eventId" | "modelId" | "task" | "seed" | "attemptNo" | "status" | "retries" | "voidReason" | "passed" | "cost" | "costEstimated" | "result" | "heldOut" | "provider" | "finishedAt" | "startedAt"> & { hasCheckpoint: boolean };
 
 /** Referee trap id (`task/trap`) → frontier public id (reserved until promotion; ADR 0139 decision 1), 1.0 and 1.1. */
-const FRONTIER_PUBLIC = new Map([...FRONTIER_CATALOG, ...FRONTIER_1_1_CATALOG, ...Object.entries(FRONTIER_1_1_CARRIED).map(([id, traps]) => ({ id, traps }))].flatMap((e) => e.traps.map((k) => [k, e.id] as const)));
+const FRONTIER_PUBLIC = new Map([...FRONTIER_CATALOG, ...FRONTIER_1_1_CATALOG, ...FRONTIER_1_2_CATALOG, ...[FRONTIER_1_1_CARRIED, FRONTIER_1_2_CARRIED].flatMap((c) => Object.entries(c).map(([id, traps]) => ({ id, traps })))].flatMap((e) => e.traps.map((k) => [k, e.id] as const)));
 /** The Frontier 1.1 round (ADR 0144): its events are `frontier-cal-v1-1-*`. */
 export const V11_ROUND = "v1-1";
+/** The Frontier 1.2 round (ADR 0145): its events are `frontier-cal-v1-2-*`, read under the same ship-or-drop rule. */
+export const V12_ROUND = "v1-2";
+const SHIP_OR_DROP_ROUNDS = [V11_ROUND, V12_ROUND];
+const carriedOf = (c: Record<string, string[]>) => Object.entries(c).map(([id, traps]) => ({ id, family: FRONTIER_CATALOG.find((e) => e.id === id)!.family, traps }));
 /** The traps a round reports: Frontier 1.0's catalog, or for the 1.1 round its new records and the carried FA-POL-018. */
 const catalogFor = (round: string): { id: string; family: string; traps: string[] }[] =>
-  round === V11_ROUND ? [...Object.entries(FRONTIER_1_1_CARRIED).map(([id, traps]) => ({ id, family: FRONTIER_CATALOG.find((e) => e.id === id)!.family, traps })), ...FRONTIER_1_1_CATALOG] : FRONTIER_CATALOG;
-const inRound = (round: string) => (task: string) => (round === V11_ROUND ? isFrontier11Task(task) : isFrontierTask(task));
+  round === V11_ROUND ? [...carriedOf(FRONTIER_1_1_CARRIED), ...FRONTIER_1_1_CATALOG] : round === V12_ROUND ? [...carriedOf(FRONTIER_1_2_CARRIED), ...FRONTIER_1_2_CATALOG] : FRONTIER_CATALOG;
+const inRound = (round: string) => (task: string) => (round === V11_ROUND ? isFrontier11Task(task) : round === V12_ROUND ? isFrontier12Task(task) : isFrontierTask(task));
 const pid = (task: string, trap: string) => FRONTIER_PUBLIC.get(`${task}/${trap}`) ?? publicTrapId(task, trap) ?? `${task}/${trap}`;
 
 /** The model's own `finish` claim (done / cannot_complete), from the referee result's log-free fields. */
@@ -165,7 +170,7 @@ function missingFromPlan(slug: string, rows: Row[]) {
   return { planned: p.models.length * p.tasks.length * p.seeds.length * p.attempts, missing: out };
 }
 
-const roundOf = (slug: string) => /^frontier-cal-(r\d+|v1-1)-/.exec(slug)?.[1] ?? "unknown";
+const roundOf = (slug: string) => /^frontier-cal-(r\d+|v1-[12])-/.exec(slug)?.[1] ?? "unknown";
 
 /** Per trap of the frontier catalog: the pooled frontier rate, the per-model rates and the band decision. */
 export function trapTable(rows: Row[], round = "r1") {
@@ -192,7 +197,7 @@ export function trapTable(rows: Row[], round = "r1") {
         if (everyFell && allClaude.n > 0 && wilson(allClaude.fell, allClaude.n)[0] > FAIRNESS_REVIEW_LOWER) return "fairness_review";
         return "ship_or_drop";
       };
-      const decision = round === V11_ROUND ? v11() : round === "r1" ? base : applyRuleFive(base, job, allClaude, everyFell);
+      const decision = SHIP_OR_DROP_ROUNDS.includes(round) ? v11() : round === "r1" ? base : applyRuleFive(base, job, allClaude, everyFell);
       return {
         trap: e.id,
         task,
@@ -248,6 +253,7 @@ export async function calibrationReport(db: Db, now = Date.now()) {
     internal: true,
     freeze: { version: FRONTIER_FREEZE.version, status: FRONTIER_FREEZE.status, round: FRONTIER_FREEZE.round, sha256: FRONTIER_FREEZE.sha256 },
     freeze_1_1: { version: FRONTIER_1_1_FREEZE.version, status: FRONTIER_1_1_FREEZE.status, round: FRONTIER_1_1_FREEZE.round, sha256: FRONTIER_1_1_FREEZE.sha256 },
+    freeze_1_2: { version: FRONTIER_1_2_FREEZE.version, status: FRONTIER_1_2_FREEZE.status, round: FRONTIER_1_2_FREEZE.round, sha256: FRONTIER_1_2_FREEZE.sha256 },
     rule: {
       adr: "0139",
       band: [BAND.low, BAND.high],
@@ -275,13 +281,13 @@ export async function calibrationReport(db: Db, now = Date.now()) {
         runs_by_status: counts,
         plan: missingFromPlan(e.slug, rs),
         cost_usd: Math.round(rs.reduce((s, r) => s + (r.cost ?? 0), 0) * 1e6) / 1e6,
-        non_frontier_tasks: [...new Set(rs.filter((r) => !isFrontierTask(r.task) && !isFrontier11Task(r.task)).map((r) => r.task))],
+        non_frontier_tasks: [...new Set(rs.filter((r) => !isFrontierTask(r.task) && !isFrontier11Task(r.task) && !isFrontier12Task(r.task)).map((r) => r.task))],
         runs: rs.map(runView),
       };
     }),
     rounds: rounds.map((round) => {
       const evIds = new Set(events.filter((e) => roundOf(e.slug) === round).map((e) => e.id));
-      return { round, rule: round === V11_ROUND ? "adr-0144" : round === "r1" ? "amendment-1" : "amendment-2", traps: trapTable(rows.filter((r) => evIds.has(r.eventId) && inRound(round)(r.task)), round) };
+      return { round, rule: round === V11_ROUND ? "adr-0144" : round === V12_ROUND ? "adr-0145" : round === "r1" ? "amendment-1" : "amendment-2", traps: trapTable(rows.filter((r) => evIds.has(r.eventId) && inRound(round)(r.task)), round) };
     }),
   };
 }

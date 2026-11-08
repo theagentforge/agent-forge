@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { DEV_SPLIT, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_1_1_TASK_IDS, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly, PRIVATE_TASK_IDS } from "@forge/arena";
+import { DEV_SPLIT, FRONTIER_1_1_CATALOG, FRONTIER_1_1_FREEZE, FRONTIER_1_1_TASK_IDS, FRONTIER_1_2_CATALOG, FRONTIER_1_2_FREEZE, FRONTIER_1_2_TASK_IDS, FRONTIER_FREEZE, FRONTIER_TASK_IDS, isPracticeOnly, PRIVATE_TASK_IDS } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { isClaudeByok } from "../src/arena/credit";
@@ -12,7 +12,8 @@ import plans from "../../../docs/data/frontier-calibration-r1.json";
 import plansR2 from "../../../docs/data/frontier-calibration-r2.json";
 import plansR3 from "../../../docs/data/frontier-calibration-r3.json";
 import plansV11 from "../../../docs/data/frontier-1-1-calibration.json";
-import { CAL_PLANS, CLAUDE_POOL, FRONTIER_POOL, MIN_N, trapTable, V11_ROUND } from "../src/arena/frontier-calibration";
+import plansV12 from "../../../docs/data/frontier-1-2-calibration.json";
+import { CAL_PLANS, CLAUDE_POOL, FRONTIER_POOL, MIN_N, trapTable, V11_ROUND, V12_ROUND } from "../src/arena/frontier-calibration";
 
 // The frontier tier's round-1 calibration plan (ADR 0139), a ready-to-run `arena:plan` value the coordinator queues:
 // held practice events on the dev seeds only, several models (never one), the three frontier jobs.
@@ -231,5 +232,59 @@ describe("frontier 1.1 calibration plan", () => {
       await db.delete(t.arenaEvents).where(eq(t.arenaEvents.id, id));
     }
     expect(total).toBe(3 * 6 * 3);
+  });
+});
+
+// ADR 0145: Frontier 1.2's one calibration round, written before any run (not queued here), sized to about $10 of
+// Anthropic credit: Haiku on six seeds, Sonnet and Opus on three, and Opus's procurement top-up behind the spend check.
+describe("frontier 1.2 calibration plan", () => {
+  it("planSchema accepts every part: held practice, calibration seeds only, 1.2 jobs only, Claude on our own key", () => {
+    expect(plansV12.map((p) => p.slug)).toEqual(["frontier-cal-v1-2-haiku", "frontier-cal-v1-2-sonnet", "frontier-cal-v1-2-opus-a", "frontier-cal-v1-2-opus-b"]);
+    for (const raw of plansV12) {
+      const p = planSchema.parse(raw);
+      expect(p).toMatchObject({ kind: "practice", hold: true, attempts: 1 });
+      expect(isPlainPractice(p)).toBe(false);
+      for (const t of p.tasks) expect(FRONTIER_1_2_TASK_IDS).toContain(t);
+      for (const s of p.seeds) expect(FRONTIER_1_2_FREEZE.calibrationSeeds).toContain(s);
+      for (const m of p.models) {
+        expect((CLAUDE_POOL as readonly string[]).includes(m), m).toBe(true);
+        expect(isClaudeByok(modelById(m)!)).toBe(true);
+      }
+      expect(CAL_PLANS[p.slug]).toBeDefined();
+    }
+    for (const id of FRONTIER_1_2_TASK_IDS) expect(isPracticeOnly(id)).toBe(true);
+    expect(planSchema.safeParse({ ...plansV12[0], slug: "v12-ranked", kind: "card", seeds: [1_500_000_001] }).success).toBe(false);
+    // Bouts per model and job: Haiku 6 everywhere; Sonnet 3; Opus 3, and 6 on procurement with the top-up.
+    const n = (m: string, task: string) => plansV12.filter((p) => p.models.includes(m) && p.tasks.includes(task)).reduce((t, p) => t + p.seeds.length, 0);
+    for (const task of FRONTIER_1_2_TASK_IDS) {
+      expect(n("claude-haiku-5.5", task)).toBe(6);
+      expect(n("claude-sonnet-5.5", task)).toBe(3);
+      expect(n("claude-opus-5.5", task)).toBe(task === "procurement-frontier-1-2" ? 6 : 3);
+    }
+  });
+
+  it("the read-out's 1.2 round reports FA-POL-018 (carried) and the three new traps under the ship-or-drop rule", () => {
+    const table = trapTable([], V12_ROUND);
+    expect(table.map((x) => x.trap).sort()).toEqual(["FA-POL-018", ...FRONTIER_1_2_CATALOG.map((e) => e.id)].sort());
+    for (const x of table) expect(x.decision).toBe("not_measured");
+    const done = (model: string, fell: boolean) => ({ id: `${model}-${fell}`, eventId: "e", modelId: model, task: "procurement-frontier-1-2", seed: 900_001, attemptNo: 1, status: "done", heldOut: false, result: { reason: "finished", traps: [{ id: "quotes_same_vendor", triggered: fell }] } });
+    const row = trapTable([done("claude-opus-5.5", false), done("claude-sonnet-5.5", true)] as never, V12_ROUND).find((x) => x.trap === "FA-POL-027")!;
+    expect(row.frontier_pool).toMatchObject({ fell: 1, n: 2 });
+    expect(row.decision).toBe("ship_or_drop");
+    // A 1.1 row is not a 1.2 row.
+    expect(trapTable([{ ...done("claude-opus-5.5", true), task: "procurement-frontier-1-1" }] as never, V12_ROUND).every((x) => x.decision === "not_measured")).toBe(true);
+  });
+
+  it("queues 39 held bouts in all (36 before the top-up)", async () => {
+    const db = getDb(env);
+    let total = 0;
+    for (const raw of plansV12) {
+      const id = await planEvent(env, planSchema.parse({ ...raw, slug: `${raw.slug}-check` }));
+      const runs = await db.select().from(t.arenaRuns).where(eq(t.arenaRuns.eventId, id));
+      total += runs.length;
+      await db.delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, id));
+      await db.delete(t.arenaEvents).where(eq(t.arenaEvents.id, id));
+    }
+    expect(total).toBe(18 + 9 + 9 + 3);
   });
 });

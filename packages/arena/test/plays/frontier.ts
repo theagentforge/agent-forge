@@ -516,7 +516,7 @@ export type ProcLapse = {
  * Hooks a caller adds to the careful procurement play (Frontier 1.1, ADR 0144): reads after the first ones, a reason to
  * escalate after the vendor check (§3.1(c)) and after the limit check (§3.1(f)), and a note of each approval made.
  */
-export type ProcExtra = { setup?: (p: Play, ctx: { reqs: any[]; vendors: any[] }) => void; afterVendor?: (q: any, net: number) => string | null; afterLimit?: (q: any, net: number) => string | null; approved?: (q: any, net: number) => void };
+export type ProcExtra = { setup?: (p: Play, ctx: { reqs: any[]; vendors: any[]; quotes: any[] }) => void; afterVendor?: (q: any, net: number) => string | null; afterLimit?: (q: any, net: number) => string | null; approved?: (q: any, net: number) => void };
 
 export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}, extra: ProcExtra = {}) {
   const p = new Play(a);
@@ -549,7 +549,7 @@ export function playProcurement(a: Attempt<any>, lapse: ProcLapse = {}, extra: P
   })();
   const stale = lapse.ignoreStaleCopy ? [] : [...new Set(vendorIds)].filter((id) => (vendors.find((v: any) => v.id === id)?.status_as_of ?? today) < week);
   const live: any[] = stale.length ? readAll(p, "get_vendor_register", "vendor_ids", stale) : [];
-  extra.setup?.(p, { reqs, vendors });
+  extra.setup?.(p, { reqs, vendors, quotes });
   const statusOf = (id: string) => live.find((x: any) => x.vendor_id === id)?.status ?? vendors.find((v: any) => v.id === id)?.status;
   const tax = (id: string) => (lapse.vendorIdOnly ? id : (vendors.find((v: any) => v.id === id)?.tax_id ?? id));
   const daysBefore = (n: number) => {

@@ -1,4 +1,4 @@
-import { Attempt, FRONTIER_1_1_TASKS, FRONTIER_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, type AttemptResult, type Caps, type TaskType } from "../src";
+import { Attempt, FRONTIER_1_1_TASKS, FRONTIER_1_2_TASKS, FRONTIER_TASKS, HARD3_2_TASKS, HARD3_3_TASKS, HARD3_TASKS, HARD_TASKS, TASKS, type AttemptResult, type Caps, type TaskType } from "../src";
 import { FRONTIER_PRIVATE_TASKS, PRIVATE_TASKS } from "../src/private";
 import { FRONTIER_HONEST, FRONTIER_TARGETED } from "./frontier-hacks";
 import { PRIVATE_HONEST, PRIVATE_TARGETED } from "./private/hacks";
@@ -36,11 +36,12 @@ export interface Hack {
 export type Outcome = "blocked" | "blocked_by_tools" | "passed";
 
 /** Every job in packages/arena, every tier (private families included, so a new one can't skip this suite). */
-export const ALL_TASKS: TaskType<any>[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS, ...FRONTIER_1_1_TASKS];
+export const ALL_TASKS: TaskType<any>[] = [...TASKS, ...HARD_TASKS, ...HARD3_TASKS, ...HARD3_2_TASKS, ...HARD3_3_TASKS, ...FRONTIER_TASKS, ...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS, ...FRONTIER_1_1_TASKS, ...FRONTIER_1_2_TASKS];
 /** Rows kept out of the published table: the private families and variants, and the frontier tier while it calibrates. */
 // The frontier tier joined the published table when promoted (Trap Set 1.3, ADR 0139 Amendment 5).
 // Frontier 1.1 (ADR 0144) is hacked like every job but stays out of the published table until it is promoted.
-export const UNPUBLISHED_TASKS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS, ...FRONTIER_1_1_TASKS];
+// Frontier 1.2 (ADR 0145) likewise.
+export const UNPUBLISHED_TASKS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS, ...FRONTIER_1_1_TASKS, ...FRONTIER_1_2_TASKS];
 export const PRIVATE_ROWS: TaskType<any>[] = [...PRIVATE_TASKS, ...FRONTIER_PRIVATE_TASKS];
 export const SEEDS = [1, 2, 3, 1_234_567_891];
 const UNLIMITED: Caps = { turns: 1e9, toolCalls: 1e9, tokens: 1e15, ms: 1e15 };
@@ -677,7 +678,7 @@ export function runTask(task: TaskType<any>): Row {
   return { task, honestPassed, seeds: SEEDS.length, cells, failures };
 }
 
-const TIER = (t: TaskType<any>) => (HARD3_3_TASKS.includes(t) ? "Hard v3.3" : HARD3_2_TASKS.includes(t) ? "Hard v3.2" : HARD3_TASKS.includes(t) ? "Hard v3.1" : HARD_TASKS.includes(t) ? "Hard v2" : PRIVATE_ROWS.includes(t) ? "Private" : FRONTIER_TASKS.includes(t) ? "Frontier 1.0" : FRONTIER_1_1_TASKS.includes(t) ? "Frontier 1.1" : "Normal");
+const TIER = (t: TaskType<any>) => (HARD3_3_TASKS.includes(t) ? "Hard v3.3" : HARD3_2_TASKS.includes(t) ? "Hard v3.2" : HARD3_TASKS.includes(t) ? "Hard v3.1" : HARD_TASKS.includes(t) ? "Hard v2" : PRIVATE_ROWS.includes(t) ? "Private" : FRONTIER_TASKS.includes(t) ? "Frontier 1.0" : FRONTIER_1_1_TASKS.includes(t) ? "Frontier 1.1" : FRONTIER_1_2_TASKS.includes(t) ? "Frontier 1.2" : "Normal");
 
 /** The table for the private families (ADR 0057): same columns, its own heading, kept with them out of the mirror. */
 export function privateMarkdown(rows: Row[]) {
