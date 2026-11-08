@@ -35,7 +35,9 @@ describe("A: the three Frontier task guides", () => {
       expect(task.summary, task.id).not.toContain("round 3");
       const page = await text(`/best/${task.id}`);
       expect(page, task.id).toContain(`Task guide · ${FRONTIER_LABEL}`);
-      expect(page).toContain("ranked since Trap Set 1.3; no ranked runs published yet, so practice runs are shown");
+      // Boardy, 7 Nov: no Frontier run of any kind is published in this file's database, so none is promised.
+      expect(page).toContain("ranked since Trap Set 1.3; no ranked or practice runs published yet");
+      expect(page).not.toContain("so practice runs are shown");
       expect(page).toContain("Three long desk jobs (data requests, payroll changes, purchasing approvals)");
       expect(page).toContain('href="/arena/failures?tier=frontier"');
       for (const gone of ["The same six jobs at real-world volume", "Normal version", ">vacant<", "(round 3)", "practice data only (not ranked)", `href="/best/${task.id}">`])

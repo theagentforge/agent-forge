@@ -54,7 +54,7 @@ import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
 import { TRAP_SET } from "../arena/benchmark";
-import { forStore, isRefresh, readStored, refreshStale, RELEASE_PARAM, releaseKey, swrFreshSeconds } from "./edge-cache";
+import { forStore, isRefresh, neverEdgeCached, readStored, refreshStale, RELEASE_PARAM, releaseKey, swrFreshSeconds } from "./edge-cache";
 import { readCookie, SESSION_COOKIE } from "./session";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
@@ -278,7 +278,8 @@ site.use("*", async (c, next) => {
     if (receiptBadge && status === 200) c.executionCtx.waitUntil(bump(c.env, ["receipt:badge"]).catch(() => {}));
   };
   // ADR 0125: with a session cookie, a page is neither served from the edge cache nor stored in it.
-  const anonymous = !viewerBound(c.req.path, c.req.header("Cookie"));
+  // Boardy, 7 Nov: the /benchmark HTML is never read from or stored in the edge cache (edge-cache.ts NO_STORE_HTML).
+  const anonymous = !viewerBound(c.req.path, c.req.header("Cookie")) && !neverEdgeCached(c.req.path, wantsJson(c));
   const fresh = anonymous ? swrFreshSeconds(c.req.path) : null;
   const hit = anonymous && !refresh ? await caches.default.match(key) : undefined;
   if (hit) {

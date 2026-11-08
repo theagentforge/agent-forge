@@ -18,9 +18,8 @@ export const SWR_PAGES: [RegExp, number][] = [
   // The home page and the Arena front page: live totals, the Wire and the latest bouts.
   [/^\/$/, 60],
   [/^\/arena$/, 60],
-  // An event's bouts and falls change only when a bout in it finishes; the benchmark when a ranked bout does.
+  // An event's bouts and falls change only when a bout in it finishes. (/benchmark is never edge-cached: NO_STORE_HTML.)
   [/^\/arena\/event\/[^/.]+(\/falls)?$/, 300],
-  [/^\/benchmark$/, 300],
   // Reports (live previews and nightly runs) and the press page.
   [/^\/reports\/[^.]+$/, 3600],
   [/^\/press\/[^.]+$/, 3600],
@@ -34,9 +33,24 @@ export const SWR_PAGES: [RegExp, number][] = [
  */
 export const RELEASE_PARAM = "__release";
 export function releaseKey(env: { CF_VERSION_METADATA?: { id?: string } }, trapSet: string) {
-  const id = env.CF_VERSION_METADATA?.id;
-  return `${typeof id === "string" && id ? id : "local"}.ts${trapSet}`;
+  return `${buildId(env)}.ts${trapSet}`;
 }
+
+/** The deployed Worker version's id (the version_metadata binding), or "local" for builds without one. */
+export function buildId(env: { CF_VERSION_METADATA?: { id?: string } }) {
+  const id = env.CF_VERSION_METADATA?.id;
+  return typeof id === "string" && id ? id : "local";
+}
+export const TRAP_SET_HEADER = "X-Trap-Set-Version";
+export const BUILD_HEADER = "X-Forge-Build";
+
+/**
+ * HTML pages the edge cache never reads or stores (Boardy, 7 Nov): /benchmark, so a reader always gets the Trap Set and
+ * build in its headers, never a copy. The page sends no-store as well; its JSON twin (?format=json or Accept JSON) and
+ * the dataset files are cached as before.
+ */
+export const NO_STORE_HTML: RegExp[] = [/^\/benchmark$/];
+export const neverEdgeCached = (path: string, json: boolean) => !json && NO_STORE_HTML.some((re) => re.test(path));
 
 /** A page's cache key for this release (what the site middleware stores it under). */
 export function releaseCacheUrl(env: { CF_VERSION_METADATA?: { id?: string } }, url: string) {

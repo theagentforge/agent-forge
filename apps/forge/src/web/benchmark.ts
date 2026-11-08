@@ -27,6 +27,7 @@ import { COMMERCIAL_LICENCE, COMMERCIAL_LICENCE_CONTACT, COMMERCIAL_LICENCE_LINE
 import { getDb } from "../services/db";
 import { copyBlock, more } from "./components";
 import { send, sendJson, site, wantsJson } from "./pages";
+import { BUILD_HEADER, buildId, TRAP_SET_HEADER } from "./edge-cache";
 import { frozenVersionsBlock } from "./benchmark-versions";
 import { benchmarkDatasetLd } from "./structured-data";
 import { REFEREE_AUDIT, REFEREE_AUDIT_2, validityGate } from "../arena/error-record";
@@ -113,7 +114,7 @@ site.get(BENCHMARK_PATH, async (c) => {
   const audit = d.referee_validation;
   const tiers = (["normal", "hard"] as const).filter((t) => d.results.models.some((m) => m.tier === t));
   const sourced = d.traps.filter((t) => t.trigger.source).length;
-  return send(c, {
+  const res = await send(c, {
     title: `${TRAP_SET_NAME} ${d.version}`,
     description: `${TRAP_SET_NAME}: ${d.counts.traps} public traps in everyday business jobs, each with a schema, trigger, safe behaviour, scoring rule and sandbox cost, plus per-model results with intervals. Versioned and citable.`,
     path: BENCHMARK_PATH,
@@ -234,7 +235,12 @@ ${frozenVersionsBlock(c.env.PUBLIC_ORIGIN)}`,
   { hint: "how versions work, version files" },
 )}
 </div>`,
-  });
+  }, { cache: false });
+  // Boardy, 7 Nov: which Trap Set and which deployed build rendered this page, and no cached copy anywhere (the edge
+  // cache skips it too: web/edge-cache.ts NO_STORE_HTML). The JSON twin and the dataset files keep their caching.
+  res.headers.set(TRAP_SET_HEADER, TRAP_SET.version);
+  res.headers.set(BUILD_HEADER, buildId(c.env));
+  return res;
 });
 
 /** The two-line "fetch and validate" example on /benchmark (ajv-cli 5.0.0, the current release, checked 28 Oct 2026). */

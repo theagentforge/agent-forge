@@ -338,7 +338,32 @@ export function computeRankings(events: { results: { model: string; task: string
 }
 
 export async function divisionRankings(db: Db, divisionOf: (model: string) => string | null = (m) => modelById(m)?.division ?? null, tier: Tier = "normal") {
+  return (await divisionRankingsWithPasses(db, divisionOf, tier)).ranks;
+}
+
+/**
+ * Models that passed every attempt in a set of runs, by counts (passes === attempts), never by a rounded rate (Boardy,
+ * 7 Nov review). Exported for tests.
+ */
+export function allPassedModels(runs: { summary: { model: string }; result: { passed: boolean } }[]) {
+  const n = new Map<string, { passes: number; attempts: number }>();
+  for (const r of runs) {
+    const c = n.get(r.summary.model) ?? { passes: 0, attempts: 0 };
+    c.attempts++;
+    if (r.result.passed) c.passes++;
+    n.set(r.summary.model, c);
+  }
+  return new Set([...n].filter(([, c]) => c.attempts > 0 && c.passes === c.attempts).map(([m]) => m));
+}
+
+/**
+ * The division rankings and, from the very same runs (every ranked card/guest run over every job in the tier: on Hard
+ * that is Hard v2, v3, the later v3 jobs and Frontier), the models that passed every attempt. A line saying "every
+ * ranked model passed" reads this set, so it can't disagree with the rankings it sits above (Boardy, 7 Nov).
+ */
+export async function divisionRankingsWithPasses(db: Db, divisionOf: (model: string) => string | null = (m) => modelById(m)?.division ?? null, tier: Tier = "normal") {
   const runs = (await finishedRuns(db, { kinds: ["card", "guest"], tier })).reverse();
+  const allPassed = allPassedModels(runs);
   const order: string[] = [];
   const byEvent = new Map<string, { model: string; task: string; result: AttemptResult }[]>();
   for (const r of runs) {
@@ -353,5 +378,5 @@ export async function divisionRankings(db: Db, divisionOf: (model: string) => st
     (out[d] ??= []).push({ model, name: modelName(model), rating: conservative(r), rd: Math.round(r.rd) });
   }
   for (const d of Object.keys(out)) out[d] = out[d]!.sort((a, b) => b.rating - a.rating).slice(0, 15);
-  return out;
+  return { ranks: out, allPassed };
 }

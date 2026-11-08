@@ -225,8 +225,9 @@ describe("a release never serves the previous release's pages (diligence review,
     expect(releaseKey({ CF_VERSION_METADATA: { id: "v-124" } }, "1.3")).not.toBe(releaseKey({ CF_VERSION_METADATA: { id: "v-123" } }, "1.3"));
   });
 
-  it("/benchmark: a copy stored under another release is never served, fresh or stale; this release's copy is", async () => {
-    const path = `/benchmark?rel=${++n}`;
+  // Boardy, 7 Nov: /benchmark itself is never edge-cached now (boardy-8nov.test.ts), so this uses the home page.
+  it("a copy stored under another release is never served, fresh or stale; this release's copy is", async () => {
+    const path = homeUrl("rel");
     // The previous release's fresh copy, under its own key.
     const old = new URL(`${ORIGIN}${path}`);
     old.searchParams.set(RELEASE_PARAM, "previous-release.ts1.2");

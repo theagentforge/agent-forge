@@ -60,14 +60,14 @@ describe("consistency: right 3 times out of 3", () => {
 });
 
 describe("/arena tier switch", () => {
-  it("Normal is the default: a link to Hard, Normal results only, and the Every attempt right column", async () => {
+  it("Normal is the default: a link to Hard, Normal results only, and no all-tied table (Boardy, 7 Nov)", async () => {
     const { res, body } = await page("/arena");
     expect(res.status).toBe(200);
     expect(body).toMatch(/<nav class="presets tier-switch" aria-label="Tier"><a class="btn chamfer primary" href="\/arena" aria-current="page">Normal<\/a><a class="btn chamfer" href="\/arena\?tier=hard">Hard<\/a><\/nav>/);
     expect(body).toContain("Now Playing");
-    expect(body).toContain("Right every time");
-    expect(body).toContain('title="Share of job versions passed on all 3 attempts">Every attempt right</th>');
-    expect(body).toContain(">3 of 3</td>");
+    // Boardy, 7 Nov: every Normal row tied at 100%, so the table moved off /arena (the JSON twin keeps it).
+    expect(body).not.toContain("Right every time");
+    expect(body).not.toContain('title="Share of job versions passed on all 3 attempts">Every attempt right</th>');
     expect(body).not.toContain("impossible-hard");
     expect(body).not.toContain("(Hard)");
   });
