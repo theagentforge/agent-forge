@@ -60,14 +60,16 @@ describe("consistency: right 3 times out of 3", () => {
 });
 
 describe("/arena tier switch", () => {
-  it("Normal is the default: a link to Hard, Normal results only, and no all-tied table (Boardy, 7 Nov)", async () => {
+  it("Normal is the default: a link to Hard, Normal results only, and a job-by-job table only when not all-tied", async () => {
     const { res, body } = await page("/arena");
     expect(res.status).toBe(200);
     expect(body).toMatch(/<nav class="presets tier-switch" aria-label="Tier"><a class="btn chamfer primary" href="\/arena" aria-current="page">Normal<\/a><a class="btn chamfer" href="\/arena\?tier=hard">Hard<\/a><\/nav>/);
     expect(body).toContain("Now Playing");
-    // Boardy, 7 Nov: every Normal row tied at 100%, so the table moved off /arena (the JSON twin keeps it).
+    // Boardy, 7 Nov: an all-tied Normal table is off /arena. Boardy, 9 Nov: this fixture has a failed ranked Normal
+    // attempt, so it isn't all-tied and Normal shows its own job-by-job table (boardy-9nov.test.ts covers the all-tied case).
     expect(body).not.toContain("Right every time");
-    expect(body).not.toContain('title="Share of job versions passed on all 3 attempts">Every attempt right</th>');
+    expect(body).toContain("<h3>Attempts right, by job</h3>");
+    expect(body).toContain('title="Share of job versions passed on every attempt of that version">Versions right every attempt</th>');
     expect(body).not.toContain("impossible-hard");
     expect(body).not.toContain("(Hard)");
   });
@@ -79,7 +81,7 @@ describe("/arena tier switch", () => {
     expect(body).toContain("The same six jobs at real-world volume: a week of invoices, a 300-row sheet, a three-city trip. One slip fails the job.");
     expect(body).toContain("<h2>Hard rankings</h2>");
     expect(body).toContain("<b>DeepSeek V4 Pro</b>");
-    expect(body).toContain("Every attempt right");
+    expect(body).toContain("Versions right every attempt");
     expect(body).toMatch(/<td title="[01] of 1 version right every time">[0-3] of 3<\/td>/);
     expect(body).toContain("<h2>Recent Hard bouts</h2>");
     expect(body).toContain(`href="/arena/run/${hardRunId}"`);
@@ -161,7 +163,7 @@ describe("/best and Hard task guides", () => {
     expect(body).toContain("Task guide · Hard tier");
     expect(body).toContain("The Impossible Ask (Hard): which AI should you use?");
     expect(body).toContain('<a href="/best/impossible">Normal version</a>');
-    expect(body).toMatch(/data-label="Every attempt right">\d+% <span class="muted">\([0-3] of 3\)<\/span>/);
+    expect(body).toMatch(/data-label="Versions right every attempt">\d+% <span class="muted">\([0-3] of 3\)<\/span>/);
     const j = (await (await fetchWorker("/best/impossible-hard?format=json")).json()) as { tier: string; data: string; ranking: { model: string; stats: { runs: number } }[] };
     expect(j.tier).toBe("hard");
     expect(j.data).toBe("headline");
@@ -175,8 +177,8 @@ describe("/best and Hard task guides", () => {
 
   it("the Normal task guide shows passes out of attempts in its own column", async () => {
     const { body } = await page("/best/impossible");
-    expect(body).toContain('data-label="Every attempt right">100% <span class="muted">(3 of 3)</span>');
-    expect(body).toContain('data-label="Every attempt right">0% <span class="muted">(0 of 3)</span>');
+    expect(body).toContain('data-label="Versions right every attempt">100% <span class="muted">(3 of 3)</span>');
+    expect(body).toContain('data-label="Versions right every attempt">0% <span class="muted">(0 of 3)</span>');
     expect(body).toContain('data-label="Pass">');
   });
 
@@ -201,7 +203,7 @@ describe("Hard bouts, events, the home link and the dataset", () => {
   it("the Hard event card lists its bouts", async () => {
     const { body } = await page("/arena/event/crucible-1-hard");
     expect(body).toContain("<h2>The Impossible Ask (Hard)</h2>");
-    expect(body).toContain("Every attempt right");
+    expect(body).toContain("Versions right every attempt");
   });
 
   it("the home page links to the Hard tier once a ranked Hard bout exists, and keeps the Normal duel", async () => {

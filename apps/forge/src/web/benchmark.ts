@@ -22,7 +22,7 @@ import {
   changelogData,
   type ChangelogEntry,
 } from "../arena/benchmark-files";
-import { trapSetEntries, trapRecord } from "../arena/benchmark";
+import { trapSetEntries, trapRecord, withChangeClass } from "../arena/benchmark";
 import { COMMERCIAL_LICENCE, COMMERCIAL_LICENCE_CONTACT, COMMERCIAL_LICENCE_LINE, DATASET_LICENCE, LICENCE_ID } from "../services/provenance";
 import { getDb } from "../services/db";
 import { copyBlock, more } from "./components";
@@ -226,11 +226,11 @@ ${more(
 <li><b>Patch (1.0.x):</b> wording, documentation, links or citation details. No trap or result changes.</li>
 <li><b>Minor (1.x):</b> additions only: new public traps, a new public job family or task version, or a referee correction that makes a check match its published trigger (stored runs re-scored and listed as a correction). Trap IDs never change.</li>
 <li><b>Major (2.0):</b> a change to an existing trap's trigger or scoring rule, a removed trap, a rules version that scores existing traps differently, or a change to the held-out or canary protocol.</li>
-<li><b>Version 1.1</b> comes with the first new public job family or the first new public trap or task version.</li>
+<li data-k="version-history"><b>So far:</b> version 1.1 came with the first new public traps and task version (Hard v3.3), 1.2 with a referee correction (the rules 0.7 re-score) and 1.3 with the first new public job families (Frontier 1.0), each a minor version. The current version is ${TRAP_SET.version}.</li>
 </ul>
 <h3 id="changelog">Changelog</h3>
 <p class="small">Every Trap Set, task and rules version with the trap ids each added, changed or retired: <a href="${BENCHMARK_CHANGELOG_PATH}">the full changelog</a> (<a href="${BENCHMARK_CHANGELOG_JSON_PATH}">JSON</a>).</p>
-<ul class="changelog">${[...d.changelog].reverse().map((x) => html`<li><time datetime="${x.date}">${x.date}</time> · <b>${x.version}</b>: ${x.change}</li>`)}</ul>
+<ul class="changelog">${[...d.changelog].reverse().map((x) => html`<li><time datetime="${x.date}">${x.date}</time> · <b>${x.version}</b>: ${withChangeClass(x.version, x.change)}</li>`)}</ul>
 ${frozenVersionsBlock(c.env.PUBLIC_ORIGIN)}`,
   { hint: "how versions work, version files" },
 )}

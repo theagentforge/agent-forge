@@ -75,7 +75,7 @@ export function duelPlayer(d: Duel, o: { mode: "cycle" | "channel"; channel?: Du
   if (d.gauntlet) return gauntletPlayer(d, o);
   const list = o.channel?.length ? o.channel : [d];
   return html`<figure class="duel" data-duel="${JSON.stringify(list)}" data-mode="${o.mode}" aria-labelledby="duel-bug">
-<div class="duel-top"><button type="button" class="btn chamfer duel-pause" data-duel-pause hidden aria-pressed="false">Pause</button><span class="label" data-duel-label>${d.practice ? "Practice replay" : "Replay"} · ${date(d.recordedAt)}</span></div>
+<div class="duel-top"><button type="button" class="btn chamfer duel-pause" data-duel-pause hidden aria-pressed="false">Pause</button><span class="label" data-duel-label>${d.practice ? "Practice replay" : "Replay"} · ${date(d.recordedAt)} · ${d.a.name} vs ${d.b.name}</span></div>
 <p class="duel-headline" data-headline data-tease="${TEASE_LINE}" aria-live="polite">${d.headline ?? TEASE_LINE}</p>
 <p class="scorebug" id="duel-bug"><span data-bug-title>${d.title}</span> · Round <span data-bug-round>${d.round}</span>/<span data-bug-rounds>${d.rounds}</span> · <span data-bug-clock>${clock(d.seconds)}</span></p>
 <ol class="captions" data-captions aria-live="polite">${d.captions.map((c) => html`<li>${c}</li>`)}</ol>

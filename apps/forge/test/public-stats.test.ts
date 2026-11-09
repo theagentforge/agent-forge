@@ -32,6 +32,7 @@ import { TRAP_PUBLIC_IDS } from "@forge/arena";
 import { PRIVATE_TRAP_CATALOG } from "../../../packages/arena/src/private";
 import { SHOWS_EMBARGOED } from "./fixtures/embargoed";
 import { fetchWorker } from "./helpers";
+import { fillPrivateLists } from "./internal-runs-helpers";
 import "../src/index";
 
 // ADR 0067 (Boardy items 2 and 16): the third-party split, its "below 10" gate and its SQL (internal since ADR 0067
@@ -323,7 +324,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
   it("/stats.json is /stats?format=json: totals, an empty headline kept for old readers, the rules version", async () => {
     const a = (await (await fetchWorker(`/stats.json?u=${uid("s")}`)).json()) as Record<string, unknown> & { headline: unknown[]; totals: ReturnType<typeof publicTotals>; now: Record<string, unknown>; blended: { includes: string[] }; internal_only: string[] };
     const b = (await (await fetchWorker(`/stats?format=json&u=${uid("s")}`)).json()) as typeof a;
-    expect(a.rules_version).toBe("2.4");
+    expect(a.rules_version).toBe("2.5");
     expect(a.rules_url).toMatch(/\/stats\/rules$/);
     expect(a.headline).toEqual([]);
     expect(b.headline).toEqual([]);
@@ -371,7 +372,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     const stats = (await (await fetchWorker(`/stats.json?u=${uid("s")}`)).json()) as { totals: ReturnType<typeof publicTotals> };
     expect(api.house_excluded).toBe(false);
     expect(api.founders_excluded).toBe(false);
-    expect(api.rules_version).toBe("2.4");
+    expect(api.rules_version).toBe("2.5");
     expect(api.third_party).toEqual([]);
     expect(api).toHaveProperty("active_owners_30d", null);
     expect(api.below_minimum).not.toContain("active_owners_30d");
@@ -438,7 +439,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     // The public rules, and the internal people rules (F-02: on /admin only now).
     const rules = [...((await (await fetchWorker("/stats/rules?format=json")).json()) as { rules: { key: string; reproduce: string }[] }).rules, ...PEOPLE_RULES];
     const since = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10);
-    const sqlFor = (k: string) => rules.find((r) => r.key === k)!.reproduce.replaceAll("<ADMIN_GITHUB_IDS>", env.ADMIN_GITHUB_IDS).replaceAll("<today - 6 days>", since);
+    const sqlFor = (k: string) => fillPrivateLists(rules.find((r) => r.key === k)!.reproduce.replaceAll("<ADMIN_GITHUB_IDS>", env.ADMIN_GITHUB_IDS).replaceAll("<today - 6 days>", since));
     const run = async (k: string) => Number(Object.values((await env.DB.prepare(sqlFor(k)).first<Record<string, number>>())!)[0]);
     // Real rows behind every total, so no pair below can pass as 0 = 0: a bout with a sprung trap, a report, a scan,
     // and traffic on every key the totals read, directory and House sessions and a catalogue client's calls included.
@@ -500,7 +501,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(page).not.toMatch(/third[- ]party/i);
     expect(page).toMatch(HONEST_LINE);
     const json = (await (await fetchWorker("/stats/rules?format=json")).json()) as { version: string; totals_include_own_test_agents: boolean; rules: { key: string; reproduce: string; minimum: number | null }[] };
-    expect(json.version).toBe("2.4");
+    expect(json.version).toBe("2.5");
     expect(json.totals_include_own_test_agents).toBe(true);
     expect(json.rules.some((r) => HEADLINE_RULES.some((h) => h.key === r.key))).toBe(false);
     for (const t of PUBLIC_TOTALS) expect(json.rules.map((r) => r.key)).toContain(t.rule);

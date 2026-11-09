@@ -1,6 +1,6 @@
 import { PRIVATE_TASK_IDS, RULES_0_6_TASKS, RULES_0_7_TASKS, RULES_HISTORY, TASK_VERSIONS, taskById, TRAP_CATALOG, type TaskVersion } from "@forge/arena";
 import { LICENCE_ID } from "../services/provenance";
-import { BENCHMARK_JSON_PATH, BENCHMARK_PATH, BENCHMARK_SCHEMA_PATH, TRAP_SET, TRAP_SET_NAME, TRAP_SET_VERSIONS, trapSchema, trapSetEntries, VERSIONING } from "./benchmark";
+import { BENCHMARK_JSON_PATH, BENCHMARK_PATH, BENCHMARK_SCHEMA_PATH, TRAP_SET, TRAP_SET_NAME, TRAP_SET_VERSIONS, trapSchema, trapSetEntries, VERSIONING, withChangeClass } from "./benchmark";
 
 // B2-07 (build plan 28 Oct, Boardy item 2; ADR 0087): the Trap Set's machine-readable completion. The traps array on
 // its own (/benchmark/v1/traps.json), a JSON Schema for the whole /benchmark/v1.json file, a changelog that lists, per
@@ -65,7 +65,7 @@ export function changelogEntries(): ChangelogEntry[] {
     const newTv = i ? v.task_versions.filter((tv) => !TRAP_SET_VERSIONS[i - 1]!.task_versions.includes(tv)) : [];
     const newJobs = TASK_VERSIONS.filter((tv) => newTv.includes(tv.version)).flatMap((tv) => tv.tasks);
     const changed = prev.filter((x) => now.includes(x) && TRAP_CATALOG.find((e) => e.id === x)!.traps.some((k) => newJobs.includes(k.split("/")[0]!)));
-    return { kind: "trap_set", version: v.version, date: v.date, change: v.change, trap_ids: { added: now.filter((x) => !prev.includes(x)), changed, retired: prev.filter((x) => !now.includes(x)) } };
+    return { kind: "trap_set", version: v.version, date: v.date, change: withChangeClass(v.version, v.change), trap_ids: { added: now.filter((x) => !prev.includes(x)), changed, retired: prev.filter((x) => !now.includes(x)) } };
   });
   const seen = new Set<string>();
   const tasks: ChangelogEntry[] = TASK_VERSIONS.map((v) => {

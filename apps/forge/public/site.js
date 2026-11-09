@@ -209,7 +209,7 @@
     var stamp = function (s) { return s.fell ? ["FOUL", "stamp-foul"] : s.caught ? ["TRAP CAUGHT", "stamp-caught"] : s.verdict === "PASS" ? ["PASS", "stamp-caught"] : [s.verdict, "stamp-foul"]; };
     function fill(d) {
       text("[data-bug-title]", d.title); text("[data-bug-round]", d.round); text("[data-bug-rounds]", d.rounds);
-      text("[data-duel-label]", (d.practice ? "Practice replay" : "Replay") + " · " + new Date(d.recordedAt).toISOString().slice(0, 10));
+      text("[data-duel-label]", (d.practice ? "Practice replay" : "Replay") + " · " + new Date(d.recordedAt).toISOString().slice(0, 10) + " · " + d.a.name + " vs " + d.b.name);
       ["a", "b"].forEach(function (k) {
         var s = d[k], box = q('[data-side="' + k + '"]');
         if (!box) return;

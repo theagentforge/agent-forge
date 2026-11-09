@@ -211,10 +211,15 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
 
   const c7 = await counters(env, now, 7, ["scan:api", "watch:calls", "a2a:requests", "visit:arrivals", "visit:all", "visit:crawler", "visit:human"], ["mcp:tool:", "visit:tag:", "visit:src:"]);
   const checksScans = c7.get("mcp:tool:forge_check") + c7.get("mcp:tool:forge_scan") + c7.get("mcp:tool:forge_watch") + c7.get("scan:api");
-  const [apiChecks] = await db
-    .select({ n: count() })
+  // Weekly brief 9 Nov: split by kind. "api" is every plain REST caller (scripts, curl, other tools); only plugin, cli
+  // and ci are install-time clients, the ones the install table on this page counts per client.
+  const checkerKinds = await db
+    .select({ kind: t.checkSources.kind, n: count() })
     .from(t.checkSources)
-    .where(and(gte(t.checkSources.day, day(now - 7 * DAY)), lte(t.checkSources.day, day(now - DAY)), eq(t.checkSources.isHouse, false), inArray(t.checkSources.kind, ["api", "plugin", "cli", "ci"])));
+    .where(and(gte(t.checkSources.day, day(now - 7 * DAY)), lte(t.checkSources.day, day(now - DAY)), eq(t.checkSources.isHouse, false), inArray(t.checkSources.kind, ["api", "plugin", "cli", "ci"])))
+    .groupBy(t.checkSources.kind);
+  const byKind = Object.fromEntries((["api", "plugin", "cli", "ci"] as const).map((k) => [k, Number(checkerKinds.find((r) => r.kind === k)?.n ?? 0)])) as Record<"api" | "plugin" | "cli" | "ci", number>;
+  const apiChecks = { n: byKind.api + byKind.plugin + byKind.cli + byKind.ci };
 
   const [reports7] = await db
     .select({ n: count(), owners: countDistinct(t.reports.humanId) })
@@ -343,8 +348,8 @@ export async function growthKpis(env: Env, now = Date.now()): Promise<{ as_of: s
       unit: "in 7 days",
       first: 5000,
       second: 50000,
-      definition: "forge_check, forge_scan and forge_watch calls over MCP, API scans, and distinct API/plugin/CLI/CI checkers per day, in the last 7 full days.",
-      detail: { mcp_and_api_calls: checksScans, api_plugin_cli_ci_checkers: Number(apiChecks?.n ?? 0) },
+      definition: "forge_check, forge_scan and forge_watch calls over MCP, API scans, and distinct API/plugin/CLI/CI checkers per day, in the last 7 full days. Most checkers are plain REST callers (kind api: scripts, curl, other tools), which are not install checks; only the plugin, CLI and CI kinds are install-time clients (the install table counts those per client).",
+      detail: { mcp_and_api_calls: checksScans, api_plugin_cli_ci_checkers: apiChecks.n, checkers_by_kind: byKind },
     }),
     kpi({
       id: "contributions",

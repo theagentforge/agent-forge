@@ -1,3 +1,4 @@
+import { FRONTIER_TASK_IDS } from "@forge/arena";
 import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { SPRINT_DAILY_PER_SOURCE } from "../arena/sprint";
 import * as t from "../db/schema";
@@ -21,8 +22,8 @@ import type { liveAgentCounts } from "./agent-funnel";
 // out from our own and blended totals, which are exact: the minimum is about what a headline claims, not secrecy). Every rule is written down once,
 // here, and the same objects render /stats/rules and go into /stats.json, so a number can always be reproduced.
 
-export const STATS_RULES_VERSION = "2.4";
-export const STATS_RULES_DATE = "2026-10-29";
+export const STATS_RULES_VERSION = "2.5";
+export const STATS_RULES_DATE = "2026-11-09";
 /** The one minimum for headline third-party numbers (ADR 0067). */
 export const THIRD_PARTY_MINIMUM = 10;
 export const BELOW_MINIMUM_TEXT = `below ${THIRD_PARTY_MINIMUM}`;
@@ -106,11 +107,19 @@ export const HEADLINE_RULES: (StatsRule & { key: HeadlineKey; short: string })[]
   },
 ];
 
+/**
+ * Rules 2.5 (weekly brief, 9 Nov): runs no public page shows are internal, so the running totals leave them out too
+ * (the same condition as views.ts publishableModelAndEvent). The SQL names the two private lists by placeholder, so
+ * the rules never name an embargoed model or a private job.
+ */
+export const INTERNAL_RUNS_TEXT = "Runs no public page shows are not counted: events held for review, models whose results aren't published yet, private and practice-only job families, and frontier calibration seeds (below 1,000,000).";
+export const INTERNAL_RUNS_SQL = `e.status != 'planned' AND r.model_id NOT IN (<EMBARGOED_MODEL_IDS>) AND r.task NOT IN (<PRIVATE_TASK_IDS>) AND NOT (r.task IN (${FRONTIER_TASK_IDS.map((id) => `'${id}'`).join(", ")}) AND r.seed < 1000000)`;
+
 /** The blended numbers on /stats: everything, ours included, labelled as such. Never a headline. */
 export const BLENDED_RULES: StatsRule[] = [
-  { key: "bouts_refereed", label: "Arena bouts refereed (all, practice included)", source: "arena_runs joined to arena_events", counts: "Every finished bout the Forge ran on the models it enters, practice included.", ours: "All of them: the Forge picks the models and runs these bouts. Most are paid for; free-model practice bouts (OpenRouter free variants and Workers AI inside its free daily allowance, ADR 0109) cost nothing and are labelled practice, with the model's provider and variant.", window: "All time", minimum: null, reproduce: "SELECT count(*) FROM arena_runs r JOIN arena_events e ON e.id = r.event_id WHERE r.status = 'done';" },
-  { key: "ranked_bouts", label: "…of them ranked", source: "arena_runs joined to arena_events", counts: "Finished bouts in a non-practice event.", ours: "All of them.", window: "All time", minimum: null, reproduce: "SELECT count(*) FROM arena_runs r JOIN arena_events e ON e.id = r.event_id WHERE r.status = 'done' AND e.kind != 'practice';" },
-  { key: "traps_sprung", label: "Traps sprung in Arena bouts", source: "arena_runs.result traps", counts: "Traps a model fell for in a finished bout (practice included).", ours: "All of them.", window: "All time", minimum: null, reproduce: "SELECT count(*) FROM arena_runs r, json_each(json_extract(r.result, '$.traps')) t WHERE r.status = 'done' AND json_extract(t.value, '$.triggered') = 1;" },
+  { key: "bouts_refereed", label: "Arena bouts refereed (all, practice included)", source: "arena_runs joined to arena_events", counts: `Every finished bout the Forge ran on the models it enters, practice included. ${INTERNAL_RUNS_TEXT}`, ours: "All of them: the Forge picks the models and runs these bouts. Most are paid for; free-model practice bouts (OpenRouter free variants and Workers AI inside its free daily allowance, ADR 0109) cost nothing and are labelled practice, with the model's provider and variant.", window: "All time", minimum: null, reproduce: `SELECT count(*) FROM arena_runs r JOIN arena_events e ON e.id = r.event_id WHERE r.status = 'done' AND ${INTERNAL_RUNS_SQL};` },
+  { key: "ranked_bouts", label: "…of them ranked", source: "arena_runs joined to arena_events", counts: `Finished bouts in a non-practice event. ${INTERNAL_RUNS_TEXT} Bouts on private held-out seeds are in this number (they are published as aggregates only). The Arena's own line below this table counts published ranked bouts only, without them; /security and /benchmark count fewer again: only ranked attempts scored under the current referee rules, with attempts that ran out of time, tokens or turns left out.`, ours: "All of them.", window: "All time", minimum: null, reproduce: `SELECT count(*) FROM arena_runs r JOIN arena_events e ON e.id = r.event_id WHERE r.status = 'done' AND e.kind != 'practice' AND ${INTERNAL_RUNS_SQL};` },
+  { key: "traps_sprung", label: "Traps sprung in Arena bouts", source: "arena_runs.result traps", counts: `Traps a model fell for in a finished bout (practice included). ${INTERNAL_RUNS_TEXT}`, ours: "All of them.", window: "All time", minimum: null, reproduce: `SELECT count(*) FROM arena_runs r JOIN arena_events e ON e.id = r.event_id, json_each(json_extract(r.result, '$.traps')) t WHERE r.status = 'done' AND ${INTERNAL_RUNS_SQL} AND json_extract(t.value, '$.triggered') = 1;` },
   { key: "gauntlet_runs_finished", label: "Gauntlet runs finished (anyone)", source: "arena_gauntlets", counts: "Every finished six-job Gauntlet run, measured re-runs included, claimed or not. Gauntlet Sprints (one job) are not in this number.", ours: "Includes our own tests and unclaimed runs whose owner we can't know.", window: "All time", minimum: PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished, reproduce: "SELECT count(*) FROM arena_gauntlets WHERE status = 'done' AND mode = 'full';" },
   { key: "gauntlet_sprints_finished", label: "Gauntlet Sprints finished (anyone)", source: "arena_gauntlets", counts: `Every finished Gauntlet Sprint (one job, one planted trap; ADR 0083), claimed or not. Never counted as a Gauntlet run. It counts runs, not agents or people: one source may start up to ${SPRINT_DAILY_PER_SOURCE} a day.`, ours: "Includes The Forge's own test agents: the house agent's daily Sprint (labelled house) and our tests, and unclaimed Sprints whose owner we can't know.", window: "All time (Sprints began 28 Oct 2026)", minimum: PUBLIC_ROW_MINIMUMS.gauntlet_sprints_finished, reproduce: "SELECT count(*) FROM arena_gauntlets WHERE status = 'done' AND mode = 'sprint';" },
   { key: "skills_scanned", label: "Distinct skill files scanned (seed included)", source: "skill_scans", counts: "Distinct text fingerprints ever scanned, including the 19 Oct launch scan and the weekly bulk scan of public skill directories (ADR 0107; rows with origin bulk:clawhub or bulk:github).", ours: "The launch scan seed, the bulk scan, and any file only we scanned.", window: "All time", minimum: null, reproduce: "SELECT count(*) FROM skill_scans;" },

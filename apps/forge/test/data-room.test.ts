@@ -198,7 +198,9 @@ describe("one source for every number", () => {
     const d = await datasetBreakdown(env);
     const row = (k: string) => d.rows.find((r) => r.key === k)!.n;
     const [work, inv] = await Promise.all([workTotals(env), dataInventory(env)]);
-    expect(row("runs_all")).toBe(work.bouts_refereed);
+    // Stats rules 2.5: /stats leaves out the internal runs (held events, embargoed models, private jobs, calibration).
+    expect(row("runs_all") - row("runs_internal")).toBe(work.bouts_refereed ?? 0);
+    expect(row("runs_stats")).toBe(work.bouts_refereed ?? 0);
     expect(row("runs_all")).toBe(inv.refereed_runs.total);
     expect(row("runs_public")).toBe((await finishedRuns(getDb(env), { hard: true })).length);
     const dataset = (await (await fetchWorker("/arena/dataset.json")).json()) as { runs: unknown[] };

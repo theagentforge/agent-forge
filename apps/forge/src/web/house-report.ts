@@ -76,7 +76,7 @@ ${statStrip({
 <article class="prose">
 ${week.sweep_days > 0
       ? html`<h2 id="week">Every no-setup server, every week</h2>
-<p>A weekly sweep also starts <strong>every</strong> no-setup server in the registry (npm with <code>npx</code>, PyPI with <code>uvx</code>), a seventh each day.${week.sweep_days < 7 ? html` <span class="muted">The sweep has run on ${week.sweep_days} of the last 7 days, so this covers part of the rotation.</span>` : ""}</p>
+<p>A weekly sweep also starts <strong>every</strong> no-setup server in the registry (npm with <code>npx</code>, PyPI with <code>uvx</code>), a seventh each day.${week.sweep_days < 7 ? html` <span class="muted" data-k="sweep-days">The sweep ran on ${week.sweep_days} of the 7 days from ${fmtUtcDay(week.window.from)} to ${fmtUtcDay(week.window.to)} (UTC), so this covers part of the rotation.</span>` : ""} <span class="muted small" data-k="sweep-window">The last 7 days here are ${fmtUtcDay(week.window.from)} to ${fmtUtcDay(week.window.to)} (UTC): they end today once today's sweep has run, and yesterday until then.</span></p>
 </article>
 ${statStrip({
   label: "The last 7 days",
@@ -120,6 +120,9 @@ ${run.entries.length > TOP_ROWS ? more(`Show all ${n(run.entries.length)} server
   });
 });
 
+/** "3 Nov 2026" from "2026-11-03". */
+const fmtUtcDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
 site.get(`${HOUSE_REPORT_PATH}.json`, async (c) => {
   const run = await latestRun(c.env);
   if (!run) return c.json({ error: "no_run_yet" }, 404);
@@ -131,7 +134,7 @@ site.get(`${HOUSE_REPORT_PATH}.json`, async (c) => {
       ...run,
       history: hist,
       // ADR 0108: the weekly sweep of every no-setup npm and PyPI server, and the tool-description scans.
-      week: { ...week, counting_rule: "One row per server (its latest result) across the last 7 daily sweeps and the latest nightly run; test errors left out." },
+      week: { ...week, counting_rule: "One row per server (its latest result) across the daily sweeps of the 7 UTC days in `window` (to today once today's sweep has run, otherwise to yesterday) and the latest nightly run; test errors left out." },
       sweep_history: sweeps,
       tool_descriptions: { ...scans, pattern_matches: matches, wording: "A pattern match is for a person to read; it is never a finding of malice." },
     },

@@ -340,7 +340,9 @@ export const FOOT_NOTE = "Same seed, same sandbox: the referee re-checks every c
 /** The parts of the card, by selector: each one carries data-run. */
 export const CARD_PARTS = ["[data-gx-label]", "[data-headline]", "[data-gx-tell]", "[data-gx-job]", "[data-gx-trap]", "[data-gx-stage]", "[data-gx-termhead]", "[data-gx-term]", "[data-gx-foot]", "[data-predict]", "[data-gx-stakes]", "[data-gx-grid]"];
 const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
-export const cardLabel = (d) => `${d.practice ? "Practice replay" : "Replay"} · ${isoDay(d.recordedAt)} · ${d.title}`;
+/** Boardy, 9 Nov: pairs rotate on the same seed, so the label names the pair shown, not only the date and job. */
+export const pairOf = (d) => (d.gauntlet ? d.gauntlet.lanes.map((l) => l.name) : [d.a.name, d.b.name]).join(" vs ");
+export const cardLabel = (d) => `${d.practice ? "Practice replay" : "Replay"} · ${isoDay(d.recordedAt)} · ${d.title} · ${pairOf(d)}`;
 export const shareText = (d) => `Same job, one hidden trap (${d.title}):\n${d.gauntlet.lanes.map((l) => `${l.grid} ${l.name}`).join("\n")}\ntheagentforge.io/arena/run/${runIdOf(d)}`;
 /** The cost line under the terminal: one row per corner, then the referee note. Escaped HTML. */
 export function footHtml(d) {

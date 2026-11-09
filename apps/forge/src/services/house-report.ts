@@ -99,8 +99,14 @@ export const sweepHistory = async (env: Env) => (await env.KV.get<HistoryPoint[]
  * servers live-tested this week" counts. Test errors are ours and left out of the count.
  */
 export async function weekOfTests(env: Env, now = Date.now()) {
-  const days = Array.from({ length: 7 }, (_, i) => new Date(now - i * 86_400_000).toISOString().slice(0, 10));
-  const [sweeps, nightly] = await Promise.all([Promise.all(days.map((d) => env.KV.get<HouseRun>(sweepKey(d), "json"))), latestRun(env)]);
+  // Weekly brief 9 Nov: "the last 7 days" are the 7 UTC days to today once today's sweep has run, and to yesterday
+  // until then. Counting today before its sweep (which runs in the morning UTC) read "6 of the last 7 days" on a week
+  // whose 7 sweeps had all run (the census series agreed: every day from 2 to 8 Nov).
+  const days8 = Array.from({ length: 8 }, (_, i) => new Date(now - i * 86_400_000).toISOString().slice(0, 10));
+  const [all8, nightly] = await Promise.all([Promise.all(days8.map((d) => env.KV.get<HouseRun>(sweepKey(d), "json"))), latestRun(env)]);
+  const start = all8[0] ? 0 : 1;
+  const days = days8.slice(start, start + 7);
+  const sweeps = all8.slice(start, start + 7);
   const runs = [...sweeps.filter((r): r is HouseRun => !!r), ...(nightly ? [nightly] : [])];
   const latest = new Map<string, HouseEntry & { probedAt: string }>();
   for (const r of runs)
@@ -112,6 +118,8 @@ export async function weekOfTests(env: Env, now = Date.now()) {
   const rows = [...latest.values()].filter((e) => e.outcome !== "error");
   return {
     sweep_days: sweeps.filter(Boolean).length,
+    /** The 7 UTC days counted (oldest first): to today once today's sweep has run, otherwise to yesterday. */
+    window: { from: days.at(-1)!, to: days[0]! },
     servers: rows.length,
     npm: rows.filter((e) => !e.registry).length,
     pypi: rows.filter((e) => e.registry === "pypi").length,

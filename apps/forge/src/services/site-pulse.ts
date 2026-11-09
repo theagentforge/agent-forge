@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
+import * as t from "../db/schema";
+import { publishableModelAndEvent } from "../arena/views";
 
 // The home page's "work done" row (ADR 0034): running totals of what the Forge does every hour, and when each last
 // happened. Real rows only, read from the database; nothing is interpolated, animated between reads or seeded.
 // - Skills scanned: unique skill files, the 19 Oct launch scan and every visitor's scan since.
-// - Bouts: every refereed Arena bout, ranked and practice (the label says how many were ranked).
+// - Bouts: every refereed Arena bout, ranked and practice (the label says how many were ranked), internal runs left out.
 // - Field reports: every report people can read (held and rejected left out), our labelled House agents included.
 // - Tools tracked: every MCP server, skill and package with a page, most of them added hourly from the MCP Registry.
 
@@ -25,10 +27,14 @@ export type WorkTotals = {
 export async function workTotals(env: Env): Promise<WorkTotals> {
   const db = getDb(env);
   const row = async (q: ReturnType<typeof sql>) => ((await db.all(q)) as Record<string, number | null>[])[0] ?? {};
-  const done = sql`r.status = 'done'`;
+  // Weekly brief 9 Nov: a run no public page may show (held event, embargoed model, private or practice-only job,
+  // frontier calibration seed) is internal, so it is in no total either. Held-out seeds and Lab arms stay in: they are
+  // published as aggregates (ADR 0058) and in each Lab's write-up.
+  const done = sql`${t.arenaRuns.status} = 'done' and ${publishableModelAndEvent()}`;
+  const from = sql`arena_runs join arena_events on arena_events.id = arena_runs.event_id`;
   const [bouts, traps, scans, reports, tools] = await Promise.all([
-    row(sql`select count(*) as n, sum(case when e.kind != 'practice' then 1 else 0 end) as ranked, max(r.finished_at) as last from arena_runs r join arena_events e on e.id = r.event_id where ${done}`),
-    row(sql`select count(*) as n from arena_runs r, json_each(json_extract(r.result, '$.traps')) t where ${done} and json_extract(t.value, '$.triggered') = 1`),
+    row(sql`select count(*) as n, sum(case when arena_events.kind != 'practice' then 1 else 0 end) as ranked, max(arena_runs.finished_at) as last from ${from} where ${done}`),
+    row(sql`select count(*) as n from ${from}, json_each(json_extract(arena_runs.result, '$.traps')) tr where ${done} and json_extract(tr.value, '$.triggered') = 1`),
     row(sql`select count(*) as n, max(last_seen) as last from skill_scans`),
     row(sql`select count(*) as n, max(created_at) as last from reports where held = 0 and moderation_state != 'rejected'`),
     row(sql`select count(*) as n, max(created_at) as last from tools`),

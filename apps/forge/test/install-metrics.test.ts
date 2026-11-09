@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { adoptionClaims, jsonText, pageText } from "../src/services/adoption-wording";
-import { INSTALL_RULES, installClient, installCounters, installOutcome, installTotals } from "../src/services/install-metrics";
+import { INSTALL_CLIENTS, INSTALL_RULES, installClient, installCounters, installOutcome, installTotals, type InstallClient } from "../src/services/install-metrics";
 import { upsertHuman } from "../src/services/identity";
 import { getDb } from "../src/services/db";
 import { newSession, SESSION_COOKIE } from "../src/web/session";
@@ -176,6 +176,52 @@ describe("B2-06: install checks by AI tools, gross", () => {
       expect(text, path).not.toMatch(/outside install|install checks by outside|install checks from outside/i);
     }
     for (const path of ["/stats.json", "/stats/rules?format=json", "/agents/live.json"]) expect(adoptionClaims(jsonText(await (await fetchWorker(`${path}${path.includes("?") ? "&" : "?"}u=${++ipN}`)).json())), path).toEqual([]);
+  });
+});
+
+describe("weekly brief 9 Nov: each install-time client increments its own row on /admin/kpis", () => {
+  // The brief read every row as 0 while "Checks and scans a week" counted 69 checkers. Those checkers were plain REST
+  // callers (check_sources kind api), which are not install checks. This pins that a real check from each client moves
+  // its own row on the page (the rendered "last 7 days" cell), and a plain REST check moves none.
+  const UAS: Record<Exclude<InstallClient, "skill-scan">, string> = {
+    plugin: "theagentforge-claude-plugin",
+    cli: "theagentforge-cli/0.7.1",
+    "hook-codex": "theagentforge-cli/0.7.1 (hook codex)",
+    "hook-gemini": "theagentforge-cli/0.7.1 (hook gemini)",
+    "hook-copilot": "theagentforge-cli/0.7.1 (hook copilot)",
+    action: "theagentforge-action/1",
+  };
+  const checkedCell = async (cookie: string) => {
+    const page = await (await fetchWorker(`/admin/kpis?u=${++ipN}`, { headers: { Cookie: cookie, Accept: "text/html" } })).text();
+    return Object.fromEntries(
+      INSTALL_CLIENTS.map((c) => {
+        const row = new RegExp(`<tr data-client="${c}"[^>]*><td>[^<]*</td><td>([0-9,]+) · `).exec(page);
+        return [c, row ? Number(row[1]!.replaceAll(",", "")) : NaN];
+      }),
+    ) as Record<InstallClient, number>;
+  };
+
+  it("a check from every client adds exactly one to its row, and a plain REST check to none", async () => {
+    const founder = await upsertHuman(getDb(env), profile({ id: Number(env.ADMIN_GITHUB_IDS) }), Date.now());
+    const cookie = `${SESSION_COOKIE}=${await newSession(env.SESSION_SECRET, founder.id)}`;
+    const page = await (await fetchWorker("/admin/kpis", { headers: { Cookie: cookie, Accept: "text/html" } })).text();
+    expect(page).toContain('data-k="install_not_api"');
+    for (const c of INSTALL_CLIENTS) {
+      const before = await checkedCell(cookie);
+      expect(before[c], c).not.toBeNaN();
+      if (c === "skill-scan") {
+        const r = await fetchWorker("/api/v1/install-outcome", { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip() }, body: JSON.stringify({ client: "skill-scan", outcome: "clear" }) });
+        expect(r.status).toBe(202);
+      } else expect((await check(`id=npm:install-row-${c}`, UAS[c])).status, c).toBe(200);
+      await settle(() => installTotals(env), (v) => v.by_client[c].last_7_days.checked > before[c]);
+      const after = await checkedCell(cookie);
+      for (const o of INSTALL_CLIENTS) expect(after[o] - before[o], `${c} → ${o}`).toBe(o === c ? 1 : 0);
+    }
+    const before = await checkedCell(cookie);
+    expect((await check("id=npm:install-row-plain", "curl/8.0")).status).toBe(200);
+    expect((await check("id=npm:install-row-plain2", "python-requests/2.32")).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await checkedCell(cookie)).toEqual(before);
   });
 });
 

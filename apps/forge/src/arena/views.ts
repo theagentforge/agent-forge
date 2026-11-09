@@ -164,7 +164,12 @@ export const notEmbargoedModel = () => and(publishableModelAndEvent(), notHeldOu
 /** The Season seed minimum (RULES-season-0; runner.ts SEASON_SEED_MIN): frontier runs below it are calibration. */
 const SEASON_SEED_FLOOR = 1_000_000;
 
-const publishableModelAndEvent = () =>
+/**
+ * Exported for the running totals (services/site-pulse.ts, services/proof-strip.ts): a run this condition drops is
+ * internal, so no public figure may count it, not even a total (weekly brief 9 Nov: the held Crucible 3 card event and
+ * the private calibration runs were counted on /stats).
+ */
+export const publishableModelAndEvent = () =>
   and(
     EMBARGOED_MODEL_IDS.length ? notInArray(t.arenaRuns.modelId, EMBARGOED_MODEL_IDS) : sql`1 = 1`,
     // ADR 0057: runs of the private job families are private held-out material, shown on no public surface.

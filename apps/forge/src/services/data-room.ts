@@ -1,6 +1,6 @@
-import { and, count, desc, eq, gte, isNotNull, isNull, notInArray, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, isNull, not, notInArray, or } from "drizzle-orm";
 import { RETIRED_METRICS } from "./proof";
-import { publicDatasetWhere } from "../arena/views";
+import { publicDatasetWhere, publishableModelAndEvent } from "../arena/views";
 import { BOT_RULE } from "./bots";
 import { costPerBoutSheet } from "./costs";
 import { BYOK_EXPIRES, byokSpendThisMonth, creditGuard, OPENROUTER_CREDIT_PURCHASED_USD } from "../arena/credit";
@@ -71,16 +71,20 @@ export async function datasetBreakdown(env: Env, now = Date.now()) {
   const n = async (q: Promise<{ n: number }[]>) => Number((await q)[0]?.n ?? 0);
   const done = eq(t.arenaRuns.status, "done");
   const runs = () => db.select({ n: count() }).from(t.arenaRuns).innerJoin(t.arenaEvents, eq(t.arenaEvents.id, t.arenaRuns.eventId));
-  const [pub, heldOut, labArms, practice, rankedPublic] = await Promise.all([
+  const [pub, heldOut, labArms, practice, rankedPublic, internal] = await Promise.all([
     n(runs().where(publicDatasetWhere(now))),
     n(runs().where(and(done, eq(t.arenaRuns.heldOut, true)))),
     n(runs().where(and(done, eq(t.arenaRuns.heldOut, false), isNotNull(t.arenaEvents.arm)))),
     n(runs().where(and(done, eq(t.arenaEvents.kind, "practice")))),
     n(runs().where(and(publicDatasetWhere(now), or(eq(t.arenaEvents.kind, "card"), eq(t.arenaEvents.kind, "guest"))))),
+    // Stats rules 2.5: runs no public page shows (held events, embargoed models, private jobs, frontier calibration).
+    n(runs().where(and(done, not(publishableModelAndEvent())))),
   ]);
   const all = inv.refereed_runs.total;
   const rows: DatasetRow[] = [
-    { key: "runs_all", label: "Refereed Arena runs, all", n: all, rule: "Every finished run (arena_runs.status = 'done'). /stats 'Arena bouts refereed' and /admin/kpis 'Refereed runs'." },
+    { key: "runs_all", label: "Refereed Arena runs, all", n: all, rule: "Every finished run (arena_runs.status = 'done'). /admin/kpis 'Refereed runs'." },
+    { key: "runs_internal", label: "…internal: in no public number", n: internal, rule: "Runs no public page shows: held events, embargoed models, private and practice-only job families, frontier calibration seeds (views.ts publishableModelAndEvent). Stats rules 2.5 leave them out of every /stats total." },
+    { key: "runs_stats", label: "…counted on /stats ('Arena bouts refereed')", n: work.bouts_refereed ?? 0, rule: "All finished runs less the internal ones (held-out seeds and Lab arms stay in)." },
     { key: "runs_public", label: "…public, in /arena/dataset.json", n: pub, rule: "The /arena/dataset.json filter (views.ts publicDatasetWhere): no held-out seed, lab arm, embargoed model, private family, held event or unpremiered fixture. The 26 Oct '3,031 public runs' figure counted this row." },
     { key: "runs_held_out", label: "…private: held-out seeds", n: heldOut, rule: "arena_runs.held_out = 1. Counted only in aggregate, never published one by one (ADR 0058)." },
     { key: "runs_lab_arms", label: "…private: Forge Lab arms", n: labArms, rule: "Runs of lab events (arena_events.arm set), not held out. Published in each Lab's write-up, not in the dataset." },
@@ -89,8 +93,8 @@ export async function datasetBreakdown(env: Env, now = Date.now()) {
     { key: "runs_ranked", label: "Ranked runs (of all)", n: inv.refereed_runs.ranked, rule: "Card and guest events, no lab arm (/admin/kpis 'ranked'). Held-out ranked runs are included here." },
     { key: "runs_ranked_public", label: "…of them public", n: rankedPublic, rule: "Ranked runs that pass the /arena/dataset.json filter." },
     { key: "runs_ranked_with_fall", label: "Ranked runs with a trap fall", n: inv.refereed_runs.with_trap_fall, rule: "Ranked runs with at least one trap triggered (/admin/kpis)." },
-    { key: "runs_non_practice", label: "Non-practice runs (/stats '…of them ranked')", n: work.ranked_bouts ?? 0, rule: "/stats counts every run that isn't practice, lab arms and held-out runs included; it is not the same as 'Ranked runs' above." },
-    { key: "traps_sprung_all", label: "Traps sprung, all runs", n: work.traps_sprung ?? 0, rule: "/stats 'Traps sprung': triggered traps across every finished run, practice included (one run can spring several)." },
+    { key: "runs_non_practice", label: "Non-practice runs (/stats '…of them ranked')", n: work.ranked_bouts ?? 0, rule: "/stats counts every run that isn't practice, lab arms and held-out runs included and internal runs left out; it is not the same as 'Ranked runs' above." },
+    { key: "traps_sprung_all", label: "Traps sprung, all runs", n: work.traps_sprung ?? 0, rule: "/stats 'Traps sprung': triggered traps across every finished run but the internal ones, practice included (one run can spring several)." },
     { key: "reports_readable", label: "Field reports, readable", n: work.field_reports ?? 0, rule: "/stats 'Field reports': not held, not rejected, House included." },
     { key: "reports_all", label: "Field reports, all stored", n: inv.field_reports.total, rule: "/admin/kpis: every row, held and rejected included." },
     { key: "reports_outside", label: "Field reports from outside the project", n: inv.field_reports.external, rule: "/admin/kpis: House and founder accounts left out. Outside-only: never public." },
@@ -102,7 +106,7 @@ export async function datasetBreakdown(env: Env, now = Date.now()) {
     generated_at: new Date(now).toISOString(),
     rows,
     checks: {
-      runs_match_stats: (work.bouts_refereed ?? 0) === all,
+      runs_match_stats: (work.bouts_refereed ?? 0) === all - internal,
       parts_add_up: sum === all,
       dataset_json_cap: 5000,
       dataset_json_truncated: pub > 5000,

@@ -219,8 +219,8 @@ describe("OA-01: where owners came from", () => {
     expect(rules).toContain("<b>2.0</b> (2026-10-28)");
     expect(rules).toContain("<b>1.1</b> (2026-10-28): Added active_owners_30d");
     const rj = (await (await fetchWorker("/stats/rules?format=json")).json()) as any;
-    expect(rj.version).toBe("2.4");
-    expect(rj.changes[0].version).toBe("2.4");
+    expect(rj.version).toBe("2.5");
+    expect(rj.changes[0].version).toBe("2.5");
     expect(rj.rules.some((r: any) => r.key === "active_owners_30d")).toBe(false);
     const internal = (await (await fetchWorker("/admin/stats/third-party.json", { headers: { Cookie: await asCookie(founder.id) } })).json()) as any;
     const sql = internal.rules.find((r: any) => r.key === "active_owners_30d").reproduce as string;

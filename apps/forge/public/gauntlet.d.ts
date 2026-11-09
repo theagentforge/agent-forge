@@ -17,6 +17,7 @@ export type CardParts = { run: string } & Record<string, CardPart>;
 export declare const CARD_PARTS: string[];
 export declare const FOOT_NOTE: string;
 export declare function runIdOf(d: Duel): string;
+export declare function pairOf(d: Duel): string;
 export declare function cardLabel(d: Duel): string;
 export declare function shareText(d: Duel): string;
 export declare function footHtml(d: Duel): string;

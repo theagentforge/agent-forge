@@ -1,4 +1,4 @@
-import { FRONTIER_EXPLAINER, FRONTIER_LABEL, FRONTIER_NAMES_NOTE, FRONTIER_NO_RUNS_NOTE, FRONTIER_RANKED_NOTE, PASS_DEFINITION, PASS_FAIL_FALL } from "../arena/terms";
+import { ALL_PASSED_PARTS, ALL_PASSED_WHY, FRONTIER_EXPLAINER, FRONTIER_LABEL, FRONTIER_NAMES_NOTE, FRONTIER_NO_RUNS_NOTE, FRONTIER_RANKED_NOTE, HONEST_DEFINITION, PASS_DEFINITION, PASS_FAIL_FALL, SCORECARD_PARTS } from "../arena/terms";
 import { rulesFields } from "../arena/rules-label";
 import {
   CANARY,
@@ -73,9 +73,17 @@ const statusTag = (s: Stats) =>
 
 /** "2 of 3": passes out of attempts on one version of a job; across several versions, how many were right every time. */
 const ofText = (c: Consistency) => (c.groups === 1 ? `${c.passes} of ${c.attempts}` : `${c.allRight} of ${c.groups} versions`);
-const ALL_RIGHT_TITLE = "Share of job versions passed on all 3 attempts";
-/** Site audit 29 Oct, issue 15: plainer than "All 3 right". */
-const ALL_RIGHT = "Every attempt right";
+/**
+ * Boardy, 9 Nov: the column is the share of job versions (task + seed) passed on every attempt of that version
+ * (views.ts consistency(): allRight / groups), so it says "versions", and the title no longer assumes 3 attempts.
+ */
+const ALL_RIGHT_TITLE = "Share of job versions passed on every attempt of that version";
+/** Site audit 29 Oct, issue 15: plainer than "All 3 right". Boardy, 9 Nov: names what is counted (versions). */
+const ALL_RIGHT = "Versions right every attempt";
+/** Boardy, 9 Nov: the heading over the job-by-job table (it was "Right every time", over rows showing 0% and 33%). */
+export const BY_JOB_HEADING = "Attempts right, by job";
+/** The honesty definition, shown right after PASS_DEFINITION wherever the scorecard lists honesty (Boardy, 9 Nov). */
+const scoreTerms = html`<p class="small muted" data-honest-def>${HONEST_DEFINITION}</p>`;
 const RAN_OUT_TITLE = "Attempts lost to running out of time or moves: a knockout, not a trap";
 
 function scoreTable(rows: { name: string; href?: string; stats: Stats; consistency: Consistency; extra?: unknown }[]) {
@@ -84,7 +92,8 @@ function scoreTable(rows: { name: string; href?: string; stats: Stats; consisten
 <tbody>${rows.map(
     (r) => html`<tr><td class="wide">${r.href ? html`<a href="${r.href}">${r.name}</a>` : r.name} ${r.extra ?? ""}</td><td class="num" data-label="Pass">${pct(r.stats.passRate)} <span class="muted">(${pct(r.stats.passCI[0])}–${pct(r.stats.passCI[1])})</span></td><td class="num" data-label="Quality">${pct(r.stats.quality)}</td><td class="num" data-label="Traps avoided">${pct(r.stats.trapResistance)}</td><td class="num" data-label="${ALL_RIGHT}">${pct(r.consistency.reliable)} <span class="muted">(${ofText(r.consistency)})</span></td><td class="num" data-label="Cost per pass">${usd(r.stats.costOfPass)}</td><td class="num" data-label="Model time">${secs(r.stats.modelMs)}</td><td class="num" data-label="Honest">${pct(r.stats.honesty)}</td></tr>`,
   )}</tbody></table>
-<p class="small muted" data-pass-def>${PASS_DEFINITION}</p>`;
+<p class="small muted" data-pass-def>${PASS_DEFINITION}</p>
+${scoreTerms}`;
 }
 
 /** ADR 0021: what the Hard tier is, in one line. */
@@ -101,8 +110,10 @@ function tierSwitch(path: string, tier: Tier) {
 /** Column heading for a job: "Refund" rather than "The Refund (Hard)". */
 const shortTitle = (title: string) => title.replace(/^The /, "").replace(/ \(Hard\)$/, "");
 
-/** Audit §5 #14: what the belt is, in one line (a tooltip on the word). */
-const BELT_TITLE = "Belt: the division's top-ranked model once ranked bouts have been fought";
+/** Audit §5 #14: what the belt is, in one line (a tooltip on the word). Boardy, 9 Nov: a belt belongs to one tier. */
+const BELT_TITLE = "Tier belt: the division's top-ranked model in this tier once ranked bouts have been fought";
+/** Boardy, 9 Nov: Normal and Hard each crown their own belt holder, so the two can differ. */
+export const TIER_BELT_LINE = "A tier belt is won within its tier only.";
 
 /** "Normal" or "Hard": the tier a ranking line is about (Boardy, 7 Nov: every claim names its tier). */
 const tierName = (tier: Tier) => (tier === "hard" ? "Hard" : "Normal");
@@ -111,8 +122,8 @@ const tierName = (tier: Tier) => (tier === "hard" ? "Hard" : "Normal");
 /** The line under a division's ranking: its tier, and what decides the order for the models listed (exported for tests). */
 export function rankBasisLine(tier: Tier, rows: { model: string }[], allPassed: Set<string>) {
   return rows.every((r) => allPassed.has(r.model))
-    ? html`<p class="small muted" data-rank-basis>${tierName(tier)} tier: ranked by quality, honesty, cost and speed. Overlapping ranges are a tie.</p>`
-    : html`<p class="small muted" data-rank-basis>${tierName(tier)} tier: ranked on the <a href="/arena/rules">scorecard</a> (pass, quality, traps avoided, honesty, cost and speed). Overlapping ranges are a tie.</p>`;
+    ? html`<p class="small muted" data-rank-basis>${tierName(tier)} tier: ranked by ${ALL_PASSED_PARTS}. Overlapping ranges are a tie.</p>`
+    : html`<p class="small muted" data-rank-basis>${tierName(tier)} tier: ranked on the <a href="/arena/rules">scorecard</a> (${SCORECARD_PARTS}). Overlapping ranges are a tie.</p>`;
 }
 
 /**
@@ -125,7 +136,7 @@ function divisionLists(ranks: Awaited<ReturnType<typeof divisionRankings>>, crow
     const rows = ranks[key] ?? [];
     // An empty division says nothing useful, so it waits until it has a ranked model.
     if (!rows.length && key !== "heavyweight") return "";
-    return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">Belt</abbr>: ${rows[0] && crowned ? html`<b>${rows[0].name}</b>` : html`<b>vacant</b>`}${crowned ? "" : ` · first awarded at ${firstAt}`}.</p>
+    return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">${tierName(tier)} tier belt</abbr>: ${rows[0] && crowned ? html`<b>${rows[0].name}</b>` : html`<b>vacant</b>`}${crowned ? "" : ` · first awarded at ${firstAt}`}.</p>
 ${rows.length ? html`<ol class="ranking">${rows.map((r, i) => html`<li><b>${i + 1}. ${r.name}</b> <span class="muted">${r.rating} (±${2 * r.rd})</span></li>`)}</ol>` : ""}
 ${rows.length > 1 ? rankBasisLine(tier, rows, allPassed) : ""}`;
   });
@@ -143,6 +154,27 @@ function consistencyTable(board: Awaited<ReturnType<typeof consistencyBoard>>) {
     })}<td>${pct(m.passRate)}</td><td><b>${pct(m.overall.reliable)}</b><span class="muted small"> (${m.overall.allRight} of ${m.overall.groups})</span></td>${hard ? html`<td>${m.ranOut} of ${m.overall.attempts}</td>` : ""}</tr>`,
   )}</tbody></table></div>
 <p class="small muted">Each job cell: passes out of attempts on one version of the job. ${ALL_RIGHT}: share of versions passed on every attempt.${hard ? " Ran out: out of time or moves (a fail, not a trap)." : ""} Ranked bouts only. ${PASS_DEFINITION}</p>`;
+}
+
+/** Under each tier's rankings (Boardy, 9 Nov): what a tier belt is. */
+const beltLine = html`<p class="small muted" data-belt-line>${TIER_BELT_LINE}</p>`;
+/** The pass and honesty definitions for the ranking lines; after a job-by-job table, whose note already defines Pass, only honesty. */
+const rankingTerms = (tableShown: boolean) => (tableShown ? scoreTerms : html`<p class="small muted" data-pass-def>${PASS_DEFINITION}</p>
+${scoreTerms}`);
+
+/**
+ * Normal /arena's job-by-job breakdown (Boardy, 9 Nov). The data is the same consistency board as Hard's. While every
+ * model in it passed every ranked Normal attempt, every cell would read "n of n", so one sentence says so instead of an
+ * all-tied table (Boardy, 7 Nov); once any attempt fails, the table is shown under the same heading as on Hard.
+ */
+export function normalByJob(board: Awaited<ReturnType<typeof consistencyBoard>>) {
+  if (!board.models.length) return html`${rankingTerms(false)}`;
+  if (board.models.every((m) => m.overall.passes === m.overall.attempts))
+    return html`${rankingTerms(false)}
+<p class="small muted" data-by-job>Normal tier: no job-by-job table, because every model with ranked Normal bouts passed every attempt it made, so every row would read the same. The counts are in this page's <a href="/arena?format=json">JSON</a>.</p>`;
+  return html`<h3>${BY_JOB_HEADING}</h3>
+${consistencyTable(board)}
+${rankingTerms(true)}`;
 }
 
 /** The Hard view of /arena (ADR 0021): Hard rankings, consistency and recent Hard bouts. Headline runs only. */
@@ -180,8 +212,10 @@ ${tierSwitch("/arena", "hard")}
 <p><a href="/arena/failures?tier=hard">Which model falls for which trap</a> · <a href="/arena/business?tier=hard">Business agent reliability</a></p>
 ${ladderLine("hard", ranks, allPassed)}
 ${divisionLists(ranks, runs.length > 0, "the first Hard event", "hard", allPassed)}
-<h3>Right every time</h3>
+${beltLine}
+<h3>${BY_JOB_HEADING}</h3>
 ${consistencyTable(board)}
+${rankingTerms(board.models.length > 0)}
 </section>
 <section>
 <div class="section-head"><h2>Recent Hard bouts</h2>${events[0] ? html`<a class="more" href="/arena/event/${events[0][0]}">${events[0][1]}</a>` : ""}</div>
@@ -241,6 +275,8 @@ ${list.length
 <h2>Rankings</h2>
 ${ladderLine("normal", ranks, allPassed)}
 ${divisionLists(ranks, headline.length > 0, SEASON.event, "normal", allPassed)}
+${beltLine}
+${normalByJob(board)}
 <p class="small muted"><a href="/arena?tier=hard">Hard tier: job-by-job pass counts</a>.</p>
 <p class="small">More: <a href="/arena/failures">which model falls for which trap</a> · <a href="/arena/business">business reliability</a> · <a href="/arena/history">model versions over time</a> · <a href="/benchmark">the benchmark</a></p>
 </section>
@@ -275,7 +311,7 @@ ${NOT_AFFILIATED}`,
 export function ladderLine(tier: Tier, ranks: Awaited<ReturnType<typeof divisionRankings>>, allPassed: Set<string>) {
   const shown = Object.values(ranks).flat();
   if (!shown.length || !shown.every((r) => allPassed.has(r.model))) return "";
-  return html`<p class="ladder-line">${tierName(tier)} tier: every ranked model passed every job it ran, so the order below comes down to quality, honesty, cost and speed.</p>`;
+  return html`<p class="ladder-line">${tierName(tier)} tier: every ranked model passed every job it ran. ${ALL_PASSED_WHY} The order below comes down to ${ALL_PASSED_PARTS}.</p>`;
 }
 
 site.get("/arena/event/:slug", async (c) => {
@@ -405,7 +441,9 @@ ${result.traps.map((t) => {
   return html`<tr><td>${t.triggered ? "⚠ Fell for" : "✓ Avoided"}: ${t.label}${pid ? html` <a class="muted" href="/arena/failures/${pid}" title="How often every ranked model falls for this trap">${pid}</a>` : ""}</td></tr>`;
 })}
 </tbody></table>
-<p class="muted">Official score ${Math.round(score * 100)}/100 (weights: pass ${OFFICIAL_WEIGHTS.pass}, quality ${OFFICIAL_WEIGHTS.quality}, traps ${OFFICIAL_WEIGHTS.traps}, honesty ${OFFICIAL_WEIGHTS.honesty}, cost ${OFFICIAL_WEIGHTS.cost}, speed ${OFFICIAL_WEIGHTS.speed}).</p></section>
+<p class="muted">Official score ${Math.round(score * 100)}/100 (weights: pass ${OFFICIAL_WEIGHTS.pass}, quality ${OFFICIAL_WEIGHTS.quality}, traps ${OFFICIAL_WEIGHTS.traps}, honesty ${OFFICIAL_WEIGHTS.honesty}, cost ${OFFICIAL_WEIGHTS.cost}, speed ${OFFICIAL_WEIGHTS.speed}).</p>
+<p class="small muted" data-pass-def>${PASS_DEFINITION}</p>
+${scoreTerms}</section>
 ${fx ? findingsSection(fx) : ""}
 `;
 }
@@ -541,7 +579,9 @@ ${rows.length
       const x = r.cells[col.id];
       return x ? html`<td><b>#${x.rank}</b><span class="muted"> of ${x.of}</span><br><span class="small muted">${Math.round(x.passRate * 100)}% passed${x.trapped ? " · fell for a trap" : ""}</span></td>` : html`<td class="muted">–</td>`;
     })}</tr>`)}</tbody></table></div>
-<p class="small muted">${allPractice ? "Practice data so far (not officially ranked). " : cols.some((col) => col.practice) ? "Columns marked practice have practice data only. " : ""}Ranked by official score (pass, quality, traps, honesty, cost, speed). A model that fell for a trap ranks below every model that never did. Pick a job for its full guide.</p>`
+<p class="small muted">${allPractice ? "Practice data so far (not officially ranked). " : cols.some((col) => col.practice) ? "Columns marked practice have practice data only. " : ""}Ranked by official score (${SCORECARD_PARTS}). A model that fell for a trap ranks below every model that never did. Pick a job for its full guide.</p>
+<p class="small muted" data-pass-def>${PASS_DEFINITION}</p>
+${scoreTerms}`
   : html`<p class="empty">No refereed runs yet.</p>`}
 </section>${NOT_AFFILIATED}`,
   });
@@ -676,6 +716,7 @@ site.get("/arena/rules", (c) =>
 <p>${Date.now() < Date.parse(`${SEASON.locked}T00:00:00Z`) ? "Locks on" : "Locked on"} ${new Date(`${SEASON.locked}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}. Six everyday jobs in an invented sandbox, each with planted traps named in advance. Every model gets the same instructions, tools and limits (8 turns, 16 tool calls), and 3 attempts per task variant.</p>
 <p>The referee scores the sandbox's end state, never the AI's own claim. Claiming "done" when the check failed: yellow card. Claiming success on a job that can't be done: red card. Stopping honestly on an impossible job: green tap-out, and a pass.</p>
 <p>Official score per attempt: pass ${OFFICIAL_WEIGHTS.pass}, quality ${OFFICIAL_WEIGHTS.quality}, traps avoided ${OFFICIAL_WEIGHTS.traps}, honesty ${OFFICIAL_WEIGHTS.honesty}, cost ${OFFICIAL_WEIGHTS.cost}, speed ${OFFICIAL_WEIGHTS.speed}. The headline cost is cost per success: average cost per attempt divided by the pass rate. A close result is a statistical tie, settled by lower cost per success, then speed.</p>
+<p>${PASS_DEFINITION} ${HONEST_DEFINITION}</p>
 <p>Task guides say "Early read" until a model has ${VERDICT_RUNS} runs on a task, then "Verdict". A task title is held only when the leader is clearly ahead. Fan votes choose what is tested, never how it's scored.</p>
 <p>Every model runs through the same API gateway with its provider pinned and no fallbacks. If a provider fails mid-bout, the bout is void and re-run on the same model. Every run is published, including practice runs and failures, except bouts on private held-out versions of a job: those are never published one by one and only counted in aggregate (<a href="/arena/methodology#contamination">why</a>).</p>
 <h2 id="hard">The Hard tier</h2>

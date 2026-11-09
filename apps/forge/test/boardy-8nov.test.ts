@@ -62,7 +62,7 @@ beforeAll(async () => {
 describe("1: the ladder line is computed from the rows shown and names their tier", () => {
   it("said only when every ranked model shown passed every attempt in this tier, by counts", async () => {
     expect(await str(ladderLine("normal", ranks("a", "b"), allPassedModels(runs(["a", true], ["a", true], ["b", true]))))).toContain(
-      "Normal tier: every ranked model passed every job it ran, so the order below comes down to quality, honesty, cost and speed.",
+      "Normal tier: every ranked model passed every job it ran. A pass means no trap was sprung, so pass and traps avoided are the same for all of them. The order below comes down to quality, honesty, cost and speed.",
     );
     // One shown model with a fail: no line.
     expect(await str(ladderLine("normal", ranks("a", "b"), allPassedModels(runs(["a", true], ["b", true], ["b", false]))))).toBe("");

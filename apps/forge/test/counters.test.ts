@@ -17,7 +17,7 @@ import "../src/index";
 
 let seq = 0;
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${++seq}`;
-const clearStrip = () => env.KV.delete("proof-strip:v2");
+const clearStrip = () => env.KV.delete("proof-strip:v3");
 const text = async (h: unknown) => String(await h);
 const init = (name: string) => ({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name, version: "1" } } });
 const mcpPost = (body: unknown) => new Request("https://x/mcp", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
@@ -79,7 +79,7 @@ describe("the proof strip", () => {
     const db = getDb(env);
     await clearStrip();
     const before = (await proofStrip(env)).bouts;
-    const run = (eventId: string, i: number) => ({ id: uid("run"), eventId, modelId: "test/model", task: "counter-test", seed: i, attemptNo: 1, status: "done" as const, result: { traps: [{ triggered: true }] } });
+    const run = (eventId: string, i: number) => ({ id: uid("run"), eventId, modelId: "test/model", task: "counter-test", seed: i, attemptNo: 1, status: "done" as const, finishedAt: Date.now(), result: { traps: [{ triggered: true }] } });
     const practice = uid("ev");
     await db.insert(t.arenaEvents).values({ id: practice, slug: practice, name: "Dry run", season: "s1", kind: "practice", status: "done" });
     for (let i = 0; i < 12; i++) await db.insert(t.arenaRuns).values(run(practice, i));
