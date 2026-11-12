@@ -1,7 +1,7 @@
 import { FINISH_TOOL } from "@forge/arena";
 import { isLean } from "../services/ops-mode";
 import { day } from "../services/proof";
-import { BYOK_EXPIRES, byokFallbackSeen, byokHeld, isClaudeByok, noteByokFallback } from "./credit";
+import { byokFallbackSeen, byokHeld, claudeBudget, houseSprintCostKey, isClaudeByok, noteByokFallback } from "./credit";
 import { eq } from "drizzle-orm";
 import * as t from "../db/schema";
 import { endHouseSprint, gauntletAct, gauntletRun, startSprint } from "./gauntlet";
@@ -16,14 +16,15 @@ import { SPRINT_CAPS } from "./sprint";
 // endpoint so the referee, seal and report are exactly a visitor's. Labelled "house" with the model's name.
 // Skipped in lean mode, without a provider key, when the month's Arena budget is used up, or over this own small cap.
 // Review (ADR 0084): Claude on our Anthropic key (BYOK) only, never another model on OpenRouter credit; skipped while
-// Claude bouts are held or a BYOK fallback was seen, and after the key's funding ends; a turn billed to credit stops
+// Claude bouts are held or a BYOK fallback was seen, and while the month's Anthropic budget is nearly used or Claude is
+// paused by hand (ADR 0147, replacing the old funding end date); a turn billed to credit stops
 // the Sprint and holds Claude bouts; and a Sprint starts only if the month's spend plus a reserve stays within the cap.
 
 export const HOUSE_SPRINT_MONTHLY_USD = 1;
 /** The least a house Sprint is assumed to cost when the cap is checked (twice the last one's cost, if more). */
 export const HOUSE_SPRINT_MIN_RESERVE_USD = 0.1;
 const doneKey = (now: number) => `sprint:house:${day(now)}`;
-const costKey = (now: number) => `sprint:house:cost:${new Date(now).toISOString().slice(0, 7)}`;
+const costKey = houseSprintCostKey;
 const LAST_COST_KEY = "sprint:house:last-cost";
 
 /**
@@ -40,8 +41,10 @@ export function houseSprintModel(now: number): ArenaModel | null {
 
 export async function houseSprint(env: Env & { OPENROUTER_API_KEY?: string }, now = Date.now(), fetcher: typeof fetch = fetch) {
   if (!env.OPENROUTER_API_KEY) return { skipped: "no_provider_key" as const };
-  if (now >= BYOK_EXPIRES) return { skipped: "byok_expired" as const };
   if (await env.KV.get(doneKey(now))) return { skipped: "done_today" as const };
+  // ADR 0147: the Anthropic monthly budget guard (or the manual flag). Checked before the day is marked done, so the
+  // Sprint is skipped, not lost: it plays on the next hourly tick once Claude is allowed again.
+  if ((await claudeBudget(env, now)).paused) return { skipped: "claude_paused" as const };
   if (await isLean(env)) return { skipped: "lean" as const };
   // A Claude turn was billed to OpenRouter credit recently: no Claude bout of ours starts until that clears.
   if ((await byokHeld(env)) || (await byokFallbackSeen(env))) return { skipped: "byok_held" as const };

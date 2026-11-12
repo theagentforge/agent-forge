@@ -2,14 +2,14 @@ import { env } from "cloudflare:workers";
 import { anyTaskById, Attempt } from "@forge/arena";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BYOK_EXPIRES, BYOK_FROM, BYOK_HOLD_KV, BYOK_FALLBACK_KV } from "../src/arena/credit";
+import { ANTHROPIC_GUARD_USD, ANTHROPIC_MONTHLY_LIMIT_USD, BYOK_FROM, BYOK_HOLD_KV, BYOK_FALLBACK_KV, CLAUDE_PAUSED_KV } from "../src/arena/credit";
 import { moderationKey, neuronKey, WAI_TOTAL_MAX_NEURONS } from "../src/arena/free-lane";
 import { SYSTEM_PROMPT } from "../src/arena/runner";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { upsertHuman } from "../src/services/identity";
 import { ledgerKey, readLedger, recordSpend } from "../src/services/llm-ledger";
-import { ANTHROPIC_ALLOWANCE_USD, monthlyCosts } from "../src/services/costs";
+import { monthlyCosts } from "../src/services/costs";
 import { MODERATION_MODEL, moderateWithinBudget } from "../src/services/moderation";
 import { KEY_KV } from "../src/social/moltbook";
 import {
@@ -38,7 +38,7 @@ import "../src/index";
 
 const ME = "agent-me";
 const POST = "post-1";
-const NOW = BYOK_EXPIRES - 10 * 86_400_000;
+const NOW = Date.UTC(2026, 10, 6);
 const LINK = "https://theagentforge.io/arena/failures?tier=hard";
 const PAGE = JSON.stringify({ as_of: "2026-10-17", falls: 14, payment_traps_present: 54 });
 const read = async (p: string) => (p.startsWith("/arena/failures") ? PAGE : p === "/arena/methodology" ? '{"traps":36}' : null);
@@ -95,7 +95,7 @@ beforeEach(async () => {
   orReply = () => claudeOk(REPLY);
   posts = 0;
   aiText = REPLY;
-  for (const prefix of ["moltbook:", "llmcost:", "freelane:", "mod-", "arena:byok"]) for (const k of (await env.KV.list({ prefix })).keys) await env.KV.delete(k.name);
+  for (const prefix of ["moltbook:", "llmcost:", "freelane:", "mod-", "arena:byok", "arena:claude"]) for (const k of (await env.KV.list({ prefix })).keys) await env.KV.delete(k.name);
   await env.KV.put(KEY_KV, "moltbook_test_secret");
   vi.spyOn(env.AI, "run").mockImplementation((async (model: string) => {
     if (String(model) === MODERATION_MODEL) return { response: "safe", usage: { prompt_tokens: 250, completion_tokens: 2, neurons: 11.2 } };
@@ -190,26 +190,47 @@ describe("Moltbook replies on Claude Haiku 5.5 while the Anthropic credit lasts 
     expect(aiCalls()).toHaveLength(2);
   });
 
-  it("after the Anthropic credit's expiry date, never calls OpenRouter: Workers AI only", async () => {
-    const r = await run(KEYED, BYOK_EXPIRES + 3_600_000);
+  it("with Claude paused by hand (arena:claude-paused), never calls OpenRouter: Workers AI only", async () => {
+    await env.KV.put(CLAUDE_PAUSED_KV, "1");
+    const r = await run(KEYED, NOW);
     expect(r.replied).toBe(1);
     expect(orBodies).toHaveLength(0);
     expect(aiCalls()).toHaveLength(1);
     expect(vi.mocked(env.AI.run).mock.calls[0]![1]).toMatchObject({ max_tokens: REPLY_MAX_TOKENS });
   });
 
+  it("ADR 0147: with the month's Anthropic spend at the guard (replies count), Workers AI only; from the 1st, Claude again", async () => {
+    await recordSpend(env.KV, "moltbook_replies", { anthropic_usd: ANTHROPIC_GUARD_USD }, NOW - 3_600_000);
+    expect((await run(KEYED, NOW)).replied).toBe(1);
+    expect(orBodies).toHaveLength(0);
+    expect(aiCalls()).toHaveLength(1);
+    // Just under the guard: Claude.
+    for (const k of (await env.KV.list({ prefix: "moltbook:" })).keys) if (k.name !== KEY_KV) await env.KV.delete(k.name);
+    for (const k of (await env.KV.list({ prefix: "llmcost:" })).keys) await env.KV.delete(k.name);
+    await recordSpend(env.KV, "moltbook_replies", { anthropic_usd: ANTHROPIC_GUARD_USD - 0.01 }, NOW - 3_600_000);
+    await run(KEYED, NOW);
+    expect(orBodies).toHaveLength(1);
+    // The limit resets at 00:00 UTC on the 1st: November's spend no longer counts.
+    for (const k of (await env.KV.list({ prefix: "moltbook:" })).keys) if (k.name !== KEY_KV) await env.KV.delete(k.name);
+    await recordSpend(env.KV, "moltbook_replies", { anthropic_usd: 5 }, NOW - 3_600_000);
+    orBodies = [];
+    await run(KEYED, Date.UTC(2026, 11, 1));
+    expect(orBodies).toHaveLength(1);
+  });
+
   it("with no Claude and the Workers AI budget used, the comment waits for the next run: nothing sent, nothing marked done", async () => {
-    await env.KV.put(neuronKey(BYOK_EXPIRES + 3_600_000, "moltbook"), String(MOLTBOOK_WAI_DAILY_NEURONS));
-    const r = await run(KEYED, BYOK_EXPIRES + 3_600_000);
+    await env.KV.put(CLAUDE_PAUSED_KV, "1");
+    await env.KV.put(neuronKey(NOW, "moltbook"), String(MOLTBOOK_WAI_DAILY_NEURONS));
+    const r = await run(KEYED, NOW);
     expect(r.why).toMatch(/^waiting: .*Workers AI budget/);
     expect(r.looked).toBe(0);
     expect(posts).toBe(0);
     expect(aiCalls()).toHaveLength(0);
     expect(await env.KV.get("moltbook:replied:q1")).toBeNull();
     // The day's total Workers AI line stops it too.
-    await env.KV.delete(neuronKey(BYOK_EXPIRES + 3_600_000, "moltbook"));
-    await env.KV.put(neuronKey(BYOK_EXPIRES + 3_600_000, "arena"), String(WAI_TOTAL_MAX_NEURONS));
-    expect((await run(KEYED, BYOK_EXPIRES + 3_600_000)).why).toMatch(/^waiting/);
+    await env.KV.delete(neuronKey(NOW, "moltbook"));
+    await env.KV.put(neuronKey(NOW, "arena"), String(WAI_TOTAL_MAX_NEURONS));
+    expect((await run(KEYED, NOW)).why).toMatch(/^waiting/);
     expect(aiCalls()).toHaveLength(0);
   });
 
@@ -332,8 +353,8 @@ describe("note moderation (ADR 0113)", () => {
   });
 });
 
-describe("/admin/costs by task, with the Anthropic credit's runway (ADR 0113)", () => {
-  it("adds Moltbook's Anthropic spend to the allowance used, and works out days left at the last 7 days' burn", async () => {
+describe("/admin/costs by task, with the Anthropic monthly budget's runway (ADR 0113, ADR 0147)", () => {
+  it("adds Moltbook's Anthropic spend to the month's spend, and works out days to the guard at the last 7 days' burn", async () => {
     const db = getDb(env);
     await db.delete(t.arenaRuns);
     const now = BYOK_FROM + 3 * 86_400_000;
@@ -347,12 +368,15 @@ describe("/admin/costs by task, with the Anthropic credit's runway (ADR 0113)", 
     await recordSpend(env.KV, "moltbook_replies", { neurons: 40 }, now - 3_600_000);
     const k = await monthlyCosts(env, now);
     expect(k.anthropic_byok.spent_since_start_usd).toBe(3.03);
-    expect(k.anthropic_byok.left_usd).toBe(ANTHROPIC_ALLOWANCE_USD - 3.03);
-    // 3 days since the credit reached the Arena: $3.03 ÷ 3 = $1.01 a day; $96.97 left lasts about 96 days, so expiry
-    // comes first.
+    expect(k.anthropic_byok.spent_month_usd).toBe(3.03);
+    expect(k.anthropic_byok.left_usd).toBe(ANTHROPIC_MONTHLY_LIMIT_USD - 3.03);
+    expect(k.anthropic_byok.left_before_guard_usd).toBe(ANTHROPIC_GUARD_USD - 3.03);
+    // 3 days since the key reached the Arena: $3.03 ÷ 3 = $1.01 a day; $86.97 to the guard lasts about 86 days, so the
+    // reset on 1 Nov comes first.
     expect(k.anthropic_byok.burn_per_day_usd).toBe(1.01);
-    expect(k.anthropic_byok.days_left_at_burn).toBeCloseTo(96, 0);
-    expect(k.anthropic_byok.lasts_until).toBe(new Date(BYOK_EXPIRES).toISOString().slice(0, 10));
+    expect(k.anthropic_byok.days_left_at_burn).toBeCloseTo(86, 0);
+    expect(k.anthropic_byok.resets_on).toBe("2026-11-01");
+    expect(k.anthropic_byok.guard_reached_on).toBeNull();
     expect(k.by_task.arena.claude_byok).toMatchObject({ bouts: 1, anthropic_usd: 3, credit_usd: 0 });
     expect(k.by_task.arena.workers_ai_practice).toMatchObject({ bouts: 1, neurons: 1000 });
     expect(k.by_task.moltbook_replies).toMatchObject({ calls: 2, anthropic_usd: 0.03, neurons: 40, cached_tokens: 900 });

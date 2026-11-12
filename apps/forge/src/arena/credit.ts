@@ -2,6 +2,7 @@ import { TASKS } from "@forge/arena";
 import { and, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
+import { readLedger } from "../services/llm-ledger";
 import { WEEKLY_ATTEMPTS, weeklyModels } from "./headline-slot";
 import { ALL_MODELS, type ArenaModel } from "./lineup";
 
@@ -40,9 +41,39 @@ export const BYOK_HOLD_SECONDS = 3_600;
 export const RESERVE_SAFETY = 1.5;
 /** Cost per bout for a model with no stored OpenRouter bouts yet. */
 export const DEFAULT_BOUT_USD = 0.05;
-/** BYOK reached the Arena on this day; the second is when the key's current funding runs out (ADR 0064). */
+/** BYOK reached the Arena on this day (ADR 0064). */
 export const BYOK_FROM = Date.UTC(2026, 9, 26);
-export const BYOK_EXPIRES = Date.UTC(2026, 10, 16);
+/**
+ * ADR 0147: the Anthropic key runs under a MONTHLY spend limit set in the Claude Console (Anthropic's email to the owner,
+ * 9 Nov 2026). It resets on the 1st of each month; when spend reaches it, Anthropic pauses API requests. It is not a
+ * one-off allowance and nothing expires. We count the month from 00:00 UTC on the 1st.
+ */
+export const ANTHROPIC_MONTHLY_LIMIT_USD = 100;
+/**
+ * New Claude bouts (and every other Claude call of ours) stop when our own figure for the month's Anthropic spend reaches
+ * this. Our figure lags the Console's (Claude bouts without a reported BYOK cost, ops
+ * checks and suspended bouts aren't counted), so the guard sits $10 under the limit.
+ */
+export const ANTHROPIC_GUARD_USD = 90;
+/** Set by hand (any value) to pause every Claude call of ours at once, whatever the month's spend reads. */
+export const CLAUDE_PAUSED_KV = "arena:claude-paused";
+/**
+ * The last month's-spend figure claudeBudget worked out, for the public pause note (arenaPause), so an Arena page doesn't
+ * read a month of ledger days each time. Only used for the same month and within CLAUDE_SPEND_FRESH_MS.
+ */
+export const CLAUDE_SPEND_KV = "arena:claude-spend";
+export const CLAUDE_SPEND_FRESH_MS = 30 * 60_000;
+/** The house Sprint's Anthropic spend this month (sprint-house.ts writes it; not stored in arena_runs). */
+export const houseSprintCostKey = (now: number) => `sprint:house:cost:${new Date(now).toISOString().slice(0, 7)}`;
+/** The start of the Anthropic limit's month (00:00 UTC on the 1st) and the next reset. */
+export const anthropicMonthStart = (now: number) => {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+};
+export const anthropicNextReset = (now: number) => {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+};
 /** Contamination test 1 (docs/data/contamination-test-1.json), counted in the reserve until it is queued. */
 export const CONTAMINATION_TEST_1 = {
   slug: "contamination-test-1",
@@ -62,8 +93,8 @@ export const creditModelIds = (byokFallback = false) => ALL_MODELS.filter((m) =>
 export const claudeByokIds = () => ALL_MODELS.filter(isClaudeByok).map((m) => m.id);
 
 /**
- * Model-agnostic jobs (practice filler, demo bouts, any "pick a model" default): these first while the BYOK credits
- * last, then the Workers AI practice models (their own daily allowance). Never used to change a ranked, weekly or study
+ * Model-agnostic jobs (practice filler, demo bouts, any "pick a model" default): these first while the month's
+ * Anthropic budget lasts (ADR 0147), then the Workers AI practice models (their own daily allowance). Never used to change a ranked, weekly or study
  * lineup, which must stay the same for comparability.
  */
 export const FILLER_MODELS = ["claude-haiku-5.5", "claude-sonnet-5.5"] as const;
@@ -266,10 +297,76 @@ export async function creditGuard(env: Env & { OPENROUTER_API_KEY?: string }, no
   };
 }
 
+/**
+ * ADR 0147: this month's Anthropic spend on our key, from what we store: Arena bouts (arena_runs.byok_cost on the Claude
+ * routes, finished since the 1st), Moltbook replies (the ledger's anthropic_usd) and the house Sprint (its KV total).
+ * An estimate that lags the Console (see ANTHROPIC_GUARD_USD).
+ */
+export async function anthropicSpendThisMonth(env: Env, now = Date.now()) {
+  const since = anthropicMonthStart(now);
+  const ids = claudeByokIds();
+  const [r] = await getDb(env)
+    .select({ c: sql<number>`coalesce(sum(${t.arenaRuns.byokCost}), 0)` })
+    .from(t.arenaRuns)
+    // Before BYOK began (26 Oct 2026) Claude ran on OpenRouter credit, not the key.
+    .where(and(inArray(t.arenaRuns.modelId, ids.length ? ids : ["-"]), gte(t.arenaRuns.finishedAt, Math.max(since, BYOK_FROM))));
+  const arena = Number(r?.c ?? 0);
+  const ledger = await readLedger(env.KV, since, now);
+  const replies = Object.values(ledger.total).reduce((a, x) => a + (x?.anthropic_usd ?? 0), 0);
+  const house = Number((await env.KV.get(houseSprintCostKey(now))) ?? 0) || 0;
+  const r4 = (x: number) => Math.round(x * 10_000) / 10_000;
+  return { since: new Date(since).toISOString().slice(0, 10), resets: new Date(anthropicNextReset(now)).toISOString().slice(0, 10), usd: r4(arena + replies + house), arena_usd: r4(arena), moltbook_usd: r4(replies), house_sprint_usd: r4(house) };
+}
+
+export interface ClaudeBudget {
+  /** No new Claude bout or call of ours starts. */
+  paused: boolean;
+  /** "budget": the month's spend is at or over ANTHROPIC_GUARD_USD; "manual": CLAUDE_PAUSED_KV is set; "unavailable": the spend couldn't be read (fails closed). */
+  reason: "budget" | "manual" | "unavailable" | null;
+  spent_usd: number | null;
+  guard_usd: number;
+  limit_usd: number;
+  /** The day the Console limit resets (YYYY-MM-DD, the 1st of next month). */
+  resets_on: string;
+}
+
+/**
+ * ADR 0147: whether Claude calls on our Anthropic key may start now. Fails closed: if the spend can't be read, paused.
+ * `cached`: use a recent figure from CLAUDE_SPEND_KV (same month, under 30 minutes old) when there is one; only the public
+ * note does this. Every start path reads the spend fresh.
+ */
+export async function claudeBudget(env: Env, now = Date.now(), opts: { cached?: boolean } = {}): Promise<ClaudeBudget> {
+  const base = { guard_usd: ANTHROPIC_GUARD_USD, limit_usd: ANTHROPIC_MONTHLY_LIMIT_USD, resets_on: new Date(anthropicNextReset(now)).toISOString().slice(0, 10) };
+  const manual = await env.KV.get(CLAUDE_PAUSED_KV).then(
+    (v) => v !== null,
+    () => null,
+  );
+  const month = new Date(anthropicMonthStart(now)).toISOString().slice(0, 7);
+  const hit = opts.cached ? await env.KV.get<{ usd: number; at: number; month: string }>(CLAUDE_SPEND_KV, "json").catch(() => null) : null;
+  const spent =
+    hit && hit.month === month && now - hit.at >= 0 && now - hit.at < CLAUDE_SPEND_FRESH_MS
+      ? hit.usd
+      : await anthropicSpendThisMonth(env, now).then(
+          async (s) => {
+            await env.KV.put(CLAUDE_SPEND_KV, JSON.stringify({ usd: s.usd, at: now, month }), { expirationTtl: 86_400 }).catch(() => {});
+            return s.usd;
+          },
+          (e) => {
+            console.error("arena: Anthropic spend unavailable", String(e));
+            return null;
+          },
+        );
+  if (manual) return { ...base, paused: true, reason: "manual", spent_usd: spent };
+  if (spent === null || manual === null) return { ...base, paused: true, reason: "unavailable", spent_usd: spent };
+  if (spent >= ANTHROPIC_GUARD_USD) return { ...base, paused: true, reason: "budget", spent_usd: spent };
+  return { ...base, paused: false, reason: null, spent_usd: spent };
+}
+
 /** Whether a model-agnostic ops call (citations, tool selection) on this model may start now. */
 export async function opsCallAllowed(env: Env & { OPENROUTER_API_KEY?: string }, claude: boolean, now = Date.now(), fetcher: typeof fetch = fetch) {
-  // Claude runs on our Anthropic key only: held (BYOK_HOLD_KV) after a turn was billed to credit, allowed otherwise.
-  if (claude) return (await byokHeld(env)) ? { ok: false as const, remaining: null, reserve: null } : { ok: true as const };
+  // Claude runs on our Anthropic key only: held (BYOK_HOLD_KV) after a turn was billed to credit, and paused when the
+  // month's Anthropic budget is nearly used or paused by hand (ADR 0147); allowed otherwise.
+  if (claude) return (await byokHeld(env)) || (await claudeBudget(env, now)).paused ? { ok: false as const, remaining: null, reserve: null } : { ok: true as const };
   // Fails closed: if the guard can't be worked out, a call that spends credit waits (the ops checks are optional).
   const g = await creditGuard(env, now, fetcher).catch((e) => {
     console.error("ops: credit guard unavailable", String(e));

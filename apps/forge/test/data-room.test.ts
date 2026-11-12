@@ -224,7 +224,9 @@ describe("one source for every number", () => {
     expect(pack.kpis.outside_only!.splits).toEqual(third.splits);
     expect(pack.kpis.outside_only!.active_owners_30d).toBe(third.active_owners_30d);
     for (const at of [pack.generated_at, pack.kpis.gross!.generated_at, pack.kpis.outside_only!.generated_at, pack.kpis.series.generated_at, pack.costs.credit.generated_at, pack.dataset.generated_at]) expect(Date.parse(at)).toBeGreaterThan(0);
-    expect(pack.costs.credit.anthropic_byok_expires).toBe("2026-11-16");
+    expect(pack.costs.credit).toMatchObject({ anthropic_monthly_limit_usd: 100, anthropic_guard_usd: 90 });
+    expect(pack.costs.credit.anthropic_limit_resets_on).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(JSON.stringify(pack.costs)).not.toContain("2026-11-16");
     for (const s of pack.kpis.series.series) expect(["outside", "ours", "outside + ours", "kpi (as defined)", "dataset (gross)"]).toContain(s.basis);
   });
 

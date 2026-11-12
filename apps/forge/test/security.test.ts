@@ -161,9 +161,9 @@ describe("/about additions (W1.5)", () => {
     expect(policy.independence.paid_placement).toBe(false);
     expect(body).toContain('<h2 id="funding">');
     expect(body).toContain("self-funded");
-    expect(body).toContain("paid Claude Max subscription");
-    expect(body).toContain("one-off allowance of Anthropic API credits");
-    expect(body).toContain("expires on 16 Nov 2026");
+    expect(body).toContain("Anthropic API usage on the founder's own Anthropic account");
+    expect(body).toContain("under a monthly spend limit that resets on the 1st of each month"); expect(body).not.toContain("$100");
+    expect(body).not.toContain("expires on 16 Nov 2026");
     expect(body).toContain("not a grant or sponsorship");
     expect(body).toContain("Cloudflare Workers AI");
     // The signed-logs line matches when replay format v2 began.

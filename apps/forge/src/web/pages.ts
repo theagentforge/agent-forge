@@ -58,6 +58,7 @@ import { forStore, isRefresh, neverEdgeCached, readStored, refreshStale, RELEASE
 import { readCookie, SESSION_COOKIE } from "./session";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
+import { CHECK_CTA_LABEL, claimBlock, HOME_CLAIM, homeProof, proofJson } from "./home-proof";
 import { draftsFor, parseSwap, shortsFor } from "../social/drafts";
 import { badgeCounts, badgeFor, badgeMarkdown } from "./badge-core";
 import { EMPTY_BOARD, frontierHard, gullibilityBoard } from "../arena/board";
@@ -140,7 +141,7 @@ export const DISCOVERY_LINKS = [
  * the public totals pass the seconds left in their snapshot (services/public-numbers.ts, ADR 0116).
  */
 export async function send(c: Ctx, o: Omit<PageOptions, "origin">, opts: { cache?: boolean; maxAge?: number } = {}) {
-  // AQ-08 (ADR 0097): when a model credit has run out or expired, every Arena page still renders, with an honest note.
+  // AQ-08 (ADR 0097): when a model credit has run out or the month's Anthropic budget is nearly used, every Arena page still renders, with an honest note.
   if (o.path === "/arena" || o.path.startsWith("/arena/") || o.path.startsWith("/arena?")) {
     const pause = await arenaPause(c.env);
     if (pause.notes.length) o = { ...o, body: html`<p class="notice warn arena-paused" role="status">${pause.notes.join(" ")}</p>${o.body}` };
@@ -524,8 +525,12 @@ site.get("/", async (c) => {
     duel ? clipUrlFor(c.env, gauntletClipId(duel.a.id, duel.b.id)).catch(() => null) : Promise.resolve(null),
   ]);
   const origin = c.env.PUBLIC_ORIGIN;
+  const proof = homeProof(c.env);
   const hero = {
     descriptor: DESCRIPTOR,
+    // The claim the page leads with, and the links a skeptic can check it by (home-proof.ts).
+    claim: HOME_CLAIM,
+    proof: proofJson(proof, origin),
     headline: hh.headline,
     subline: HOME_SUBHEAD,
     headline_source: homeHeroJson(hh, origin),
@@ -534,7 +539,7 @@ site.get("/", async (c) => {
     primary_cta: { label: PRIMARY_CTA.label, url: `${origin}${PRIMARY_CTA.href}` },
     secondary_ctas: [
       { label: "Connect your AI", url: `${origin}/connect` },
-      { label: "Check a tool", url: `${origin}/check` },
+      { label: CHECK_CTA_LABEL, url: `${origin}/check` },
     ],
     for_security_teams: `${origin}/security`,
   };
@@ -565,22 +570,23 @@ site.get("/", async (c) => {
         organization(origin, SITE_DESCRIPTION),
       ],
     },
-    // Site audit 29 Oct (§3.1): one job per block. The hero (one primary and one secondary action) with "Which AI falls
-    // for it?" beside it on wide screens (the five-number strip doesn't fit half a page), then the numbers, the Arena
-    // replay, the trap card result, one check box, the Wire and a last call.
+    // Site audit 29 Oct (§3.1): one job per block. Homepage-claim (12 Nov): the hero leads with the claim (BRAND.md's
+    // descriptor) and the proof a skeptic can check (signed replays, the validity pack, held-out seeds, the Trap Set
+    // version), then the replay-backed headline, one primary and one secondary action, with "Which AI falls for it?"
+    // beside it on wide screens. Then the Arena replay, the trap card result, one check box and the Wire; the gross
+    // totals come after all of that, just before the last call.
     body: html`
 <section class="hero2">
 <div class="hero2-copy">
+${claimBlock(proof)}
 ${heroBlock(hh, now)}
 <p class="lead">${HOME_SUBHEAD}</p>
-<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/check?from=home-hero">Check a tool</a></p>
+<p class="hero-ctas"><a class="btn primary chamfer" href="${PRIMARY_CTA.href}?from=home-hero">${PRIMARY_CTA.label}</a> <a class="btn chamfer" href="/check?from=home-hero">${CHECK_CTA_LABEL}</a></p>
 <p class="small muted">Free, no account. Short on time? <a href="${SPRINT_PATH}?from=home-hero">Try the 90-second Sprint</a>.</p>
 ${advisoryLine(Date.now())}
 </div>
 ${boardBlock(board)}
 </section>
-
-${liveBand(work, live, now, numbers.as_of)}
 
 ${duel ? html`<section class="home-arena" id="arena" aria-labelledby="arena-title"><div class="section-head"><h2 id="arena-title">Now on the Arena</h2><a class="more" href="/arena?from=home">All bouts</a></div>
 ${duelPlayer(duel, { mode: "cycle", channel: duels, clipUrl: duelClip })}<p class="small hero-links"><a href="/arena/run/${duel.a.id}?from=home" data-gx-full="gx">Watch the full bout</a>${hard.length ? html` · <a href="/arena?tier=hard&amp;from=home">New: Hard tier</a>` : ""}</p></section>` : ""}
@@ -596,6 +602,8 @@ ${launchScanHeadline() ? html`<p class="small">${launchScanHeadline()}, mostly v
 </section>
 ${wireHero(posts, now)}
 </section>
+
+${liveBand(work, live, now, numbers.as_of)}
 
 <section class="panel chamfer panel-body home-final" aria-labelledby="home-final">
 <h2 id="home-final">Would your agent pay the fake invoice?</h2>

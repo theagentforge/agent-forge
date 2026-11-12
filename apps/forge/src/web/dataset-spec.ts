@@ -12,6 +12,7 @@ import { FIELD_REPORTS_LABEL, HOUSE_METHOD_PATH } from "../services/site-pulse";
 import { commercialLicenceLine, NOT_KNOWN } from "./benchmark";
 import { disclosure, fieldReportsLabel, more } from "./components";
 import { CROISSANT_PATH } from "./croissant";
+import { DATASHEET_PATH } from "./dataset-datasheet";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { verifyCommand } from "./replay-verify";
 import { statsData } from "./stats";
@@ -166,6 +167,7 @@ export async function datasetSpecData(env: Env) {
       json_schema_per_trap: `${origin}${BENCHMARK_SCHEMA_PATH}`,
       json_schema_whole_file: `${origin}${BENCHMARK_FILE_SCHEMA_PATH}`,
       croissant: `${origin}${CROISSANT_PATH}`,
+      datasheet: `${origin}${DATASHEET_PATH}`,
       citation_cff: `${origin}${BENCHMARK_PATH}/v1/CITATION.cff`,
       bouts_json: `${origin}/arena/dataset.json`,
       osv_feed: `${origin}${OSV_FEED_PATH}`,
@@ -232,6 +234,7 @@ site.get(DATASET_SPEC_PATH, async (c) => {
 <div class="table-wrap"><table class="table" aria-label="What you get"><tbody>
 <tr><th scope="row">Records</th><td>${typeof k.bouts.refereed_practice_included === "number" ? `${n(k.bouts.refereed_practice_included)} refereed Arena bouts, practice included, on ` : "Refereed Arena bouts on "}${k.trap_set.traps} public traps${typeof k.skill_scans.distinct_skill_files_scanned === "number" ? `; ${n(k.skill_scans.distinct_skill_files_scanned)} skill files scanned` : ""}${f.sample.status === "published" ? html`; a fixed <a href="${SAMPLE_DIR}">sample of ${n(f.sample.records)} records</a>` : ""}.</td></tr>
 <tr><th scope="row">Formats</th><td>JSON, JSON Schema, Croissant 1.0, CITATION.cff and OSV (<a href="#formats">all files</a>).</td></tr>
+<tr><th scope="row">Datasheet</th><td>Motivation, composition, collection, uses, distribution and maintenance of each dataset, with its known gaps (<a href="${DATASHEET_PATH}" data-link="datasheet">datasheet</a>).</td></tr>
 <tr><th scope="row">Licence</th><td>Evaluation only, not for training (<a href="#licence">terms</a>).</td></tr>
 </tbody></table></div>
 ${disclosure(html`Numbers are read live from the same functions as <a href="/stats">/stats</a> and <a href="${BENCHMARK_PATH}">/benchmark</a> and count everything, our own test agents included. <a href="${DATASET_SPEC_JSON_PATH}">JSON</a>`)}
@@ -288,6 +291,7 @@ ${more(html`<span id="install-tests">Field reports and install tests</span>`, ht
 <li>JSON: <a href="${BENCHMARK_JSON_PATH}">${BENCHMARK_JSON_PATH}</a> (the Trap Set, live), <a href="${BENCHMARK_TRAPS_PATH}">${BENCHMARK_TRAPS_PATH}</a> (traps only), <a href="/arena/dataset.json">/arena/dataset.json</a> (every public bout).</li>
 <li>JSON Schema: <a href="${BENCHMARK_SCHEMA_PATH}">per trap</a> and <a href="${BENCHMARK_FILE_SCHEMA_PATH}">whole file</a> (2020-12).</li>
 <li>Croissant 1.0 with RAI: <a href="${CROISSANT_PATH}">${CROISSANT_PATH}</a>. CITATION.cff: <a href="${BENCHMARK_PATH}/v1/CITATION.cff">${BENCHMARK_PATH}/v1/CITATION.cff</a>.</li>
+<li>Datasheet (Datasheets for Datasets) for every public dataset: <a href="${DATASHEET_PATH}">${DATASHEET_PATH}</a>.</li>
 <li>OSV feed: <a href="${OSV_FEED_PATH}">${OSV_FEED_PATH}</a> (OSV schema; pattern findings, not confirmed vulnerabilities).</li>
 <li>Sample: <a href="${SAMPLE_DIR}">the sample dataset</a>${f.sample.status === "published" ? html`, <a href="${f.sample.zip ? new URL(f.sample.zip).pathname : SAMPLE_ZIP_PATH}">zip</a>${f.sample.version ? ` (${f.sample.version})` : ""}, ${n(f.sample.records)} records${f.sample.verified ? `, ${f.sample.verified}` : ""}, SHA-256 <code class="mono-break">${f.sample.sha256}</code>` : ""} (<a href="${SAMPLE_SCHEMA_PATH}">record schema</a>).</li>
 <li>Released versions (frozen or reconstructed, as marked): <a href="${BENCHMARK_VERSIONS_PATH}">${BENCHMARK_VERSIONS_PATH}</a>, diff at <code>${BENCHMARK_DIFF_PATH}?from=&lt;version&gt;&amp;to=&lt;version&gt;</code>.

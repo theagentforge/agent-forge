@@ -4,6 +4,7 @@ import { getDb } from "../services/db";
 import { isAdmin } from "../services/identity";
 import { currentSession } from "./dashboard";
 import type { Context } from "hono";
+import { validityReleased } from "./validity-switch";
 
 // The release switch for the validity pack (ADR 0136; review 5 Nov). Dinike hasn't yet approved publishing
 // /benchmark/validity, its files, the error record or the trap pages' "Dispute and correction history" section, and
@@ -11,7 +12,8 @@ import type { Context } from "hono";
 // those answers 404 (or is left off the page) for everyone but a signed-in admin, who sees it uncached ("private,
 // no-store") as a preview. Off by default: an unset or any other value is off.
 
-export const validityReleased = (env: { VALIDITY_PUBLIC?: string }) => (env.VALIDITY_PUBLIC ?? "").trim().toLowerCase() === "on";
+// The switch itself lives in validity-switch.ts (no imports), so the home page can read it without an import cycle.
+export { validityReleased };
 
 /** Who may see the validity pack on this request: everyone once released, otherwise only a signed-in admin. */
 export async function validityAccess(c: Context<{ Bindings: Env }>): Promise<"public" | "admin_preview" | null> {

@@ -3,7 +3,7 @@ import { RETIRED_METRICS } from "./proof";
 import { publicDatasetWhere, publishableModelAndEvent } from "../arena/views";
 import { BOT_RULE } from "./bots";
 import { costPerBoutSheet } from "./costs";
-import { BYOK_EXPIRES, byokSpendThisMonth, creditGuard, OPENROUTER_CREDIT_PURCHASED_USD } from "../arena/credit";
+import { ANTHROPIC_GUARD_USD, ANTHROPIC_MONTHLY_LIMIT_USD, anthropicNextReset, byokSpendThisMonth, creditGuard, OPENROUTER_CREDIT_PURCHASED_USD } from "../arena/credit";
 import * as t from "../db/schema";
 import { thirdPartyData } from "../web/admin-kpis";
 import { PEOPLE_RULES, statsData } from "../web/stats";
@@ -201,7 +201,10 @@ export async function buyerPack(env: Env, now = Date.now()) {
         openrouter_left_usd: credit?.remaining ?? null,
         openrouter_guard: credit?.state ?? null,
         anthropic_byok_spend_this_month_usd: byok?.usd ?? null,
-        anthropic_byok_expires: new Date(BYOK_EXPIRES).toISOString().slice(0, 10),
+        /** ADR 0147: a monthly spend limit on the key (Claude Console), not an expiring credit. */
+        anthropic_monthly_limit_usd: ANTHROPIC_MONTHLY_LIMIT_USD,
+        anthropic_guard_usd: ANTHROPIC_GUARD_USD,
+        anthropic_limit_resets_on: new Date(anthropicNextReset(now)).toISOString().slice(0, 10),
       },
       /** Diligence review, 7 Nov: full model cost per refereed bout (Anthropic-billed Claude bouts included), dated. */
       per_bout: perBout,

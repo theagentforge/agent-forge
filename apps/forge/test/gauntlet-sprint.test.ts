@@ -4,7 +4,7 @@ import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { ownerFunnel } from "../src/services/owner-funnel";
 import { OPS_MODE_KEY, resetOpsModeCache } from "../src/services/ops-mode";
-import { BYOK_FALLBACK_KV, BYOK_HOLD_KV, isClaudeByok } from "../src/arena/credit";
+import { BYOK_FALLBACK_KV, BYOK_HOLD_KV, CLAUDE_PAUSED_KV, isClaudeByok } from "../src/arena/credit";
 import { checkReplay, isAnyHeldOutSeed, isDevSplitSeed, PRIVATE_TASK_IDS, refereeCheck, TRAP_CATALOG, trapEntry, type KeySet, type VerifySig } from "@forge/arena";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -388,11 +388,13 @@ describe("review: the house Sprint spends only our Anthropic key, within its cap
     }
   });
 
-  it("skips after the key's funding ends, while Claude bouts are held, and when the cap's reserve would be passed", async () => {
+  it("skips while Claude is paused (monthly Anthropic budget or the manual flag, ADR 0147), while Claude bouts are held, and when the cap's reserve would be passed", async () => {
     const fetcher = (async () => {
       throw new Error("no model call expected");
     }) as unknown as typeof fetch;
-    expect(await houseSprint(keyEnv(), Date.UTC(2026, 10, 20, 10), fetcher)).toMatchObject({ skipped: "byok_expired" });
+    await env.KV.put(CLAUDE_PAUSED_KV, "1");
+    expect(await houseSprint(keyEnv(), Date.UTC(2026, 10, 20, 10), fetcher)).toMatchObject({ skipped: "claude_paused" });
+    await env.KV.delete(CLAUDE_PAUSED_KV);
     await env.KV.put(BYOK_HOLD_KV, "{}");
     expect(await houseSprint(keyEnv(), Date.UTC(2026, 10, 2, 10), fetcher)).toMatchObject({ skipped: "byok_held" });
     await clearHolds();

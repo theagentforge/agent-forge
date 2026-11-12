@@ -1173,7 +1173,7 @@ export const toolHistoryQueue = sqliteTable(
     /** The version's publish date from registry metadata (npm `time`, PyPI earliest upload-time). */
     publishedAt: integer("published_at").notNull(),
     status: text("status").notNull(),
-    /** failed: a failure class; excluded: prerelease | over_cap | no_tool_page */
+    /** failed: a failure class; excluded: prerelease | no_tool_page (over_cap until ADR 0134 amendment 3) */
     reason: text("reason"),
     /** The House tester's raw outcome for this version */
     outcome: text("outcome"),
@@ -1183,6 +1183,11 @@ export const toolHistoryQueue = sqliteTable(
     toolsCount: integer("tools_count"),
     descriptionSha256: text("description_sha256"),
     enqueuedAt: integer("enqueued_at").notNull(),
+    /**
+     * ADR 0134 amendment 3: the order of work. 0: the newest MAX_VERSIONS stable versions of each server (the first
+     * pass); 1: older stable versions, once excluded as over_cap, re-queued after every first-pass version.
+     */
+    tier: integer("tier").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.server, t.version] }), index("tool_history_queue_status").on(t.status, t.attempts)],
 );

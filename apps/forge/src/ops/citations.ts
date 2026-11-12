@@ -25,6 +25,9 @@ export const CITATION_MODELS = [
   { key: "perplexity", model: "perplexity/sonar" },
 ] as const;
 
+/** ADR 0147: this citation model runs on our own Anthropic key, so it waits under the Claude budget guard. */
+export const citationOnClaude = (key: unknown) => CITATION_MODELS.some((m) => m.key === key && "provider" in m && m.provider === "anthropic");
+
 /** theagentforge.io or www.theagentforge.io, not a lookalike such as notheagentforge.io or theagentforge.io.evil.com. */
 const OURS = /(?<![a-z0-9.-])(www\.)?theagentforge\.io(?![a-z0-9-]|\.[a-z])/i;
 

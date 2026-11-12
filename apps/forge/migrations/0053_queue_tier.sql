@@ -1,0 +1,1 @@
+ALTER TABLE `tool_history_queue` ADD `tier` integer DEFAULT 0 NOT NULL;

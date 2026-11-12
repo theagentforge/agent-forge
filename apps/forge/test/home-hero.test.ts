@@ -210,7 +210,7 @@ describe("the home hero (W2.1)", () => {
     const ctas = body.slice(body.indexOf('class="hero-ctas"'), body.indexOf("</p>", body.indexOf('class="hero-ctas"')));
     expect(ctas).toContain('<a class="btn primary chamfer" href="/gauntlet?from=home-hero">Run the Gauntlet</a>');
     expect(ctas.match(/btn primary/g)).toHaveLength(1);
-    expect(ctas).toMatch(/class="btn chamfer" href="\/check\?from=home-hero">Check a tool<\/a>$/);
+    expect(ctas).toMatch(/class="btn chamfer" href="\/check\?from=home-hero">Check a tool before install<\/a>$/);
     expect(ctas.match(/class="btn/g)).toHaveLength(2);
     expect(body).toContain('Short on time? <a href="/gauntlet/sprint?from=home-hero">Try the 90-second Sprint</a>.');
     // The header's call to action on every page is the Gauntlet too.

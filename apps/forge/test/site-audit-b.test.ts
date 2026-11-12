@@ -68,7 +68,7 @@ describe("the home page (site audit §3.1)", () => {
     const hero = main.slice(main.indexOf('class="hero2"'), main.indexOf("</section>"));
     expect(hero.match(/class="btn[ "]/g)).toHaveLength(2);
     expect(hero).toContain('href="/gauntlet?from=home-hero">Run the Gauntlet</a>');
-    expect(hero).toContain('href="/check?from=home-hero">Check a tool</a>');
+    expect(hero).toContain('href="/check?from=home-hero">Check a tool before install</a>');
     const order = ['class="hero2"', 'id="experiments"', 'id="home-check"', 'class="wire2"', 'id="home-final"'].map((m) => main.indexOf(m));
     for (const i of order) expect(i).toBeGreaterThan(0);
     expect([...order].sort((a, b) => a - b)).toEqual(order);

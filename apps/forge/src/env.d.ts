@@ -54,6 +54,11 @@ interface ForgeSecrets {
    * admin until Dinike approves publishing them. Not a secret.
    */
   VALIDITY_PUBLIC?: string;
+  /**
+   * ADR 0146 release switch: "on" publishes /dataset/drift and /dataset/drift/sample.json (totals and a seeded sample of
+   * the drift report). Off by default (unset): 404 for everyone but a signed-in admin. Not a secret.
+   */
+  DRIFT_PUBLIC?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

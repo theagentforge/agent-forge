@@ -609,6 +609,12 @@ code.excerpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm)}
 .advisory-line{margin:var(--s3) 0;max-width:60ch;border-left:2px solid var(--seam);padding-left:var(--s3)}
 .live-pill i{width:8px;height:8px;border-radius:50%;background:var(--brand);animation:pill-pulse 1.8s infinite}
 @keyframes pill-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--brand) 60%,transparent)}70%{box-shadow:0 0 0 10px transparent}100%{box-shadow:0 0 0 0 transparent}}
+/* Homepage-claim (12 Nov): the claim first, then the proof a skeptic can check, one tap target per link. */
+.hero-claim{margin:0 0 var(--s3);max-width:46ch;font:700 var(--fs-lg)/1.4 var(--font-display);font-stretch:105%;color:var(--text)}
+.hero-proof-t{margin:0 0 var(--s1)}
+.hero2 .hero-proof{list-style:none;margin:0 0 var(--s2);padding:0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s4);max-width:none}
+.hero-proof li{margin:0}
+.hero-proof a{display:inline-flex;align-items:center;min-height:24px;font-size:var(--fs-sm)}
 .hero2 h1{font-size:var(--fs-hero);line-height:.98;margin:var(--s4) 0;font-stretch:112%;font-weight:800;letter-spacing:-.02em}
 .hero2 h1 em{font-style:normal;color:var(--brand)}
 .hero2 .lead{max-width:46ch}

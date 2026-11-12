@@ -21,6 +21,8 @@ export default defineConfig({
           // Production switches the validity pack on (wrangler.jsonc); tests start from "off" and switch it on per test
           // (test/validity-release.test.ts covers the switch, test/validity.test.ts the released pack).
           VALIDITY_PUBLIC: "off",
+          // ADR 0146: the drift report starts unreleased; test/drift-report.test.ts switches it on per test.
+          DRIFT_PUBLIC: "off",
         },
       },
     })),

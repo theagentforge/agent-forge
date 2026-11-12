@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openRouterBody } from "../src/arena/adapters";
-import { BYOK_EXPIRES, BYOK_FALLBACK_KV, BYOK_HOLD_KV, claudeByokIds, CONTAMINATION_TEST_1, CREDIT_KV, creditModelIds, FILLER_MODELS, isClaudeByok, OPENROUTER_CREDIT_PURCHASED_USD, type CreditSnapshot } from "../src/arena/credit";
+import { ANTHROPIC_GUARD_USD, BYOK_FALLBACK_KV, BYOK_HOLD_KV, claudeByokIds, CONTAMINATION_TEST_1, CREDIT_KV, creditModelIds, FILLER_MODELS, isClaudeByok, OPENROUTER_CREDIT_PURCHASED_USD, type CreditSnapshot } from "../src/arena/credit";
 import { weeklyModels } from "../src/arena/headline-slot";
 import { HEADLINE, modelById, testedModels } from "../src/arena/lineup";
 import { processQueue } from "../src/arena/runner";
@@ -13,8 +13,8 @@ import { getDb, newId } from "../src/services/db";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
-// ADR 0064 Amendment 3 (5 Nov 2026): Claude Opus 5.5 joins the lineup on our Anthropic key (BYOK), before the credit
-// expires on 16 Nov. It never runs on OpenRouter credit, stops at BYOK_EXPIRES, leaves the weekly lineup and the house
+// ADR 0064 Amendment 3 (5 Nov 2026): Claude Opus 5.5 joins the lineup on our Anthropic key (BYOK). It never runs on
+// OpenRouter credit, waits under the monthly Anthropic budget guard (ADR 0147) like every Claude bout, leaves the weekly lineup and the house
 // Sprint as they were, and stays off public lists until it has a finished ranked run.
 
 const OPUS = "claude-opus-5.5";
@@ -80,9 +80,9 @@ describe("Claude Opus 5.5 in the lineup", () => {
     expect(HEADLINE.findIndex((m) => m.id === OPUS)).toBeGreaterThan(HEADLINE.findIndex((m) => m.id === "qwen3.8-max"));
   });
 
-  it("plays on our key before BYOK_EXPIRES and never starts at or after it", async () => {
+  it("plays on our key while the month's Anthropic budget lasts and never starts once it reaches the guard", async () => {
     await env.KV.put(CREDIT_KV, JSON.stringify(snapshot(50)));
-    const before = BYOK_EXPIRES - 2 * 86_400_000;
+    const before = Date.UTC(2027, 1, 10); // a month no other test spends in
     const e = await event("opus-held-batch", "card", "planned");
     const early = await run(e, OPUS);
     const ok = openRouter({ cost: 0.0002, is_byok: true, cost_details: { upstream_inference_cost: 0.04 } });
@@ -91,13 +91,16 @@ describe("Claude Opus 5.5 in the lineup", () => {
     expect(done!.status).toBe("done");
     expect(done!.byokCost).toBeGreaterThan(0);
     expect(ok.models.every((m) => m === "anthropic/claude-opus-5.5")).toBe(true);
-    // At the expiry: no Opus call at all, the bout waits.
+    // The month's spend at the guard: no Opus call at all, the bout waits (queued, not voided).
+    const spendRun = await run(e, "claude-sonnet-5.5", { status: "done", finishedAt: before - 60_000, byokCost: ANTHROPIC_GUARD_USD, cost: ANTHROPIC_GUARD_USD });
     const late = await run(e, OPUS, { seed: 2 });
     const after = openRouter({ cost: 0.0002, is_byok: true, cost_details: { upstream_inference_cost: 0.04 } });
-    await processQueue(KEYED, BYOK_EXPIRES + 60_000, () => BYOK_EXPIRES, after.f);
+    const out = await processQueue(KEYED, before + 60_000, () => before, after.f);
     const [waiting] = await getDb(env).select().from(t.arenaRuns).where(eq(t.arenaRuns.id, late));
     expect(waiting!.status).toBe("queued");
     expect(after.models).toEqual([]);
+    expect(out.skipped).toContain("paused: claude budget");
+    await getDb(env).delete(t.arenaRuns).where(eq(t.arenaRuns.id, spendRun));
   });
 
   it("a turn billed to OpenRouter credit pauses the Opus bout after that turn and holds every Claude bout", async () => {
@@ -105,7 +108,7 @@ describe("Claude Opus 5.5 in the lineup", () => {
     const e = await event("opus-fallback", "card");
     const id = await run(e, OPUS);
     const { f, models } = openRouter({ cost: 0.05, is_byok: false });
-    await processQueue(KEYED, Date.now() + 60_000, () => Math.min(Date.now(), BYOK_EXPIRES - 86_400_000), f);
+    await processQueue(KEYED, Date.now() + 60_000, () => Date.now(), f);
     const [row] = await getDb(env).select().from(t.arenaRuns).where(eq(t.arenaRuns.id, id));
     expect(row!.status).toBe("queued");
     expect(row!.checkpoint).not.toBeNull();
@@ -136,9 +139,9 @@ describe("public lists before Opus's first ranked run", () => {
     let s = await modelsSection();
     expect(s).not.toContain("Claude Opus 5.5");
     expect(s).toContain(`${main} main,`);
-    // Bouts actually played and refereed (on our key, before the expiry).
+    // Bouts actually played and refereed (on our key, under the month's budget guard).
     await env.KV.put(CREDIT_KV, JSON.stringify(snapshot(50)));
-    const T = Math.min(Date.now(), BYOK_EXPIRES - 86_400_000);
+    const T = Date.now();
     const play = () => processQueue(KEYED, T + 60_000, () => T, openRouter({ cost: 0.0002, is_byok: true, cost_details: { upstream_inference_cost: 0.04 } }).f);
     // (The queued card run would be played below; drop it so each step tests one thing.)
     await getDb(env).delete(t.arenaRuns).where(eq(t.arenaRuns.eventId, (await getDb(env).select().from(t.arenaEvents).where(eq(t.arenaEvents.slug, "opus-queued")))[0]!.id));

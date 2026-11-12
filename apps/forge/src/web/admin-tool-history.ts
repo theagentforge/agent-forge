@@ -60,7 +60,7 @@ ${Object.keys(p.versions.excluded_by_reason).length ? html`<table class="table">
 <tr><th>Changed within the same major version</th><td class="num">${n(p.drift.changed_without_major_bump)}</td></tr>
 <tr><th>Changed text matching a scanner rule it didn't match before</th><td class="num">${n(p.drift.with_new_text_rules)}</td></tr>
 </tbody></table>
-<p class="small">Buyer-only download, tool text included (JSON lines, a page at a time): <a href="/admin/tool-history/full.jsonl?origin=backfill">backfill rows</a> · <a href="/admin/tool-history/full.jsonl">every row</a>. Public files (hashes and change classes): <a href="/dataset/census">/dataset/census</a>. <a href="/admin/tool-history?format=json">JSON</a></p>`,
+<p class="small">Buyer-only download, tool text included (JSON lines, a page at a time): <a href="/admin/tool-history/full.jsonl?origin=backfill">backfill rows</a> · <a href="/admin/tool-history/full.jsonl">every row</a>. Drift report (ADR 0146), every changed pair with its text: <a href="/admin/tool-history/drift.jsonl">drift.jsonl</a> · public totals and sample: <a href="/dataset/drift">/dataset/drift</a> (shown only once DRIFT_PUBLIC is on). Public files (hashes and change classes): <a href="/dataset/census">/dataset/census</a>. <a href="/admin/tool-history?format=json">JSON</a></p>`,
     },
     { cache: false },
   );

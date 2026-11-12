@@ -18,7 +18,7 @@ import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsTo
 import { postToMoltbook, validatePost } from "./social/moltbook";
 import { takeReport } from "./social/moltbook-replies";
 import { DAILY_CAP_USD, DESCRIPTION_SETS, PROMPTS, runSelection, SELECTION_MODELS, type DescriptionSet } from "./ops/tool-selection";
-import { CITATION_MODELS, CITATION_QUESTIONS, runCitations } from "./ops/citations";
+import { CITATION_MODELS, CITATION_QUESTIONS, citationOnClaude, runCitations } from "./ops/citations";
 import { recordToolCheck } from "./services/feedback";
 import { recordMiss, scanMissLabel } from "./services/misses";
 import { scoutSignals } from "./services/scout-signals";
@@ -279,6 +279,9 @@ publicApi.post("/api/v1/ops/citations", async (c) => {
   // Every citation call spends credit: the Claude one runs on our key, but its web-search plugin is billed to credit.
   const allowed = await opsCallAllowed(c.env, false);
   if (!allowed.ok) return c.json({ error: "paused_credit", remaining: allowed.remaining, reserve: allowed.reserve }, 429);
+  // ADR 0147: the Claude citation call also runs on our Anthropic key, so it waits like every Claude call of ours.
+  if (citationOnClaude(b?.model) && !(await opsCallAllowed(c.env, true)).ok)
+    return c.json({ error: "paused_claude" }, 429);
   const r = await runCitations(c.env, b!.model as string, from, to);
   await c.env.KV.put(key, String(spent + r.cost), { expirationTtl: 3 * 86_400 });
   return c.json(r, 200);

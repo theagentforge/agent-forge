@@ -20,14 +20,14 @@
 
 import { scanSkill } from "@forge/shared";
 import { byokOf } from "../arena/adapters";
-import { BYOK_EXPIRES, byokHeld, noteByokFallback } from "../arena/credit";
+import { byokHeld, claudeBudget, noteByokFallback } from "../arena/credit";
 import { meteredAi, neuronRates, neuronsFor, waiRoom } from "../arena/free-lane";
 import { recordSpend } from "../services/llm-ledger";
 import { AGENT_DESCRIPTION, CLAIM_KV, MOLTBOOK_API, moltbookKey, solveChallenge } from "./moltbook";
 
 /**
  * ADR 0113: replies are written by Claude Haiku 5.5 on our own Anthropic key (OpenRouter BYOK, provider pinned, no
- * fallbacks) until BYOK_EXPIRES. Haiku 5.5 takes no temperature; low effort keeps its thinking short.
+ * fallbacks) while the month's Anthropic budget lasts (ADR 0147). Haiku 5.5 takes no temperature; low effort keeps its thinking short.
  */
 export const CLAUDE_REPLY_MODEL = "anthropic/claude-haiku-5.5";
 /**
@@ -335,9 +335,10 @@ export function workersAiBrain(env: Env, now: number): ReplyBrain {
   };
 }
 
-/** The brains to try, in order, for this run: Claude while the Anthropic credit lasts and isn't held, then Workers AI. */
+/** The brains to try, in order, for this run: Claude while the month's Anthropic budget lasts and isn't held, then Workers AI. */
 export async function replyBrains(env: Env & { OPENROUTER_API_KEY?: string }, fetcher: typeof fetch, now: number): Promise<ReplyBrain[]> {
-  const claude = now < BYOK_EXPIRES && !!env.OPENROUTER_API_KEY && !(await byokHeld(env)) && !(await env.KV.get(claudeOffKey).catch(() => null));
+  // ADR 0147: replies spend the same Anthropic monthly limit as Claude bouts, so the same guard (and manual flag) applies.
+  const claude = !!env.OPENROUTER_API_KEY && !(await byokHeld(env)) && !(await env.KV.get(claudeOffKey).catch(() => null)) && !(await claudeBudget(env, now)).paused;
   return [...(claude ? [claudeBrain(env, fetcher, now)] : []), workersAiBrain(env, now)];
 }
 

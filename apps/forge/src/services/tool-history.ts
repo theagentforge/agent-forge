@@ -27,8 +27,13 @@ export const SINCE_MS = Date.parse(`${BACKFILL_SINCE}T00:00:00.000Z`);
 /** Versions offered to one run (10 shards of 100, 4 at a time, at most 75 s each: under 32 minutes a shard). */
 export const PER_RUN = 1000;
 export const SHARDS = 10;
-/** The newest stable versions kept per server; older ones are listed as excluded (over_cap), never silently dropped. */
+/**
+ * The first pass: the newest stable versions per server, tested first (tier 0). Older stable versions are tested too
+ * (ADR 0134 amendment 3, 9 Nov: gate 1 covers every published stable version), queued at tier 1, after all first-pass work.
+ */
 export const MAX_VERSIONS = 150;
+/** Queue tiers, in the order the plan offers them. */
+export const TIERS = { first: 0, older: 1 } as const;
 /** PyPI servers have no download ranking; the first 100 (by name) that the weekly sweep has seen start. */
 export const PYPI_CAP = 100;
 /** A version offered this many times with no answer (its shard died) is closed as test_error. */
@@ -103,7 +108,7 @@ export async function backfillPlan(env: Env, limit = PER_RUN) {
     : await candidateServers(env);
   const versions = (await db.all(
     sql`SELECT q.server AS server, s.registry AS registry, s.package AS package, q.version AS version FROM tool_history_queue q JOIN tool_history_servers s ON s.server = q.server
-        WHERE q.status = 'pending' ORDER BY q.attempts, s.rank, q.server, q.published_at LIMIT ${n}`,
+        WHERE q.status = 'pending' ORDER BY q.tier, q.attempts, s.rank, q.server, q.published_at LIMIT ${n}`,
   )) as unknown as PlanVersion[];
   return {
     data_kind: "tool_history_backfill_plan",
@@ -141,9 +146,9 @@ export function selectVersions(registry: string, versions: { version: string; pu
   return {
     stable: stable.length,
     rows: [
-      ...stable.slice(0, MAX_VERSIONS).map((v) => ({ ...v, status: "pending", reason: null as string | null })),
-      ...stable.slice(MAX_VERSIONS).map((v) => ({ ...v, status: "excluded", reason: "over_cap" })),
-      ...dated.filter((v) => isPrerelease(registry, v.version)).map((v) => ({ ...v, status: "excluded", reason: "prerelease" })),
+      ...stable.slice(0, MAX_VERSIONS).map((v) => ({ ...v, status: "pending", reason: null as string | null, tier: TIERS.first as number })),
+      ...stable.slice(MAX_VERSIONS).map((v) => ({ ...v, status: "pending", reason: null as string | null, tier: TIERS.older as number })),
+      ...dated.filter((v) => isPrerelease(registry, v.version)).map((v) => ({ ...v, status: "excluded", reason: "prerelease", tier: TIERS.first as number })),
     ],
   };
 }
@@ -174,6 +179,7 @@ export async function enqueueVersions(env: Env, input: unknown, now = Date.now()
       status: toolId ? v.status : "excluded",
       reason: toolId ? v.reason : v.status === "pending" ? "no_tool_page" : v.reason,
       enqueuedAt: now,
+      tier: v.tier,
     }));
     const stmts = [];
     // D1 allows 100 bound parameters a statement; a row has up to 12 columns.
@@ -312,6 +318,7 @@ export async function backfillProgress(env: Env) {
         FROM tool_history_servers s`,
   )) as Record<string, number | null>[])[0]!;
   const byStatus = (await db.all(sql`SELECT status, coalesce(reason, '') AS reason, count(*) AS n FROM tool_history_queue GROUP BY status, reason ORDER BY status, reason`)) as { status: string; reason: string; n: number }[];
+  const older = Number(((await db.all(sql`SELECT count(*) AS n FROM tool_history_queue WHERE status = 'pending' AND tier = ${TIERS.older}`)) as { n: number }[])[0]?.n ?? 0);
   const sum = (st: string) => byStatus.filter((r) => r.status === st).reduce((a, r) => a + Number(r.n), 0);
   const reasons = (st: string) => Object.fromEntries(byStatus.filter((r) => r.status === st).map((r) => [r.reason, Number(r.n)]));
   const last = ((await db.all(sql`SELECT max(observed_at) AS at, count(DISTINCT strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')) AS days FROM tool_history_queue WHERE observed_at IS NOT NULL`)) as { at: number | null; days: number }[])[0];
@@ -324,7 +331,7 @@ export async function backfillProgress(env: Env) {
     since: BACKFILL_SINCE,
     per_run: PER_RUN,
     servers: { total, npm: Number(servers.npm ?? 0), pypi: Number(servers.pypi ?? 0), enumerated, not_found: Number(servers.not_found ?? 0), complete: Number(servers.complete ?? 0) },
-    versions: { done: sum("done"), failed: sum("failed"), pending, excluded: sum("excluded"), failed_by_class: reasons("failed"), excluded_by_reason: reasons("excluded") },
+    versions: { done: sum("done"), failed: sum("failed"), pending, pending_older: older, excluded: sum("excluded"), failed_by_class: reasons("failed"), excluded_by_reason: reasons("excluded") },
     history_rows: { backfill: Number(rows?.n ?? 0), tools: Number(rows?.tools ?? 0) },
     drift: { pairs: Number(drift.pairs ?? 0), changed: Number(drift.changed ?? 0), changed_without_major_bump: Number(drift.no_major ?? 0), with_new_text_rules: Number(drift.rules ?? 0) },
     last_observed_at: last?.at ? new Date(Number(last.at)).toISOString() : null,

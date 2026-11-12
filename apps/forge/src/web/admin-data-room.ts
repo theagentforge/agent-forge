@@ -95,7 +95,7 @@ ${s.series.map((r) => html`<tr data-basis="${r.basis}"><td>${r.label}</td><td>${
 <table class="kpi-table"><tbody>
 <tr><td>OpenRouter credit bought (total)</td><td>$${p.costs.credit.openrouter_bought_usd}</td></tr>
 <tr><td>OpenRouter credit left (estimate) · guard</td><td>${p.costs.credit.openrouter_left_usd === null ? "not yet measured" : `$${p.costs.credit.openrouter_left_usd.toFixed(2)}`} · ${p.costs.credit.openrouter_guard ?? "–"}</td></tr>
-<tr><td>Anthropic BYOK spend this month (estimate)</td><td>${p.costs.credit.anthropic_byok_spend_this_month_usd === null ? "not yet measured" : `$${p.costs.credit.anthropic_byok_spend_this_month_usd.toFixed(2)}`}; credits expire <b>${p.costs.credit.anthropic_byok_expires}</b></td></tr>
+<tr><td>Anthropic BYOK spend this month (estimate)</td><td>${p.costs.credit.anthropic_byok_spend_this_month_usd === null ? "not yet measured" : `$${p.costs.credit.anthropic_byok_spend_this_month_usd.toFixed(2)}`}; $${p.costs.credit.anthropic_monthly_limit_usd} monthly spend limit (Claude bouts pause at $${p.costs.credit.anthropic_guard_usd}), resets <b>${p.costs.credit.anthropic_limit_resets_on}</b></td></tr>
 </tbody></table>
 ${p.costs.per_bout ? html`<h3 id="cost-per-bout">Full cost per refereed bout (computed ${p.costs.per_bout.as_of})</h3>
 <table class="kpi-table"><tbody>${(["month", "all_time"] as const).map((w) => {
@@ -144,7 +144,7 @@ site.get(DATA_ROOM_PATH, async (c) => {
     c,
     "Data room",
     html`<h1 class="page-title">Buyer data room (private)</h1>
-<p>Founder admins only. <a href="${BRIEF_PATH}">Two-page buyer brief (PDF)</a> · <a href="${BACKUP_PATH}">Backups</a>. Share it with a buyer only after they sign an NDA (template: <code>docs/strategy/nda-template.md</code>, not yet lawyer-reviewed). JSON: <a href="${DATA_ROOM_PATH}/pack.json">pack.json</a>. Runbook: <code>docs/runbooks/data-room.md</code>.</p>
+<p>Founder admins only. <a href="${BRIEF_PATH}">Two-page buyer brief (PDF)</a> · <a href="${BACKUP_PATH}">Backups</a>. Share it with a buyer only after they sign an NDA (template: <code>docs/strategy/nda-template.md</code>, not yet lawyer-reviewed). JSON: <a href="${DATA_ROOM_PATH}/pack.json">pack.json</a>. Tool-definition history (ADR 0134): <a href="/admin/tool-history">progress</a> · <a href="/admin/tool-history/full.jsonl">full history</a> · <a href="/admin/tool-history/drift.jsonl">drift report</a> (ADR 0146; JSON lines, a page at a time, X-Next-After). Runbook: <code>docs/runbooks/data-room.md</code>.</p>
 ${made ? html`<p class="callout"><b>New link, shown once.</b> Copy it now; only its hash is stored:<br><code>${shareUrl(c.env.PUBLIC_ORIGIN, made)}</code></p>` : ""}
 <h2 id="links">Buyer links</h2>
 <form method="post" action="${DATA_ROOM_PATH}/links"><input type="hidden" name="csrf" value="${csrf}">

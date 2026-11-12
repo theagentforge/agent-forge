@@ -78,6 +78,8 @@ import "./web/dataset-sample";
 import "./web/dataset-spec";
 import "./web/dataset-census";
 import "./web/admin-tool-history";
+import "./web/dataset-drift";
+import "./web/dataset-datasheet";
 import "./web/results-policy";
 import "./web/history-api";
 import "./web/security";

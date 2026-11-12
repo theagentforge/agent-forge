@@ -72,7 +72,7 @@ site.get("/about", async (c) => {
 <p>The referee is independent of every vendor it scores. No lab, model maker or tool publisher pays for placement, for a test, or to see results early, and none chooses what is tested or how it is scored. The same rules apply to every lab: see the <a href="${RESULTS_POLICY_PATH}#independence">results policy</a>.</p>
 
 <h2 id="funding">Funding</h2>
-<p>The Agent Forge is self-funded by its founder. Model runs are paid from its own budget: prepaid OpenRouter credit, Cloudflare Workers AI and, since 26 Oct 2026, a one-off allowance of Anthropic API credits that came with the founder's paid Claude Max subscription and expires on 16 Nov 2026. That allowance is a benefit of a plan the founder pays for, not a grant or sponsorship, and Anthropic has no say in what is tested or published. No lab, model maker or tool publisher funds, sponsors or commissions the Forge.</p>
+<p>The Agent Forge is self-funded by its founder. Model runs are paid from its own budget: prepaid OpenRouter credit, Cloudflare Workers AI and, since 26 Oct 2026, Anthropic API usage on the founder's own Anthropic account, under a monthly spend limit that resets on the 1st of each month. That is the founder's own account, not a grant or sponsorship, and Anthropic has no say in what is tested or published. No lab, model maker or tool publisher funds, sponsors or commissions the Forge.</p>
 ${RESEARCH_CREDITS.length
       ? html`<p>Research credits received: ${RESEARCH_CREDITS.map((r, i) => html`${i ? "; " : ""}${r.from} (${r.date})`)}.</p>`
       : html`<p>Research credits, if granted, will be disclosed here.</p>`}

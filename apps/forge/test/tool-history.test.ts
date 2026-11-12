@@ -54,7 +54,7 @@ describe("pure rules", () => {
     expect([...OUTCOMES].sort()).toEqual(Object.keys(OUTCOME_CLASS).sort());
   });
 
-  it("queues stable versions since 1 Sep 2025, newest MAX_VERSIONS, and says why the rest aren't", () => {
+  it("queues every stable version since 1 Sep 2025, the newest MAX_VERSIONS first, and says why the rest aren't", () => {
     const list = [
       { version: "0.1.0", published_at: "2025-08-31T23:59:59Z" },
       { version: "1.0.0", published_at: "2025-09-01T00:00:00Z" },
@@ -65,8 +65,10 @@ describe("pure rules", () => {
     ];
     const r = selectVersions("npm", list, NOW);
     expect(r.stable).toBe(MAX_VERSIONS + 1);
-    expect(r.rows.filter((x) => x.status === "pending")).toHaveLength(MAX_VERSIONS);
-    expect(r.rows.find((x) => x.version === "1.0.0")).toMatchObject({ status: "excluded", reason: "over_cap" });
+    expect(r.rows.filter((x) => x.status === "pending" && x.tier === 0)).toHaveLength(MAX_VERSIONS);
+    // ADR 0134 amendment 3: older stable versions are tested too, after the first pass (tier 1), never excluded.
+    expect(r.rows.find((x) => x.version === "1.0.0")).toMatchObject({ status: "pending", reason: null, tier: 1 });
+    expect(r.rows.some((x) => x.reason === "over_cap")).toBe(false);
     expect(r.rows.find((x) => x.version === "1.1.0-rc.1")).toMatchObject({ status: "excluded", reason: "prerelease" });
     expect(r.rows.some((x) => x.version === "0.1.0" || x.version === "3.0.0")).toBe(false);
   });

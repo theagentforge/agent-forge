@@ -7,7 +7,7 @@ import { sealRun } from "../services/replay-keys";
 import { signReport } from "../services/signing";
 import { callModel, ProviderError, type CacheOptions, type ChatMessage } from "./adapters";
 import { armText, ARMS, type Arm } from "./arms";
-import { BYOK_EXPIRES, byokHeld, claudeByokIds, creditGuard, creditModelIds, byokFallbackSeen, isClaudeByok, noteByokFallback } from "./credit";
+import { ANTHROPIC_GUARD_USD, byokHeld, claudeBudget, claudeByokIds, creditGuard, creditModelIds, byokFallbackSeen, isClaudeByok, noteByokFallback } from "./credit";
 import { noteOutOfCredit } from "../services/costs";
 import { FREE_LANE_PREFIX } from "./free-lane-slug";
 import { freeLaneRunRefusal, freeVariantIds, LaneMeter, type TurnGate } from "./free-lane";
@@ -369,8 +369,9 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   /**
    * `solved`: plain practice runs dropped because the model already got that job right 3 times out of 3 (S1).
    * `pausedCredit`: queued practice and panel runs on credit-spending models left waiting by the credit guard (ADR 0064).
+   * `pausedClaude`: queued Claude runs left waiting by the Anthropic monthly budget guard or the manual flag (ADR 0147).
    */
-  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, solved: 0, pausedCredit: 0, freeLane: null as string | null, skipped: [] as string[] };
+  const out = { played: 0, voided: 0, suspended: 0, rateLimited: 0, solved: 0, pausedCredit: 0, pausedClaude: 0, freeLane: null as string | null, skipped: [] as string[] };
   /** Models that were rate limited this tick: skipped until the next one. */
   const cooling = new Set<string>();
   // A run left "running" by a Worker that died is re-queued (it never stored a result). Its checkpoint, if any, is
@@ -411,9 +412,23 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
   const claudeIds = byokFallback ? [] : claudeByokIds();
   // Held after a Claude turn was billed to credit: no Claude bout (of any kind) starts or resumes this tick.
   if (await byokHeld(env)) for (const id of claudeByokIds()) cooling.add(id);
-  // AQ-08: after the Anthropic credit's expiry date no Claude bout starts or resumes (the Arena pages say "paused").
-  // Move BYOK_EXPIRES when the credit is renewed.
-  if (now() >= BYOK_EXPIRES) for (const id of claudeByokIds()) cooling.add(id);
+  // ADR 0147: the Anthropic key has a monthly spend limit. At ANTHROPIC_GUARD_USD of this month's spend, or with the manual
+  // flag (CLAUDE_PAUSED_KV) set, or if the spend can't be read, no Claude bout of any kind (ranked, weekly, guest, Lab,
+  // panel, practice) starts or resumes: its runs stay queued, untouched, and play after the reset on the 1st. Never voided.
+  const budget = await claudeBudget(env, now());
+  /** This month's Anthropic spend, kept up to date as Claude bouts finish this tick. */
+  let claudeSpent = budget.spent_usd ?? 0;
+  const pauseClaude = async (why: string) => {
+    for (const id of claudeByokIds()) cooling.add(id);
+    const [n] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(t.arenaRuns)
+      .where(and(eq(t.arenaRuns.status, "queued"), inArray(t.arenaRuns.modelId, claudeByokIds().length ? claudeByokIds() : ["-"])));
+    out.pausedClaude = Number(n?.n ?? 0);
+    out.skipped.push(`paused: claude ${why}`);
+    console.log("arena_paused_claude", JSON.stringify({ why, runs: out.pausedClaude, spent: claudeSpent, guard: ANTHROPIC_GUARD_USD, resets_on: budget.resets_on }));
+  };
+  if (budget.paused) await pauseClaude(budget.reason ?? "budget");
   const blocked = new Set<"openrouter" | "workers-ai">();
   /** Practice's allowance is used up: Workers AI still plays headline events, up to their own allowance. */
   let practiceBlocked = false;
@@ -568,6 +583,11 @@ export async function processQueue(env: Env & { OPENROUTER_API_KEY?: string }, d
           })
           .where(eq(t.arenaRuns.id, run.id));
         out.played++;
+        // ADR 0147: a Claude bout that takes the month's spend to the guard stops further Claude bouts this tick.
+        if (isClaudeByok(model) && !budget.paused) {
+          claudeSpent += r.byokCost ?? 0;
+          if (claudeSpent >= ANTHROPIC_GUARD_USD && !out.skipped.includes("paused: claude budget")) await pauseClaude("budget");
+        }
       } catch (e) {
         // A provider failure voids the bout; it is re-run later on the same model, never switched (ADR 0014 §6). The
         // checkpoint goes too: a voided bout restarts from the beginning, not from where it was suspended.

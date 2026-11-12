@@ -108,10 +108,10 @@ export const HEADLINE: ArenaModel[] = [
   // price, so it counts toward the practice allowance; its runs in headline events are still headline results.
   { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", lab: "DeepSeek (open weights)", division: "heavyweight", route: { kind: "workers-ai", model: "@cf/deepseek-ai/deepseek-v4-pro-0813", priceIn: 1.32, priceOut: 3.96, maxTokens: 8192 } },
   { id: "qwen3.8-max", name: "Qwen3.8 Max", lab: "Alibaba", division: "heavyweight", route: { kind: "openrouter", model: "qwen/qwen3.8-max-0902", provider: "alibaba" } },
-  // Added 5 Nov 2026 (Don, 5 Nov: use the Anthropic credits before they expire on 16 Nov; docs/ops/anthropic-credit-plan-
+  // Added 5 Nov 2026 (Don, 5 Nov: use the Anthropic credits; ADR 0147 later found the key has a monthly limit, not an expiry; docs/ops/anthropic-credit-plan-
   // 2026-11.md). Anthropic's flagship, id and price from OpenRouter's model page on 5 Nov (anthropic/claude-opus-5.5,
   // released 22 Sep 2026, $4 in / $20 out per million tokens). Pinned to provider anthropic with no fallbacks, so it runs
-  // on our own Anthropic key (BYOK) like Sonnet, and stops at BYOK_EXPIRES. Listed after Sonnet: Sonnet stays
+  // on our own Anthropic key (BYOK) like Sonnet, and waits like every Claude bout under the monthly budget guard (ADR 0147). Listed after Sonnet: Sonnet stays
   // Anthropic's weekly entry. Costs come from OpenRouter's reported usage, so no price is stored here.
   { id: "claude-opus-5.5", name: "Claude Opus 5.5", lab: "Anthropic", division: "heavyweight", flagship: true, route: { kind: "openrouter", model: "anthropic/claude-opus-5.5", provider: "anthropic" } },
   // Embargoed entries (K2) live in their own file, which the public mirror replaces with an empty list.

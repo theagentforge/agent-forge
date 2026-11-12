@@ -1,17 +1,18 @@
 import { and, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { freeVariantIds, NEURONS_PER_USD } from "../arena/free-lane";
 import * as t from "../db/schema";
-import { BYOK_EXPIRES, BYOK_FROM, claudeByokIds, CREDIT_KV, OPENROUTER_CREDIT_PURCHASED_USD, type CreditSnapshot } from "../arena/credit";
+import { ANTHROPIC_GUARD_USD, ANTHROPIC_MONTHLY_LIMIT_USD, anthropicNextReset, anthropicSpendThisMonth, BYOK_FROM, claudeBudget, claudeByokIds, CLAUDE_PAUSED_KV, CREDIT_KV, OPENROUTER_CREDIT_PURCHASED_USD, type CreditSnapshot } from "../arena/credit";
 import { getDb } from "./db";
 import { readLedger } from "./llm-ledger";
 import { opsMode } from "./ops-mode";
 
 // AQ-08 (ADR 0097): the cost runway guard. What the Forge costs to run each month, by source, for /admin/costs and the
-// data room; and the "paused" state public Arena pages show when a model credit runs out or expires. Reads only what is
+// data room; and the "paused" state public Arena pages show when a model credit runs out or the month's Anthropic budget
+// is nearly used. Reads only what is
 // already stored (D1 and KV): it never calls a provider, so a page that shows it can't fail because a provider does.
 
-/** The Anthropic API credit allowance that came with the founder's Claude Max plan (ADR 0064), in USD. */
-export const ANTHROPIC_ALLOWANCE_USD = 100;
+/** ADR 0147: the Anthropic key's monthly spend limit in the Claude Console (resets on the 1st), re-exported here. */
+export { ANTHROPIC_GUARD_USD, ANTHROPIC_MONTHLY_LIMIT_USD };
 /** Cloudflare Workers Paid plan (MASTER_PLAN §10): the fixed monthly fee; usage above the included amounts is extra. */
 export const CLOUDFLARE_PLAN_USD = 5;
 /** Set by the runner when OpenRouter answers 402 (out of credit) or 403 (key limit); clears itself. */
@@ -29,15 +30,18 @@ export async function noteOutOfCredit(env: Pick<Env, "KV">, status: number, now 
 export interface ArenaPause {
   /** Non-Claude OpenRouter bouts: the prepaid credit is used up (OpenRouter's last reading, or a 402 in the last hours). */
   openrouter: boolean;
-  /** Claude bouts: the Anthropic credit they run on has passed its expiry date. */
+  /** Claude bouts: the month's Anthropic spend has reached ANTHROPIC_GUARD_USD, or Claude is paused by hand (ADR 0147). */
   claude: boolean;
   notes: string[];
 }
 
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-/** The pause state public Arena pages show. Never throws: if KV can't be read, it reports no pause it can't prove. */
-export async function arenaPause(env: Pick<Env, "KV">, now = Date.now()): Promise<ArenaPause> {
+/**
+ * The pause state public Arena pages show. Never throws: if KV or D1 can't be read, it reports no pause it can't prove
+ * (the runner itself fails closed on Claude).
+ */
+export async function arenaPause(env: Env, now = Date.now()): Promise<ArenaPause> {
   const [snap, flagRaw] = await Promise.all([
     env.KV.get<CreditSnapshot>(CREDIT_KV, "json").catch(() => null),
     env.KV.get(OUT_OF_CREDIT_KV).catch(() => null),
@@ -56,10 +60,11 @@ export async function arenaPause(env: Pick<Env, "KV">, now = Date.now()): Promis
   // A 402/403 is superseded by a later fresh reading that shows credit: the pause lifts as soon as credit is back.
   const flagged = flagRaw !== null && !(fresh && snap!.remaining !== null && snap!.remaining > 0 && flagAt !== null && snap!.good_at! > flagAt);
   const openrouter = flagged || readsEmpty;
-  const claude = now >= BYOK_EXPIRES;
+  const budget = await claudeBudget(env, now, { cached: true }).catch(() => null);
+  const claude = !!budget && (budget.reason === "budget" || budget.reason === "manual");
   const notes: string[] = [];
   if (openrouter) notes.push("Paused: the Arena's prepaid model credit has run out, so new bouts on non-Claude models wait until it is topped up.");
-  if (claude) notes.push(`Paused: Claude bouts ran on Anthropic API credit that expired on ${day(BYOK_EXPIRES)}, so new Claude bouts wait until there is new credit.`);
+  if (claude) notes.push(`Paused: Claude bouts run on a monthly API budget that is nearly used; they resume when it resets on ${day(anthropicNextReset(now))}.`);
   if (notes.length) notes.push("Published results, replays and the dataset are unaffected.");
   return { openrouter, claude, notes };
 }
@@ -93,18 +98,25 @@ export async function monthlyCosts(env: Env, now = Date.now()) {
           .where(and(inArray(t.arenaRuns.modelId, ids.length ? ids : ["-"]), gte(t.arenaRuns.finishedAt, from)))
       )[0]?.c ?? 0,
     );
-  // ADR 0113: Moltbook replies on Claude spend the same Anthropic credit; their spend is in the ledger (KV, 40 days).
+  // ADR 0113: Moltbook replies on Claude spend the same Anthropic key; their spend is in the ledger (KV, 40 days).
   const ledgerMonth = await readLedger(env.KV, since, now);
   const ledgerSinceStart = await readLedger(env.KV, Math.max(BYOK_FROM, now - 39 * 86_400_000), now);
   const ledgerAnthropic = (l: Awaited<ReturnType<typeof readLedger>>) => Object.values(l.total).reduce((a, x) => a + (x?.anthropic_usd ?? 0), 0);
-  const byokMonth = (await byokSum(Math.max(since, BYOK_FROM))) + ledgerAnthropic(ledgerMonth);
+  // ADR 0147: the month's figure is the one the guard reads (bouts, Moltbook replies and the house Sprint).
+  const anth = await anthropicSpendThisMonth(env, now);
+  const byokMonth = anth.usd;
   const byokAll = (await byokSum(BYOK_FROM)) + ledgerAnthropic(ledgerSinceStart);
   // Burn rate: the last 7 days' Anthropic spend (bouts and ledger), per day.
   const weekAgo = now - 7 * 86_400_000;
   const byokWeek = (await byokSum(Math.max(weekAgo, BYOK_FROM))) + ledgerAnthropic(await readLedger(env.KV, Math.max(weekAgo, BYOK_FROM), now));
   const burnPerDay = byokWeek / Math.max(1, Math.min(7, (now - BYOK_FROM) / 86_400_000));
-  const left = Math.max(0, ANTHROPIC_ALLOWANCE_USD - byokAll);
-  const daysAtBurn = burnPerDay > 0 ? left / burnPerDay : null;
+  const reset = anthropicNextReset(now);
+  /** Left before the guard stops Claude calls (ANTHROPIC_GUARD_USD), and before the Console limit itself. */
+  const leftToGuard = Math.max(0, ANTHROPIC_GUARD_USD - byokMonth);
+  const left = Math.max(0, ANTHROPIC_MONTHLY_LIMIT_USD - byokMonth);
+  const daysAtBurn = burnPerDay > 0 ? leftToGuard / burnPerDay : null;
+  const budget = await claudeBudget(env, now);
+  const manualFlag = (await env.KV.get(CLAUDE_PAUSED_KV).catch(() => null)) !== null;
   const snap = await env.KV.get<CreditSnapshot>(CREDIT_KV, "json").catch(() => null);
   const mode = await opsMode(env, now).catch(() => "normal" as const);
   return {
@@ -121,19 +133,27 @@ export async function monthlyCosts(env: Env, now = Date.now()) {
     },
     workers_ai: { estimated_month_usd: r4(Number(wai?.c ?? 0)), bouts_month: Number(wai?.n ?? 0) },
     anthropic_byok: {
+      /** This month's spend on the key (estimate; the Console has the exact figure). */
       spent_month_usd: r4(byokMonth),
+      spent_month_parts: { arena_usd: anth.arena_usd, moltbook_usd: anth.moltbook_usd, house_sprint_usd: anth.house_sprint_usd },
       spent_since_start_usd: r4(byokAll),
-      allowance_usd: ANTHROPIC_ALLOWANCE_USD,
+      /** ADR 0147: the Console's monthly spend limit (Anthropic pauses the key there) and where our guard stops Claude. */
+      monthly_limit_usd: ANTHROPIC_MONTHLY_LIMIT_USD,
+      guard_usd: ANTHROPIC_GUARD_USD,
       left_usd: r4(left),
+      left_before_guard_usd: r4(leftToGuard),
       started: day(BYOK_FROM),
-      expires: day(BYOK_EXPIRES),
-      days_left: Math.max(0, Math.ceil((BYOK_EXPIRES - now) / 86_400_000)),
-      expired: now >= BYOK_EXPIRES,
-      /** ADR 0113: the last 7 days' spend per day, and how many days the credit left lasts at that rate (null: no spend). */
+      /** The limit resets at 00:00 UTC on the 1st of each month. */
+      resets_on: day(reset),
+      days_to_reset: Math.max(0, Math.ceil((reset - now) / 86_400_000)),
+      paused: budget.paused,
+      paused_reason: budget.reason,
+      manual_flag: manualFlag,
+      /** ADR 0113: the last 7 days' spend per day, and how many days until the guard at that rate (null: no spend). */
       burn_per_day_usd: r4(burnPerDay),
       days_left_at_burn: daysAtBurn === null ? null : Math.round(daysAtBurn * 10) / 10,
-      /** Whichever comes first: the credit running out at the current burn, or its expiry. */
-      lasts_until: day(Math.min(BYOK_EXPIRES, daysAtBurn === null ? BYOK_EXPIRES : now + daysAtBurn * 86_400_000)),
+      /** The day the guard is reached at the current burn, or null if the reset comes first (or there's no spend). */
+      guard_reached_on: daysAtBurn === null || now + daysAtBurn * 86_400_000 >= reset ? null : day(now + daysAtBurn * 86_400_000),
     },
     by_task: await spendByTask(env, since, now, ledgerMonth.total),
     github_actions: { billing_url: GITHUB_BILLING_URL },

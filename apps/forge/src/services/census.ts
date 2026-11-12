@@ -446,7 +446,7 @@ export function censusSchema(version: string, first: Record<string, string | nul
           change_class: "Against the server's previous observed set: first, none, or tool_added; tool_removed; description_changed; schema_changed (joined by ;). not_yet_computed until the daily drift step has read it",
           failure_class: `For a backfill version that didn't start: its class in ${TAXONOMY_VERSION} (the other fields are empty)`,
         },
-        coverage: `Backfill: stable versions published since ${BACKFILL_SINCE} of the latest nightly top-500 servers (npm) and up to 100 PyPI servers the weekly sweep has seen start, at most the newest ${MAX_VERSIONS} per server. Not tested: ${Object.entries(EXCLUDED_REASONS).map(([k, v]) => `${k} (${v})`).join("; ")}`,
+        coverage: `Backfill: stable versions published since ${BACKFILL_SINCE} of the latest nightly top-500 servers (npm) and up to 100 PyPI servers the weekly sweep has seen start, the newest ${MAX_VERSIONS} stable versions of each server first, then its older stable versions (ADR 0134 amendment 3, 9 Nov 2026: versions excluded until then as over_cap are re-queued after the first pass and listed as over_cap until they are). Not tested: ${Object.entries(EXCLUDED_REASONS).filter(([k]) => k !== "over_cap").map(([k, v]) => `${k} (${v})`).join("; ")}`,
       },
       "drift.csv": {
         format: "CSV, one row per consecutive pair of observed tool-definition sets of a server whose definitions changed",
