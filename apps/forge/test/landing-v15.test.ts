@@ -261,7 +261,8 @@ describe("no outside-use, install or check counts on the home page (Dinike, 13 N
   it("seeded install and check counters never reach the page or its JSON, and no label says outside, installs or checks", async () => {
     for (const [k, v] of [["install:checked:plugin", 6543], ["install:blocked:plugin", 5432], ["check:web", 8765], ["check:mcp", 7654], ["connect:first-check", 9876]] as const)
       await env.DB.prepare("INSERT INTO usage_daily (day, key, n) VALUES (?, ?, ?) ON CONFLICT(day, key) DO UPDATE SET n = excluded.n").bind(today(), k, v).run();
-    const figures = /6,?543|5,?432|8,?765|7,?654|9,?876/;
+    // Whole numbers only: replay ids and timestamps hold random digit runs that once matched by chance (24 Nov).
+    const figures = /(?<![\w.,-])(?:6,?543|5,?432|8,?765|7,?654|9,?876)(?![\w,])/;
     const page = await html("/?n=v15-counts");
     const json = await (await fetchWorker("/?format=json&n=v15-counts")).text();
     expect(page).not.toMatch(figures);

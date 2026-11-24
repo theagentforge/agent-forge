@@ -87,6 +87,7 @@ import "./web/dataset-datasheet";
 import "./web/results-policy";
 import "./web/history-api";
 import "./web/security";
+import "./web/security-thanks";
 import "./web/arena-history";
 import "./web/arena-clip";
 import "./web/arena-failures";

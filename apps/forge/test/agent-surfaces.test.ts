@@ -8,6 +8,7 @@ import { MCP_SERVER_VERSION, SERVERS } from "../src/server-info";
 import { discoveryCounters } from "../src/services/usage";
 import { PUBLICATIONS } from "../src/web/publications";
 import { PREFLIGHT_PATHS, PROTOCOL_VERSIONS, securityTxt } from "../src/web/discovery";
+import { ACKNOWLEDGEMENTS } from "../src/web/security-thanks";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -165,6 +166,20 @@ describe("machine-correct", () => {
     const expires = Date.parse(/^Expires: (.+)$/m.exec(securityTxt(ORIGIN, now))![1]!);
     expect(expires - now).toBeGreaterThan(90 * 86_400_000);
     expect(expires - now).toBeLessThan(365 * 86_400_000);
+  });
+
+  it("links security.txt's Acknowledgments field to /security/thanks, which credits each listed researcher", async () => {
+    const text = await (await fetchWorker("/.well-known/security.txt")).text();
+    expect(text).toContain(`Acknowledgments: ${ORIGIN}/security/thanks`);
+    const page = await fetchWorker("/security/thanks", { headers: { Accept: "text/html" } });
+    expect(page.status).toBe(200);
+    const body = await page.text();
+    for (const a of ACKNOWLEDGEMENTS) {
+      expect(body).toContain(`<a href="${a.url}" rel="noopener">${a.name}</a>`);
+      expect(a.url).toMatch(/^https:\/\//);
+    }
+    const json = (await (await fetchWorker("/security/thanks?format=json")).json()) as { acknowledgements: unknown[] };
+    expect(json.acknowledgements).toHaveLength(ACKNOWLEDGEMENTS.length);
   });
 
   it("answers CORS preflights on the read-only discovery files, and llms.txt and skill.md are CORS-open", async () => {

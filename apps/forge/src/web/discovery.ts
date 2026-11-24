@@ -1,3 +1,4 @@
+import { SECURITY_THANKS_PATH } from "./security-thanks";
 import { KEYS_PATH } from "@forge/arena";
 import type { Context } from "hono";
 import { MCP_SERVER_VERSION, SERVER_ICON_PATH, SERVERS } from "../server-info";
@@ -113,6 +114,7 @@ export function securityTxt(origin: string, now = Date.now()) {
     "Preferred-Languages: en",
     `Canonical: ${origin}${SECURITY_TXT_PATH}`,
     "Policy: https://github.com/theagentforge/agent-forge/blob/main/SECURITY.md",
+    `Acknowledgments: ${origin}${SECURITY_THANKS_PATH}`,
     "",
   ].join("\n");
 }
