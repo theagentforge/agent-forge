@@ -11,8 +11,9 @@
   // /skill.md and /llms.txt run through the Worker first so agent fetches can be counted (ADR 0026, agent-channels §4.5).
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/skill.md", "/llms.txt"] },
   // Published reports and Forge Lab write-ups are bundled as text from docs/ and lab/ (src/web/publications.ts), and
-  // frozen Trap Set snapshots from src/seed/benchmark/ so they are served byte for byte (ADR 0101).
-  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv", "**/seed/benchmark/v*.json.txt"], "fallthrough": true }],
+  // frozen Trap Set snapshots from src/seed/benchmark/ so they are served byte for byte (ADR 0101), and frozen research
+  // report versions from src/seed/research/ for the same reason (ADR 0149).
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.csv", "**/seed/benchmark/v*.json.txt", "**/seed/research/*.json.txt"], "fallthrough": true }],
   // Hourly seeding from the official MCP Registry (one page of 100 servers per run).
   // Hourly: registry seeding. Every 5 minutes: the Arena runner (does nothing when no bouts are queued).
   "triggers": { "crons": ["17 * * * *", "*/5 * * * *"] },

@@ -1,3 +1,4 @@
+import { sha256Of } from "@forge/shared";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { readReceipt, receiptToken, RECEIPT_SCHEMA } from "../src/services/receipts";
@@ -58,13 +59,14 @@ describe("Forge receipts", () => {
     expect(r.known).toBe(false);
     expect(r.share.badge_markdown).toBeNull();
     const j = (await (await fetchWorker(`${path(r.share.receipt_url)}?format=json`)).json()) as any;
-    expect(j.receipt).toMatchObject({ kind: "check", subject: "npm:receipt-test-unknown-pkg", verdict: r.verdict, security: r.security_status });
-    expect(j.live_url).toContain("/t/npm%3Areceipt-test-unknown-pkg");
+    // ADR 0157: an id not on file is signed as its sha256, never as the text asked, and has no live page.
+    expect(j.receipt).toMatchObject({ kind: "check", subject: await sha256Of("npm:receipt-test-unknown-pkg"), subject_kind: "asked_sha256", subject_trust: "asked_sha256", verdict: r.verdict, security: r.security_status });
+    expect(j.live_url).toBeNull();
   });
 
   it("keeps an inline version out of the subject, so the live link is the tool's page", async () => {
     const r = (await (await fetchWorker("/api/v1/check?id=npm:receipt-inline-pkg@1.2.3")).json()) as any;
     const j = (await (await fetchWorker(`${path(r.share.receipt_url)}?format=json`)).json()) as any;
-    expect(j.receipt).toMatchObject({ subject: "npm:receipt-inline-pkg", version: "1.2.3" });
+    expect(j.receipt).toMatchObject({ subject: await sha256Of("npm:receipt-inline-pkg"), version: "1.2.3" });
   });
 });

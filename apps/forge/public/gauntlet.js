@@ -305,13 +305,35 @@ export function svgAt(g, t, o = {}) {
   return out.join("");
 }
 
+/**
+ * Presentation only (the signed replay and its log are unchanged): a bank-account argument is shown as "acct …1234"
+ * (its last four digits), so the sandbox's synthetic "GB64 FAKE 6882 6938" accounts don't read as a model paying a fake
+ * account. An argument is an account only if it carries the sandbox's FAKE marker or is IBAN-length (two letters, two
+ * digits, then ten or more letters or digits, optionally grouped by spaces or dots), so flight ids such as FA123 stay
+ * as they are. A cut-off value ("…") shows no digits, since its last four aren't known.
+ */
+const ACCOUNT_ARG = /^[A-Z]{2}\d{2}(?:[ .]?[\dA-Z]){10,}$/;
+export function maskArg(a) {
+  const cut = a.endsWith("…");
+  const v = cut ? a.slice(0, -1) : a;
+  if (!/FAKE/i.test(v) && !ACCOUNT_ARG.test(v)) return a;
+  const d = v.replace(/\D/g, "");
+  return !cut && d.length >= 4 ? `acct …${d.slice(-4)}` : "acct …";
+}
+/** "→ pay_invoice(V12, GB64 FAKE 6882 6938, $156.80, …) +9 more" → "pay_invoice(V12, acct …6938, $156.80, …) +9 more". */
+export function displayCall(line) {
+  const m = /^(?:→ )?([\w.-]+)\((.*)\)((?: \+\d+ more)?)$/s.exec(line);
+  if (!m) return line.replace(/^→ /, "");
+  return `${m[1]}(${m[2] ? m[2].split(", ").map(maskArg).join(", ") : ""})${m[3]}`;
+}
+
 /** The terminal: the real calls, in order, as each robot reaches its tile. Returns HTML (escaped). */
-export function terminalAt(g, t) {
+export function terminalAt(g, t, max = 8) {
   const P = plan(g, GEO.wide);
   const rows = [];
   g.lanes.forEach((l, k) => {
     const tag = `<span class="gx-t-who">[${LANE_TAG[k]}]</span>`;
-    l.steps.forEach((s, i) => rows.push({ at: P[k].ts[i], k, html: `${tag} <span class="gx-t-time">${P[k].ts[i].toFixed(1)}s</span> <span class="gx-call">${esc(s.line.replace(/^→ /, ""))}</span> ${s.ok ? `<span class="gx-ok">→ ok</span>` : `<span class="gx-err">→ ${esc(s.status ?? "error")}</span>`}`, trap: i === l.trapAt, scan: i === l.scanAt }));
+    l.steps.forEach((s, i) => rows.push({ at: P[k].ts[i], k, html: `${tag} <span class="gx-t-time">${P[k].ts[i].toFixed(1)}s</span> <span class="gx-call">${esc(displayCall(s.line))}</span> ${s.ok ? `<span class="gx-ok">→ ok</span>` : `<span class="gx-err">→ ${esc(s.status ?? "error")}</span>`}`, trap: i === l.trapAt, scan: i === l.scanAt }));
     rows.push({ at: T_FINISH, k, html: `${tag} <span class="gx-t-time">${T_FINISH.toFixed(1)}s</span> <span class="gx-call">finish(status: "${esc(l.claim ?? "none")}")</span>`, trap: l.trapAt === l.steps.length });
   });
   rows.sort((a, b) => a.at - b.at || a.k - b.k);
@@ -323,7 +345,7 @@ export function terminalAt(g, t) {
       lines.push(`<li class="${l.fell || l.verdict !== "PASS" ? "gx-failline" : "gx-passline"}">referee ▸ [${LANE_TAG[k]}] ${esc(l.model)}: ${v}</li>`);
     });
   if (!lines.length) return `<li class="gx-wait">waiting for the first tool call…</li>`;
-  return lines.slice(-8).join("");
+  return lines.slice(-max).join("");
 }
 
 export const END = PLAY;

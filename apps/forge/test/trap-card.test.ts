@@ -72,7 +72,13 @@ describe("trap card (ADR 0017 §1)", () => {
     expect(block).toContain('href="/lab/3/results?from=trap-card"');
     expect(block).toContain('href="/lab/4/results?from=trap-card"');
     expect(block.indexOf('id="experiment-3"')).toBeGreaterThan(-1);
-    expect(page.replace(block, "")).not.toMatch(/\d+\s?%/);
+    // BRAND.md v1.5 (16 Nov): Experiment 3's by-job table moved here from the home page; its cuts are Experiment 3's
+    // own figures, each beside its "in 100" counts.
+    const jobsAt = page.indexOf('<div class="trap-card-jobs">');
+    expect(jobsAt).toBeGreaterThan(page.indexOf('id="experiment-4"'));
+    const jobs = page.slice(jobsAt, page.indexOf("</details>", jobsAt));
+    expect(jobs).toMatch(/<b>\d+% fewer<\/b><small>\d+ → \d+ in 100<\/small>/);
+    expect(page.replace(block, "").replace(jobs, "")).not.toMatch(/\d+\s?%/);
     // The block sits above the paste guides.
     expect(page.indexOf('id="experiment-4"')).toBeLessThan(page.indexOf('id="where"'));
   });

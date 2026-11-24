@@ -21,7 +21,9 @@ import type { NotedTool } from "./state";
 //           (source of docs.github.com/en/copilot/reference/hooks-reference: preToolUse, toolName/toolArgs,
 //           permissionDecision, matcher; a non-zero exit other than a timeout DENIES, so this always exits 0)
 
-export const HOOK_TIMEOUT_MS = 3000;
+// ADR 0154: 4 s (was 3 s). The hooks run as `npx -y`, which takes a second or two before this starts, and every client
+// gives the hook 10 s, so 4 s for the check still leaves room; past it the command goes ahead (fail open).
+export const HOOK_TIMEOUT_MS = 4000;
 const PACKAGE = "@theagentforge/cli";
 
 type Json = Record<string, unknown>;

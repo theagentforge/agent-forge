@@ -88,4 +88,20 @@ describe("old forge zips (ADR 0121)", () => {
       expect(createHash("sha256").update(readFileSync(join(dir, file))).digest("hex"), file).toBe(sha256);
     }
   });
+
+  it("0.9.0-full stays served beside 0.9.1-full, byte for byte (ADR 0152: the directory's reviewers may hold those URLs)", () => {
+    const dir = join(root, "..", "..", "apps", "forge", "public", "plugins");
+    const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+    expect(m.version).toBe("0.9.1-full");
+    // Both 0.9.0 builds: the one the directory's reviewers saw, and the 13 Nov rebuild with the 5 s hook timeout.
+    for (const key of ["theagentforge@0.9.0-full", "theagentforge@0.9.0-full-timeout5s"]) {
+      const prev = m.legacy[key];
+      expect(prev.version, key).toBe("0.9.0-full");
+      expect(Object.keys(prev.files).sort()).toEqual(["production", "staging"]);
+      for (const { file, sha256 } of Object.values(prev.files) as { file: string; sha256: string }[]) {
+        expect(file).toMatch(/^theagentforge-(staging|production)-0\.9\.0-full-/);
+        expect(createHash("sha256").update(readFileSync(join(dir, file))).digest("hex"), file).toBe(sha256);
+      }
+    }
+  });
 });

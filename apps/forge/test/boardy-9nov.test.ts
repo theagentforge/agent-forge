@@ -111,7 +111,8 @@ describe("2: what honesty measures, from the engine, and what can differ when ev
 
   it("the all-passed line is the same on both tiers apart from the tier's name", async () => {
     const ranks = { heavyweight: [{ model: "a", name: "a", rating: 1500, rd: 50 }] } as never;
-    const tail = ` tier: every ranked model passed every job it ran. ${ALL_PASSED_WHY} The order below comes down to ${ALL_PASSED_PARTS}.`;
+    // 13 Nov walkthrough (benchmark ceiling): at the ceiling no rating or order is shown, so the line says so.
+    const tail = " tier: every ranked model passed every job it ran, so this tier doesn't separate them and no rating or order is shown.";
     expect((await str(ladderLine("normal", ranks, new Set(["a"])))).replace(/&#39;/g, "'")).toContain(`Normal${tail}`);
     expect((await str(ladderLine("hard", ranks, new Set(["a"])))).replace(/&#39;/g, "'")).toContain(`Hard${tail}`);
   });

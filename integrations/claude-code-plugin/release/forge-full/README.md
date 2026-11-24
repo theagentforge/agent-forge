@@ -12,8 +12,8 @@ In Claude Code:
 ```
 
 ### Two editions
-This is the **full edition** (version 0.9.0-full), served only by The Forge's own marketplace above. It has the
-hooks described below. Anthropic's plugin directory lists the **directory edition** (version 0.9.0) instead: the same
+This is the **full edition** (version 0.9.1-full), served only by The Forge's own marketplace above. It has the
+hooks described below. Anthropic's plugin directory lists the **directory edition** (version 0.9.1) instead: the same
 MCP servers and commands, and a skill that asks Claude to call `forge_check` itself, with no hooks, because the
 directory accepts command hooks only from organizations it has verified. If you already use
 `theagentforge@theagentforge` 0.8.0, refresh the listing with `/plugin marketplace update theagentforge`, then update

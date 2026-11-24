@@ -41,7 +41,14 @@ function body(f: FailOfTheWeek, latest: boolean) {
 
 async function render(c: Ctx, f: FailOfTheWeek | null, latest: boolean, date?: string) {
   const path = latest ? "/arena/fail-of-the-week" : fotwPath(date!);
-  if (wantsJson(c)) return f ? c.json(fotwJson(f, c.env.PUBLIC_ORIGIN), 200, JSON_HEADERS) : c.json({ error: "not_found", date: date ?? null, next_bout_at: new Date(nextHeadlineSlot(Date.now())).toISOString() }, 404, JSON_HEADERS);
+  // 13 Nov walkthrough: /arena links the latest page, so with no pick yet it is a page (200, noindex), not a 404. A
+  // dated address with no pick stays a 404.
+  if (wantsJson(c))
+    return f
+      ? c.json(fotwJson(f, c.env.PUBLIC_ORIGIN), 200, JSON_HEADERS)
+      : latest
+        ? c.json({ status: "none_yet", next_bout_at: new Date(nextHeadlineSlot(Date.now())).toISOString(), failures_url: `${c.env.PUBLIC_ORIGIN}/arena/failures` }, 200, JSON_HEADERS)
+        : c.json({ error: "not_found", date: date ?? null, next_bout_at: new Date(nextHeadlineSlot(Date.now())).toISOString() }, 404, JSON_HEADERS);
   if (!f)
     return send(c, {
       title: "Fail of the Week",
@@ -49,10 +56,11 @@ async function render(c: Ctx, f: FailOfTheWeek | null, latest: boolean, date?: s
       path,
       nav: "arena",
       noindex: true,
-      status: 404,
+      status: latest ? 200 : 404,
       body: html`<p class="eyebrow"><a href="/arena">${PUBLIC_NAME}</a> · Fail of the Week</p>
 <h1 class="page-title">Fail of the Week</h1>
-<p class="empty">${date ? `No Fail of the Week for ${date}: the bout isn't fully refereed yet, or no attempt sprang a trap.` : "None yet. It's picked once each weekly headline bout is refereed."}</p>
+<p class="empty">${date ? `No Fail of the Week for ${date}: the bout isn't fully refereed yet, or no attempt sprang a trap.` : "No pick in the last few weeks: it's picked from a weekly headline bout once every attempt is refereed and one sprang a planted trap."}</p>
+<p>Every refereed fall so far, by trap and model: <a href="/arena/failures">which model falls for which trap</a>.</p>
 <p>Next headline bout: ${formatSlot(nextHeadlineSlot(Date.now()))}. <a href="/arena/headline.ics">Add it to your calendar</a>.</p>`,
     });
   return send(c, {

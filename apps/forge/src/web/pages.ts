@@ -54,7 +54,8 @@ import { LIVE_AGENT_LABELS, liveAgentCounts } from "../services/agent-funnel";
 import { asOfShort, publicNumbers, secondsLeft, type LiveCounts } from "../services/public-numbers";
 import { markdownResponse, prefersMarkdown } from "./markdown";
 import { TRAP_SET } from "../arena/benchmark";
-import { forStore, isRefresh, neverEdgeCached, readStored, refreshStale, RELEASE_PARAM, releaseKey, swrFreshSeconds } from "./edge-cache";
+import { forStore, isRefresh, neverEdgeCached, readStored, refreshStale, RELEASE_PARAM, releaseKey, RENDERED_AT, swrFreshSeconds } from "./edge-cache";
+import { fromSnapshot, isSnapshotPage, overloaded, readSnapshot, refreshSnapshot, singleFlight, SNAPSHOT_HEADER, SNAPSHOT_REFRESH_SECONDS, SNAPSHOT_REWRITE_SECONDS, snapshotable, snapshotKey, snapshotRenderOf, writeSnapshot } from "./page-snapshots";
 import { readCookie, SESSION_COOKIE } from "./session";
 import { boardBlock, boardJson, labBand, wireHero, wireJson, wirePosts } from "./home-wire";
 import { experimentsData } from "./experiments";
@@ -71,7 +72,7 @@ import { FIELD_REPORTS_BAND_LABEL, FIELD_REPORTS_BAND_NOTE, HOUSE_METHOD_PATH, T
 import { agentDetail, liveWire, toolDetail, topScouts, watchlist } from "./queries";
 import { SPRINT_PATH } from "../arena/sprint";
 import { dayLabel } from "./experiments";
-import { toolAnswerLine, toolAsOf, toolSources } from "./tool-answer";
+import { latestInstallTest, registryListing, toolAnswerLine, toolAsOf, toolPageTitle, toolSources } from "./tool-answer";
 import { HOUSE_TOOLS_SOURCE, type HouseToolsPayload } from "../services/house-tools";
 import { agentVerdicts, NO_VERDICTS, verdictCounts } from "../services/verdicts";
 
@@ -112,7 +113,7 @@ export const site = new Hono<{ Bindings: Env }>();
 // action's clicks were counted nowhere.
 export const HOME_CLICK_FROM = /^home(-hero|-source)?$/;
 site.use("*", async (c, next) => {
-  if (c.req.method === "GET" && HOME_CLICK_FROM.test(c.req.query("from") ?? "") && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$|gauntlet$)/.test(c.req.path) && !isLikelyBot(c.req.raw)) {
+  if (c.req.method === "GET" && HOME_CLICK_FROM.test(c.req.query("from") ?? "") && /^\/(arena(\/run\/|\/call-it$|$)|best(\/|$)|trap-card$|connect$|check$|gauntlet(\/sprint|\/ci)?$)/.test(c.req.path) && !isLikelyBot(c.req.raw)) {
     c.executionCtx.waitUntil(recordHomeClick(c.env).catch(() => {}));
   }
   await next();
@@ -196,7 +197,8 @@ site.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   // ADR 0125: the background re-render of a stale page (web/edge-cache.ts) is not a visit. It counts nothing and reads
   // no cached copy; it only renders the page and stores it.
-  const refresh = isRefresh(c.req.raw);
+  // ADR 0154: a snapshot re-render (background or the hourly cron) is not a visit either.
+  const refresh = isRefresh(c.req.raw) || !!snapshotRenderOf(c.req.raw);
   // Our own probes (services/internal.ts: screens, Scout) are counted apart, as internal:<component>:*.
   const ours = internalCaller(c.req.raw.headers);
   // ADR 0124: bots (services/bots.ts) see every page as usual but add nothing to the people and agent KPIs.
@@ -243,6 +245,8 @@ site.use("*", async (c, next) => {
   // ADR 0130: the home headline is one backed line picked at random per visit. The page is edge-cached for 60 s, so
   // the pick is made here, before the cache: each line is its own cache entry (at most six), and the handler renders
   // the line it is handed. A `hero` parameter in the address is never trusted.
+  // ADR 0154: the KV snapshot keys carry the same `hero` value (web/page-snapshots.ts), so cached HTML is per line too.
+  // Restored 16 Nov (Dinike: "revert to the exact setting we had before the november 13th change").
   const home = c.req.path === "/";
   if (home) {
     url.searchParams.delete(HERO_PARAM);
@@ -280,18 +284,43 @@ site.use("*", async (c, next) => {
   };
   // ADR 0125: with a session cookie, a page is neither served from the edge cache nor stored in it.
   // Boardy, 7 Nov: the /benchmark HTML is never read from or stored in the edge cache (edge-cache.ts NO_STORE_HTML).
-  const anonymous = !viewerBound(c.req.path, c.req.header("Cookie")) && !neverEdgeCached(c.req.path, wantsJson(c));
+  const noCookie = !viewerBound(c.req.path, c.req.header("Cookie"));
+  const anonymous = noCookie && !neverEdgeCached(c.req.path, wantsJson(c));
+  // ADR 0154: the heavy public pages also keep a KV snapshot (web/page-snapshots.ts), read where the edge has no copy.
+  // Never for a request with the session cookie. /benchmark is snapshotted too: its key carries the release and Trap
+  // Set like the edge key, so its headers stay right; it is still never stored in the edge cache.
+  const snapKey = noCookie && isSnapshotPage(c.req.path) ? snapshotKey(key.url) : null;
+  const snapMark = snapshotRenderOf(c.req.raw);
   const fresh = anonymous ? swrFreshSeconds(c.req.path) : null;
-  const hit = anonymous && !refresh ? await caches.default.match(key) : undefined;
+  const hit = anonymous && !refresh && !snapMark ? await caches.default.match(key) : undefined;
+  const accept = c.req.header("Accept") ?? null;
+  const reRender = (req: Request) => site.fetch(req, c.env, c.executionCtx);
   if (hit) {
     countBadge(hit.status);
     // Pages outside the stale-while-revalidate list, and copies stored before it, are served as they are.
     const stored = fresh === null ? null : readStored(hit, fresh);
-    if (stored?.state !== "expired") countShown(hit);
-    if (!stored) return hit;
-    if (stored.state === "stale") c.executionCtx.waitUntil(refreshStale(key, c.req.header("Accept") ?? null, (req) => site.fetch(req, c.env, c.executionCtx)));
-    if (stored.state !== "expired") return stored.res;
-    await stored.res.body?.cancel();
+    // ADR 0154: a snapshot page's edge copy that went stale long ago gives way to the (hourly) KV snapshot.
+    const longStale = !!snapKey && fresh !== null && stored?.state === "stale" && Date.now() - Number(hit.headers.get(RENDERED_AT)) > (fresh + SNAPSHOT_REWRITE_SECONDS) * 1000;
+    if (!longStale) {
+      if (stored?.state !== "expired") countShown(hit);
+      if (!stored) return hit;
+      if (stored.state === "stale") c.executionCtx.waitUntil(refreshStale(key, accept, reRender));
+      if (stored.state !== "expired") return stored.res;
+    }
+    await stored?.res.body?.cancel();
+  }
+  // ADR 0154: no usable edge copy. A snapshot page is answered from its KV snapshot when there is one; one older than
+  // its refresh window is re-rendered in the background (one at a time per data centre for edge-cached pages).
+  if (snapKey && !refresh && !snapMark) {
+    const snap = await readSnapshot(c.env, snapKey);
+    if (snap) {
+      const res = fromSnapshot(snap);
+      countShown(res);
+      if (fresh !== null) c.executionCtx.waitUntil(caches.default.put(key, forStore(new Response(snap.body, { status: snap.status, headers: snap.headers }), fresh, snap.at)).catch(() => {}));
+      if (Date.now() - snap.at > SNAPSHOT_REFRESH_SECONDS * 1000)
+        c.executionCtx.waitUntil(fresh !== null ? refreshStale(key, accept, reRender) : refreshSnapshot(key.url, accept, reRender));
+      return res;
+    }
   }
   // Uncached tool pages, checks, package answers and share images query the database, OSV and the registries (and
   // draw a PNG), so each visitor IP gets a budget.
@@ -300,18 +329,54 @@ site.use("*", async (c, next) => {
     const { success } = await c.env.CHECK_LIMITER.limit({ key: `web:${ip}` });
     if (!success) return c.text("Too many requests. Wait a minute and try again.", 429, { "Retry-After": "60", "Cache-Control": "no-store" });
   }
-  await next();
-  countBadge(c.res.status);
-  countShown(c.res);
-  if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
-  if (anonymous && c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public") && !c.res.headers.has("Set-Cookie")) {
-    if (refresh && fresh !== null) {
-      // A background refresh: nobody reads this response, so its body goes straight to the cache, and the refresh
-      // keeps its lock until the new copy is stored.
-      await caches.default.put(key, forStore(c.res, fresh));
-      c.res = new Response(null, { status: 200, headers: c.res.headers });
-    } else c.executionCtx.waitUntil(caches.default.put(key, fresh === null ? c.res.clone() : forStore(c.res.clone(), fresh)));
+  const render = async () => {
+    await next();
+    countBadge(c.res.status);
+    countShown(c.res);
+    if (markdown && (c.res.headers.get("Content-Type") ?? "").startsWith("text/html")) c.res = await markdownResponse(c.res, new URL(c.req.url).toString());
+    // ADR 0154: the KV snapshot. A visitor's render writes one (it found none above); a background re-render only when
+    // the stored one is older than SNAPSHOT_REWRITE_SECONDS; the hourly cron always.
+    if (snapKey && snapshotable(c.res)) {
+      const background = refresh || !!snapMark;
+      const old = background && !snapMark?.force ? await readSnapshot(c.env, snapKey) : null;
+      if (!background || snapMark?.force || !old || Date.now() - old.at > SNAPSHOT_REWRITE_SECONDS * 1000) {
+        const copy = c.res.clone();
+        if (background) {
+          await writeSnapshot(c.env, snapKey, copy);
+          if (snapMark) {
+            c.res = new Response(c.res.body, c.res);
+            c.res.headers.set(SNAPSHOT_HEADER, "written");
+          }
+        } else c.executionCtx.waitUntil(writeSnapshot(c.env, snapKey, copy));
+      }
+    }
+    if (anonymous && c.res.status === 200 && (c.res.headers.get("Cache-Control") ?? "").startsWith("public") && !c.res.headers.has("Set-Cookie")) {
+      if (refresh && fresh !== null) {
+        // A background refresh: nobody reads this response, so its body goes straight to the cache, and the refresh
+        // keeps its lock until the new copy is stored.
+        await caches.default.put(key, forStore(c.res, fresh));
+        c.res = new Response(null, { status: 200, headers: c.res.headers });
+      } else c.executionCtx.waitUntil(caches.default.put(key, fresh === null ? c.res.clone() : forStore(c.res.clone(), fresh)));
+    }
+    return c.res;
+  };
+  // ADR 0154: a heavy page renders once per isolate at a time: concurrent visitors of the same page share that render,
+  // and past MAX_LIVE_RENDERS different heavy renders at once a visitor gets 429 with Retry-After instead of adding to
+  // D1's queue. Background refreshes and the cron are one at a time already.
+  if ((snapKey || fresh !== null) && !refresh && !snapMark) {
+    let rendered = false;
+    const res = await singleFlight(
+      key.url,
+      () => ((rendered = true), render()),
+      async () => overloaded(c.req.path, accept),
+    );
+    if (!rendered && res.status === 200) countShown(res);
+    // Set, not only returned: after next() Hono keeps c.res and ignores a returned response, and this one carries
+    // the body singleFlight read.
+    c.res = res;
+    return c.res;
   }
+  await render();
 });
 
 function watchTable(items: Awaited<ReturnType<typeof watchlist>>, now: number) {
@@ -419,7 +484,7 @@ function lineH1(l: HeroLine) {
  */
 export function heroHeadline(h: HomeHero) {
   if (h.case === "replay") return html`<h1 aria-live="off">${lineH1(h.line)}</h1>`;
-  if (h.case === "count") return html`<h1>AI agents paid a planted fake invoice in <em>${h.fell_display} of ${h.runs.toLocaleString("en-US")}</em> refereed sandbox runs.</h1>`;
+  // ADR 0152 (13 Nov walkthrough): the "below 10 of 511" count headline stays retired; with no backed replay, the question.
   return html`<h1>Would your AI agent pay a <em>fake invoice</em>?</h1>`;
 }
 
@@ -442,8 +507,6 @@ function sourceParts(p: HeroProof) {
  * one short line; the trap's catalogue entry is one hover away, and the replay one tap.
  */
 export function heroSource(h: HomeHero) {
-  if (h.case === "count")
-    return html`<p class="small hero-source" data-hero-source="count"><span class="muted">Source:</span> every public refereed run of the Normal scam-invoice job, practice and ranked (Lab arms left out). <a href="/arena/dataset.json">The dataset</a> · <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
   if (h.case === "question")
     return html`<p class="small muted hero-source" data-hero-source="question">Every Arena job hides planted traps, a fake invoice among them. <a href="/arena/methodology#catalog">Trap catalogue</a></p>`;
   const s = sourceParts(h.proof);
@@ -667,7 +730,8 @@ site.get("/check", async (c) => {
   // With nothing typed yet, offer a few tools agents reported on recently, so a phone visitor can try it in one tap.
   const examples = q ? [] : [...new Set((await liveWire(getDb(c.env), 30).catch(() => [])).map((r) => r.toolId))].slice(0, 4);
   return send(c, {
-    title: q ? `Check: ${q}` : "Check a tool",
+    // ADR 0157: the typed text is repeated (title, terminal line) only when it is a valid id, URL or fingerprint.
+    title: query ? `Check: ${q}` : "Check a tool",
     description: line ?? "Check any skill, MCP server or API against field reports from human-verified agents.",
     path: q ? `/check?q=${encodeURIComponent(q)}` : "/check",
     nav: "check",
@@ -818,7 +882,8 @@ site.get("/t/:id{.+}", async (c) => {
   if (!d) {
     const alias = await findTool(db, id);
     if (alias) return c.redirect(toolHref(alias.canonicalId), 301);
-    return notFound(c, "No reports for this tool yet", `No agent has reported on ${id} yet.`);
+    // ADR 0157: the address isn't repeated, so a link to /t/<any text> can't put chosen words on our page.
+    return notFound(c, "No reports for this tool yet", "No agent has reported on this tool yet.");
   }
   const latest = d.versions[0];
   const { check, v, version: cardV } = await toolCardFields(c.env, d.tool.canonicalId);
@@ -833,10 +898,13 @@ site.get("/t/:id{.+}", async (c) => {
   const now = Date.now();
   // The dated one-sentence answer and its sources (citations issue #234): the same counts the page shows, nothing more.
   const asOf = toolAsOf(check, [d.reports[0]?.createdAt ?? 0, ...d.events.map((e) => e.createdAt), ...d.signals.map((x) => x.fetchedAt)]);
-  const answerLine = toolAnswerLine(d.tool.canonicalId, check, asOf);
+  // 13 Nov walkthrough (ADR 0152): with no field reports, the line also says what we do know.
+  const known = d.reports.length ? {} : { install: await latestInstallTest(db, d.tool.canonicalId), registry: registryListing(d.signals, ["osv", HOUSE_TOOLS_SOURCE]) };
+  const answerLine = toolAnswerLine(d.tool.canonicalId, check, asOf, known);
   return send(c, {
-    title: `${d.tool.canonicalId} — field reports`,
-    description: verdictLine(check),
+    // Coordinator, 13 Nov: the title states the result too, so a search result or an assistant can cite it.
+    title: toolPageTitle(d.tool.canonicalId, check),
+    description: answerLine,
     path,
     // A page with no reports and no House test has nothing to say yet: keep it out of search (ADR 0011 a).
     noindex: d.reports.length === 0,
@@ -854,8 +922,8 @@ site.get("/t/:id{.+}", async (c) => {
     // dated answer in words, one action. The API line and how agents confirm or dispute sit in "For agents" below.
     body: html`<p class="eyebrow">${d.tool.kind.replace("_", " ")} ${d.claim ? html`· claimed by @${d.claim.login}` : ""} · updated <time datetime="${new Date(asOf).toISOString()}">${new Date(asOf).toISOString().slice(0, 10)}</time></p>
 <h1 class="mono-title page-title">${breakableId(d.tool.canonicalId)}${check.version ? html` <span class="muted">${check.version}</span>` : ""}</h1>
-<div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}<span class="small">${verdictPlain(v, latest?.distinctOwners ?? 0, latest?.verifiedOwners ?? 0)}</span></div>
 <p class="lead" id="answer">${answerLine}</p>
+<div class="verdict-row">${verdictChip(v)}${latest?.successScore != null ? html`<span class="score">Forge Score <b>${latest.successScore}</b></span>` : ""}<span class="small">${verdictPlain(v, latest?.distinctOwners ?? 0, latest?.verifiedOwners ?? 0)}</span></div>
 ${latest && (latest.loopRate != null || latest.recoversAfterResetRate != null) ? html`<div class="stats spaced">
 ${latest.loopRate != null ? html`<div class="stat"><b>${Math.round(latest.loopRate * 100)}%</b><span>loop rate</span></div>` : ""}
 ${latest.recoversAfterResetRate != null ? html`<div class="stat"><b>${Math.round(latest.recoversAfterResetRate * 100)}%</b><span>recovers after a fresh start</span></div>` : ""}
@@ -895,7 +963,7 @@ ${d.events.length ? html`<ol class="feed">${d.events.map((e) =>
 
 <section aria-labelledby="publisher"><h2 id="publisher">Publisher</h2>
 ${d.replies.length ? html`<ol class="feed">${d.replies.map((r) =>
-      feedItem({ title: html`@${r.login}`, time: ago(r.createdAt, now), meta: ["verified publisher"], note: r.body }),
+      feedItem({ title: html`@${r.login}`, time: ago(r.createdAt, now), meta: ["verified publisher"], note: r.body, noteFrom: "publisher reply" }),
     )}</ol>` : html`<p class="muted">No reply from the publisher yet.</p>`}
 <p class="small">Maintain this tool? <a rel="nofollow" href="/claim?tool=${encodeURIComponent(d.tool.canonicalId)}">Claim it and reply for free</a>. Think something here is wrong? <a rel="nofollow" href="/disputes?tool=${encodeURIComponent(d.tool.canonicalId)}">Open a dispute</a>.</p>
 </section>

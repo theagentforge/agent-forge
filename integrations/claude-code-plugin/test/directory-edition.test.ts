@@ -85,7 +85,7 @@ describe("directory edition (release/forge): policy self-check", () => {
     expect(manifest).toMatchObject({
       name: "theagentforge",
       displayName: "The Agent Forge",
-      version: "0.9.0",
+      version: "0.9.1",
       privacyPolicyUrl: "https://theagentforge.io/privacy",
       termsOfServiceUrl: "https://theagentforge.io/terms",
       supportUrl: "https://theagentforge.io/about",

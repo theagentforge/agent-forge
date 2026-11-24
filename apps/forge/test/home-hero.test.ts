@@ -45,13 +45,15 @@ function run(fell: string[], status: "done" | "cannot_complete" = "done") {
   return { result: { ...base, passed: false, traps: base.traps.map((x) => ({ ...x, triggered: fell.includes(x.id) })) } as AttemptResult, log: a.log };
 }
 
-async function addRun(key: string, eventId: string, model: string, r: ReturnType<typeof run>, finishedAt: number, o: { badSignature?: boolean; heldOut?: boolean } = {}) {
+async function addRun(key: string, eventId: string, model: string, r: ReturnType<typeof run>, finishedAt: number, o: { badSignature?: boolean; heldOut?: boolean; unsealed?: boolean } = {}) {
   const id = crypto.randomUUID();
   // v1 replays: an HMAC over the log, as the runner signs them (arena/runner.ts).
   const signature = o.badSignature ? "not-a-signature" : await signReport(env.REPORT_SIGNING_KEY, { id, log: JSON.stringify(r.log) });
   await getDb(env).insert(t.arenaRuns).values({
     id, eventId, modelId: model, task: "scam-invoice", seed: 3_100_001, attemptNo: 1, status: "done", heldOut: o.heldOut ?? false,
     passed: false, score: 0.2, cost: 0.01, tokens: 1000, result: r.result, log: r.log, signature, finishedAt,
+    // 13 Nov walkthrough: only replay format v2 (sealed) runs back a headline; a seal's presence marks v2 here.
+    replaySeal: o.unsealed ? null : ({ v: 2, fixture: true } as never),
   });
   ids[key] = id;
 }
@@ -100,7 +102,7 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     expect(JSON.parse(s.json).hero.headline_source).toMatchObject({ case: "question", replay: { status: "not_found" }, count: { runs: 0, fell: null, below_minimum: false } });
   });
 
-  it("falls but no qualifying replay: a count from the public runs, 'below 10' under the minimum (ADR 0067)", async () => {
+  it("falls but no qualifying replay: the question, never a count line (the 'below 10 of N' headline is retired, ADR 0152)", async () => {
     // Each fails one replay rule; held-out, held-event and embargoed runs aren't public, so they aren't counted either.
     await addRun("embargoed", practice, EMBARGOED.id, run(["paid_scam"]), t0 + 1);
     await addRun("cannot", practice, "mistral-large-4", run(["paid_scam"], "cannot_complete"), t0 + 2);
@@ -109,37 +111,32 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
     await addRun("unsigned", practice, "mistral-large-4", run(["paid_scam"]), t0 + 4, { badSignature: true });
     await addRun("held-out", practice, "mistral-large-4", run(["paid_scam"]), t0 + 5, { heldOut: true });
     await addRun("held-event", held, "mistral-large-4", run(["paid_scam"]), t0 + 6);
+    // A fall with "done" but replay format v1 only (no seal): not publicly checkable, so it backs no headline (13 Nov).
+    await addRun("unsealed", practice, "mistral-large-4", run(["paid_scam"]), t0 + 6.5, { unsealed: true });
     await resetHero();
     expect(await heroProof(env)).toBeNull();
-    expect(await fakeInvoiceCount(env)).toEqual({ runs: 3, fell: 2 });
+    expect(await fakeInvoiceCount(env)).toEqual({ runs: 4, fell: 3 });
     const h = await homeHero(env);
-    expect(h).toMatchObject({ case: "count", runs: 3, fell: 2, fell_display: "below 10" });
+    expect(h).toMatchObject({ case: "question", runs: 4, fell: 3 });
     const s = await heroSurfaces();
     expect(s.all).not.toContain("reported the job done");
     expect(s.all).not.toMatch(SHOWS_EMBARGOED);
-    expect(s.html).toContain("<h1>AI agents paid a planted fake invoice in <em>below 10 of 3</em> refereed sandbox runs.</h1>");
-    expect(s.html).toContain('data-hero-source="count"');
-    expect(s.html).toContain('<a href="/arena/dataset.json">The dataset</a>');
-    // The hero copy links no replay (the live Wire beside it may link bouts of its own).
-    const copy = s.html.slice(s.html.indexOf('class="hero2-copy"'), s.html.indexOf("</div>", s.html.indexOf('class="hero2-copy"')));
-    expect(copy).toContain("<h1>");
-    expect(copy).not.toContain("/arena/run/");
+    expect(s.html).not.toMatch(/paid a planted fake invoice in/);
+    expect(s.html).toContain("<h1>Would your AI agent pay a <em>fake invoice</em>?</h1>");
     // The sub-line doesn't depend on the headline, so it stays.
     expect(s.html).toContain(`<p class="lead">${HOME_SUBHEAD}</p>`);
     const src = JSON.parse(s.json).hero.headline_source;
-    expect(src).toMatchObject({ case: "count", replay: { status: "not_found" }, count: { runs: 3, fell: null, below_minimum: true, dataset_url: `${env.PUBLIC_ORIGIN}/arena/dataset.json` } });
+    expect(src).toMatchObject({ case: "question", replay: { status: "not_found" }, count: { runs: 4, fell: null, below_minimum: true, dataset_url: `${env.PUBLIC_ORIGIN}/arena/dataset.json` } });
   });
 
-  it("from 10 falls the count is stated, and the share title stays within 60 characters", async () => {
+  it("from 10 falls there is still no count headline; the JSON keeps the reproducible count", async () => {
     for (let i = 0; i < 9; i++) await addRun(`cannot-${i}`, practice, "mistral-large-4", run(["paid_scam"], "cannot_complete"), t0 + 7 + i / 100);
     const h = await homeHero(env);
-    expect(h).toMatchObject({ case: "count", runs: 12, fell: 11, fell_display: "11" });
-    expect(h.share.length).toBeLessThanOrEqual(60);
+    expect(h).toMatchObject({ case: "question", runs: 13, fell: 12 });
     const s = await heroSurfaces();
     expect(s.all).not.toContain("reported the job done");
-    expect(s.html).toContain("<h1>AI agents paid a planted fake invoice in <em>11 of 12</em> refereed sandbox runs.</h1>");
-    expect(s.html).toContain('<meta property="og:title" content="Fake invoice paid in 11 of 12 refereed sandbox runs">');
-    expect(JSON.parse(s.json).hero.headline_source.count).toMatchObject({ runs: 12, fell: 11, below_minimum: false });
+    expect(s.html).not.toMatch(/paid a planted fake invoice in/);
+    expect(JSON.parse(s.json).hero.headline_source.count).toMatchObject({ runs: 13, fell: 12, below_minimum: false });
   });
 
   it("with a qualifying replay: the D2 headline, linked to a public run where the fake invoice was paid and the model said done", async () => {
@@ -180,7 +177,7 @@ describe("the hero is true in every case (W2.1 follow-up)", () => {
 
   it("keeps its first pick, and never picks an embargoed model, a 'can't be done', a held-out run or a held event", async () => {
     expect((await heroProof(env))!.run).toBe(ids.pick);
-    for (const k of ["embargoed", "cannot", "other-trap", "unsigned", "held-out", "held-event"]) expect((await heroProof(env))!.run).not.toBe(ids[k]);
+    for (const k of ["embargoed", "cannot", "other-trap", "unsigned", "held-out", "held-event", "unsealed"]) expect((await heroProof(env))!.run).not.toBe(ids[k]);
   });
 });
 

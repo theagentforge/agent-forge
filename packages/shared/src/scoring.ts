@@ -6,7 +6,11 @@ import type { Strain } from "./report";
 export type HumanTier = "verified" | "sandbox";
 export type SecurityStatus = "clear" | "under_review" | "flagged" | "confirmed_malicious";
 export type CheckVerdict = "clear" | "caution" | "flagged" | "confirmed_malicious";
-/** What a check says about security: a verdict, or "unknown" for a tool we don't know with no published advisory. */
+/**
+ * What a check says about security: a verdict, or "unknown" for a tool we don't know with no published advisory.
+ * "clear" means nothing flagged it; whether an advisory source was checked is the separate `advisories_checked` field
+ * (ADR 0152: a field, not a new value, so clients already installed keep working).
+ */
 export type CheckSecurity = CheckVerdict | "unknown";
 
 export interface ScoredReport {

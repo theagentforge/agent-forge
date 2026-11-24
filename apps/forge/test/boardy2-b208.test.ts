@@ -297,7 +297,12 @@ describe("B2-10 (public part): trap-count target on /benchmark", () => {
     expect(TRAP_TARGETS.map((x) => x.traps)).toEqual([60, 100]);
     const v1 = (await (await get("/benchmark/v1.json", "application/json")).json()) as any;
     const body = unescape(await (await get("/benchmark")).text());
-    expect(body).toContain("Target: 60 public traps by 31 Dec 2026 and 100 by 31 Mar 2027.");
+    // 13 Nov walkthrough: a reached target is said to be reached, never shown as still ahead.
+    if (v1.counts.traps >= 60) expect(body).toContain("Next target: 100 public traps by 31 Mar 2027 (60 by 31 Dec 2026: reached).");
+    else expect(body).toContain("Next target: 60 public traps by 31 Dec 2026 and 100 by 31 Mar 2027.");
+    expect(trapTargetLine(41).toString()).toContain("Next target: 60 public traps by 31 Dec 2026 and 100 by 31 Mar 2027.");
+    expect(trapTargetLine(67).toString()).not.toMatch(/Next target: 60/);
+    expect(trapTargetLine(120).toString()).toContain("Every target so far is reached");
     expect(body).toContain(`Public traps so far: <span data-trap-total>${v1.counts.traps}</span>.`);
   });
 

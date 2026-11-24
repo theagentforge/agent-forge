@@ -1,5 +1,3 @@
-import { installChecksTotal } from "./install-metrics";
-import { rowShown } from "./counters";
 import { and, eq, gte, like, lte, notInArray, or, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "./db";
@@ -319,12 +317,10 @@ export async function liveAgentCounts(env: Env, now = Date.now()) {
     used: f.stages.used + d.monitors_and_catalogs.calls + houseCalls,
   };
   const shown = (v: number) => (v > 0 ? v : null);
-  // B2-06 (ADR 0086): install checks by our install-time clients, gross (our own tests included).
-  // B3-04 (ADR 0099): like the install rows on /stats, the total appears once it passes its minimum.
-  const installAll = await installChecksTotal(env).catch(() => null);
-  const installChecks = rowShown("install_checks", installAll) ? installAll : null;
   return {
-    install_checks_total: installChecks,
+    // Dinike, 16 Nov (ADR 0155): install-check figures are internal only (/admin/kpis, the data room) until they're a
+    // strength, so the public total is always null, which every public reader leaves out (home band, live.json, /stats).
+    install_checks_total: null as number | null,
     page_views_total: shown(Number(pv?.n ?? 0) + (env.ENVIRONMENT === "production" ? Object.values(PAGE_VIEWS_BACKFILL).reduce((a, b) => a + b, 0) : 0)),
     agent_visits_total: shown(all.found),
     agent_connections_total: shown(all.connected),

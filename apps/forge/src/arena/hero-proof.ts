@@ -2,12 +2,19 @@ import { publicTrapId, taskById, trapEntry, TRAP_CATALOG, type AttemptResult, ty
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, like, sql, type SQL } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb } from "../services/db";
-import { BELOW_MINIMUM_TEXT, THIRD_PARTY_MINIMUM } from "../services/public-stats";
+import { THIRD_PARTY_MINIMUM } from "../services/public-stats";
 import { verifiedReplay } from "./fail-card";
 import { isEmbargoed, modelById } from "./lineup";
 import { modelName, notEmbargoed } from "./views";
 import AUDIT_1 from "../seed/validity/referee-audit-1.json";
 
+/**
+ * The trap the referee audits found the referee wrong on (referee audit 2: every disagreement was FA-CLM-001, a false
+ * claim). It never backs the home replay (featured.ts) nor a home headline: a line covering it is never backed or pinned.
+ */
+export const AUDIT_ERROR_TRAPS: ReadonlySet<string> = new Set(["FA-CLM-001"]);
+/** A line that covers an audit-error trap: never backed, never pinned (review of the 16 Nov revert). */
+export const auditRetired = (l: Pick<HeroLine, "catalogue">) => l.catalogue.some((id) => AUDIT_ERROR_TRAPS.has(id));
 /**
  * Runs whose published trap verdict the referee audit found wrong (ADR 0136; referee audit 1, 5 Nov 2026). Such a run
  * never backs a home headline, whatever its pin, until it is re-scored. Hotfix 5 Nov: the false-claim line had been
@@ -149,7 +156,7 @@ type RunRow = { run: { id: string; modelId: string; task: string; finishedAt: nu
 
 /** The facts for one run on one line, or null unless it meets rules 1 and 2 with a public catalogue trap. */
 export function proofOf(r: RunRow, l: HeroLine = FIXED_LINE): HeroProof | null {
-  if (!r.result || !r.log || isEmbargoed(r.run.modelId) || AUDIT_WRONG_RUNS.has(r.run.id)) return null;
+  if (auditRetired(l) || !r.result || !r.log || isEmbargoed(r.run.modelId) || AUDIT_WRONG_RUNS.has(r.run.id)) return null;
   const fell = (job: string, trap: string) => job === r.run.task && r.result!.traps.some((x) => x.id === trap && x.triggered);
   const pair = linePairs(l).find(([j, x]) => fell(j, x));
   if (!pair) return null;
@@ -179,6 +186,8 @@ export function proofOf(r: RunRow, l: HeroLine = FIXED_LINE): HeroProof | null {
 type Row = { run: typeof t.arenaRuns.$inferSelect; event: typeof t.arenaEvents.$inferSelect };
 
 async function checked(env: Env, row: Row, l: HeroLine) {
+  // 13 Nov walkthrough: only a replay anyone can check (replay format v2, sealed) backs a headline.
+  if (!row.run.replaySeal) return null;
   const p = proofOf({ run: row.run, event: row.event, result: row.run.result as AttemptResult | null, log: row.run.log as LogEvent[] | null }, l);
   if (!p) return null;
   return (await verifiedReplay(env, row.run.id, row.run.log, row.run.signature)) ? p : null;
@@ -195,6 +204,7 @@ async function search(env: Env, l: HeroLine, now: number, rankedOnly = false): P
     .where(
       and(
         eq(t.arenaRuns.status, "done"),
+        isNotNull(t.arenaRuns.replaySeal),
         inArray(t.arenaRuns.task, [...new Set(pairs.map(([j]) => j))]),
         fellSql(l),
         l.needsDone ? saidDoneSql() : undefined,
@@ -236,7 +246,7 @@ async function readState(env: Env): Promise<HeroState> {
 /** The line keys with a pinned source, as the edge cache sees them before rendering (web/pages.ts picks one per visit). */
 export async function pinnedLineKeys(env: Env): Promise<string[]> {
   const s = await env.KV.get<HeroState>(KV_KEY, "json").catch(() => null);
-  return HERO_LINES.filter((l) => s?.pins?.[l.key]?.run).map((l) => l.key);
+  return HERO_LINES.filter((l) => !auditRetired(l) && s?.pins?.[l.key]?.run).map((l) => l.key);
 }
 
 /**
@@ -343,7 +353,6 @@ interface Fixed {
 }
 export type HomeHero =
   | ({ case: "replay"; headline: string; line: HeroLine; proof: HeroProof; lines: HeroProof[]; latest_fall: number | null } & Fixed)
-  | ({ case: "count"; headline: string; runs: number; fell: number; fell_display: string; latest_fall: number | null } & Fixed)
   | ({ case: "question"; headline: string; runs: number; fell: number; latest_fall: number | null } & Fixed);
 
 /** BRAND.md D2 headline: shown only when a replay backs it. */
@@ -351,14 +360,9 @@ export const D2_HEADLINE = lineText(FIXED_LINE);
 export const QUESTION_HEADLINE = "Would your AI agent pay a fake invoice?";
 
 async function fallback(env: Env, now: number) {
+  // 13 Nov walkthrough: the "AI agents paid a planted fake invoice in below 10 of 511 runs" count line is retired (a
+  // minimum-suppressed count read as a claim); with no backed replay the hero asks the question, which claims nothing.
   const { runs, fell } = await fakeInvoiceCount(env, now).catch(() => ({ runs: 0, fell: 0 }));
-  if (fell > 0 && runs > 0) {
-    const shown = fell >= THIRD_PARTY_MINIMUM ? fell.toLocaleString("en-US") : BELOW_MINIMUM_TEXT;
-    const of = `${shown} of ${runs.toLocaleString("en-US")}`;
-    const headline = `AI agents paid a planted fake invoice in ${of} refereed sandbox runs.`;
-    // The share title stays within 60 characters (og:title).
-    return { case: "count" as const, headline, share: `Fake invoice paid in ${of} refereed sandbox runs`, share_headline: headline, runs, fell, fell_display: shown };
-  }
   return { case: "question" as const, headline: QUESTION_HEADLINE, share: QUESTION_HEADLINE, share_headline: QUESTION_HEADLINE, runs, fell };
 }
 

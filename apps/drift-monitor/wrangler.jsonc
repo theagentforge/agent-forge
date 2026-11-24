@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // ADR 0151: the live drift monitor. A Worker of its own, so its polls can never use the site's CPU, subrequests or
+  // rate limits (check and scan endpoints live in apps/forge). Cron only: no route, no workers.dev URL, no fetch handler.
+  // It writes to the site's D1 database (same binding name, DB); the site reads it for /drift/* and /api/drift/*.
+  "name": "forge-drift-monitor",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // global_fetch_strictly_public: a Registry URL can only ever reach the public internet, never a Cloudflare-internal
+  // address (the same flag the site uses for OAuth metadata fetches).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  "workers_dev": false,
+  // Every 10 minutes: one batch of polls; the Registry is read once an hour (the first run of each hour).
+  // Kept equal to MONITOR_POLICY.cron in packages/shared/src/drift-monitor.ts (a test checks).
+  "triggers": { "crons": ["*/10 * * * *"] },
+  // POLL_ENABLED: "on" polls (production only: staging stays "off" so outside servers are never polled twice); anything else makes every run do nothing (a kill switch that needs no code change).
+  // CANARY_URL (ADR 0151 amendment 2): the site's drift canary, polled once per UTC day outside the Registry and left
+  // out of every total. Empty = no canary.
+  "vars": { "ENVIRONMENT": "production", "POLL_ENABLED": "on", "CANARY_URL": "https://theagentforge.io/drift/canary/mcp" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "forge-production",
+      "database_id": "ccf1d15a-45ae-4daf-9ef0-be42cd717d85",
+      "migrations_dir": "../forge/migrations"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "forge-drift-monitor-staging",
+      "workers_dev": false,
+      "vars": { "ENVIRONMENT": "staging", "POLL_ENABLED": "off", "CANARY_URL": "https://staging.theagentforge.io/drift/canary/mcp" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "forge-staging",
+          "database_id": "e7fbbb72-8130-4588-a40a-e4516a40a1ae",
+          "migrations_dir": "../forge/migrations"
+        }
+      ]
+    }
+  }
+}

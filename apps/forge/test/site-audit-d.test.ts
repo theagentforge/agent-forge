@@ -20,7 +20,8 @@ describe("site audit batch D", () => {
     const step1 = body.indexOf('id="first-step"');
     expect([lead, agent, phone, step1].every((i) => i > 0)).toBe(true);
     expect(lead < agent && agent < phone && phone < step1).toBe(true);
-    expect(body).toContain("Check a package. Link your agent. Test it (optional).");
+    // 16 Nov clarity pass: one recommended path, no sign-in; linking and testing optional.
+    expect(body).toContain("One line gives your AI the Forge's checks: no account, no sign-in. Linking it to you and testing it are optional.");
     expect(body.slice(agent, phone)).toContain(AGENT_LINE(ORIGIN));
     // The phone block: one line and the link to send; the scan and check forms are in a closed <details>.
     const block = body.slice(phone, step1);

@@ -7,7 +7,7 @@ import { TRAP_CARD_CHANGELOG, TRAP_CARD_DATE, TRAP_CARD_MAX_CHARS, TRAP_CARD_VER
 import { html } from "hono/html";
 import { signReport } from "../services/signing";
 import { copyBlock, liftTable } from "./components";
-import { experimentsBlock } from "./home-wire";
+import { experimentsBlock, labJobsBlock } from "./home-wire";
 import { send, site } from "./pages";
 
 // The trap card page (ADR 0017 §1): one generic card any person can paste into their AI's settings. Versioned,
@@ -105,6 +105,7 @@ ${copyBlock("trap-card-text", m.text)}
 <h2 id="works">Does it work?</h2>
 <p class="small muted">Two pre-registered experiments, published whatever they showed.</p>
 ${experimentsBlock("trap-card")}
+<div class="trap-card-jobs">${labJobsBlock()}</div>
 <p class="small">The card is the same for everyone. Lines written for one AI beat it on traps in Experiment 3, but made two models skip work or quit early. They stay off while we review them.</p>
 </section>
 <section aria-labelledby="where">

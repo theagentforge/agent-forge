@@ -18,7 +18,7 @@ const snap = (remaining: number, at = Date.now()): CreditSnapshot => ({ at, good
 const ARENA_PAGES = ["/arena", "/arena/rules", "/arena/methodology", "/arena/history", "/arena/failures", "/arena/proving-ground", "/arena/vote", "/arena/call-it", "/arena/business"];
 /** A fixed mid-month moment with no Claude spend stored (the old name for "Claude not paused"). */
 const BEFORE_EXPIRY = Date.UTC(2026, 10, 13);
-const CLAUDE_NOTE = "Paused: Claude bouts run on a monthly API budget that is nearly used; they resume when it resets on";
+const CLAUDE_NOTE = "Next Claude bouts:";
 const EV = "ev-costs-claude";
 
 async function clear() {
@@ -66,7 +66,7 @@ describe("Arena pause state", () => {
     const p = await arenaPause(env, BEFORE_EXPIRY);
     expect(p.openrouter).toBe(true);
     expect(p.claude).toBe(false);
-    expect(p.notes.join(" ")).toContain("prepaid model credit has run out");
+    expect(p.notes.join(" ")).toContain("New bouts on non-Claude models are on hold");
     expect(p.notes.join(" ")).toContain("unaffected");
   });
 
@@ -140,7 +140,7 @@ describe("Arena pages while paused", () => {
     for (const p of await arenaPages()) {
       expect(p.status, p.path).toBe(200);
       expect(p.text, p.path).toContain('class="notice warn arena-paused"');
-      expect(p.text, p.path).toContain("prepaid model credit has run out");
+      expect(p.text, p.path).toContain("New bouts on non-Claude models are on hold");
     }
   });
 

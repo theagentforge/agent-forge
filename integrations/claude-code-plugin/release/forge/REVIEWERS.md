@@ -1,6 +1,6 @@
 # Notes for directory reviewers
 
-This page explains, in plain terms, what the `theagentforge` plugin (directory edition, 0.9.0) contains and how it
+This page explains, in plain terms, what the `theagentforge` plugin (directory edition, 0.9.1) contains and how it
 answers each finding on version 0.8.0. Everything here is also described for users in [README.md](README.md).
 Contact: hello@theagentforge.io.
 
@@ -32,7 +32,7 @@ Only the three MCP servers above, and only when Claude calls one of their tools.
 sign-in. `forge-reports` uses OAuth (GitHub sign-in on theagentforge.io) the first time it's used.
 
 ## The full edition
-The Forge's own marketplace (theagentforge.io/marketplace.json) keeps a full edition, version `0.9.0-full`, with the
+The Forge's own marketplace (theagentforge.io/marketplace.json) keeps a full edition, version `0.9.1-full`, with the
 command hooks (pre-install check, failure counts, report drafts). It is not part of this submission. Its files are in
 the repository at `integrations/claude-code-plugin/release/forge-full/`.
 

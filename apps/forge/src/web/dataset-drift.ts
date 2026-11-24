@@ -20,7 +20,7 @@ export const FULL_PATH = "/admin/tool-history/drift.jsonl";
 
 type Ctx = Context<{ Bindings: Env }>;
 
-async function isFounder(c: Ctx) {
+export async function isFounder(c: Ctx) {
   const s = await currentSession(c).catch(() => null);
   if (!s) return false;
   const me = await getDb(c.env).query.humans.findFirst({ where: eq(t.humans.id, s.session.h) });

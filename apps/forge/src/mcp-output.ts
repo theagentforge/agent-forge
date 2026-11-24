@@ -95,7 +95,8 @@ const summaryOutput = z.looseObject({
   verdict,
   security_status: security,
   known: z.boolean(),
-  tool: str,
+  // ADR 0157: null (REST, full) or left out (compact) when the tool isn't on file; the asked id is never echoed here.
+  tool: str.nullable().optional(),
   version: str.optional(),
   field_reports: num,
   people: num,
@@ -131,6 +132,7 @@ export const checkAnswerOutput = z.looseObject({
   verdict,
   other_versions_flagged: z.array(z.looseObject({ version: str, security_status: security })).optional(),
   public_signals_summary: opt(advisoriesOutput),
+  advisories_checked: z.boolean().optional(),
   page_url: opt(str),
   reports_for_this_version: num,
   be_first: z.boolean(),

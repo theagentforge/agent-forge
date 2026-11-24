@@ -24,7 +24,8 @@ import { claimShownPath, commandHash, emit, forgeOrigin, installIdFor, installsP
 // On a repeat check it says what changed since the last answer this machine got (kept in the plugin's data folder,
 // never sent), and each tool's lines end with the answer's signed receipt link.
 
-const TIMEOUT_MS = 3000;
+// ADR 0154: 5 s (was 3 s); hooks.json gives this hook 10 s, and past 5 s the install goes ahead (fail open).
+const TIMEOUT_MS = 5000;
 
 type Answer = VerdictInput & CheckAnswerLike & { tool: { id: string; kind?: string } | null; fingerprint?: string | null };
 export interface Checked {

@@ -1,13 +1,14 @@
 import { CANARY, isRescoredGroup, PUBLIC_NAME, rescoredGroup, RULES_VERSION, TRAP_CATALOG, VERDICT_RUNS } from "@forge/arena";
 import { SCAN_RULES, SCAN_RULES_VERSION, type ScanFamily } from "@forge/shared";
 import { html } from "hono/html";
-import { contaminationStatus, eventWorlds, refereeAudit } from "../arena/benchmark";
+import { contaminationStatus, eventWorlds, refereeAudit, TRAP_SET, trapSetEntries } from "../arena/benchmark";
 import { businessBoard, cellJson, MIN_CELL_ATTEMPTS, type BizCell, type BusinessBoard } from "../arena/business";
 import { JOBS } from "../arena/gauntlet";
 import { formatSlot, nextHeadlineSlot } from "../arena/headline-slot";
 import { EXPERIMENTS, intervalText, pText, type Experiment } from "./experiments";
 import { heldOutGap, weeklyPooledGap } from "../arena/holdout";
 import { latestHardSummary, type FallSummary } from "../arena/results";
+import { refereeValidity } from "../arena/research-validity";
 import { getDb } from "../services/db";
 import { REPLAY_V2_FROM } from "../services/replay-keys";
 import { DATASET_LICENCE, LICENCE_ID, LICENCE_PATH } from "../services/provenance";
@@ -132,7 +133,7 @@ export function rescoredData(r: BusinessBoard | null) {
   };
 }
 
-export function securityData(origin: string, b: BusinessBoard, gap: SecurityGap, audit: string, now = Date.now(), rescored: BusinessBoard | null = null, hard: FallSummary | null = null) {
+export function securityData(origin: string, b: BusinessBoard, gap: SecurityGap, audit: string, now = Date.now(), rescored: BusinessBoard | null = null, hard: FallSummary | null = null, validity: ReturnType<typeof refereeValidity> = null) {
   const next = nextHeadlineSlot(now);
   return {
     name: `${PUBLIC_NAME} security overview`,
@@ -196,6 +197,8 @@ export function securityData(origin: string, b: BusinessBoard, gap: SecurityGap,
       results_policy: { url: `${origin}${RESULTS_POLICY_PATH}`, version: RESULTS_POLICY_VERSION, notice_days: NOTICE_DAYS, paid_placement: false },
       licence: { id: LICENCE_ID, url: `${origin}${LICENCE_PATH}` },
       referee_human_agreement: { status: audit, url: `${origin}/benchmark#referee` },
+      /** The published independent re-grade (ADR 0149), the same figure /research/referee-validity gives; null before release. */
+      referee_validity: validity,
     },
     reports: REPORT_FACTS,
     trap_card_experiments: trapCardExperimentsData(origin),
@@ -290,13 +293,32 @@ async function securityInputs(env: Env) {
 /** The /security?format=json object (the State of Agent Reliability report reads the same numbers). */
 export async function securityJson(env: Env) {
   const { b, gap, audit, rescored, hard } = await securityInputs(env);
-  return securityData(env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard);
+  return securityData(env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard, refereeValidity(env, env.PUBLIC_ORIGIN));
 }
 
 /**
  * ADR 0123: the latest ranked Hard event's line, read from the same summary arena_results gives with no arguments:
  * "In Crucible 2: Hard, the latest ranked Hard event, 17 of 108 attempts (16%) fell for a planted trap…".
  */
+/**
+ * 13 Nov walkthrough: one trap count everywhere, saying what it counts. The catalogue's public traps, and how many of
+ * them the current Trap Set version holds (the same number while every catalogued task version is in the set).
+ */
+export function publicTrapsLine() {
+  const inSet = trapSetEntries().length;
+  const all = TRAP_CATALOG.length;
+  const set = html`<a href="/benchmark">The Forge Trap Set ${TRAP_SET.version}</a>`;
+  return html`${all} public traps in the <a href="/arena/methodology#catalog">trap catalogue</a>, each with a stable ID and the real-world pattern it's based on; ${inSet === all ? html`all ${all} are in ${set}, the versioned, citable benchmark` : html`${inSet} of them are in ${set} (the rest come with task versions it doesn't hold yet)`}.`;
+}
+
+/** The latest referee-validity version (arena/research-validity.ts, shared with the home page's proof strip). */
+export { refereeValidity };
+
+export function refereeValidityLine(v: ReturnType<typeof refereeValidity>) {
+  if (!v) return html`How often an independent check agrees with the referee: not yet published (<a href="/benchmark#referee">referee audit</a>).`;
+  return html`How often an independent check agrees with the referee: an independent checker re-graded every public ranked replay and agreed with the published referee verdict on <b>${num(v.agree)} of ${num(v.trap_verdicts)}</b> trap verdicts (<a href="${new URL(v.url).pathname}" data-referee-validity>referee validity, version ${v.version}</a>). The checker is independent of the referee's code, not of the written rules.`;
+}
+
 export function latestHardLine(h: FallSummary | null) {
   if (!h || !h.event || !h.attempts) return "";
   const w = h.worst_model;
@@ -305,7 +327,8 @@ export function latestHardLine(h: FallSummary | null) {
 
 site.get(SECURITY_PATH, async (c) => {
   const { b, gap, audit, rescored, hard } = await securityInputs(c.env);
-  if (wantsJson(c)) return sendJson(c, securityData(c.env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard));
+  const validity = refereeValidity(c.env, c.env.PUBLIC_ORIGIN);
+  if (wantsJson(c)) return sendJson(c, securityData(c.env.PUBLIC_ORIGIN, b, gap, audit, Date.now(), rescored, hard, validity));
   const older = b.rulesVersions.filter((v) => v.version !== b.rules && !isRescoredGroup(v.version));
   const rs = rescoredData(rescored);
   const olderN = older.reduce((n, v) => n + v.attempts, 0);
@@ -322,23 +345,17 @@ site.get(SECURITY_PATH, async (c) => {
 <h1 class="page-title">What an agent can be tricked into doing, measured</h1>
 <p class="lead">For teams that secure AI agents. Every number links to its source and says what it can't tell you.</p>
 
-<h2 id="reach">What an install can reach</h2>
-<p>A skill file is text the agent obeys. An MCP server, plugin or package runs with the agent's own access. Whatever the agent can reach, the tool can ask for. The Forge's skill scanner has <a href="/scan/rules">${SCAN_RULES.length} rules</a> (version <code>${SCAN_RULES_VERSION}</code>) for patterns behind real attacks on agents. It matches the text only: it doesn't run the code or use a model, so it can miss what isn't written in a known form.</p>
-${more(
-  "What the rules look for",
-  html`<div class="table-wrap"><table class="table stack">
-<thead><tr><th scope="col">What the rules look for</th><th scope="col" class="num">Rules</th><th scope="col">Examples</th></tr></thead>
-<tbody>${fams.map((f) => html`<tr><td class="wide">${f.name}</td><td class="num" data-label="Rules">${f.rules}</td><td data-label="Examples">${f.titles.slice(0, 3).join("; ")}</td></tr>`)}</tbody></table></div>`,
-  { hint: `${SCAN_RULES.length} rules in ${fams.length} families: running downloaded code, reading keys, sending data out, hidden text…` },
-)}
-<p>You often can't read the code first. In the official MCP Registry on ${fmtDay(census.date)}, ${pct(census.remote_only_share)} of ${num(census.servers)} servers were remote only (the code runs on someone else's machine) and ${pct(census.no_repository_share)} listed no source repository (<a href="${census.path}">Registry census</a>).</p>
-
 <h2 id="arena">What the Arena measures</h2>
-<p>The Arena gives AI models everyday business jobs (refunds, supplier invoices, bookings, stock, records) in a sandbox with planted traps. ${TRAP_CATALOG.length} public traps, each with a stable ID and the real-world pattern it's based on (<a href="/arena/methodology#catalog">trap catalogue</a>; as a versioned, citable benchmark: <a href="/benchmark">The Forge Trap Set</a>).</p>
 ${latestHardLine(hard)}
+<p>The Arena gives AI models everyday business jobs (refunds, supplier invoices, bookings, stock, records) in a sandbox with planted traps. ${publicTrapsLine()}</p>
+<h3 id="current-rules">Under the current referee rules only</h3>
 <p>The numbers below count only attempts scored under the current referee rules (<code>${RULES_VERSION}</code>), because a rules change can change how a trap is scored.${olderN ? html` ${num(olderN)} more ranked attempts were scored under older rules (${older.map((v, i) => html`${i ? ", " : ""}${v.version}: ${num(v.attempts)}`)}) and aren't pooled with them; their per-model rows are on <a href="/benchmark#results">the Trap Set results</a>.` : ""}</p>
 ${b.attempts
-  ? html`<p><b>${b.overall.shown ? html`${pct(b.overall.rate!)} of ${b.attempts}` : html`${b.attempts}`} ranked attempts</b>${b.overall.shown ? html` fell for at least one planted trap (95% interval ${pctRange(b.overall.ci!)})` : ""}, across ${b.models.length} models${b.since && b.asOf ? `, ${fmtDay(b.since)} to ${fmtDay(b.asOf)}` : ""}. ${b.knockouts} more attempts ran out of time, tokens or turns and aren't counted either way.</p>
+  ? html`<p data-current-rules-line>${
+      b.attempts < VERDICT_RUNS
+        ? html`An early read on only ${b.attempts} ranked ${b.attempts === 1 ? "attempt" : "attempts"}, not a headline${b.overall.shown ? html`: ${pct(b.overall.rate!)} fell for at least one planted trap (95% interval ${pctRange(b.overall.ci!)})` : " (too few for a rate)"}`
+        : html`<b>${b.overall.shown ? html`${pct(b.overall.rate!)} of ${b.attempts}` : html`${b.attempts}`} ranked attempts</b>${b.overall.shown ? html` fell for at least one planted trap (95% interval ${pctRange(b.overall.ci!)})` : ""}`
+    }, across ${b.models.length} models${b.since && b.asOf ? `, ${fmtDay(b.since)} to ${fmtDay(b.asOf)}` : ""}. ${b.knockouts} more attempts ran out of time, tokens or turns and aren't counted either way.</p>
 ${modelsLine(byModel)}
 ${more(
   html`<span id="models">Which models fell</span>`,
@@ -364,7 +381,7 @@ ${nullFinding()}
 <ul>
 <li><b>The referee reads what happened.</b> It checks the sandbox's end state and the log of tool calls, never the AI's own account. The referee code is public (<a href="https://github.com/theagentforge/agent-forge">theagentforge/agent-forge</a>).</li>
 <li><b>Checkable without trusting us.</b> Runs from ${fmtDay(REPLAY_V2_FROM)} use replay format v2: the log is hash-chained and its final record is signed with Ed25519, with the public keys at <a href="/.well-known/forge-keys.json">/.well-known/forge-keys.json</a>. Anyone can check one: <code>${verifyCommand("<replay URL>")}</code> (<a href="/methodology#replays">how replays are verified</a>).</li>
-<li><b>Limits:</b> runs before ${fmtDay(REPLAY_V2_FROM)} (format v1) carry a server signature (HMAC-SHA256) that only we can check, so for those you have to trust our copy. How often the referee agrees with human reviewers: ${audit === "measured" ? html`measured (<a href="/benchmark#referee">referee audit</a>)` : html`not yet published (<a href="/benchmark#referee">referee audit</a>)`}.</li>
+<li><b>Limits:</b> runs before ${fmtDay(REPLAY_V2_FROM)} (format v1) carry a server signature (HMAC-SHA256) that only we can check, so for those you have to trust our copy. ${refereeValidityLine(validity)}</li>
 </ul>
 ${more("Replays in the dataset, and the gaming test", html`<ul>
 <li><b>Every ranked attempt has a replay</b>, linked from the tables above and listed in <a href="/arena/dataset.json">the dataset</a>. <a href="/dataset/sample">The sample dataset</a> is a fixed, checksummed zip of public records with signed replays to verify; the whole dataset is on <a href="/dataset">the dataset spec</a>.</li>
@@ -373,6 +390,17 @@ ${more("Replays in the dataset, and the gaming test", html`<ul>
 
 <h2 id="gauntlet">Test your own agent</h2>
 <p><a href="/gauntlet">The Gauntlet</a> runs your agent through the same ${JOBS.length} everyday jobs with the same hidden traps, refereed the same way. Free, no account. You get a result page with what it fell for, a <a href="/trap-card">trap card</a> built from those traps, and a re-run to see whether the card helped. For agents handling invoices, purchasing or support, <a href="/teams">we'll run yours and send a report</a>.</p>
+
+<h2 id="reach">What an install can reach</h2>
+<p>A skill file is text the agent obeys. An MCP server, plugin or package runs with the agent's own access. Whatever the agent can reach, the tool can ask for. The Forge's skill scanner has <a href="/scan/rules">${SCAN_RULES.length} rules</a> (version <code>${SCAN_RULES_VERSION}</code>) for patterns behind real attacks on agents. It matches the text only: it doesn't run the code or use a model, so it can miss what isn't written in a known form.</p>
+${more(
+  "What the rules look for",
+  html`<div class="table-wrap"><table class="table stack">
+<thead><tr><th scope="col">What the rules look for</th><th scope="col" class="num">Rules</th><th scope="col">Examples</th></tr></thead>
+<tbody>${fams.map((f) => html`<tr><td class="wide">${f.name}</td><td class="num" data-label="Rules">${f.rules}</td><td data-label="Examples">${f.titles.slice(0, 3).join("; ")}</td></tr>`)}</tbody></table></div>`,
+  { hint: `${SCAN_RULES.length} rules in ${fams.length} families: running downloaded code, reading keys, sending data out, hidden text…` },
+)}
+<p>You often can't read the code first. In the official MCP Registry on ${fmtDay(census.date)}, ${pct(census.remote_only_share)} of ${num(census.servers)} servers were remote only (the code runs on someone else's machine) and ${pct(census.no_repository_share)} listed no source repository (<a href="${census.path}">Registry census</a>).</p>
 
 <h2 id="pre-install">Before an install: check and scan</h2>
 <ul>

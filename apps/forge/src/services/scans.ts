@@ -1,4 +1,4 @@
-import { SCAN_MAX_BYTES, SCAN_RULES_VERSION, scanSkill, type ScanFinding, type ScanResult } from "@forge/shared";
+import { hasUnsafeChars, injectionSignals, urlProblem, SCAN_MAX_BYTES, SCAN_RULES_VERSION, scanSkill, textLike, type ScanFinding, type ScanResult } from "@forge/shared";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import * as t from "../db/schema";
 import { getDb, type Db } from "./db";
@@ -107,7 +107,11 @@ export async function fetchSkillText(input: string, fetcher: typeof fetch = fetc
   return { ok: true, text: new TextDecoder().decode(buf), url: u.toString() };
 }
 
-const cleanName = (s: unknown) => (typeof s === "string" ? s.replace(/[^\p{L}\p{N} ._@/:-]/gu, "").trim().slice(0, 80) || null : null);
+/** ADR 0157: a name a caller gave is shown on public pages, so one that reads as an instruction is dropped. */
+const cleanName = (s: unknown) => {
+  const n = typeof s === "string" ? s.replace(/[^\p{L}\p{N} ._@/:-]/gu, "").trim().slice(0, 80) : "";
+  return n && !injectionSignals(n).length && !textLike(n) ? n : null;
+};
 
 /** Scans and records. `sourceUrl` set means it came from a public URL, so its page is public. */
 export async function scanAndRecord(env: Env, text: string, opts: { name?: unknown; sourceUrl?: string | null; now?: number } = {}) {
@@ -154,6 +158,9 @@ export const scanPath = (fp: string) => `/scan/${fp.replace(/^sha256:/, "")}`;
  * comes from a third-party file and may itself be an injection. Agents get rule ids and line numbers to look at in
  * their own copy; people see the excerpts on the page.
  */
+/** ADR 0157: a scan's source link as agents get it: the URL when it is a plain one, else null. */
+export const agentSourceUrl = (u: string | null | undefined) => (u && urlProblem(u, 2048) === null ? u : null);
+
 export function agentView(r: ScanResult, opts: { isPublic: boolean; origin: string; sourceUrl?: string | null }) {
   return {
     verdict: r.verdict,
@@ -163,7 +170,8 @@ export function agentView(r: ScanResult, opts: { isPublic: boolean; origin: stri
     findings: r.findings.map((f: ScanFinding) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })),
     rules_url: `${opts.origin}/scan/rules`,
     page_url: opts.isPublic ? `${opts.origin}${scanPath(r.fingerprint)}` : null,
-    source_url: opts.sourceUrl ?? null,
+    // ADR 0157: the fetched link goes back to agents only when it is a plain URL.
+    source_url: agentSourceUrl(opts.sourceUrl),
     bytes: r.bytes,
     guarantee: false,
   };
@@ -268,10 +276,13 @@ export function skillLabel(sourceUrl: string | null, name?: string | null): { ti
       const gh = u.hostname === "raw.githubusercontent.com" && parts.length >= 4;
       const file = parts.at(-1) ?? "";
       const folder = /^skill\.md$/i.test(file) && parts.length > (gh ? 4 : 1) ? parts.at(-2)! : file;
-      return { title: folder || u.hostname, where: gh ? `${parts[0]}/${parts[1]}` : u.hostname };
+      // ADR 0157: a path part is the link owner's text; one with spaces or that reads as an instruction isn't a title.
+      const plain = (x: string | undefined) => !!x && !hasUnsafeChars(x) && !textLike(x);
+      return { title: plain(folder) ? folder : u.hostname, where: gh ? (plain(parts[0]) && plain(parts[1]) ? `${parts[0]}/${parts[1]}` : "GitHub") : u.hostname };
     } catch {
       /* fall through */
     }
   }
-  return { title: name || "Pasted skill", where: null };
+  // Older rows may hold a name stored before cleanName refused instruction-like ones.
+  return { title: name && !injectionSignals(name).length && !textLike(name) ? name : "Pasted skill", where: null };
 }

@@ -1,5 +1,5 @@
 import { html } from "hono/html";
-import { entryToolId, history, latestRun, newlyBroken, OUTCOMES, pct, runForDay, sweepHistory, toCsv, weekOfTests, type HouseEntry, type HouseOutcome } from "../services/house-report";
+import { entryToolId, history, latestRun, newlyBroken, OUTCOME_TEXT, OUTCOMES, pct, runForDay, sweepHistory, toCsv, weekOfTests, type HouseEntry, type HouseOutcome } from "../services/house-report";
 import { cachedToolScans } from "../services/house-tools";
 import { disclosure, more, statStrip, toolHref } from "./components";
 import { send, site } from "./pages";
@@ -9,17 +9,7 @@ import { send, site } from "./pages";
 
 export const HOUSE_REPORT_PATH = "/reports/house";
 
-export const OUTCOME_TEXT: Record<HouseOutcome, string> = {
-  worked: "started and listed its tools",
-  partial: "started, but listing tools failed",
-  failed: "npm could not install it",
-  needs_config: "asked for a key or setting",
-  no_answer: "never answered the handshake",
-  not_on_npm: "published version not on npm",
-  not_on_pypi: "published version not on PyPI",
-  no_command: "has no command named after the package",
-  error: "test error (not counted against it)",
-};
+export { OUTCOME_TEXT };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const n = (v: number) => v.toLocaleString("en-US");

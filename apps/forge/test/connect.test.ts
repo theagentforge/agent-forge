@@ -9,13 +9,26 @@ import "../src/index";
 const page = async (path: string, headers: Record<string, string> = {}) => (await fetchWorker(path, { headers: { Accept: "text/html", ...headers } })).text();
 
 describe("October 2026 advisory lines (crisis-messaging §4)", () => {
-  it("home carries the dated line until it retires; /connect carries its sub-line", async () => {
-    const home = await page("/");
-    expect(home).toContain("<b>October 2026 advisories:</b> checks now include OSV malicious-package and CISA exploited-vulnerability data.");
-    expect(home).toContain('href="/advisories/2026-10?from=home"');
-    expect(String(advisoryLine(ADVISORY_LINE_UNTIL))).toBe("");
+  it("home carries the dated line until it retires (12 Nov home, restored 16 Nov); /connect links the archive", async () => {
+    // The line itself, on a fixed clock either side of the retire date (22 Nov 2026).
+    const LINE = "<b>October 2026 advisories:</b> checks now include OSV malicious-package and CISA exploited-vulnerability data.";
+    expect(String(advisoryLine(ADVISORY_LINE_UNTIL - 1))).toContain(LINE);
+    expect(String(advisoryLine(ADVISORY_LINE_UNTIL - 1))).toContain('href="/advisories/2026-10?from=home"');
     expect(String(advisoryLine(ADVISORY_LINE_UNTIL - 1))).toContain("See what changed");
-    expect(await page("/connect")).toContain("Your agent can check its own stack against <a href=\"/advisories/2026-10?from=connect\">this month's advisories</a> once connected.");
+    expect(String(advisoryLine(ADVISORY_LINE_UNTIL))).toBe("");
+    // The live home page renders with today's clock: the line before the retire date, none after.
+    const home = await page("/");
+    if (Date.now() < ADVISORY_LINE_UNTIL) {
+      expect(home).toContain(LINE);
+      expect(home).toContain('href="/advisories/2026-10?from=home"');
+    } else {
+      expect(home).not.toContain("October 2026 advisories:");
+      expect(home).not.toContain('href="/advisories/2026-10?from=home"');
+    }
+    // 13 Nov walkthrough: /connect no longer calls it this month's.
+    const connect = await page("/connect");
+    expect(connect).not.toContain("this month's advisories");
+    expect(connect).toContain('href="/advisories/2026-10?from=connect"');
   });
 });
 

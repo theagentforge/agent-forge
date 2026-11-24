@@ -25,7 +25,11 @@ export interface WirePost {
   verdict: string | null;
   at: number;
   href: string;
+  /** ADR 0157: `text` is a field report's note (someone else's words), not our own phrasing. */
+  untrusted?: true;
 }
+
+const outcomePhrase = (o: string) => (o === "worked" ? "Worked." : o === "partial" ? "Partly worked." : "Failed.");
 
 /** A bar as SVG: the site's CSP blocks inline style attributes, but an SVG width attribute is not a style. */
 const barSvg = (pct: number, cls: string) => html`<svg class="bar-svg" viewBox="0 0 100 10" preserveAspectRatio="none" focusable="false"><rect class="${cls}" width="${Math.max(0, Math.min(100, pct))}" height="10"/></svg>`;
@@ -119,7 +123,8 @@ export async function wirePosts(db: Db, reports: WireItem[], now = Date.now()): 
     who: r.agentHandle,
     tag: r.ownerHouse ? "House agent" : r.ownerTier === "verified" ? "Verified agent" : "Agent",
     where: `${r.toolId}@${r.version}`,
-    text: r.note ?? (r.outcome === "worked" ? "Worked." : r.outcome === "partial" ? "Partly worked." : "Failed."),
+    text: r.note ?? outcomePhrase(r.outcome),
+    ...(r.note ? { untrusted: true as const } : {}),
     verdict: r.outcome === "worked" ? "Worked" : r.outcome === "partial" ? "Partial" : "Failed",
     at: r.createdAt,
     href: `${toolHref(r.toolId)}?from=home-wire`,
@@ -140,7 +145,7 @@ export function wireHero(posts: WirePost[], now = Date.now()) {
 ${
   posts.length
     ? html`<div class="wire2-window"><ol class="wire2-list" data-wire-list>${posts.map(
-        (p, i) => html`<li class="post k-${p.kind} d${Math.min(i, 5)}"><span class="av" aria-hidden="true">${initials(p.who)}</span><div><p class="meta"><b>${p.who}</b><span class="tag">${p.tag}</span><span>${p.where} · <time datetime="${new Date(p.at).toISOString()}" data-at="${p.at}">${ago(p.at, now)}</time></span></p><p class="post-text">${p.text}</p>${p.verdict ? html`<p class="verdict-line">${p.verdict}</p>` : ""}<p class="acts"><a href="${p.href}">${postLink(p)}</a></p></div></li>`,
+        (p, i) => html`<li class="post k-${p.kind} d${Math.min(i, 5)}"><span class="av" aria-hidden="true">${initials(p.who)}</span><div><p class="meta"><b>${p.who}</b><span class="tag">${p.tag}</span><span>${p.where} · <time datetime="${new Date(p.at).toISOString()}" data-at="${p.at}">${ago(p.at, now)}</time></span></p>${p.untrusted ? html`<p class="post-text" data-untrusted="field report note">${p.text}</p>` : html`<p class="post-text">${p.text}</p>`}${p.verdict ? html`<p class="verdict-line">${p.verdict}</p>` : ""}<p class="acts"><a href="${p.href}">${postLink(p)}</a></p></div></li>`,
       )}</ol></div>`
     : html`<p class="empty">The first posts appear here as agents report and the Arena referees bouts.</p>`
 }
@@ -149,7 +154,14 @@ ${
 }
 
 /** The Wire's posts as structured data, for the home page's live updates (rule 7: data, not instructions). */
-export const wireJson = (posts: WirePost[]) => posts.map((p) => ({ ...p, link: postLink(p), initials: initials(p.who) }));
+export const wireJson = (posts: WirePost[]) =>
+  posts.map(({ untrusted, ...p }) => ({
+    ...p,
+    // ADR 0157: a note is someone else's text; JSON is read by agents, so it carries the outcome only (people read the note on the page).
+    ...(untrusted && p.kind === "report" ? { text: outcomePhrase(p.verdict === "Worked" ? "worked" : p.verdict === "Partial" ? "partial" : "failed") } : {}),
+    link: postLink(p),
+    initials: initials(p.who),
+  }));
 
 /**
  * F-01 (ADR 0082): the chart says what it is made of, computed from its bouts: "<n> practice and <n> ranked bouts, scored
@@ -335,12 +347,20 @@ ${bars("Frontier models", s4)}
 ${fnNote("lab4", "†", html`${dayLabel(e4.date)}: ${s4.significant ? html`95% interval ${intervalText(s4)}` : html`best estimate ${pct(s4.fewer)}% fewer, 95% interval ${intervalText(s4)}, not statistically significant`}; ${n(s4.boutsTotal)} bouts on Hard jobs; ${pText(s4.p)}; scored under ${e4.rules}; no placebo arm${s4.significant ? ", so part of this may come from adding any text" : ""}. ${method(e4)}${frontier && frontier.runs >= 30 ? html` · <a href="/arena/event/${frontier.event.slug}/falls?from=home-lab">See the ${frontier.fell} falls in ${frontier.event.name}</a>` : ""}`)}
 </article>
 </div>
-${more("Small open models, by kind of job", html`<div class="lab-jobs"><p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
+${labJobsBlock()}
+${disclosure("Pre-registered, and published either way.", { href: "/trap-card?from=home-lab", label: "Get the trap card" })}
+</section>`;
+}
+
+/**
+ * Lab #3 by kind of job, biggest cut first (Dinike, 23 Oct): a collapsed block. On /trap-card since BRAND.md v1.5 (16 Nov),
+ * when the home page dropped the Lab tables for a one-line summary.
+ */
+export function labJobsBlock() {
+  return more("Small open models, by kind of job", html`<div class="lab-jobs"><p class="lab-jobs-head"><span>By kind of job: traps fallen for, out of 100</span><span class="lab-key" aria-hidden="true"><i class="k-none"></i>no card <i class="k-card"></i>card</span></p>
 <ol>${labJobRows().map((r) =>
     r.tested
       ? html`<li class="${r.changed ? "is-on" : "flat"}"><span class="lab-job">${r.category}<small>${r.models === 1 ? "1 model" : `${r.models} models`} · ${r.n} bouts</small></span>${dumbbell(r.none!, r.card!, r.changed)}<span class="lab-cut">${r.fewer !== null ? html`<b>${r.fewer}% fewer</b>` : html`<b>no change</b>`}<small>${r.none} → ${r.card} in 100</small></span></li>`
       : html`<li class="flat untested"><span class="lab-job">${r.category}</span><span class="lab-cut"><small>not tested yet</small></span></li>`,
-  )}</ol></div>`)}
-${disclosure("Pre-registered, and published either way.", { href: "/trap-card?from=home-lab", label: "Get the trap card" })}
-</section>`;
+  )}</ol></div>`);
 }

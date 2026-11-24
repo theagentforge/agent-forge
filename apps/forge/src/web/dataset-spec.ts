@@ -13,6 +13,8 @@ import { commercialLicenceLine, NOT_KNOWN } from "./benchmark";
 import { disclosure, fieldReportsLabel, more } from "./components";
 import { CROISSANT_PATH } from "./croissant";
 import { DATASHEET_PATH } from "./dataset-datasheet";
+import { RESEARCH_VALIDITY_PATH, researchIndex } from "../arena/research-validity";
+import { validityReleased } from "./validity-switch";
 import { send, sendJson, site, wantsJson } from "./pages";
 import { verifyCommand } from "./replay-verify";
 import { statsData } from "./stats";
@@ -168,6 +170,8 @@ export async function datasetSpecData(env: Env) {
       json_schema_whole_file: `${origin}${BENCHMARK_FILE_SCHEMA_PATH}`,
       croissant: `${origin}${CROISSANT_PATH}`,
       datasheet: `${origin}${DATASHEET_PATH}`,
+      // ADR 0149: the referee audit as a citable report, frozen by version; only once the validity pack is public.
+      referee_validity_report: validityReleased(env) ? { url: `${origin}${RESEARCH_VALIDITY_PATH}`, latest: researchIndex(origin).latest } : null,
       citation_cff: `${origin}${BENCHMARK_PATH}/v1/CITATION.cff`,
       bouts_json: `${origin}/arena/dataset.json`,
       osv_feed: `${origin}${OSV_FEED_PATH}`,
@@ -235,6 +239,7 @@ site.get(DATASET_SPEC_PATH, async (c) => {
 <tr><th scope="row">Records</th><td>${typeof k.bouts.refereed_practice_included === "number" ? `${n(k.bouts.refereed_practice_included)} refereed Arena bouts, practice included, on ` : "Refereed Arena bouts on "}${k.trap_set.traps} public traps${typeof k.skill_scans.distinct_skill_files_scanned === "number" ? `; ${n(k.skill_scans.distinct_skill_files_scanned)} skill files scanned` : ""}${f.sample.status === "published" ? html`; a fixed <a href="${SAMPLE_DIR}">sample of ${n(f.sample.records)} records</a>` : ""}.</td></tr>
 <tr><th scope="row">Formats</th><td>JSON, JSON Schema, Croissant 1.0, CITATION.cff and OSV (<a href="#formats">all files</a>).</td></tr>
 <tr><th scope="row">Datasheet</th><td>Motivation, composition, collection, uses, distribution and maintenance of each dataset, with its known gaps (<a href="${DATASHEET_PATH}" data-link="datasheet">datasheet</a>).</td></tr>
+${f.referee_validity_report?.latest ? html`<tr data-k="referee_validity_report"><th scope="row">Referee validity</th><td>How often the referee is wrong, re-graded by an independent checker over every public ranked replay: a citable report, frozen by version (<a href="${RESEARCH_VALIDITY_PATH}" data-link="research">version ${f.referee_validity_report.latest.version}</a>).</td></tr>` : ""}
 <tr><th scope="row">Licence</th><td>Evaluation only, not for training (<a href="#licence">terms</a>).</td></tr>
 </tbody></table></div>
 ${disclosure(html`Numbers are read live from the same functions as <a href="/stats">/stats</a> and <a href="${BENCHMARK_PATH}">/benchmark</a> and count everything, our own test agents included. <a href="${DATASET_SPEC_JSON_PATH}">JSON</a>`)}

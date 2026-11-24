@@ -15,6 +15,11 @@ export interface VerdictInput {
   page_url: string | null;
   /** Published advisories (crisis-wave plan C2): the line names the one behind an advisory-based verdict. */
   public_signals_summary?: { advisories: { id: string; kind: string }[] } | null;
+  /**
+   * ADR 0152: false when no advisory source was checked (no npm or PyPI package, or OSV didn't answer). Missing on
+   * answers from before the field existed, which are read as checked (the old behaviour).
+   */
+  advisories_checked?: boolean;
 }
 
 /** The advisory id behind an advisory-based verdict: a malicious-package record first. */
@@ -44,6 +49,9 @@ export function displayVerdict(c: Pick<VerdictInput, "security_status" | "forge_
   return c.forge_score === null ? "insufficient" : "clear";
 }
 
+/** ADR 0152: added to a clear or not-enough-reports line when `advisories_checked` is false. */
+export const ADVISORIES_NOT_CHECKED = "advisories not checked";
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function verdictLine(c: VerdictInput): string {
@@ -58,9 +66,11 @@ export function verdictLine(c: VerdictInput): string {
   switch (v) {
     case "clear":
       parts.push("clear", `Forge Score ${c.forge_score}`, plural(c.distinct_owners, "independent agent"), subject);
+      if (c.advisories_checked === false) parts.push(ADVISORIES_NOT_CHECKED);
       break;
     case "insufficient":
       parts.push(`not enough reports yet (${Math.min(c.distinct_owners, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE})`, subject);
+      if (c.advisories_checked === false) parts.push(ADVISORIES_NOT_CHECKED);
       break;
     case "caution":
       parts.push("caution", "security report under review", subject);

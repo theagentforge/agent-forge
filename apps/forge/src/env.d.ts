@@ -59,6 +59,17 @@ interface ForgeSecrets {
    * the drift report). Off by default (unset): 404 for everyone but a signed-in admin. Not a secret.
    */
   DRIFT_PUBLIC?: string;
+  /**
+   * ADR 0151 release switch: "on" publishes the live drift monitor's change figures (totals, whitespace share on
+   * /drift/coverage), the gateway API (/api/drift/*) and forge_watch's `servers` field. Off by default (unset): coverage
+   * counts and the policy page stay public; the rest is 404 for everyone but a signed-in founder. Not a secret.
+   */
+  LIVE_DRIFT_PUBLIC?: string;
+  /**
+   * ADR 0151 second switch: "on" also serves third-party tool text (snapshot bodies, change events' before/after text)
+   * once LIVE_DRIFT_PUBLIC is on. Off by default (unset): digests and change classes only; a founder sees the text. Not a secret.
+   */
+  LIVE_DRIFT_TEXT_PUBLIC?: string;
   /** Injected by OAuthProvider into the default handler. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

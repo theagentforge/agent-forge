@@ -2,6 +2,7 @@ import {
   displayVerdict,
   reportSchema,
   TOOL_ID_PATTERN,
+  noteNeedsReview,
   scanNote,
   scoreToolVersion,
   TOOL_KINDS,
@@ -68,6 +69,12 @@ export interface CheckResult {
    * couldn't be reached. Identifiers only: ids, aliases, fixed versions, dates and links (never advisory text).
    */
   public_signals_summary: AdvisoryResult | null;
+  /**
+   * ADR 0152: whether an advisory source answered for this check. False when the tool has no npm or PyPI package (a
+   * GitHub repository, a skill, an API) or OSV didn't answer: a "clear" then means only that nothing on the Forge
+   * flagged it. A separate field, not a security_status value, so clients already installed keep working.
+   */
+  advisories_checked: boolean;
   page_url: string | null;
   /** The version the agent asked about (from `version`, the id or the URL); `version` is the one the reports are on. */
   asked_version?: string;
@@ -160,6 +167,20 @@ export async function findTool(db: Db, canonicalId: string) {
   return alias ? db.query.tools.findFirst({ where: eq(t.tools.id, alias.toolId) }) : undefined;
 }
 
+/** findTool in one round trip: the canonical id and the alias read together; the canonical id wins, as in findTool. */
+async function findToolAtOnce(db: Db, canonicalId: string) {
+  const [direct, viaAlias] = await Promise.all([
+    db.query.tools.findFirst({ where: eq(t.tools.canonicalId, canonicalId) }),
+    db
+      .select({ tool: t.tools })
+      .from(t.toolAliases)
+      .innerJoin(t.tools, eq(t.tools.id, t.toolAliases.toolId))
+      .where(eq(t.toolAliases.alias, canonicalId))
+      .limit(1),
+  ]);
+  return direct ?? viaAlias[0]?.tool;
+}
+
 /**
  * Published advisories for a check (crisis-wave plan P1):
  * - with a version: a malicious-package record for it (a MAL- id, or a CWE-506 record: services/advisories.ts) is "flagged"; any other advisory for it is "under review"
@@ -186,7 +207,51 @@ async function advisoriesFor(env: Env, ids: string[], version: string | null) {
   return r ? markExploited(r, kev.ids, kev.updated) : null;
 }
 
-export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResult> {
+/** ADR 0154: how long a check's result is kept in KV (global), for the next asker of the same question anywhere. */
+export const CHECK_KV_SECONDS = 300;
+/** Off in most tests (test/apply-migrations.ts), so a test that files a report checks it straight back. */
+export const checkKvCache = { enabled: true };
+/** The KV key of a check's kept result: the four things asked, as asked. */
+export const checkCacheKey = (q: Pick<CheckQuery, "id" | "url" | "fingerprint" | "version">) =>
+  `chk:v1:${JSON.stringify([q.id ?? null, q.url ?? null, q.fingerprint ?? null, q.version ?? null])}`;
+
+/**
+ * Drops the kept check results a filed report can change (ADR 0154 review): each id it may have been asked by, with
+ * and without the version, and its fingerprint. A few KV deletes; other spellings (a page URL) age out in 300 s.
+ */
+export async function forgetCheck(env: Pick<Env, "KV">, ids: string[], version: string | null, fingerprint: string | null) {
+  const keys = new Set<string>();
+  for (const id of new Set(ids.filter(Boolean))) {
+    keys.add(checkCacheKey({ id }));
+    if (version) keys.add(checkCacheKey({ id, version }));
+    if (version) keys.add(checkCacheKey({ id: `${id}@${version}` }));
+  }
+  if (fingerprint) keys.add(checkCacheKey({ fingerprint }));
+  await Promise.all([...keys].map((k) => env.KV.delete(k).catch(() => {})));
+}
+
+/**
+ * checkTool, answered from KV when the same question (id, url, fingerprint, version) was asked in the last
+ * CHECK_KV_SECONDS: a popular tool's check then costs no D1 round trip and no OSV or registry call in a data centre
+ * whose edge cache doesn't hold it. Used by REST /api/v1/check and the public MCP forge_check.
+ */
+export async function cachedCheckTool(env: Env, q: CheckQuery, opts: { waitUntil?: (p: Promise<unknown>) => void } = {}): Promise<{ result: CheckResult; cached: boolean }> {
+  const key = checkCacheKey(q);
+  const usable = checkKvCache.enabled && key.length <= 500;
+  if (usable) {
+    const hit = await env.KV.get<CheckResult>(key, "json").catch(() => null);
+    if (hit && typeof hit === "object" && typeof hit.security_status === "string") return { result: hit, cached: true };
+  }
+  const result = await checkTool(env, q, opts);
+  if (usable) {
+    const put = env.KV.put(key, JSON.stringify(result), { expirationTtl: CHECK_KV_SECONDS }).catch(() => {});
+    if (opts.waitUntil) opts.waitUntil(put);
+    else await put;
+  }
+  return { result, cached: false };
+}
+
+export async function checkTool(env: Env, asked: CheckQuery, opts: { waitUntil?: (p: Promise<unknown>) => void } = {}): Promise<CheckResult> {
   const db = getDb(env);
   // A version written into the id or the registry URL counts as the version asked about (24 Oct production check).
   let q = asked;
@@ -209,18 +274,19 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
     if (version) tool = await db.query.tools.findFirst({ where: eq(t.tools.id, version.toolId) });
   } else {
     canonical = q.id ? canonicalToolId(q.id) : canonicalFromUrl(q.url!);
-    tool = await findTool(db, canonical);
+    // ADR 0154: the canonical id and the alias are looked up at once (findTool asks one after the other), and the
+    // asked and newest versions at once: two D1 round trips where there were up to five.
+    tool = await findToolAtOnce(db, canonical);
     // The version asked about, when reports exist for it; otherwise the newest on file (asked_version says which).
-    if (tool && q.version)
-      version = await db.query.toolVersions.findFirst({
-        where: and(eq(t.toolVersions.toolId, tool.id), eq(t.toolVersions.version, q.version)),
-        orderBy: desc(t.toolVersions.firstSeenAt),
-      });
-    if (tool && !version)
-      version = await db.query.toolVersions.findFirst({
-        where: eq(t.toolVersions.toolId, tool.id),
-        orderBy: desc(t.toolVersions.firstSeenAt),
-      });
+    if (tool) {
+      const [asked, newest] = await Promise.all([
+        q.version
+          ? db.query.toolVersions.findFirst({ where: and(eq(t.toolVersions.toolId, tool.id), eq(t.toolVersions.version, q.version)), orderBy: desc(t.toolVersions.firstSeenAt) })
+          : undefined,
+        db.query.toolVersions.findFirst({ where: eq(t.toolVersions.toolId, tool.id), orderBy: desc(t.toolVersions.firstSeenAt) }),
+      ]);
+      version = asked ?? newest;
+    }
   }
 
   if (!tool) {
@@ -259,6 +325,7 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
       security_status: security,
       other_versions_flagged: [],
       public_signals_summary: advisories,
+      advisories_checked: !!advisories,
       page_url: null,
       reports_for_this_version: 0,
       be_first: true,
@@ -298,13 +365,19 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
   const aliases = aliasRows.map((a) => a.alias);
   const onAsked = !(q.version && version?.version !== q.version);
   const [advisories, listed] = await Promise.all([
-    advisoriesFor(env, [tool.canonicalId, ...aliases], q.version ?? version?.version ?? null).then(async (a) => {
-      if (a) await recordAdvisories(db, tool.id, a).catch(() => {});
+    // ADR 0154: the OSV answer is stored for the tool page without holding up the answer (up to three D1 round trips).
+    advisoriesFor(env, [tool.canonicalId, ...aliases], q.version ?? version?.version ?? null).then((a) => {
+      if (a) {
+        const stored = recordAdvisories(db, tool.id, a).catch(() => {});
+        if (opts.waitUntil) opts.waitUntil(stored);
+        else return stored.then(() => a);
+      }
       return a;
     }),
     version && onAsked && reportCount ? reportsWithVerdicts(env, db, version.id, 100) : [],
   ]);
   const status = worse(inherited ?? ownStatus, advisoryStatus(advisories));
+  const security = verdictFor(status);
   return {
     known: true,
     tool: { kind: tool.kind, id: tool.canonicalId },
@@ -319,9 +392,10 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
     strain_reports: score?.strainReports ?? 0,
     strain_hook_reports: score?.strainHookReports ?? 0,
     outcome_breakdown: score?.outcomeBreakdown ?? EMPTY_BREAKDOWN,
-    security_status: verdictFor(status),
+    security_status: security,
     other_versions_flagged: otherFlagged.map((o) => ({ version: o.version, security_status: verdictFor(o.status) })),
     public_signals_summary: advisories,
+    advisories_checked: !!advisories,
     page_url: toolPageUrl(env.PUBLIC_ORIGIN, tool.canonicalId),
     reports_for_this_version: q.version && version?.version !== q.version ? 0 : reportCount,
     be_first: q.version && version?.version !== q.version ? true : reportCount === 0,
@@ -331,7 +405,7 @@ export async function checkTool(env: Env, asked: CheckQuery): Promise<CheckResul
       report_url: reportUrl(env.PUBLIC_ORIGIN, { tool: tool.canonicalId, kind: TOOL_KINDS.includes(tool.kind as never) ? (tool.kind as ReportDraft["kind"]) : "mcp_server", ...(onAsked ? { version: version?.version ?? q.version ?? "", fp: version?.fingerprint ?? "" } : { version: q.version!, fp: "" }) }),
       reports_needed: reportsNeeded(score?.distinctOwners ?? 0, score?.verifiedOwners ?? 0, score?.successScore != null),
     },
-    verdict: displayVerdict({ security_status: verdictFor(status), forge_score: score?.successScore ?? null }),
+    verdict: displayVerdict({ security_status: security, forge_score: score?.successScore ?? null }),
     reports: listed.slice(0, 20),
     corroborated_reports: listed.filter((r) => r.verdicts.corroborated).length,
   };
@@ -415,6 +489,11 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
     // don't spend the shared AI moderation budget (ADR 0011 b: ~500 a night).
     noteState = "approved";
     note = report.note;
+  } else if (report.note && noteNeedsReview(report.note)) {
+    // ADR 0157: Llama Guard judges harm, not prompt injection. A note that matches our injection patterns (the
+    // forge_scan rules for hidden instructions plus NT-INJ-*) is kept for a person to read and never shown until then.
+    noteState = "review";
+    note = report.note;
   } else if (report.note) {
     noteState = await moderateWithinBudget(env, report.note, now);
     // A note the model rejects is dropped; the structured report still counts.
@@ -448,6 +527,8 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
   };
   await db.insert(t.reports).values({ ...fields, serverSignature: await signReport(env.REPORT_SIGNING_KEY, fields) });
   await rescoreToolVersion(db, version, now);
+  // ADR 0154: a kept check result for this tool may now be out of date.
+  await forgetCheck(env, [tool.canonicalId, report.tool.id], version.version, version.fingerprint);
   if (!held) await forgetContributor(env, who.human.id);
   let verdict: Extract<ReportResult, { ok: true }>["verdict"];
   if (target && report.verdict) {
@@ -467,7 +548,7 @@ export async function submitReport(env: Env, props: AgentProps, input: unknown, 
       ? "none"
       : noteState === "approved"
         ? "published"
-        : noteState === "pending"
+        : noteState === "pending" || noteState === "review"
           ? "pending_moderation"
           : "removed_by_moderation",
     ...(verdict ? { verdict } : {}),

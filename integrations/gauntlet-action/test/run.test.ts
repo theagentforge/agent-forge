@@ -19,7 +19,7 @@ const summary = (fell: boolean, jobs = 1, reason = "finished") => ({
 });
 
 /** A fake Forge (start, act, status, public JSON), a fake model and a fake GitHub, recording every request. */
-function world(opts: { jobs?: number; fell?: boolean; modelReplies?: ((n: number) => any)[]; start?: { status: number; body: any }; finishOnAct?: boolean; reason?: string; actStatus?: number; pubStatus?: number; comments?: { id: number; body: string }[] } = {}) {
+function world(opts: { jobs?: number; fell?: boolean; modelReplies?: ((n: number) => any)[]; start?: { status: number; body: any }; finishOnAct?: boolean; reason?: string; actStatus?: number; pubStatus?: number; comments?: { id: number; body: string }[]; replays?: "signed" | "unsigned" } = {}) {
   const jobs = opts.jobs ?? 1;
   const calls: { url: string; method: string; headers: Record<string, string>; body: any }[] = [];
   let current = 1;
@@ -55,6 +55,8 @@ function world(opts: { jobs?: number; fell?: boolean; modelReplies?: ((n: number
       }
       if (url === `${ORIGIN}/api/v1/gauntlet/${ID}`) return json(done ? { status: "done", report: { challenge_of: null } } : { status: "open" });
       if (url === `${ORIGIN}/gauntlet/r/${ID}?format=json` && opts.pubStatus) return json({ error: "internal" }, opts.pubStatus);
+      if (opts.replays && new RegExp(`^${ORIGIN}/gauntlet/r/${ID}/\\d+\\.json$`).test(url))
+        return json({ id: `${ID}/1`, kind: "gauntlet", replay: opts.replays === "signed" ? { format: "forge-replay/2", chain: {}, seal: { signature: "ed25519:c2ln" } } : { format: "forge-replay/1", signature_alg: null } });
       if (url === `${ORIGIN}/gauntlet/r/${ID}?format=json`) return json(done ? { id: ID, mode: jobs === 1 ? "sprint" : "full", status: "done", summary: summary(!!opts.fell, jobs, opts.reason), trap_card: jobs > 1 ? "Checks for my AI agent:\n- Verify the payee" : null } : { id: ID, status: "open", summary: null });
       if (url.includes("/issues/7/comments") && method === "GET") return json(opts.comments ?? []);
       if (url.includes("/comments")) return json({});
@@ -331,6 +333,54 @@ describe("summary, comment and claim link", () => {
     const md = summaryMarkdown(o, judge(o, inputs()), inputs());
     expect(md).toContain("not that the agent is safe");
     expect(md).not.toMatch(/certif/i);
+  });
+});
+
+describe("the blocking gate and its audit evidence", () => {
+  it("a sprung trap fails the step by default (exit code 1); fail-on-trap: none is the documented opt-out", async () => {
+    const blocked = world({ fell: true });
+    expect(await run(inputs(), event, blocked.io)).toBe(1);
+    expect(blocked.out.verdict).toBe("fail");
+    expect(blocked.commands.some((c) => c.startsWith("::error title=forge-gauntlet::Fell for 1 trap"))).toBe(true);
+    const reportOnly = world({ fell: true });
+    expect(await run(inputs({ "INPUT_FAIL-ON-TRAP": "none" }), event, reportOnly.io)).toBe(0);
+    expect(reportOnly.out["fell-for"]).toBe("FA-PAY-001");
+    const yml = readFileSync(new URL("../action.yml", import.meta.url), "utf8");
+    expect(yml).toMatch(/fail-on-trap:\n {4}description: "any \(default: the step exits non-zero[^"]*none \(report only: the opt-out\)/);
+    expect(/fail-on-trap:\n.*\n.*\n    default: (\S+)/.exec(yml)![1]).toBe("any");
+  });
+
+  it("outputs each played job's signed replay as audit evidence, with how to check it", async () => {
+    const w = world({ jobs: 6, fell: true, replays: "signed" });
+    expect(await run(inputs({ INPUT_MODE: "full" }), event, w.io)).toBe(1);
+    const urls = w.out["replay-urls"]!.split(",");
+    expect(urls).toEqual([1, 2, 3, 4, 5, 6].map((n) => `${ORIGIN}/gauntlet/r/${ID}/${n}.json`));
+    expect(w.out["replays-signed"]).toBe("6");
+    expect(w.md).toContain("Audit evidence: 6 of 6 job replays signed");
+    expect(w.md).toContain(`npx @theagentforge/cli@0.7.1 verify ${urls[0]}`);
+    // Read from The Forge with plain GETs; the model key never goes there.
+    const reads = w.calls.filter((c) => c.url.endsWith(".json") && c.url.startsWith(`${ORIGIN}/gauntlet/r/`));
+    expect(reads.map((c) => c.method)).toEqual(Array(6).fill("GET"));
+    for (const c of reads) expect(JSON.stringify(c)).not.toContain(KEY);
+  });
+
+  it("says so when a replay is not signed, and evidence never changes the verdict", async () => {
+    const w = world({ fell: false, replays: "unsigned" });
+    expect(await run(inputs(), event, w.io)).toBe(0);
+    expect(w.out["replays-signed"]).toBe("0");
+    expect(w.md).toContain("Audit evidence: 0 of 1 job replay signed");
+    expect(w.md).toContain("job 1, not signed");
+    expect(w.md).not.toContain("verify");
+    const down = world({ fell: false });
+    expect(await run(inputs(), event, down.io)).toBe(0);
+    expect(down.out["replays-signed"]).toBe("0");
+  });
+
+  it("an unfinished run has no evidence lines and empty evidence outputs", async () => {
+    const w = world({ modelReplies: Array(8).fill(() => ({ content: "no tools" })), replays: "signed" });
+    expect(await run(inputs(), event, w.io)).toBe(1);
+    expect(w.out["replay-urls"]).toBe("");
+    expect(w.md).not.toContain("Audit evidence");
   });
 });
 

@@ -8,6 +8,19 @@ import { FAMILIES, recordHouseNight } from "./house-results";
 export const OUTCOMES = ["worked", "partial", "failed", "needs_config", "no_answer", "not_on_npm", "not_on_pypi", "no_command", "error"] as const;
 export type HouseOutcome = (typeof OUTCOMES)[number];
 
+/** Each outcome in words (the House Report page and the tool page's answer line). */
+export const OUTCOME_TEXT: Record<HouseOutcome, string> = {
+  worked: "started and listed its tools",
+  partial: "started, but listing tools failed",
+  failed: "npm could not install it",
+  needs_config: "asked for a key or setting",
+  no_answer: "never answered the handshake",
+  not_on_npm: "published version not on npm",
+  not_on_pypi: "published version not on PyPI",
+  no_command: "has no command named after the package",
+  error: "test error (not counted against it)",
+};
+
 const entrySchema = z.strictObject({
   /** Only PyPI rows carry it (ADR 0108); a row without it is npm, as every row was before. */
   registry: z.literal("pypi").optional(),

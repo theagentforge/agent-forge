@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUDIT_WRONG_RUNS, HERO_LINES, proofOf } from "../src/arena/hero-proof";
+import { AUDIT_WRONG_RUNS, auditRetired, HERO_LINES, linePairs, proofOf } from "../src/arena/hero-proof";
 
 // Hotfix 5 Nov 2026: a run whose published verdict referee audit 1 found wrong never backs a home headline.
 describe("home headline excludes runs the referee audit found wrong", () => {
@@ -11,12 +11,16 @@ describe("home headline excludes runs the referee audit found wrong", () => {
   });
 
   it("refuses such a run even when its record would otherwise qualify", () => {
-    const line = HERO_LINES.find((l) => l.key === "false-claim")!;
+    // 5389d7a: the false-claim line (FA-CLM-001, an audit-error trap) never backs a headline at all, so a control on it
+    // can't qualify. The exclusion is proved on a line that can: double orders (FA-DUP-001).
+    const line = HERO_LINES.find((l) => l.key === "double-order")!;
+    expect(auditRetired(line)).toBe(false);
+    const [task, trap] = linePairs(line)[0]!;
     const id = [...AUDIT_WRONG_RUNS].find((r) => r.startsWith("23f12299"))!;
     const row = {
-      run: { id, modelId: "mistral-large-4", task: "impossible-hard", finishedAt: Date.UTC(2026, 9, 20) },
+      run: { id, modelId: "mistral-large-4", task, finishedAt: Date.UTC(2026, 9, 20) },
       event: { kind: "card" },
-      result: { traps: [{ id: "false_claim", triggered: true }] },
+      result: { traps: [{ id: trap, triggered: true }] },
       log: [{ type: "finish", claim: { status: "done" } }],
     } as unknown as Parameters<typeof proofOf>[0];
     expect(proofOf(row, line)).toBeNull();

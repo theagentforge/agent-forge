@@ -193,7 +193,7 @@ site.get(`${ANSWER_PREFIX}:id{.+}`, async (c) => {
   const [repoRows, detail] = await Promise.all([repoScans(db, id), toolDetail(db, id)]);
   const scans = repoRows.filter((r) => answerId(r.sourceUrl) === id).sort((a, b) => b.lastSeen - a.lastSeen);
   const hasReports = !!detail?.reports.length;
-  if (!scans.length && !hasReports) return notFound(c, "No Forge data on this tool yet", `Nothing public has been scanned or reported for ${id} yet. Scan the file yourself to see today's result.`);
+  if (!scans.length && !hasReports) return notFound(c, "No Forge data on this tool yet", "Nothing public has been scanned or reported for this tool yet. Scan the file yourself to see today's result.");
   const scan = scans[0] ?? null;
   const label = scan ? skillLabel(scan.sourceUrl, scan.name) : { title: id.split("/").at(-1) ?? id, where: null };
   const name = label.where ? `${label.title} (${label.where})` : label.title;
@@ -310,7 +310,7 @@ ${scans.length > 1 ? html`<p class="small muted">Earlier versions: ${scans.slice
 ${hasReports
       ? html`<section aria-labelledby="reports"><h2 id="reports">Field reports</h2>
 <p>${plural(reportCount, "report")}, the latest on ${day(detail!.reports[0]!.createdAt)}. <a href="/t/${encodeURIComponent(detail!.tool.canonicalId)}">All reports, versions and status history</a>.</p>
-${quotes.map((r) => html`<blockquote class="quote"><p>${r.note}</p><footer class="small muted">${r.agentHandle}${r.ownerHouse ? " (House: the Forge's own test agent)" : ""}, v${r.version}, ${day(r.createdAt)}</footer></blockquote>`)}
+${quotes.map((r) => html`<blockquote class="quote"><p data-untrusted="field report note">${r.note}</p><footer class="small muted">${r.agentHandle}${r.ownerHouse ? " (House: the Forge's own test agent)" : ""}, v${r.version}, ${day(r.createdAt)}</footer></blockquote>`)}
 </section>`
       : ""}
 <section aria-labelledby="how"><h2 id="how">How this answer is made</h2>

@@ -8,6 +8,8 @@ import { dataInventory, growthKpis, PARTNER_STAGES, PARTNERS_KV, CITATIONS_KV, t
 import { currentSession, guardPost } from "./dashboard";
 import { send, site } from "./pages";
 import { csrfToken } from "./session";
+import { outsideUse, type OutsideUse } from "../services/outside-use";
+import { OWN_COOKIE_HEADER } from "../services/internal";
 import type { OwnerFunnel } from "../services/owner-funnel";
 import { ownerActivity, type OwnerActivity, type ownersBySource } from "../services/owners";
 import { ACTIVE_OWNERS_RULE, outsideStatsData, outsideUseBlock, smallRows } from "./stats";
@@ -32,7 +34,7 @@ export function creditPanel(g: CreditGuard, byok: Awaited<ReturnType<typeof byok
 <tr><td>Model-agnostic filler</td><td>${FILLER_MODELS.join(", ")} (BYOK), then the Workers AI practice models</td></tr>
 </tbody></table>`;
 }
-import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_COUNTING_BEGAN, INSTALL_GAPS, INSTALL_OUTCOMES, installIdsSeen, installMismatches, installTotals, type InstallClient, type InstallTotals } from "../services/install-metrics";
+import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_COUNTING_BEGAN, INSTALL_GAPS, INSTALL_NOT_MEASURED, INSTALL_OUTCOMES, installIdsSeen, installMismatches, installTotals, type InstallClient, type InstallTotals } from "../services/install-metrics";
 import { ID_CLIENTS, installReturnsData, RETURN_DAYS, type Cohort, type InstallReturns } from "../services/install-ids";
 import { landingFunnel, LANDING_STAGES, type LandingFunnel } from "../services/landing-funnel";
 import { privateWorkflow, verifyActionsToken, type OidcClaims } from "../services/house";
@@ -133,9 +135,10 @@ export function installPanel(v: (InstallTotals & { outside: ReturnType<typeof in
 <p><small>Checked · would block · advisory. Gross is what /stats shows; outside is gross less our tagged CI and repositories (<code>install:ours:*</code>). The outside numbers are never shown publicly (Dinike, 28 Oct). Distinct sources today come from check_sources (the plugin, the CLI and its hooks, and the Action; daily-salted codes, never an IP).</small></p>
 <p data-k="install_not_api"><small>Only the install-time clients count here, told apart by the User-Agent each sends. Plain REST checks (scripts, curl and other tools; check_sources kind <code>api</code>) are not install checks, so "Checks and scans a week" can count many checkers while every row here is 0: its detail (<code>checkers_by_kind</code>) splits them by kind.</small></p>
 <p data-k="install_counted_from"><small>${from} Install counting began ${INSTALL_COUNTING_BEGAN} (counting rules 2.2); earlier checks were never counted. ${gaps} Nothing is backfilled.</small></p>
+<p data-k="install_not_measured"><small>Not measured on some paths (ADR 0155): ${INSTALL_NOT_MEASURED.map((g) => `${g.path}, ${g.from} until ${g.until}: ${g.why}.`).join(" ")} A 0 there for those days means "not measured", not "no use".</small></p>
 ${bad.size ? html`<p class="notice warn" data-k="install_mismatch">Counting fault: install IDs were seen this week for ${[...bad].map((c) => INSTALL_CLIENT_NAMES[c]).join(", ")} but no check of theirs was counted. An ID is written by the same request as its check, so these numbers are wrong until this is fixed.</p>` : ""}
 <table class="kpi-table"><thead><tr><th>Client</th><th>Last 7 days (gross)</th><th>All time (gross)</th>${ids ? html`<th>Install IDs seen, last 7 days</th>` : ""}</tr></thead><tbody>
-${INSTALL_CLIENTS.map((c) => html`<tr data-client="${c}"${bad.has(c) ? html` class="kpi-off"` : ""}><td>${INSTALL_CLIENT_NAMES[c]}</td><td>${cell(v.by_client[c].last_7_days)}</td><td>${cell(v.by_client[c].all_time)}</td>${ids ? html`<td>${c === "skill-scan" ? "–" : (ids[c] ?? 0).toLocaleString("en-US")}</td>` : ""}</tr>`)}
+${INSTALL_CLIENTS.map((c) => html`<tr data-client="${c}"${bad.has(c) ? html` class="kpi-off"` : ""}><td>${INSTALL_CLIENT_NAMES[c]}</td><td>${cell(v.by_client[c].last_7_days)}</td><td>${cell(v.by_client[c].all_time)}</td>${ids ? html`<td>${c === "skill-scan" || c === "cli-exposure" ? "–" : (ids[c] ?? 0).toLocaleString("en-US")}</td>` : ""}</tr>`)}
 <tr><td><b>All clients, gross</b></td><td>${cell(v.gross.last_7_days)}</td><td>${cell(v.gross.all_time)}</td></tr>
 <tr><td>Ours (tagged)</td><td>${cell(v.ours.last_7_days)}</td><td>${cell(v.ours.all_time)}</td></tr>
 <tr data-k="install_outside"><td><b>Outside</b></td><td><b>${cell(v.outside.last_7_days)}</b></td><td><b>${cell(v.outside.all_time)}</b></td></tr>
@@ -303,6 +306,15 @@ export function botRulePanel() {
 ${r.previous.length ? html`<ul>${r.previous.map((p) => html`<li><small>${p.version} (${p.in_force}): ${p.definition}</small></li>`)}</ul>` : html`<p><small>No earlier version.</small></p>`}`;
 }
 
+/** Outside use (Dinike, 13 Nov: outside numbers only on the inside): dated, zeros shown, each row's definition beside it. */
+function outsideNowPanel(o: OutsideUse) {
+  return html`<h2 id="outside-now">Outside use (excluding our own test traffic and directory monitors)</h2>
+<p><small>As of ${o.as_of}. Founder-only: never on /stats or /stats.json (Dinike, 13 Nov 2026). Counted by construction: House and founder accounts, our tagged callers, directory health checks and monitors are left out by the queries themselves. This browser is marked as ours while you're signed in here, so your own browsing isn't counted as outside use.</small></p>
+<table class="kpi-table"><thead><tr><th>Row</th><th>Value</th><th>Window</th></tr></thead><tbody>${o.rows.map(
+    (r) => html`<tr><td><b>${r.label}</b><br><small>${r.definition}</small>${r.by_client ? html`<br><small>${Object.entries(r.by_client).map(([k, v], i) => html`${i ? " · " : ""}${k} ${v}`)}</small>` : ""}</td><td>${r.value.toLocaleString("en-US")}</td><td>${r.window}</td></tr>`,
+  )}</tbody></table>`;
+}
+
 site.get("/admin/kpis", async (c) => {
   const s = await currentSession(c);
   if (!s || !(await admin(c, s.session.h))) return c.redirect("/dashboard");
@@ -326,6 +338,10 @@ site.get("/admin/kpis", async (c) => {
   const heroStats = await heroLineStats(c.env).catch(() => null);
   const third = await thirdPartyData(c.env).catch((e) => (console.error("admin: third-party numbers unavailable", String(e)), null));
   const small = await smallRows(c.env).catch(() => null);
+  const outsideNow = await outsideUse(c.env).catch((e) => (console.error("admin: outside use unavailable", String(e)), null));
+  // Own traffic (KPI fix, 13 Nov): a founder's visit here marks this browser as ours, so its page views, beacons and
+  // web checks are counted apart as internal:founder:* instead of as people outside (services/internal.ts OWN_COOKIE).
+  c.header("Set-Cookie", OWN_COOKIE_HEADER);
   const north = kpis[0]!;
   const daily = ((north.detail?.daily as { day: string; agents: number }[]) ?? []).map((d) => d.agents);
   return send(
@@ -340,6 +356,7 @@ site.get("/admin/kpis", async (c) => {
 <tbody>${kpis.map(
         (k) => html`<tr class="kpi-${k.status}"><td><b>${k.name}</b><br><small>${k.definition}</small></td><td>${fmt(k.value)} ${k.unit}${k.bot_filter ? botCell(k.bot_filter, as_of) : ""}</td><td>${fmt(k.first)}</td><td>${fmt(k.second)}</td><td>${STATUS_LABEL[k.status]}</td><td>${spark(trend(k.id))}</td></tr>`,
       )}</tbody></table>
+${outsideNow ? outsideNowPanel(outsideNow) : html`<h2 id="outside-now">Outside use</h2><p>Couldn't be read just now (see the Worker log).</p>`}
 ${credit && byok ? creditPanel(credit, byok) : html`<h2 id="credit">Arena credit (ADR 0064)</h2><p>Couldn't be worked out just now (see the Worker log). The runner pauses new practice and panel bouts on credit-spending models while that's so.</p>`}
 ${landingFunnelPanel(funnel)}
 ${heroStats ? heroLinesPanel(heroStats) : ""}

@@ -23,6 +23,13 @@ export const SWR_PAGES: [RegExp, number][] = [
   // Reports (live previews and nightly runs) and the press page.
   [/^\/reports\/[^.]+$/, 3600],
   [/^\/press\/[^.]+$/, 3600],
+  // ADR 0154 (13 Nov audit: 4-8 s to first byte): the other heavy public pages, also kept as KV snapshots.
+  [/^\/security$/, 300],
+  [/^\/dataset$/, 300],
+  [/^\/stats$/, 60],
+  [/^\/arena\/methodology$/, 3600],
+  [/^\/arena\/failures(\/[A-Za-z]+-[A-Za-z]+-[0-9]+)?$/, 300],
+  [/^\/trap-card$/, 300],
 ];
 
 /**

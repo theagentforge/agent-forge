@@ -1,3 +1,4 @@
 # Byte-exact files: never convert line endings (a frozen Trap Set snapshot is served and hashed byte for byte, ADR 0101).
 apps/forge/src/seed/benchmark/*.json.txt -text
+apps/forge/src/seed/research/*.json.txt -text
 apps/forge/test/fixtures/dataset-sample/* -text

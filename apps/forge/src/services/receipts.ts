@@ -1,9 +1,9 @@
-import type { ScanResult } from "@forge/shared";
+import { sha256Of, urlProblem, type ScanResult } from "@forge/shared";
 import { answerPagePath, questionForTask } from "../arena/answers";
 import type { CheckResult } from "./forge";
 import { scanPath } from "./scans";
 import { signReport } from "./signing";
-import { splitInlineVersion } from "./tools";
+import { canonicalFromUrl, canonicalToolId, splitInlineVersion } from "./tools";
 
 // Forge receipts (conversion review, 24 Oct 2026): every check and scan returns a link an agent can paste where its
 // work is reviewed (a pull request, a README, a Moltbook post). The link carries what the Forge answered and when,
@@ -12,7 +12,8 @@ import { splitInlineVersion } from "./tools";
 // Data only (AGENTS.md rule 7): the share fields are URLs and Markdown, never instructions.
 
 export const RECEIPT_SCHEMA = 1;
-export const RECEIPT_KINDS = ["check", "scan", "exposure", "watch", "traps", "results"] as const;
+/** drift (ADR 0151): a live drift monitor answer; subject is the Registry name, verdict observed/unchanged/changed/not_observed/not_monitored. */
+export const RECEIPT_KINDS = ["check", "scan", "exposure", "watch", "traps", "results", "drift"] as const;
 export type ReceiptKind = (typeof RECEIPT_KINDS)[number];
 const MAX_TOKEN = 2400;
 
@@ -26,6 +27,13 @@ export interface ReceiptPayload {
    * model id with data only: never free text).
    */
   subject: string;
+  /**
+   * ADR 0157, what the subject is (check and drift receipts from 23 Nov 2026): "tool", the canonical id of a tool on
+   * file (drift: a monitored server's Registry name); "asked_sha256", the sha256 of an id we don't know (the id itself is
+   * never signed); "fingerprint", a sha256 fingerprint as asked. Absent on older receipts, whose subject is shown only as
+   * "asked (unverified)" and only when it is a valid id.
+   */
+  subject_kind?: "tool" | "asked_sha256" | "fingerprint";
   version: string | null;
   /**
    * check: the display verdict; scan: flagged, caution or clear; exposure: flagged, caution or no_match; watch: flagged,
@@ -35,6 +43,8 @@ export interface ReceiptPayload {
   /** check only: security_status and how many published advisories matched. */
   security?: string;
   advisories?: number;
+  /** check only, ADR 0152: present (false) when no advisory source was checked; absent on older receipts and when checked. */
+  advisories_checked?: false;
   /** check only, when above 0: reports on this version confirmed by 2+ distinct other owners (V1, ADR 0047). */
   corroborated?: number;
   /** scan only: the rules version and the public URL scanned, if any. */
@@ -96,25 +106,39 @@ function share(origin: string, token: string, label: string, page: string | null
   return { receipt_url: url, receipt_badge_url: img, receipt_markdown: `[![${label}](${img})](${url})`, page_url: page, badge_markdown: badge };
 }
 
+/**
+ * What a check receipt signs as its subject (ADR 0157): the canonical id of a tool on file; a fingerprint as asked; or,
+ * for anything else, the sha256 of the canonical id asked, so text a caller typed is never signed into a receipt.
+ */
+export async function checkSubject(r: Pick<CheckResult, "tool">, asked: string): Promise<{ subject: string; subject_kind: NonNullable<ReceiptPayload["subject_kind"]> }> {
+  if (r.tool?.id) return { subject: r.tool.id, subject_kind: "tool" };
+  if (/^sha256:[0-9a-f]{64}$/.test(asked)) return { subject: asked, subject_kind: "fingerprint" };
+  // A version written into the id (npm:x@1.2.3) goes in `version`; the same id in any spelling gives the same hash.
+  const id = /^https?:\/\//i.test(asked) ? canonicalFromUrl(asked) : canonicalToolId(splitInlineVersion(asked).id);
+  return { subject: await sha256Of(id), subject_kind: "asked_sha256" };
+}
+
 /** Share fields for a forge_check answer. `asked` is the id as the agent gave it (the tool may be unknown). */
 export async function checkShare(env: Pick<Env, "REPORT_SIGNING_KEY" | "PUBLIC_ORIGIN">, r: CheckResult, asked: string, now = Date.now()): Promise<Share> {
-  // A version written into the id (npm:x@1.2.3) goes in `version`, so the subject is the tool and its live link works.
-  const subject = r.tool?.id ?? splitInlineVersion(asked).id;
+  const { subject, subject_kind } = await checkSubject(r, asked);
   const token = await receiptToken(env.REPORT_SIGNING_KEY, {
     v: RECEIPT_SCHEMA,
     kind: "check",
     subject,
+    subject_kind,
     version: r.version ?? r.public_signals_summary?.version ?? null,
     verdict: r.verdict,
     security: r.security_status,
     advisories: r.public_signals_summary?.total ?? 0,
+    // Only when false, so receipts for checked tools stay as they were.
+    ...(r.advisories_checked === false ? { advisories_checked: false as const } : {}),
     // Only when there is one, so receipts for tools with no confirmed reports stay as they were.
     ...(r.corroborated_reports > 0 ? { corroborated: r.corroborated_reports } : {}),
     at: minute(now),
   });
   const origin = env.PUBLIC_ORIGIN;
   // The live badge exists only for tools with reports (web/badge.ts), so it's offered only then.
-  const badge = r.known && r.distinct_owners > 0 && r.page_url ? `[![Forge](${origin}/badge/${encodeURIComponent(subject)}.svg)](${r.page_url})` : null;
+  const badge = subject_kind === "tool" && r.known && r.distinct_owners > 0 && r.page_url ? `[![Forge](${origin}/badge/${encodeURIComponent(subject)}.svg)](${r.page_url})` : null;
   return share(origin, token, "Forge check", r.page_url, badge);
 }
 
@@ -132,7 +156,8 @@ export async function scanShare(
     version: null,
     verdict: r.verdict,
     rules: r.rules_version,
-    source: opts.sourceUrl ?? null,
+    // ADR 0157: a source URL goes into the signed record only when it is a plain URL (no spaces, no sentences).
+    source: opts.sourceUrl && urlProblem(opts.sourceUrl, 2048) === null ? opts.sourceUrl : null,
     at: minute(now),
   });
   const origin = env.PUBLIC_ORIGIN;

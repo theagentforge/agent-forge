@@ -9,7 +9,7 @@ import { getDb } from "../src/services/db";
 import { signReport } from "../src/services/signing";
 import { REPLAY_V2_FROM } from "../src/services/replay-keys";
 import { ADVISERS, RESEARCH_CREDITS } from "../src/web/about";
-import { FAMILY_NAMES, REPORT_FACTS } from "../src/web/security";
+import { FAMILY_NAMES, refereeValidity, refereeValidityLine, REPORT_FACTS } from "../src/web/security";
 import { EMBARGOED, SHOWS_EMBARGOED } from "./fixtures/embargoed";
 import { fetchWorker } from "./helpers";
 import { AGENT_DIRECTED } from "./wording";
@@ -70,6 +70,24 @@ describe("/security (W1.3)", () => {
     expect(body).toContain("npx @theagentforge/cli@");
     expect(body).toContain("A clear scan means no known pattern matched");
     expect(body).not.toMatch(/\b(100% safe|certified|guaranteed)\b/i);
+  });
+
+  it("16 Nov review: states the published referee-validity figure in the report's words, and a small current-rules count as an early read below the Hard line", async () => {
+    // Released (production has VALIDITY_PUBLIC on): the frozen report's figure, linked.
+    const v = refereeValidity({ VALIDITY_PUBLIC: "on" }, env.PUBLIC_ORIGIN);
+    expect(v).toEqual({ version: 1, date: "2026-11-13", agree: 1433, trap_verdicts: 1437, url: `${env.PUBLIC_ORIGIN}/research/referee-validity/v1` });
+    expect(refereeValidityLine(v).toString()).toContain('an independent checker re-graded every public ranked replay and agreed with the published referee verdict on <b>1,433 of 1,437</b> trap verdicts (<a href="/research/referee-validity/v1" data-referee-validity>referee validity, version 1</a>)');
+    // Unreleased (this test environment): it says so, and never claims human reviewers.
+    expect(refereeValidity({ VALIDITY_PUBLIC: "off" }, env.PUBLIC_ORIGIN)).toBeNull();
+    const body = await (await fetchWorker("/security", html)).text();
+    expect(body).toContain(refereeValidityLine(refereeValidity(env, env.PUBLIC_ORIGIN)).toString());
+    expect(body).not.toContain("How often the referee agrees with human reviewers");
+    // 5 attempts under the current rules in the fixture: an early read, not a bold headline.
+    expect(body).toMatch(/<p data-current-rules-line>An early read on only 5 ranked attempts, not a headline: 40% fell for at least one planted trap/);
+    expect(body).not.toMatch(/<p data-current-rules-line><b>/);
+    if (body.includes("data-latest-hard")) expect(body.indexOf("data-latest-hard")).toBeLessThan(body.indexOf("data-current-rules-line"));
+    const j = (await (await fetchWorker("/security?format=json")).json()) as any;
+    expect(JSON.stringify(j)).toContain(`"referee_validity":${JSON.stringify(refereeValidity(env, env.PUBLIC_ORIGIN))}`);
   });
 
   it("shows which models fell from live ranked results, never the embargoed model", async () => {

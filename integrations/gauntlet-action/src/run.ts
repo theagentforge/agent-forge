@@ -15,6 +15,8 @@ export const ACTION_VERSION = "1.0.0";
 export const CLIENT_TAG = `gh-action-gauntlet-${ACTION_VERSION}`;
 export const USER_AGENT = `forge-gauntlet-action/${ACTION_VERSION} (+https://theagentforge.io/gauntlet/ci)`;
 export const DEFAULT_ORIGIN = "https://theagentforge.io";
+/** The CLI that checks a signed replay (apps/forge/src/web/replay-verify.ts VERIFY_CLI_VERSION; a test ties the two). */
+export const VERIFY_CLI = "@theagentforge/cli@0.7.1";
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const MARKER = "<!-- forge-gauntlet -->";
 /** Owners whose runs are The Forge's own: counted apart (X-Forge-Internal), never as outside runs. */
@@ -281,6 +283,13 @@ export async function playJob(inputs: Inputs, io: Io, id: string, job: JobPayloa
 
 // ---------- The result ----------
 
+/** One job's replay as audit evidence: its JSON (log, result, hash chain and seal) and whether it carries a signature. */
+export interface Evidence {
+  job: number;
+  url: string;
+  signed: boolean;
+}
+
 export interface Outcome {
   id: string;
   mode: "sprint" | "full";
@@ -358,7 +367,7 @@ export function judge(o: Outcome, inputs: Pick<Inputs, "failOnTrap" | "minPassRa
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 
 /** The job summary (and, opted in, the PR comment). For people; links go to the public run pages. */
-export function summaryMarkdown(o: Outcome, v: Verdict, inputs: Inputs, extra: { claimNote?: string | null } = {}) {
+export function summaryMarkdown(o: Outcome, v: Verdict, inputs: Inputs, extra: { claimNote?: string | null; evidence?: Evidence[] } = {}) {
   const what = o.mode === "sprint" ? "Gauntlet Sprint (one job, a Sprint result, not a Gauntlet score)" : `Gauntlet (${o.jobsTotal || 6} jobs)`;
   const head =
     v.label === "incomplete"
@@ -373,12 +382,36 @@ export function summaryMarkdown(o: Outcome, v: Verdict, inputs: Inputs, extra: {
     ...(v.reasons.length ? [""] : []),
     ...(rows.length ? ["| Job (replay) | Result | Traps it fell for |", "|---|---|---|", ...rows, ""] : []),
     `Run: [${o.reportUrl}](${o.reportUrl})${o.vsUrl ? ` · head-to-head: [${o.vsUrl}](${o.vsUrl})` : ""}`,
+    ...evidenceLines(extra.evidence ?? []),
     ...(o.trapCard ? ["", "<details><summary>Trap card for this agent (checks, with the ones it slipped on first)</summary>", "", "```text", o.trapCard, "```", "</details>"] : []),
     ...(extra.claimNote ? ["", extra.claimNote] : []),
     "",
     `<sub>Refereed by [The Agent Forge](${inputs.origin}/gauntlet/ci) from the agent's tool calls in a sandbox with planted traps (invented money, no real systems). A pass means it didn't fall for these traps on these jobs, not that the agent is safe. Replays are kept 30 days.</sub>`,
     "",
   ].join("\n");
+}
+
+/** The audit-evidence lines of the summary: each job's replay JSON, signed or not, and how to check one. */
+export function evidenceLines(ev: Evidence[]): string[] {
+  if (!ev.length) return [];
+  const signed = ev.filter((e) => e.signed);
+  return [
+    "",
+    `Audit evidence: ${signed.length} of ${ev.length} job replay${ev.length === 1 ? "" : "s"} signed (replay format v2: hash-chained log and result, Ed25519 seal): ${ev.map((e) => `[job ${e.job}${e.signed ? "" : ", not signed"}](${e.url})`).join(" · ")}.${signed.length ? ` Check one yourself: \`npx ${VERIFY_CLI} verify ${signed[0]!.url}\`.` : ""} The Forge keeps replays 30 days; save the files (output \`replay-urls\`) to keep them longer.`,
+  ];
+}
+
+/** Fetches each reached job's replay JSON from The Forge and records whether it is signed. Never fails the check. */
+export async function replayEvidence(inputs: Inputs, io: Io, o: Outcome): Promise<Evidence[]> {
+  const out: Evidence[] = [];
+  for (const j of o.jobs) {
+    if (!j.replayUrl) continue;
+    const url = `${j.replayUrl}.json`;
+    const r = await forge(inputs, io, "GET", url.slice(inputs.origin.length));
+    const sig = r.json?.replay?.seal?.signature;
+    out.push({ job: j.n, url, signed: r.status === 200 && typeof sig === "string" && sig.startsWith("ed25519:") });
+  }
+  return out;
 }
 
 async function gh(event: Event, token: string, io: Io, method: string, path: string, body?: unknown) {
@@ -503,15 +536,18 @@ export async function run(inputs: Inputs, event: Event, io: Io): Promise<number>
     io.output("claim-url", claimUrl);
     claimNote = `Claim link: in the masked step output \`claim-url\` (it holds this run's private key; don't paste it anywhere public). After a verified owner claims the run, its score page is ${inputs.origin}/score/${id} and its badge ${inputs.origin}/badge/score/${id}.svg${o.challengeOf ? " (a challenge gets no badge)" : ""}.`;
   }
-  const md = summaryMarkdown(o, v, inputs, { claimNote });
+  const evidence = o.status === "done" ? await replayEvidence(inputs, io, o) : [];
+  const md = summaryMarkdown(o, v, inputs, { claimNote, evidence });
   io.summary(md);
   io.output("verdict", v.label);
   io.output("jobs-passed", String(o.jobsPassed));
   io.output("jobs-total", String(o.jobsTotal));
   io.output("traps-fell", String(o.trapsFell));
   io.output("fell-for", o.fellFor.join(","));
+  io.output("replay-urls", evidence.map((e) => e.url).join(","));
+  io.output("replays-signed", String(evidence.filter((e) => e.signed).length));
   // The claim note never goes into a pull request comment: comments are not masked.
-  const posted = await upsertComment(summaryMarkdown(o, v, inputs), event, inputs, io);
+  const posted = await upsertComment(summaryMarkdown(o, v, inputs, { evidence }), event, inputs, io);
   for (const r of v.reasons) io.command(`::error title=forge-gauntlet::${esc(r)}`);
   io.log(`Forge Gauntlet ${id}: ${v.label}; comment ${posted}.`);
   return v.pass ? 0 : 1;

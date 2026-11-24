@@ -22,7 +22,7 @@ import {
 } from "../services/public-stats";
 import { HOUSE_METHOD_PATH } from "../services/site-pulse";
 import { asOfText, publicNumbers, secondsLeftOf } from "../services/public-numbers";
-import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_RULES, installJson, installTotals } from "../services/install-metrics";
+import { installJson, installTotals } from "../services/install-metrics";
 import { countsAsHouse } from "../services/identity";
 import { skillStats, usageStats } from "../services/usage";
 import { outsideMetrics, publicMetricsOn, type OutsideMetric, type OutsideMetrics } from "../services/outside-metrics";
@@ -142,10 +142,13 @@ export async function statsData(env: Env, o: RowOptions = {}) {
     totals: publicTotals(work, live, env.PUBLIC_ORIGIN),
     /** F-02: signed-in people and agents, AI tool calls and skill scans in 7 days, our own included (gross). */
     gross: grossJson(gross, env.PUBLIC_ORIGIN, o),
-    /** B2-06 (ADR 0086): install checks by AI tools at the moment of install, gross (our own tests included). */
-    install: installJson(install, env.PUBLIC_ORIGIN, o),
+    /**
+     * B2-06 (ADR 0086): install checks by AI tools, gross. Dinike, 16 Nov (ADR 0155): internal only until they're a
+     * strength, so only the data room (`allRows`, founder-only) gets them; /stats.json never carries the key.
+     */
+    ...(o.allRows ? { install: installJson(install, env.PUBLIC_ORIGIN, o) } : {}),
     /** F-02: these fields carried outside-only numbers; they are internal now (/admin/kpis) and always null here. */
-    internal_only: [...STATS_INTERNAL_FIELDS],
+    internal_only: [...STATS_INTERNAL_FIELDS, "install"],
     now: null,
     history: null,
     usage: null,
@@ -154,6 +157,8 @@ export async function statsData(env: Env, o: RowOptions = {}) {
     /** The totals, ours included (the home band reads the same rows). Exact numbers (no minimum), labelled by what they include. */
     blended: {
       includes: ["house_agents", "founder_accounts", "our_tests", "crawlers", "uptime_checks", "directory_health_checks", "launch_scan_seed"],
+      /** 16 Nov review: the two ranked-bout figures, each with its definition (they differ by the held-out-seed bouts and Lab-arm bouts). */
+      definitions: RANKED_BOUT_DEFINITIONS,
       work: work ? { bouts_refereed: work.bouts_refereed, ranked_bouts: work.ranked_bouts, traps_sprung: work.traps_sprung, skills_scanned: work.skills_scanned, field_reports: work.field_reports, tools_tracked: work.tools_tracked } : null,
       /** B3-04 (ADR 0099): left out (the key is absent) until it passes PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished. */
       ...smallRow("gauntlet_runs_finished", numbers.gauntlet.full, o),
@@ -169,6 +174,15 @@ export async function statsData(env: Env, o: RowOptions = {}) {
     generated_at: new Date().toISOString(),
   };
 }
+
+/**
+ * 16 Nov review: blended.work.ranked_bouts and blended.our_arena.ranked_bouts count different things. Both labels are
+ * printed on /stats too. No figure here: the numbers stay where they are.
+ */
+export const RANKED_BOUT_DEFINITIONS = {
+  "work.ranked_bouts": "Every finished bout in a non-practice event, bouts on private held-out seeds (published as aggregates only) and Lab-arm bouts included; internal runs left out.",
+  "our_arena.ranked_bouts": "Published ranked bouts only: the runs /arena ranks (headline and guest events), with held-out-seed bouts and Lab-arm bouts left out. The difference from work.ranked_bouts is the held-out-seed bouts and Lab-arm bouts.",
+} as const;
 
 /** B3-04: `{ [key]: value }` when the row passes its minimum (or `allRows`), otherwise `{}`, so the key is absent. */
 function smallRow<K extends "gauntlet_runs_finished" | "gauntlet_sprints_finished">(key: K, v: number | null, o: RowOptions): Partial<Record<K, number | null>> {
@@ -201,7 +215,8 @@ export async function smallRows(env: Env) {
   add("gauntlet_sprints_finished", "gauntlet_sprints_finished", SMALL_ROW_LABELS.gauntlet_sprints_finished, sprints);
   add("signed_in_people", "signed_in_people", SMALL_ROW_LABELS.signed_in_people, gross?.signed_in_people ?? null);
   add("signed_in_agents", "signed_in_agents", SMALL_ROW_LABELS.signed_in_agents, gross?.signed_in_agents ?? null);
-  for (const i of installJson(install, "", { allRows: true }).items) add(i.key, "install_checks", i.label, i.value);
+  // ADR 0155: install rows are internal only now, so none is shown on /stats whatever its value.
+  for (const i of installJson(install, "", { allRows: true }).items) rows.push({ key: i.key, label: i.label, value: i.value, minimum: PUBLIC_ROW_MINIMUMS.install_checks, shown: false });
   return rows;
 }
 
@@ -234,7 +249,6 @@ export function outsideUseBlock(m: OutsideMetrics, preview = false) {
 </section>`;
 }
 
-const INSTALL_ROW_TEXT = { checked: "Install checks run", blocked: "Installs our answer would block", advisory: "Install checks with a published advisory (not blocked)" } as const;
 
 site.get("/stats", async (c) => {
   const d = await statsData(c.env);
@@ -244,7 +258,7 @@ site.get("/stats", async (c) => {
   const small = new Set(["gauntlet_runs_finished", "gauntlet_sprints_finished"]);
   const blendedRows: [unknown, number | null | undefined, string][] = [
     ["Arena bouts refereed, practice included (the Forge runs these on the models it enters)", b.work?.bouts_refereed, "bouts_refereed"],
-    ["…of them ranked", b.work?.ranked_bouts, "ranked_bouts"],
+    ["…of them ranked (every non-practice bout, held-out seeds and Lab arms included)", b.work?.ranked_bouts, "ranked_bouts"],
     ["Traps sprung in Arena bouts", b.work?.traps_sprung, "traps_sprung"],
     ["Gauntlet runs finished (six jobs; anyone, claimed or not, our tests included)", b.gauntlet_runs_finished, "gauntlet_runs_finished"],
     ["Gauntlet Sprints finished (one job; not Gauntlet runs)", b.gauntlet_sprints_finished, "gauntlet_sprints_finished"],
@@ -258,7 +272,7 @@ site.get("/stats", async (c) => {
   ];
   return send(c, {
     title: "Stats",
-    description: "Live numbers for The Agent Forge: running totals, signed-in people and agents, 7-day AI and skill-check numbers and install checks, our own test agents included, each with a published counting rule.",
+    description: "Live numbers for The Agent Forge: running totals, signed-in people and agents, 7-day AI and skill-check numbers, our own test agents included, each with a published counting rule.",
     path: "/stats",
     nav: "stats",
     jsonAlternate: "/stats.json",
@@ -269,22 +283,13 @@ ${d.outside_use ? outsideUseBlock(d.outside_use) : ""}
 <div class="scroll-x spaced"><table class="table">
 <thead><tr><th scope="col">Total</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
 <tbody>${blendedRows.filter(([, , key]) => !small.has(key) || key in b).map(([label, v, key]) => html`<tr data-k="${key}"><td>${label}</td><td class="num">${typeof v === "number" && v > 0 ? n(v) : "none yet"}</td><td><a href="/stats/rules#${key}">rule</a></td></tr>`)}</tbody></table></div>
-${b.our_arena ? html`<p class="small muted" data-our-arena>Our own Arena, published ranked bouts only (the runs <a href="/arena">/arena</a> ranks; held-out seeds left out): ${n(b.our_arena.ranked_bouts)} bouts on ${n(b.our_arena.models_ranked)} AI models, ${n(b.our_arena.traps_sprung_ranked)} traps sprung. <a href="/security#arena">/security</a> counts fewer: only attempts scored under the current referee rules, with attempts that ran out of time, tokens or turns left out.</p>` : ""}
+${b.our_arena ? html`<p class="small muted" data-our-arena>Our own Arena, published ranked bouts only (the runs <a href="/arena">/arena</a> ranks; held-out-seed bouts and Lab-arm bouts left out, which is why it is lower than "…of them ranked" above): ${n(b.our_arena.ranked_bouts)} bouts on ${n(b.our_arena.models_ranked)} AI models, ${n(b.our_arena.traps_sprung_ranked)} traps sprung. <a href="/security#arena">/security</a> counts fewer: only attempts scored under the current referee rules, with attempts that ran out of time, tokens or turns left out.</p>` : ""}
 <h2 class="page-title" id="gross">People, agents and the last 7 days</h2>
 <div class="scroll-x spaced"><table class="table">
 <thead><tr><th scope="col">Measure</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
 <tbody>${d.gross.items.map((x) => html`<tr data-k="${x.key}"><td>${x.label}</td><td class="num">${typeof x.value === "number" && x.value > 0 ? n(x.value) : "none yet"}</td><td><a href="/stats/rules#${x.key}">rule</a></td></tr>`)}</tbody></table></div>
 <p class="small muted">${d.gross.items.some((x) => x.key === "signed_in_people" || x.key === "signed_in_agents") ? "Signed-in people and agents count everyone who signed in, our own House and founder accounts included. " : ""}The 7-day numbers are daily totals of calls and requests, not distinct agents, and include our own tests, monitors and directory checks.</p>
-${d.install.items.length
-  ? html`<h2 class="page-title" id="install">Install checks by AI tools</h2>
-<p class="small">Checks made at the moment of an install by ${INSTALL_CLIENTS.map((k) => INSTALL_CLIENT_NAMES[k]).join(", ")}. Counted apart from AI connections, page views and crawlers. "Would block" means our answer was one these clients stop the install on; a person can still go ahead.</p>
-<div class="scroll-x spaced"><table class="table">
-<thead><tr><th scope="col">Install checks</th><th scope="col" class="num">Number</th><th scope="col">Rule</th></tr></thead>
-<tbody>${d.install.items.map(
-      (x) => html`<tr data-k="${x.key}"><td>${INSTALL_ROW_TEXT[x.outcome]}, ${x.window === "all_time" ? "all time" : "last 7 days"}</td><td class="num">${n(x.value ?? 0)}</td><td><a href="/stats/rules#${x.key}">rule</a></td></tr>`,
-    )}</tbody></table></div>
-<p class="small muted">${TOTALS_NOTE} Our own CI and repositories run these clients too and are counted here. Each package or tool checked counts once; the skill-scan Action counts once per run, only where its user turned the run count on (it is off by default).</p>`
-  : ""}`,
+`,
   }, { maxAge: secondsLeftOf(d.as_of) });
 });
 
@@ -296,6 +301,7 @@ site.get("/stats.json", async (c) => {
 
 /** What changed in each version of the rules, newest first (so a reader can tell why a number appeared). */
 export const STATS_RULES_CHANGES = [
+  { version: "2.6", date: "2026-11-16", change: "The install-check numbers and their rules are no longer published (they are kept internally). No other number or rule changed." },
   { version: "2.5", date: "2026-11-09", change: "bouts_refereed, ranked_bouts and traps_sprung no longer count runs that no public page shows (events held for review, models whose results aren't published yet, private and practice-only job families, frontier calibration seeds); the Arena line under the totals counts published ranked bouts and models only, the same runs /arena ranks. The numbers fell; the SQL gives the two private lists as placeholders." },
   { version: "2.4", date: "2026-10-29", change: "bouts_refereed now also counts the free-model practice lane (B3-13, ADR 0109): practice bouts on OpenRouter free variants and on Workers AI inside its free daily allowance. They are labelled practice and with the model's provider and variant (a free variant is its own model entry), and are never ranked. The rule and its SQL are unchanged; only the note on whose bouts these are changed." },
   { version: "2.3", date: "2026-10-29", change: `Small rows have a minimum (B3-04, ADR 0099): Gauntlet runs finished and Gauntlet Sprints finished (${PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished} each), people signed in and agents linked (${PUBLIC_ROW_MINIMUMS.signed_in_people} each) and each install-check row (${PUBLIC_ROW_MINIMUMS.install_checks}). ${ROWS_APPEAR_TEXT} The field-report total says that most reports are our House agent's nightly install tests (B3-06). No count changed.` },
@@ -316,7 +322,7 @@ export const ACTIVE_OWNERS_RULE: StatsRule = { key: "active_owners_30d", label: 
 const ALL_RULES = () => [
   ...BLENDED_RULES.map((r) => ({ ...r, group: "blended" as const })),
   ...GROSS_RULES.map((r) => ({ ...r, group: "gross" as const })),
-  ...INSTALL_RULES.map((r) => ({ ...r, group: "install" as const })),
+  // ADR 0155 (Dinike, 16 Nov): the install-check rules are internal with their numbers (INSTALL_RULES, data room).
 ];
 
 site.get("/stats/rules", async (c) => {
@@ -348,17 +354,15 @@ ${rules.filter((r) => r.group === group).map(
 <h2>What every number includes</h2>
 <ul>
 <li><b>Totals</b> (the home page's live numbers): everything the Forge has done or recorded. ${TOTALS_NOTE} Arena bouts are the ones the Forge runs on the models it enters; skills scanned include the 19 Oct 2026 launch scan of 9,930 public skills; most field reports are our House agent's nightly install tests (<a href="${HOUSE_METHOD_PATH}">method</a>); page views, visits, connections and tool uses also include crawlers, uptime checks and directory health checks. Each is shown exactly; Gauntlet runs and Gauntlet Sprints have a minimum (below).</li>
-<li><b>Install checks by AI tools</b>: checks made at the moment of an install by our plugin, CLI, hooks and GitHub Actions, and what our answer meant there (would block, advisory). ${TOTALS_NOTE} Each row has a minimum (below).</li>
 <li><b>Signed-in people and agents, and the last 7 days</b>: everyone who signed in with GitHub and their agents, and the AI tool calls and skill scans of the last 7 days. Like the totals, these include our own House accounts (the Forge's test agents, labelled "house" everywhere), the founder accounts and our own tests. Signed-in people and agents have a minimum (below); the 7-day numbers are shown exactly.</li>
 </ul>
 <h2 id="minimums">Minimums</h2>
-<p>Some rows are still small, so each has a minimum: Gauntlet runs finished ${PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished}, Gauntlet Sprints finished ${PUBLIC_ROW_MINIMUMS.gauntlet_sprints_finished}, people signed in ${PUBLIC_ROW_MINIMUMS.signed_in_people}, agents linked to a signed-in person ${PUBLIC_ROW_MINIMUMS.signed_in_agents}, and each install-check row ${PUBLIC_ROW_MINIMUMS.install_checks} (the home page's install checks total too). ${ROWS_APPEAR_TEXT} Every minimum applies to the number as shown, our own activity included, and every other number has none.</p>
+<p>Some rows are still small, so each has a minimum: Gauntlet runs finished ${PUBLIC_ROW_MINIMUMS.gauntlet_runs_finished}, Gauntlet Sprints finished ${PUBLIC_ROW_MINIMUMS.gauntlet_sprints_finished}, people signed in ${PUBLIC_ROW_MINIMUMS.signed_in_people}, agents linked to a signed-in person ${PUBLIC_ROW_MINIMUMS.signed_in_agents}. ${ROWS_APPEAR_TEXT} Every minimum applies to the number as shown, our own activity included, and every other number has none.</p>
 <p>Requests from our own tests and probes (tagged <code>X-Forge-Internal</code>, a <code>theagentforge-internal/</code> User-Agent or an internal MCP client name) are recorded apart as <code>internal:&lt;component&gt;:*</code>, and the 7-day AI tool call and skill scan numbers add them back in. A tag grants nothing.</p>
 <h2>Reproducing a number</h2>
 <p>Each rule gives the SQL that produces the number from the D1 database; <code>&lt;ADMIN_GITHUB_IDS&gt;</code> is the founder list from the Worker settings. The JSON twin of this page is <a href="/stats/rules?format=json">/stats/rules?format=json</a>; /stats.json carries <code>rules_version</code> so a reader knows which rules made each number.</p>
 ${section("Totals (our own test agents included)", "blended")}
 ${section("Signed-in people and agents, and the last 7 days (our own included)", "gross")}
-${section("Install checks by AI tools (our own tests included)", "install")}
 </article>`,
   });
 });

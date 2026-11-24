@@ -1,7 +1,8 @@
 import { CANARY } from "@forge/arena";
 import type { Context } from "hono";
 import { html } from "hono/html";
-import { disagreementNowText, disagreementStatuses, REFEREE_AUDIT, REFEREE_AUDIT_2, REFEREE_AUDIT_ADJUDICATIONS, validityGate, type ErrorEntry } from "../arena/error-record";
+import { dayText, disagreementNowText, disagreementStatuses, REFEREE_AUDIT, REFEREE_AUDIT_2, REFEREE_AUDIT_ADJUDICATIONS, validityGate, type ErrorEntry } from "../arena/error-record";
+import { RESEARCH_VALIDITY_PATH, researchIndex, versionPath } from "../arena/research-validity";
 import {
   AUDIT_2_DISAGREEMENTS_CSV_PATH,
   AUDIT_2_FILE_PATH,
@@ -113,6 +114,7 @@ gated(VALIDITY_PATH, async (c) => {
   const k = d.contamination.public_vs_held_out.pooled_ranked_events;
   const r = d.reproducibility;
   const s = d.contamination.answer_key_scan;
+  const research = researchIndex(c.env.PUBLIC_ORIGIN);
   return send(c, {
     title: "Benchmark validity",
     description: d.headlines[0]!,
@@ -124,6 +126,7 @@ gated(VALIDITY_PATH, async (c) => {
 <h1 class="page-title">How far can you trust the Trap Set's results?</h1>
 <div class="summary-3" data-headlines>${a2 ? html`<p data-census-headline>${d.headlines[0]}</p><p class="small muted">Referee audit ${a.audit_id.replace("referee-audit-", "")}, the first pass, on a sample, that found the ${a.disagreements.length} errors:</p>` : ""}${d.headlines.slice(a2 ? 1 : 0).map((h) => html`<p>${h}</p>`)}</div>
 <p class="small" data-terms>${PASS_FAIL_FALL}</p>
+${research.latest ? html`<p class="small" data-research><b>To cite:</b> the <a href="${RESEARCH_VALIDITY_PATH}">referee-validity report</a>, frozen by version (latest <a href="${versionPath(research.latest.version)}">version ${research.latest.version}, ${dayText(research.latest.date)}</a>), with its method, every disagreement, the correction history, limitations and how to reproduce it. This page stays live.</p>` : ""}
 ${a2
   ? html`<section id="referee-audit-2"><h2>1. Referee audit ${a2.audit_id.replace("referee-audit-", "")} (${a2.date}): every public ranked replay</h2>
 <p>${a2.what}</p>
@@ -194,6 +197,6 @@ ${claimReviewText().map((x) => html`<p>${x}</p>`)}
 ${r.differences.map((b) => reproduceText(b, d.error_record.entries, b.audit_id === REFEREE_AUDIT_2.audit_id ? `In referee audit ${b.audit_id.replace("referee-audit-", "")}'s ${b.runs} replays` : `In referee audit ${b.audit_id.replace("referee-audit-", "")}'s ${b.runs} sampled replays`))}
 <p><b>Model outputs vary.</b> ${r.model_variance.statement} Across ${r.model_variance.three_of_three.groups} model-job-seed groups with three attempts, ${r.model_variance.three_of_three.same_pass_fail_on_every_attempt} reached the same pass/fail every time and ${r.model_variance.three_of_three.same_verdict_and_traps_on_every_attempt} also sprang the same traps.</p>
 </section>
-<p class="small muted"><a href="${VALIDITY_JSON_PATH}">This page as JSON</a> · <a href="/benchmark">The Trap Set</a> · <a href="/benchmark/held-out">Held-out contract</a></p>`,
+<p class="small muted"><a href="${VALIDITY_JSON_PATH}">This page as JSON</a> · <a href="${RESEARCH_VALIDITY_PATH}">Referee-validity report (citable)</a> · <a href="/benchmark">The Trap Set</a> · <a href="/benchmark/held-out">Held-out contract</a></p>`,
   });
 });

@@ -21,7 +21,7 @@ import {
 } from "../src/services/public-stats";
 import { SEEDED_AT } from "../src/services/skill-seed";
 import { grossNumbers } from "../src/services/public-stats";
-import { PEOPLE_RULES } from "../src/web/stats";
+import { PEOPLE_RULES, RANKED_BOUT_DEFINITIONS } from "../src/web/stats";
 import { bump, CATALOG_SCAN_KEY, mcpCounters } from "../src/services/usage";
 import { proofNow } from "../src/services/proof";
 import { INSTALL_RULES } from "../src/services/install-metrics";
@@ -278,7 +278,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(json.third_party).toEqual([]);
     expect(json.stats.totals.includes_own_test_agents).toBe(true);
     // ADR 0105: the install-checks total is below its minimum here, so it is left out (not a null item).
-    expect(json.stats.totals.items.map((i) => i.key)).toEqual(PUBLIC_TOTALS.map((t) => t.key).filter((k) => k !== "install_checks_total"));
+    expect(json.stats.totals.items.map((i) => i.key)).toEqual(PUBLIC_TOTALS.map((t) => t.key));
     // The caveats survive the JSON twin's free-text filter (it strips keys named "note").
     expect(json.stats.totals.caveat).toBe(TOTALS_NOTE);
     expect(json.stats.totals.traffic_caveat).toBe(TRAFFIC_NOTE);
@@ -321,16 +321,28 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(block).not.toMatch(/models ranked|tools checked/);
   });
 
+  it("16 Nov review: the two ranked-bout figures each carry a definition, in the JSON and on /stats, with no new figure", async () => {
+    const a = (await (await fetchWorker(`/stats.json?u=${uid("s")}`)).json()) as { blended: Record<string, unknown> & { definitions: Record<string, string>; work: Record<string, unknown> | null; our_arena: Record<string, unknown> | null } };
+    expect(a.blended.definitions).toEqual(RANKED_BOUT_DEFINITIONS);
+    expect(Object.keys(a.blended.definitions)).toEqual(["work.ranked_bouts", "our_arena.ranked_bouts"]);
+    expect(a.blended.definitions["work.ranked_bouts"]).toMatch(/held-out seeds \(published as aggregates only\) and Lab-arm bouts included/);
+    expect(a.blended.definitions["our_arena.ranked_bouts"]).toMatch(/held-out-seed bouts and Lab-arm bouts left out/);
+    for (const d of Object.values(RANKED_BOUT_DEFINITIONS)) expect(d).not.toMatch(/\d/);
+    const page = await (await fetchWorker(`/stats?u=${uid("s")}`)).text();
+    expect(page).toContain("…of them ranked (every non-practice bout, held-out seeds and Lab arms included)");
+    if (a.blended.our_arena) expect(page).toContain('held-out-seed bouts and Lab-arm bouts left out, which is why it is lower than "…of them ranked" above');
+  });
+
   it("/stats.json is /stats?format=json: totals, an empty headline kept for old readers, the rules version", async () => {
     const a = (await (await fetchWorker(`/stats.json?u=${uid("s")}`)).json()) as Record<string, unknown> & { headline: unknown[]; totals: ReturnType<typeof publicTotals>; now: Record<string, unknown>; blended: { includes: string[] }; internal_only: string[] };
     const b = (await (await fetchWorker(`/stats?format=json&u=${uid("s")}`)).json()) as typeof a;
-    expect(a.rules_version).toBe("2.5");
+    expect(a.rules_version).toBe("2.6");
     expect(a.rules_url).toMatch(/\/stats\/rules$/);
     expect(a.headline).toEqual([]);
     expect(b.headline).toEqual([]);
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
     expect(a.totals.includes_own_test_agents).toBe(true);
-    expect(a.totals.items.map((i) => i.key)).toEqual(PUBLIC_TOTALS.map((t) => t.key).filter((k) => k !== "install_checks_total"));
+    expect(a.totals.items.map((i) => i.key)).toEqual(PUBLIC_TOTALS.map((t) => t.key));
     expect(a.totals.caveat).toBe(TOTALS_NOTE);
     expect(a.totals.traffic_caveat).toMatch(/crawlers/);
     expect(a.blended.includes).toEqual(expect.arrayContaining(["house_agents", "founder_accounts", "crawlers"]));
@@ -372,7 +384,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     const stats = (await (await fetchWorker(`/stats.json?u=${uid("s")}`)).json()) as { totals: ReturnType<typeof publicTotals> };
     expect(api.house_excluded).toBe(false);
     expect(api.founders_excluded).toBe(false);
-    expect(api.rules_version).toBe("2.5");
+    expect(api.rules_version).toBe("2.6");
     expect(api.third_party).toEqual([]);
     expect(api).toHaveProperty("active_owners_30d", null);
     expect(api.below_minimum).not.toContain("active_owners_30d");
@@ -501,7 +513,7 @@ describe("pages and machine-readable numbers (ADR 0067 Amendment 1: public total
     expect(page).not.toMatch(/third[- ]party/i);
     expect(page).toMatch(HONEST_LINE);
     const json = (await (await fetchWorker("/stats/rules?format=json")).json()) as { version: string; totals_include_own_test_agents: boolean; rules: { key: string; reproduce: string; minimum: number | null }[] };
-    expect(json.version).toBe("2.5");
+    expect(json.version).toBe("2.6");
     expect(json.totals_include_own_test_agents).toBe(true);
     expect(json.rules.some((r) => HEADLINE_RULES.some((h) => h.key === r.key))).toBe(false);
     for (const t of PUBLIC_TOTALS) expect(json.rules.map((r) => r.key)).toContain(t.rule);

@@ -23,6 +23,9 @@ export default defineConfig({
           VALIDITY_PUBLIC: "off",
           // ADR 0146: the drift report starts unreleased; test/drift-report.test.ts switches it on per test.
           DRIFT_PUBLIC: "off",
+          // ADR 0151: the live drift monitor's change figures and API start unreleased; test/live-drift.test.ts switches it on.
+          LIVE_DRIFT_PUBLIC: "off",
+          LIVE_DRIFT_TEXT_PUBLIC: "off",
         },
       },
     })),

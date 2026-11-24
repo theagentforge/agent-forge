@@ -1,4 +1,16 @@
-import { CANARY } from "@forge/arena";
+import { CANARY, TASKS } from "@forge/arena";
+
+/**
+ * 13 Nov walkthrough ("9 jobs" here, "six jobs" on the Gauntlet): the Trap Set's jobs said the way every page counts
+ * them: the six everyday jobs (each also at Hard volume, the Gauntlet's six) and the Frontier desk jobs.
+ */
+export function jobsPhrase(traps: { job: { id: string } }[]) {
+  const ids = new Set(traps.map((t) => t.job.id));
+  const everyday = [...ids].filter((id) => TASKS.some((t) => t.id === id)).length;
+  const other = ids.size - everyday;
+  const six = everyday === 6 ? "the six everyday jobs" : `${everyday} everyday ${everyday === 1 ? "job" : "jobs"}`;
+  return other ? `${ids.size} jobs: ${six} (also at Hard volume) and ${other} Frontier desk ${other === 1 ? "job" : "jobs"}` : `${six}`;
+}
 import { html } from "hono/html";
 import {
   BENCHMARK_CFF_PATH,
@@ -65,10 +77,17 @@ export function trapTargetText(targets = TRAP_TARGETS) {
   if (!targets.length) return null;
   return targets.map((t, i) => `${t.traps}${i === 0 ? " public traps" : ""} by ${longDate(t.by)}`).join(targets.length === 2 ? " and " : ", ");
 }
+/**
+ * 13 Nov walkthrough: a target already passed isn't shown as still ahead ("60 by 31 Dec" with 67 published). The line
+ * names the next target and says the earlier one was reached; with every target passed it says so.
+ */
 export function trapTargetLine(publicTraps: number, targets = TRAP_TARGETS) {
-  const target = trapTargetText(targets);
-  if (!target) return html``;
-  return html`<p class="trap-target" id="trap-target"><b>Public traps so far: <span data-trap-total>${publicTraps}</span>.</b> Target: ${target}. Each new trap is a new, append-only job version, listed in the <a href="${BENCHMARK_CHANGELOG_PATH}">changelog</a> and counted once it is published in <a href="${BENCHMARK_JSON_PATH}">v1.json</a> (<code>counts.traps</code>).</p>`;
+  if (!targets.length) return html``;
+  const reached = targets.filter((t) => publicTraps >= t.traps);
+  const ahead = targets.filter((t) => publicTraps < t.traps);
+  const passed = reached.length ? ` (${reached.map((t) => `${t.traps} by ${longDate(t.by)}`).join(", ")}: reached)` : "";
+  const target = ahead.length ? `Next target: ${trapTargetText(ahead)}${passed}.` : `Every target so far is reached${passed}.`;
+  return html`<p class="trap-target" id="trap-target"><b>Public traps so far: <span data-trap-total>${publicTraps}</span>.</b> ${target} Each new trap is a new, append-only job version, listed in the <a href="${BENCHMARK_CHANGELOG_PATH}">changelog</a> and counted once it is published in <a href="${BENCHMARK_JSON_PATH}">v1.json</a> (<code>counts.traps</code>).</p>`;
 }
 
 /** B3-02 (ADR 0104): the commercial-licence line, word for word, with the address as a mail link. */
@@ -112,7 +131,12 @@ site.get(BENCHMARK_PATH, async (c) => {
   const gap = d.data_protection.public_vs_private_gap;
   const gapRows = [...gap.per_event.map((g) => ({ label: `${g.name}, ${g.event_name}`, g })), ...gap.weekly_pooled.map((g) => ({ label: `${g.name}, weekly bouts pooled (${g.events})`, g }))];
   const audit = d.referee_validation;
-  const tiers = (["normal", "hard"] as const).filter((t) => d.results.models.some((m) => m.tier === t));
+  // 13 Nov walkthrough (benchmark ceiling): Hard first, where the jobs separate the models; Normal after it.
+  const tiers = (["hard", "normal"] as const).filter((t) => d.results.models.some((m) => m.tier === t));
+  const ceiling = (tier: "normal" | "hard") => {
+    const ms = d.results.models.filter((m) => m.tier === tier);
+    return ms.length > 1 && ms.every((m) => m.pass.n > 0 && m.pass.k === m.pass.n);
+  };
   const sourced = d.traps.filter((t) => t.trigger.source).length;
   const res = await send(c, {
     title: `${TRAP_SET_NAME} ${d.version}`,
@@ -125,14 +149,14 @@ site.get(BENCHMARK_PATH, async (c) => {
     body: html`<div class="prose">
 <h1 class="page-title">${TRAP_SET_NAME}</h1>
 <p class="muted">Version <b>${d.version}</b> · ${longDate(d.date)}</p>
-<p class="lead">${d.counts.traps} planted traps in ${d.counts.jobs} everyday jobs. Each is based on a real fraud or failure (${sourced} cite a source). A referee checks the sandbox, never the model's word. Results for ${d.counts.models} models.</p>
+<p class="lead">${d.counts.traps} planted traps in ${jobsPhrase(d.traps)}. Each is based on a real fraud or failure (${sourced} cite a source). A referee checks the sandbox, never the model's word. Results for ${d.counts.models} models.</p>
 ${trapTargetLine(d.counts.traps)}
 
 <h2 id="results">Results by model</h2>
 <p>Ranked public attempts only, with 95% intervals. Under ${d.limits.early_read_below_attempts} attempts a row is an early read, not a verdict. Rows scored under older rules are marked and never pooled.</p>
 ${tiers.length
       ? tiers.map(
-          (tier) => html`<h3>${tier === "hard" ? "Hard" : "Normal"} jobs</h3><div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Rules</th><th scope="col">Passed</th><th scope="col">95% interval</th><th scope="col">Trap falls (95% interval)</th><th scope="col">Knockouts</th><th scope="col">Runs</th></tr></thead><tbody>${d.results.models
+          (tier) => html`<h3>${tier === "hard" ? "Hard" : "Normal"} jobs</h3>${ceiling(tier) ? html`<p class="small" data-ceiling>Every model below passed every ${tier === "hard" ? "Hard" : "Normal"} attempt, so these jobs don't separate them: read the rows as a tie, not an order.</p>` : ""}<div class="table-wrap"><table class="table stack"><thead><tr><th scope="col">Model</th><th scope="col">Rules</th><th scope="col">Passed</th><th scope="col">95% interval</th><th scope="col">Trap falls (95% interval)</th><th scope="col">Knockouts</th><th scope="col">Runs</th></tr></thead><tbody>${d.results.models
             .filter((m) => m.tier === tier)
             .map(
               (m) => html`<tr><td data-label="Model">${m.name}${m.maker ? html` <span class="muted small">(${m.maker})</span>` : ""}<br><code class="small">${m.model}</code>${m.providers.length ? html`<br><span class="small muted">served by ${m.providers.join(", ")}</span>` : ""}</td><td data-label="Rules">${m.rescored_from_signed_logs ? html`${m.scored_under}, <span data-rescored>re-scored from signed logs</span> <span class="muted small">(played under ${Object.entries(m.played_under).map(([v, n]) => `${v}: ${n}`).join("; ")})</span>` : m.rules_version}${m.scored_under_trap_set_rules ? "" : html` <span class="muted small">older rules</span>`}</td><td data-label="Passed">${m.pass.k} of ${m.pass.n} (${pct(m.pass.rate)})${m.pass.early ? html` <span class="muted small">early read</span>` : ""}</td><td data-label="Interval">${interval(m.pass.ci_95)}</td><td data-label="Trap falls">${m.trap_falls.k} of ${m.trap_falls.n} (${interval(m.trap_falls.ci_95)})</td><td data-label="Knockouts">${m.knockouts}</td><td data-label="Runs">${m.run_dates.first} to ${m.run_dates.last}<br><span class="small muted">${m.task_versions.join(", ")}</span></td></tr>`,

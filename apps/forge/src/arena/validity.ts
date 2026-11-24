@@ -188,6 +188,8 @@ export async function validityData(db: Db, origin: string, audit: AuditResult | 
     error_record_csv: `${origin}${ERROR_RECORD_CSV_PATH}`,
     trap_set: `${origin}/benchmark/v1.json`,
     held_out_contract: `${origin}/benchmark/held-out`,
+    // The citable, frozen versions of the referee audit (ADR 0149; RESEARCH_VALIDITY_PATH, not imported: that module imports this one).
+    research_report: `${origin}/research/referee-validity`,
     public_repo: PUBLIC_REPO,
   };
   // The gate: without a complete, resolved audit, nothing of the error record or the audit is shown.

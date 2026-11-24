@@ -30,6 +30,14 @@ const UNDOCUMENTED = [
   "GET /api/v1/house/backfill/plan",
   "POST /api/v1/house/backfill/versions",
   "POST /api/v1/house/backfill/results",
+  // ADR 0151 amendment 2: the drift canary is a test fixture (an MCP endpoint of its own), not part of the API.
+  "GET /drift/canary/mcp",
+  "POST /drift/canary/mcp",
+  "DELETE /drift/canary/mcp",
+  // ADR 0151: the live drift API is 404 until LIVE_DRIFT_PUBLIC is on (Dinike's call); it goes in the spec when released.
+  "GET /api/drift/tool",
+  "POST /api/drift/hold",
+  "GET /api/drift/snapshot/:p",
   "POST /api/v1/social/moltbook",
   "GET /api/v1/social/moltbook/replies",
   "GET /api/v1/ops/scout-signals",

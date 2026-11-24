@@ -10,7 +10,16 @@
 
 export const INTERNAL_HEADER = "X-Forge-Internal";
 /** Components we run. Any other tag counts as "other", so a stranger can't fill the counters with made-up names. */
-export const INTERNAL_COMPONENTS = ["scout", "house", "screens", "ci-cline", "ci", "action", "bulk", "llms"] as const;
+export const INTERNAL_COMPONENTS = ["scout", "house", "screens", "ci-cline", "ci", "action", "bulk", "llms", "founder"] as const;
+
+/**
+ * KPI fix (13 Nov): a founder's own browser. /admin/kpis sets this cookie for a signed-in founder; any request that
+ * carries it is ours (component "founder"), so the founder's page views, beacons and web checks never count as people
+ * or checks from outside. Like the tags above it only leaves traffic out of the counts; it grants nothing.
+ */
+export const OWN_COOKIE = "forge_own";
+export const OWN_COOKIE_HEADER = `${OWN_COOKIE}=1; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax`;
+const OWN_COOKIE_RE = /(?:^|;\s*)forge_own=1(?:;|$)/;
 export type InternalComponent = (typeof INTERNAL_COMPONENTS)[number] | "other";
 
 const UA_TAG = /\btheagentforge-internal\/([a-z0-9-]{1,32})/i;
@@ -26,7 +35,8 @@ export function internalCaller(headers: Pick<Headers, "get">): InternalComponent
   const h = headers.get(INTERNAL_HEADER);
   if (h !== null && h.trim()) return component(h.slice(0, 40));
   const ua = UA_TAG.exec(headers.get("user-agent") ?? "");
-  return ua ? component(ua[1]!) : null;
+  if (ua) return component(ua[1]!);
+  return OWN_COOKIE_RE.test(headers.get("cookie") ?? "") ? "founder" : null;
 }
 
 /**

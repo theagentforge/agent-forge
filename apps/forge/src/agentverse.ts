@@ -134,7 +134,7 @@ check pypi:litellm==1.107.0
 \`\`\`
 Example output (abridged):
 \`\`\`json
-{"skill": "check-tool", "result": {"summary": {"verdict": "flagged", "security_status": "flagged", "tool": "pypi:litellm", "version": "1.107.0", "field_reports": 0, "top_advisories": [{"id": "MAL-2026-2144", "kind": "malicious"}]}, "share": {"receipt_url": "${origin}/r/..."}}}
+{"skill": "check-tool", "result": {"summary": {"verdict": "flagged", "security_status": "flagged", "known": false, "version": "1.107.0", "field_reports": 0, "top_advisories": [{"id": "MAL-2026-2144", "kind": "malicious"}]}, "share": {"receipt_url": "${origin}/r/..."}}}
 \`\`\`
 
 Example input:

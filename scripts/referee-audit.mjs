@@ -6,6 +6,7 @@
 //   node scripts/referee-audit.mjs [--origin https://theagentforge.io] [--cache dir] [--out file.json]
 //                                  [--adjudications file.json] [--date YYYY-MM-DD]
 //                                  [--census] [--audit-id referee-audit-2] [--also-rules "rules 0.7"] [--frame-source text]
+//                                  [--runs-from apps/forge/src/seed/validity/referee-audit-2.json]
 //
 // The frame is read from the public files: /arena/dataset.json lists the ranked events, each event's
 // /arena/events/<slug>.json lists its runs and the traps the referee marked; each sampled run's replay is
@@ -14,6 +15,8 @@
 // apps/forge/src/seed/validity/referee-audit-1.json; re-running against the same frame reproduces its figures.
 // Audit 2 (ADR 0136 Amendment 1) is the census: `--census --audit-id referee-audit-2 --also-rules "rules 0.7"` re-grades
 // every run in the frame (no sample) and also runs the prepared rules 0.7 referee (ADR 0140) on each replay.
+// --runs-from keeps only the runs a frozen audit file lists, so a later re-run re-grades exactly that audit's replays
+// (the referee-validity report, ADR 0149): the public frame grows with every ranked event.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -84,6 +87,12 @@ else {
     mkdirSync(cache, { recursive: true });
     writeFileSync(join(cache, "frame.json"), JSON.stringify(frame));
   }
+}
+
+if (opt("--runs-from")) {
+  const keep = new Set(JSON.parse(readFileSync(opt("--runs-from"), "utf8")).runs.map((r) => r.run));
+  frame = frame.filter((r) => keep.has(r.run));
+  if (frame.length !== keep.size) console.warn(`warning: ${keep.size - frame.length} of the ${keep.size} listed runs are not in today's public frame`);
 }
 
 const { drawSample } = await import(new URL("../packages/arena/src/audit/sample.ts", import.meta.url).href);

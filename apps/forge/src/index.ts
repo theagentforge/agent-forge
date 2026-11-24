@@ -12,6 +12,7 @@ import { REQUESTS_MCP_ROUTE, requestsMcpHandler } from "./mcp-requests";
 import "./test-requests-api";
 import "./tool-history-api";
 import "./server-history-api";
+import "./live-drift-api";
 import { acceptingBoth, asPlainJson, wantsJsonOnly } from "./mcp-json";
 import { type McpEndpoint, recordMcp } from "./services/usage";
 import { type InternalComponent, internalOf } from "./services/internal";
@@ -41,6 +42,7 @@ import { getDb } from "./services/db";
 import { writeLadderSnapshot } from "./services/digest";
 import { runMoltbookReplies } from "./social/moltbook-replies";
 import { notFound, site } from "./web/pages";
+import { onWorkerError, writePageSnapshots } from "./web/page-snapshots";
 import { syncOwners } from "./services/owners";
 import "./web/static-pages";
 import "./web/about";
@@ -72,6 +74,7 @@ import "./web/arena-methodology";
 import "./web/benchmark";
 import "./web/benchmark-versions";
 import "./web/validity";
+import "./web/research-validity";
 import "./web/reliability-report";
 import "./web/croissant";
 import "./web/dataset-sample";
@@ -79,6 +82,7 @@ import "./web/dataset-spec";
 import "./web/dataset-census";
 import "./web/admin-tool-history";
 import "./web/dataset-drift";
+import "./web/live-drift";
 import "./web/dataset-datasheet";
 import "./web/results-policy";
 import "./web/history-api";
@@ -115,6 +119,7 @@ import "./web/osv-feed";
 import "./web/admin-costs";
 import "./web/pricing";
 import "./web/admin-usage";
+import "./web/admin-note-review";
 import "./web/admin-claims";
 import { CLAIMS_NIGHTLY_HOUR, registerClaimsInProcess, runClaimChecks } from "./services/claims";
 import { CARD_PATHS } from "./web/discovery";
@@ -149,6 +154,8 @@ app.on(["GET", "HEAD"], LLMS_FULL_PATH, (c) => serveLlmsFull(c.env, c.executionC
 app.route("/", publicApi);
 app.route("/", auth);
 app.route("/", site);
+// ADR 0154: overload (D1 "overloaded" in the 13 Nov burst) answers 429 with Retry-After, never Hono's default 500.
+app.onError(onWorkerError);
 app.notFound((c) =>
   c.req.path.startsWith("/api/") ? c.json({ error: "not_found" }, 404) : notFound(c, "Page not found", "That page doesn't exist."),
 );
@@ -377,6 +384,13 @@ export default {
       const r = await app.fetch(new Request(`${env.PUBLIC_ORIGIN}${path}${sep}format=json`), env, ctx);
       return r.ok ? r.text() : null;
     };
+    // ADR 0154: the heavy public pages' KV snapshots, rendered in-process one at a time. Awaited, not waitUntil: the
+    // renders together can outlast waitUntil's ~30 s.
+    try {
+      console.log("page_snapshots", JSON.stringify(await writePageSnapshots(env, (req) => Promise.resolve(app.fetch(req, env, ctx)))));
+    } catch (e) {
+      console.error("page_snapshots_failed", String(e).slice(0, 200));
+    }
     // ADR 0120: the nightly claim check (its promise never rejects: failures are logged above).
     await claimsRun;
     await censusRun;

@@ -8,6 +8,25 @@ importers:
 
   .: {}
 
+  apps/drift-monitor:
+    dependencies:
+      '@forge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.4.1
+        version: 1.4.1(@cloudflare/workers-types@5.20261014.1)(@types/node@26.6.5)(vitest@4.1.11(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+      wrangler:
+        specifier: ^4.150.0
+        version: 4.150.0(@cloudflare/workers-types@5.20261014.1)(@types/node@26.6.5)
+
   apps/forge:
     dependencies:
       '@cf-wasm/og':

@@ -1,5 +1,13 @@
 // Rejects notes that contain credentials, file paths or links (MASTER_PLAN §6.5, §6.8).
 // This is a deterministic first line of defence; Llama Guard moderation runs after it.
+import { injectionSignals } from "./untrusted";
+
+/**
+ * ADR 0157: true when a note matches an injection pattern (our forge_scan rules for hidden instructions and prompt
+ * injection, plus patterns aimed at a model reading it, such as "print CANARY_OK"). Such a note is not refused
+ * (honest notes can quote an attack) but held for a person to read; Llama Guard is a harm classifier, not an injection one.
+ */
+export const noteNeedsReview = (note: string) => injectionSignals(note).length > 0;
 
 export type NoteRejection = "credential" | "file_path" | "link";
 

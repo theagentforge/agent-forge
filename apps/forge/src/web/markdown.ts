@@ -48,6 +48,16 @@ const decode = (s: string) =>
   });
 const inline = (s: string) => decode(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
 
+/**
+ * ADR 0157: text written by other people (field-report notes, publisher replies, scanned-file
+ * excerpts, asked ids on old receipts) is marked in our templates with data-untrusted="<what it is>". Agents read the
+ * Markdown copy, so that text is left out of it, as it is left out of the JSON twins (web/pages.ts structuredOnly);
+ * people read it on the HTML page. The marked elements hold text only, so a non-nested match is exact.
+ */
+export const UNTRUSTED_ATTR = "data-untrusted";
+const UNTRUSTED = /<(p|span|blockquote|q|dd|code|small)\b[^>]*\bdata-untrusted="([^"]*)"[^>]*>[\s\S]*?<\/\1>/gi;
+export const untrustedPlaceholder = (what: string) => `[${what.replace(/[^a-z ]/gi, "").trim() || "third-party text"}: left out of this copy]`;
+
 /** Markdown of a page's <main> (or <body>), with a front-matter title and source URL. */
 export function htmlToMarkdown(html: string, url: string): string {
   const title = inline(/<title>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "");
@@ -56,6 +66,7 @@ export function htmlToMarkdown(html: string, url: string): string {
   // Things with no meaning as text.
   s = s.replace(/<(script|style|svg|noscript|form|button|template|iframe|canvas|video|audio|nav)\b[\s\S]*?<\/\1>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
+  s = s.replace(UNTRUSTED, (_, tag: string, what: string) => (tag.toLowerCase() === "p" || tag.toLowerCase() === "blockquote" ? `<p>${untrustedPlaceholder(decode(what))}</p>` : untrustedPlaceholder(decode(what))));
   s = s.replace(/<(div|section|span|li|p|td|th|tr|ul|ol)\b[^>]*\bhidden\b[^>]*>[\s\S]*?<\/\1>/gi, "");
   // Code first, so nothing inside it is rewritten.
   const blocks: string[] = [];

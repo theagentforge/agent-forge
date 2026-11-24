@@ -31,7 +31,7 @@ describe("home page Arena hero (ADR 0016)", () => {
   it("the H1 comes first, then the Trap Gauntlet, server-rendered as the finished frame (works without JS)", async () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
-    const h1 = body.search(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|AI agents paid a planted fake invoice in <em>[^<]+<\/em> refereed Arena runs\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
+    const h1 = body.search(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
     const player = body.indexOf("data-gauntlet=");
     expect(h1).toBeGreaterThan(0);
     expect(player).toBeGreaterThan(h1);

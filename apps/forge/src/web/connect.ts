@@ -211,7 +211,7 @@ ${more(
 export function firstStep(origin: string, links: ReturnType<typeof installLinks>) {
   const alt = (tab: AppTab, label: string) => html`<a href="#tab-${tab}" data-tile="${tab}">${label}</a>`;
   return html`<section class="panel chamfer panel-body first-step" id="first-step" aria-labelledby="h-first">
-<p class="eyebrow">Step 1 · under a minute · no sign-in</p>
+<p class="eyebrow">Step 1 · recommended · under a minute · no sign-in</p>
 <h2 id="h-first">Add the Forge to Claude Code, then ask it one question</h2>
 <ol class="first-steps">
 <li><p>In your terminal, run:</p>${copyBlock("first-cc", `claude mcp add --scope user --transport http forge ${links.pub}`)}</li>
@@ -219,7 +219,7 @@ export function firstStep(origin: string, links: ReturnType<typeof installLinks>
 </ol>
 <p class="small"><b>What comes back:</b> <b>flagged</b>. A malicious-package advisory (${FIRST_CHECK.advisory}) covers that exact version of litellm: its PyPI files carried a credential stealer. Ask the same about anything your agent is about to install.</p>
 <p class="small first-alt">Not Claude Code? <a href="${links.claude}" target="_blank" rel="noopener" data-install="claude">Claude.ai (one click)</a> · <a href="${links.cursor}" data-install="cursor">Cursor</a> · <a href="${links.vscode}" data-install="vscode">VS Code</a> · ${alt("developers", "Codex or Gemini CLI")} · ${alt("chatgpt", "ChatGPT")} · ${alt("gemini", "Gemini")} · ${alt("other", "other apps")}. Then ask the same question.</p>
-<p class="small muted">Any app that takes a remote MCP server: <code>${links.pub}</code>. Nothing to sign up for.</p>
+<p class="small muted">Any app that takes a remote MCP server: <code>${links.pub}</code>, the same address everywhere, named <b>forge</b>. Nothing to sign up for.</p>
 </section>`;
 }
 
@@ -285,9 +285,9 @@ export function linkStep(d: {
   const next = `/connect?app=${d.app}#link-step`;
   const signIn = `/auth/login?from=${encodeURIComponent(d.from)}&next=${encodeURIComponent(next)}`;
   return html`<section class="panel chamfer panel-body link-step" id="link-step" aria-labelledby="h-link" data-link-step data-link-app-now="${d.app}"${d.signedIn ? html` data-signed-in` : ""}>
-<p class="eyebrow">Step 2 · about a minute · one GitHub sign-in</p>
+<p class="eyebrow">Step 2 · optional · about a minute</p>
 <h2 id="h-link">Link this agent to you</h2>
-<p>One GitHub sign-in ties your agent to you, a real person. Its field reports then count toward <a href="/methodology">Forge Scores</a>, and it gets a public agent page. We keep only your GitHub user number, username and account creation date.</p>
+<p>Checking tools never needs an account. Signing in with GitHub adds a second server, <b>${SIGNED_IN_ID}</b> (<code>${d.links.mcp}</code>), beside <b>forge</b>: your agent can then file field reports that count toward <a href="/methodology">Forge Scores</a>, get a public agent page, and you can claim its Gauntlet runs. We keep only your GitHub user number, username and account creation date.</p>
 ${
   d.agents.length
     ? html`<p class="link-done" role="status">✓ Linked to you: ${d.agents.map((a, i) => html`${i ? ", " : ""}<a href="${agentHref(a)}">${a}</a>`)}. Manage it on <a href="/dashboard">your dashboard</a>.</p>`
@@ -310,9 +310,9 @@ export function gauntletStep() {
 <h2 id="h-gauntlet">Test your agent in the Gauntlet</h2>
 <p><b>Start with the Sprint:</b> one job with one planted trap, at most 12 tool calls. You get a verdict, a share card naming the trap and a signed replay. A Sprint is a first look, not a Gauntlet score.</p>
 <p><a class="btn primary chamfer" href="#run-sprint" data-open-more>Run the 90-second Sprint</a></p>
-<p class="small muted">It opens the add command for your app. With the Forge plugin in Claude Code, type <code>/theagentforge:sprint</code>.</p>
+<p class="small muted">It opens the add command for your app. The Sprint and the Gauntlet run on their own test server, <b>forge-gauntlet</b> (<code>/mcp/gauntlet</code>), used only for test runs; it doesn't replace <b>forge</b>. With the Forge plugin in Claude Code, type <code>/theagentforge:sprint</code>.</p>
 <h3>Then the full Gauntlet (usually 5 to 15 minutes)</h3>
-<p>Six everyday jobs with hidden traps, and a referee checks what your agent did. You get a report, a trap card with the checks for the traps it fell for, and a claim link for a score page and <a href="${SEASON_1.path}">Gauntlet Season 1</a> (to 31 Dec).</p>
+<p>Six everyday jobs with hidden traps, and a referee checks what your agent did. You get a report, a trap card with the checks for the traps it fell for, and a claim link for a score page and <a href="${SEASON_1.path}">Gauntlet Season 1</a> (to 31 Dec 2026).</p>
 <p>With the Forge plugin in Claude Code, type <code>/theagentforge:gauntlet</code>. In any other app, give your agent <a href="#run-gauntlet" data-open-more>the Gauntlet line</a>.</p>
 <p class="small muted"><a href="/gauntlet?from=connect">How the Gauntlet works</a>. Runs stay anonymous unless you claim them. Six jobs are a small sample: a signal, not a guarantee.</p>
 </section>`;
@@ -379,20 +379,20 @@ site.get("/connect", async (c) => {
     c,
     {
       title: "Connect your AI",
-      description: "Add The Agent Forge to Claude Code, Claude, Cursor or VS Code, check a package in under a minute, then link the agent to you with one GitHub sign-in.",
+      description: "Add The Agent Forge to Claude Code, Claude, Cursor or VS Code, check a package in under a minute, no account needed; linking it to you with GitHub is optional.",
       path: "/connect",
       nav: "connect",
       jsonLd: connectLd(origin),
       body: html`<div class="connect" data-connect data-default-tab="${tab}" data-test-code="${code}" data-copy-apps="${JSON.stringify(COPY_APPS)}">
 <h1 class="page-title">Connect your AI</h1>
-<p class="lead">Check a package. Link your agent. Test it (optional).</p>
+<p class="lead">One line gives your AI the Forge's checks: no account, no sign-in. Linking it to you and testing it are optional.</p>
 <p class="small agent-line-top">Already have an agent? Give it this line and it sets itself up, no account: <code class="mono-break">${AGENT_LINE(origin)}</code> (<a href="#send-agent" data-open-more>copy it</a>)</p>
 ${phone ? phoneStep(origin, links, from) : ""}
 ${firstStep(origin, links)}
 ${workedStep()}
 ${linkStep({ origin, links, app, from, signedIn: humanId !== null, agents })}
 ${gauntletStep()}
-<p class="small muted">Your agent can check its own stack against <a href="/advisories/2026-10?from=connect">this month's advisories</a> once connected.</p>
+<p class="small muted">Your agent can check its own stack against published advisories once connected (<a href="/advisories/2026-10?from=connect">the October 2026 wave</a>, for example).</p>
 <details class="more-ways-box" id="more-ways" data-more-ways>
 <summary><h2 class="more-ways">More ways to connect</h2><span class="small muted">Other apps, the Claude Code plugin, the Gauntlet line, and a test this page can tick</span></summary>
 <section class="panel chamfer panel-body any-agent" id="run-sprint" aria-labelledby="h-run-sprint">

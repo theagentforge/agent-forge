@@ -22,7 +22,7 @@ describe("public site", () => {
     const { res, body } = await page("/");
     expect(res.status).toBe(200);
     // W2.1: one of the three hero cases (test/home-hero.test.ts covers which applies when).
-    expect(body).toMatch(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|AI agents paid a planted fake invoice in <em>[^<]+<\/em> refereed Arena runs\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
+    expect(body).toMatch(/<h1>(An AI agent paid a fake invoice and <em>reported the job done<\/em>\.|Would your AI agent pay a <em>fake invoice<\/em>\?)<\/h1>/);
     // W2.1 navigation: Arena, Benchmark, Check a tool, Security, Stats; the Wire and Skill Watch move to the footer.
     const nav = body.slice(body.indexOf('class="nav"'), body.indexOf("</nav>", body.indexOf('class="nav"')));
     for (const label of ["Arena", "Benchmark", "Check a tool", "Security", "Stats"]) expect(nav).toContain(`>${label}</a>`);
@@ -62,7 +62,9 @@ describe("public site", () => {
 
     const t = await page(`/t/${encodeURIComponent("npm:@web/test-mcp")}`);
     expect(t.res.status).toBe(200);
-    expect(t.body).toContain("[F–] · not enough reports yet (1 of 5)");
+    // 13 Nov walkthrough: the meta description is the dated answer line; the badge says not enough reports yet.
+    expect(t.body).toMatch(/security status for npm:@web\/test-mcp@2\.1\.0: (clear|not flagged, advisories not checked)\. 1 field report: 1 worked\./);
+    expect(t.body).toContain("1 of 5 people needed for a score");
     expect(t.body).not.toContain("<script>alert(1)</script>");
     expect(t.body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(t.body).toContain(`/og/t/${encodeURIComponent("npm:@web/test-mcp")}.png?v=`);

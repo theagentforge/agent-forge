@@ -21,6 +21,13 @@ registryTransport.fetch = (async () => new Response("offline in tests", { status
 import { publicNumbersCache } from "../src/services/public-numbers";
 publicNumbersCache.enabled = false;
 
+// ADR 0154: the KV page snapshots and the KV check-answer copy are off in tests for the same reason;
+// test/page-snapshots.test.ts turns them on.
+import { pageSnapshots } from "../src/web/page-snapshots";
+import { checkKvCache } from "../src/services/forge";
+pageSnapshots.enabled = false;
+checkKvCache.enabled = false;
+
 // Nor any page the claim verifier reads elsewhere (ADR 0120): outside URLs answer 503 unless a test records its own.
 import { claimsTransport } from "../src/services/claims";
 claimsTransport.fetch = (async () => new Response("offline in tests", { status: 503 })) as typeof claimsTransport.fetch;

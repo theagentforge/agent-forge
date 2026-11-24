@@ -14,6 +14,7 @@ import {
   STRAIN_SOURCES,
   TOOL_KINDS,
 } from "./constants";
+import { CHECK_ID_MESSAGE, CHECK_URL_MESSAGE, checkIdProblem, urlProblem, versionProblem } from "./untrusted";
 
 export * from "./constants";
 
@@ -43,6 +44,10 @@ export const strainSchema = z
 export const TOOL_ID_PATTERN =
   /^(?:npm:(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*|pypi:[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?|github\.com\/[a-z0-9][a-z0-9_.-]*\/[a-z0-9_.-]+(?:\/[a-z0-9_.@-]+)*|mcp-registry:[a-z0-9][a-z0-9._/-]*|https?:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[a-z0-9._~%@+-]*)*)$/i;
 export const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+_-]*$/;
+/** ADR 0157: the fixed message for a refused version (never repeats the input). */
+export const VERSION_MESSAGE = "version must be a version string such as 1.4.2 (64 characters at most, no sentences)";
+const versionField = () =>
+  z.string().trim().min(1).max(64, VERSION_MESSAGE).regex(VERSION_PATTERN, VERSION_MESSAGE).refine((v) => versionProblem(v) === null, { message: VERSION_MESSAGE, abort: true });
 
 export const toolRefSchema = z.strictObject({
   kind: z.enum(TOOL_KINDS),
@@ -51,8 +56,10 @@ export const toolRefSchema = z.strictObject({
     .trim()
     .min(1)
     .max(512)
-    .regex(TOOL_ID_PATTERN, "id must be npm:<package>, pypi:<package>, github.com/<owner>/<repo>[/path], mcp-registry:<name> or an http(s) URL"),
-  version: z.string().trim().min(1).max(128).regex(VERSION_PATTERN, "version must be a version string such as 1.4.2"),
+    .regex(TOOL_ID_PATTERN, "id must be npm:<package>, pypi:<package>, github.com/<owner>/<repo>[/path], mcp-registry:<name> or an http(s) URL")
+    // ADR 0157: a reported id becomes a tool "on file", named in receipts, so it follows the check id grammar too.
+    .refine((v) => checkIdProblem(v) === null, { message: CHECK_ID_MESSAGE, abort: true }),
+  version: versionField(),
   fingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/, "fingerprint must be sha256:<64 lowercase hex>"),
 });
 
@@ -80,14 +87,17 @@ export const reportSchema = z.strictObject({
   evidence_sha256: z.string().regex(/^sha256:[0-9a-f]{64}$/, "evidence_sha256 must be sha256:<64 lowercase hex>").optional(),
 });
 
-/** Input to a check: any one of id, url or fingerprint. */
+/**
+ * Input to a check: any one of id, url or fingerprint. ADR 0157: the id and url follow a strict grammar (an identifier,
+ * never a sentence), and a refusal says what is accepted with a fixed message that never repeats the input.
+ */
 export const checkQuerySchema = z
   .strictObject({
-    id: z.string().trim().min(1).max(512).optional(),
-    url: z.url({ protocol: /^https?$/ }).max(512).optional(),
+    id: z.string().trim().min(1).max(512).refine((v) => checkIdProblem(v) === null, { message: CHECK_ID_MESSAGE, abort: true }).optional(),
+    url: z.url({ protocol: /^https?$/ }).max(512).refine((v) => urlProblem(v) === null, { message: CHECK_URL_MESSAGE, abort: true }).optional(),
     fingerprint: toolRefSchema.shape.fingerprint.optional(),
     /** The exact version to check advisories for (crisis-wave plan C2); field reports stay pinned to what's on file. */
-    version: z.string().trim().min(1).max(128).regex(VERSION_PATTERN, "version must be a version string such as 1.4.2").optional(),
+    version: versionField().optional(),
   })
   .refine((q) => [q.id, q.url, q.fingerprint].filter((v) => v !== undefined).length === 1, {
     message: "give exactly one of id, url or fingerprint",

@@ -41,6 +41,7 @@ async function addRuns(eventId: string, model: string, task: string, traps: stri
     await getDb(env).insert(t.arenaRuns).values({
       id, eventId, modelId: model, task, seed: 4_100_001, attemptNo: 1, status: "done", passed: r.result.passed, score: 0.5, cost: 0.01, tokens: 1000,
       result: r.result, log: r.log, signature: await signReport(env.REPORT_SIGNING_KEY, { id, log: JSON.stringify(r.log) }), finishedAt: clock,
+      replaySeal: { v: 2, fixture: true } as never, // 13 Nov: only sealed (v2) replays back a headline or case
     });
   }
 }

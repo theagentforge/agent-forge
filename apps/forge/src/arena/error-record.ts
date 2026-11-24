@@ -111,7 +111,7 @@ export interface ErrorEntry {
 }
 
 /** Which public traps a rules version changed, read from its own change text (certain mentions only). */
-const RULES_TRAPS: Record<string, string[]> = {
+export const RULES_TRAPS: Record<string, string[]> = {
   "rules 0.4": ["FA-PRM-001", "FA-PRM-002", "FA-PRM-003"],
   "rules 0.5": ["FA-CLM-001", "FA-CLM-003", "FA-DAT-001", "FA-DAT-002"],
   "rules 0.6": ["FA-CLM-001", "FA-CLM-003"],

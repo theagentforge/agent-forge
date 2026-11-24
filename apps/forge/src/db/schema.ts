@@ -181,7 +181,9 @@ export const reports = sqliteTable(
     outcome: text("outcome", { enum: ["worked", "partial", "failed"] }).notNull(),
     issues: text("issues", { mode: "json" }).$type<string[]>().notNull(),
     note: text("note"),
-    moderationState: text("moderation_state", { enum: ["none", "approved", "pending", "rejected"] }).notNull(),
+    // "review" (ADR 0157): the note matched an injection pattern; it is never shown and never sent to the model, until a
+    // person sets it to approved or rejected (how: ADR 0157).
+    moderationState: text("moderation_state", { enum: ["none", "approved", "pending", "rejected", "review"] }).notNull(),
     serverSignature: text("server_signature").notNull(),
     createdAt: integer("created_at").notNull(),
     /** Held for review by an anomaly rule (MASTER_PLAN §6.6); held reports don't count until released. */
@@ -1331,3 +1333,167 @@ export const testRequests = sqliteTable(
     index("test_requests_ip_day").on(t.ipDay),
   ],
 );
+
+// ADR 0151: the live drift monitor of remote MCP servers in the official MCP Registry. Written by the poller Worker
+// (apps/drift-monitor, raw SQL), read by this Worker. drift_events, drift_polls and drift_snapshots are append-only
+// (the migration adds triggers that refuse UPDATE and DELETE): retention is the point of this data.
+
+/** One remote endpoint (registry name + remote URL) of a server's latest Registry version. */
+export const driftServers = sqliteTable(
+  "drift_servers",
+  {
+    /** sha256(registry name + "\n" + remote URL), first 32 hex characters. */
+    id: id(),
+    registryName: text("registry_name").notNull(),
+    remoteUrl: text("remote_url").notNull(),
+    host: text("host").notNull(),
+    /** streamable-http | sse (as the Registry lists it) */
+    transport: text("transport").notNull(),
+    /** The Registry version this remote was last listed under. */
+    registryVersion: text("registry_version"),
+    /** The Registry's own status for the server (active, deprecated, deleted). */
+    registryStatus: text("registry_status"),
+    /** False once the server's latest Registry version no longer lists this remote (kept, never deleted). */
+    listed: integer("listed", { mode: "boolean" }).notNull().default(true),
+    /** Set when the Registry declares a required header (no default) or URL variable: never contacted. e.g. header:X-API-Key */
+    needsConfig: text("needs_config"),
+    firstListedAt: integer("first_listed_at").notNull(),
+    lastListedAt: integer("last_listed_at").notNull(),
+    nextPollAt: integer("next_poll_at").notNull(),
+    lastPollAt: integer("last_poll_at"),
+    lastOkAt: integer("last_ok_at"),
+    /** ok | auth_required | error | rate_limited | skipped_optout | skipped_needs_config | skipped_sse */
+    lastStatus: text("last_status"),
+    lastErrorClass: text("last_error_class"),
+    lastHttpStatus: integer("last_http_status"),
+    consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+    pollsTotal: integer("polls_total").notNull().default(0),
+    pollsOk: integer("polls_ok").notNull().default(0),
+    /** The first successful observation (the baseline: no change event is written for it). */
+    firstObservedAt: integer("first_observed_at"),
+    /** At the last successful poll: the Registry version, the version the server reported in initialize, the snapshot. */
+    okRegistryVersion: text("ok_registry_version"),
+    okReportedVersion: text("ok_reported_version"),
+    okSnapshot: text("ok_snapshot"),
+  },
+  (t) => [
+    uniqueIndex("drift_servers_name_url").on(t.registryName, t.remoteUrl),
+    index("drift_servers_due").on(t.listed, t.nextPollAt),
+    index("drift_servers_url").on(t.remoteUrl),
+    index("drift_servers_host").on(t.host),
+  ],
+);
+
+/** The previous observation of each tool of an endpoint (what the next poll compares with). The only mutable drift table. */
+export const driftToolState = sqliteTable(
+  "drift_tool_state",
+  {
+    serverId: text("server_id").notNull(),
+    tool: text("tool").notNull(),
+    rawDigest: text("raw_digest").notNull(),
+    normalisedDigest: text("normalised_digest").notNull(),
+    /** Kuadrant #1633 contract digest: name, description, inputSchema and outputSchema. */
+    contractDigest: text("contract_digest").notNull(),
+    descriptionDigest: text("description_digest").notNull(),
+    schemaDigest: text("schema_digest").notNull(),
+    outputDigest: text("output_digest").notNull(),
+    /** The contract canonical text of {name, description, inputSchema, outputSchema}. */
+    text: text("text").notNull(),
+    firstSeenAt: integer("first_seen_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.serverId, t.tool] })],
+);
+
+/** Every tools/list result seen, canonical JSON (keys sorted, every field), content-addressed. Append-only. */
+export const driftSnapshots = sqliteTable("drift_snapshots", {
+  sha256: text("sha256").primaryKey(),
+  body: text("body").notNull(),
+  toolsCount: integer("tools_count").notNull(),
+  bytes: integer("bytes").notNull(),
+  firstSeenAt: integer("first_seen_at").notNull(),
+});
+
+/** One row per poll attempt (or skip), with its own timestamp and, when it worked, the snapshot seen. Append-only. */
+export const driftPolls = sqliteTable(
+  "drift_polls",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    serverId: text("server_id").notNull(),
+    at: integer("at").notNull(),
+    status: text("status").notNull(),
+    errorClass: text("error_class"),
+    httpStatus: integer("http_status"),
+    snapshot: text("snapshot"),
+    toolsCount: integer("tools_count"),
+    registryVersion: text("registry_version"),
+    reportedVersion: text("reported_version"),
+    protocolVersion: text("protocol_version"),
+    /** True for an endpoint's first successful observation. */
+    baseline: integer("baseline", { mode: "boolean" }).notNull().default(false),
+    changes: integer("changes").notNull().default(0),
+    durationMs: integer("duration_ms"),
+  },
+  (t) => [index("drift_polls_server_at").on(t.serverId, t.at), index("drift_polls_at").on(t.at)],
+);
+
+/**
+ * One row per tool whose digest differs from its previous observation: the append-only change log. A→B→A is two rows.
+ * Both sides' tool text and both snapshots are kept, so every event can be shown exactly as seen.
+ */
+export const driftEvents = sqliteTable(
+  "drift_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    serverId: text("server_id").notNull(),
+    pollId: integer("poll_id").notNull(),
+    tool: text("tool").notNull(),
+    observedAt: integer("observed_at").notNull(),
+    /** When the "before" side was last seen (the previous successful poll). */
+    previousAt: integer("previous_at"),
+    /** whitespace_only | description | schema | output_schema | tool_added | tool_removed */
+    changeClass: text("change_class").notNull(),
+    descriptionChanged: integer("description_changed", { mode: "boolean" }).notNull(),
+    schemaChanged: integer("schema_changed", { mode: "boolean" }).notNull(),
+    outputSchemaChanged: integer("output_schema_changed", { mode: "boolean" }).notNull(),
+    beforeRaw: text("before_raw"),
+    afterRaw: text("after_raw"),
+    beforeNormalised: text("before_normalised"),
+    afterNormalised: text("after_normalised"),
+    beforeContract: text("before_contract"),
+    afterContract: text("after_contract"),
+    beforeText: text("before_text"),
+    afterText: text("after_text"),
+    beforeSnapshot: text("before_snapshot"),
+    afterSnapshot: text("after_snapshot").notNull(),
+    registryVersionBefore: text("registry_version_before"),
+    registryVersionAfter: text("registry_version_after"),
+    reportedVersionBefore: text("reported_version_before"),
+    reportedVersionAfter: text("reported_version_after"),
+    /** Both the Registry version and the version the server reported were the same on both sides. */
+    sameVersion: integer("same_version", { mode: "boolean" }).notNull(),
+  },
+  (t) => [index("drift_events_server_at").on(t.serverId, t.observedAt), index("drift_events_at").on(t.observedAt), index("drift_events_class").on(t.changeClass)],
+);
+
+/** The published opt-out list: a Registry name, a host or an exact URL. Checked before every poll. */
+export const driftOptouts = sqliteTable(
+  "drift_optouts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** registry_name | host | url */
+    kind: text("kind").notNull(),
+    value: text("value").notNull(),
+    addedAt: integer("added_at").notNull(),
+    /** A short public note ("owner's request"); never an email address. */
+    note: text("note"),
+  },
+  (t) => [uniqueIndex("drift_optouts_kind_value").on(t.kind, t.value)],
+);
+
+/** Monitor state: series_started_at (the first successful poll; set once), registry cursor and sync times. */
+export const driftMeta = sqliteTable("drift_meta", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});

@@ -6,7 +6,9 @@
     ".": "./src/index.ts",
     "./light": "./src/light.ts",
     "./install-parse": "./src/install-parse.ts",
-    "./skill-scan": "./src/skill-scan.ts"
+    "./skill-scan": "./src/skill-scan.ts",
+    "./drift-monitor": "./src/drift-monitor.ts",
+    "./drift-canary": "./src/drift-canary.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

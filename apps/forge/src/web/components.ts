@@ -61,14 +61,18 @@ export function breakableId(id: string) {
   return raw(esc(id).replace(/([/@:])/g, "$1<wbr>"));
 }
 
-/** One feed row: a title line (with time on the right), a quiet meta line, and an optional quoted note. */
-export function feedItem(o: { title: unknown; time: unknown; meta: unknown[]; note?: string | null }) {
+/**
+ * One feed row: a title line (with time on the right), a quiet meta line, and an optional quoted note. The note is
+ * someone else's text (a field report's note, a publisher's reply): marked untrusted, so the Markdown copy for agents
+ * leaves it out (ADR 0157).
+ */
+export function feedItem(o: { title: unknown; time: unknown; meta: unknown[]; note?: string | null; noteFrom?: string }) {
   const parts = o.meta.filter((m) => m !== "" && m != null);
   return html`<li>
 <div class="fi-title">${o.title}</div>
 <div class="fi-time">${o.time}</div>
 <div class="fi-meta">${parts.map((m, i) => html`${i ? html`<span class="dot" aria-hidden="true"></span>` : ""}${m}`)}</div>
-${o.note ? html`<p class="fi-note">${o.note}</p>` : ""}
+${o.note ? html`<p class="fi-note" data-untrusted="${o.noteFrom ?? "field report note"}">${o.note}</p>` : ""}
 </li>`;
 }
 

@@ -1,6 +1,7 @@
+import { OWASP_AGENTIC, publicTrapId, TRAP_CATALOG, trapSeverity, type OwaspAgenticId } from "@forge/arena";
 import { html } from "hono/html";
-import { ACTION_VERSION, CLIENT_TAG, DEFAULT_MAX_TURNS, TRAP_FAMILIES } from "../../../../integrations/gauntlet-action/src/run";
-import { GAUNTLET_DAILY_PER_SOURCE } from "../arena/gauntlet";
+import { ACTION_VERSION, CLIENT_TAG, DEFAULT_MAX_TURNS, TRAP_FAMILIES, VERIFY_CLI } from "../../../../integrations/gauntlet-action/src/run";
+import { GAUNTLET_DAILY_PER_SOURCE, JOBS } from "../arena/gauntlet";
 import { SPRINT_DAILY_PER_SOURCE, SPRINT_TOOL_CALLS } from "../arena/sprint";
 import { copyBlock } from "./components";
 import { send, site } from "./pages";
@@ -13,9 +14,64 @@ export const GAUNTLET_CI_PATH = "/gauntlet/ci";
 export const GAUNTLET_ACTION_USES = "theagentforge/gauntlet@v1";
 /**
  * Whether theagentforge/gauntlet is released (the repository holds the action and `@v1` resolves). Until then the page
- * says so instead of offering a line that doesn't work yet. Flip it with the first release (Dinike's Marketplace step).
+ * says so instead of offering a line that doesn't work yet. On since 13 Nov 2026 (ADR 0150): the repository holds the
+ * v1.0.0 files on `main` and the `v1` branch, so `@v1` resolves, Marketplace listing or not (as forge-check since 16 Oct).
  */
-export const GAUNTLET_ACTION_RELEASED = false;
+export const GAUNTLET_ACTION_RELEASED = true;
+
+/**
+ * Harness, "The State of Agent DLC 2026" (Sapio Research survey for Harness, July 2026), read 13 Nov 2026: "Only 19%
+ * actually have a gate that automatically blocks every bad release, no exceptions." The page gives 700 respondents,
+ * technology professionals at large enterprises in five countries.
+ */
+export const HARNESS_GATE_STAT = {
+  url: "https://www.harness.io/state-of-agent-dlc-2026",
+  text: "In Harness's State of Agent DLC 2026 (a Sapio Research survey of 700 technology professionals at large enterprises, July 2026), 19% said they have a gate that automatically blocks every bad release.",
+} as const;
+
+/** The forge-check action (theagentforge/forge-check): fails CI when a tool the repository uses is flagged. */
+export const FORGE_CHECK_USES = "theagentforge/forge-check@v1";
+
+export interface OwaspRow {
+  id: OwaspAgenticId;
+  name: string;
+  /** Traps in the Gauntlet's six jobs that the Trap Set's severity annotation maps to this category. */
+  gauntlet: { trap: string; fit: "direct" | "partial" }[];
+  /** Other public Trap Set traps mapped to it (played in the Arena, not by this action). */
+  trapSetOnly: { trap: string; fit: "direct" | "partial" }[];
+}
+
+/**
+ * What the gate tests, by OWASP Top 10 for Agentic Applications category, read from the published per-trap annotation
+ * (packages/arena/src/severity.ts, "never forced"), so the page can't claim a category no trap is mapped to.
+ */
+export function gauntletOwasp(): OwaspRow[] {
+  const inGauntlet = new Set(JOBS.flatMap((t) => t.traps.map((x) => publicTrapId(t.id, x.id)).filter((x): x is string => !!x)));
+  return (Object.keys(OWASP_AGENTIC.categories) as OwaspAgenticId[]).map((id) => {
+    const mapped = TRAP_CATALOG.map((e) => ({ trap: e.id, o: trapSeverity(e.id)?.owasp_agentic ?? null })).filter((x) => x.o?.id === id).map((x) => ({ trap: x.trap, fit: x.o!.fit }));
+    return { id, name: OWASP_AGENTIC.categories[id], gauntlet: mapped.filter((x) => inGauntlet.has(x.trap)), trapSetOnly: mapped.filter((x) => !inGauntlet.has(x.trap)) };
+  });
+}
+
+const fitList = (xs: { trap: string; fit: string }[]) => xs.map((x) => `${x.trap} (${x.fit})`).join(", ");
+
+/**
+ * The Gauntlet column of that mapping as a Markdown table, for the action's README (a test checks the README carries it
+ * word for word). Only the six jobs' traps, which are frozen, so the Arena's growing catalog doesn't churn the README.
+ */
+export function owaspMarkdown(rows: OwaspRow[] = gauntletOwasp()) {
+  const note = (r: OwaspRow) =>
+    r.id === "ASI04"
+      ? "Not tested by the Gauntlet. [forge-check](https://github.com/theagentforge/forge-check) fails CI when an MCP server or tool your repository uses is flagged (field reports, OSV advisories): known reports only."
+      : r.id === "ASI02" && !r.gauntlet.length
+        ? "Planted only in the harder Arena jobs, which this action doesn't play ([full mapping](https://theagentforge.io/gauntlet/ci#owasp))."
+        : "";
+  return [
+    "| OWASP category | Gauntlet traps (fit) | Note |",
+    "|---|---|---|",
+    ...rows.filter((r) => r.gauntlet.length || r.id === "ASI02" || r.id === "ASI04").map((r) => `| ${r.id} ${r.name} | ${r.gauntlet.length ? fitList(r.gauntlet) : "none"} | ${note(r)} |`),
+  ].join("\n");
+}
 
 const FAMILY_WORDS: Record<(typeof TRAP_FAMILIES)[number], string> = {
   PAY: "paid a scam or a changed payee",
@@ -64,6 +120,7 @@ site.get(GAUNTLET_CI_PATH, (c) => {
 ${GAUNTLET_ACTION_RELEASED
   ? ""
   : html`<p class="notice" role="status">Not released yet: the <code>${GAUNTLET_ACTION_USES}</code> address works from its first release. The source is in <code>integrations/gauntlet-action</code> of the public code repository.</p>`}
+<p class="small" data-action-links>On the GitHub Marketplace as <a href="https://github.com/marketplace/actions/forge-gauntlet">Forge Gauntlet</a>, version ${ACTION_VERSION}; source at <a href="https://github.com/theagentforge/gauntlet">github.com/theagentforge/gauntlet</a>.</p>
 <h2>Add it in one file</h2>
 <div class="copy-wrap">${copyBlock("gauntlet-ci-workflow", workflowExample())}</div>
 <p class="small muted">Add your model key as a repository secret first (Settings, Secrets and variables, Actions). Any OpenAI-compatible endpoint works: set <code>base-url</code> for OpenRouter, Together, Groq, Azure OpenAI or a model served on the runner.</p>
@@ -80,6 +137,29 @@ ${GAUNTLET_ACTION_RELEASED
 <li>A run your agent didn't finish always fails, even with no trap sprung: a job where its replies, tool calls or time ran out counts as unfinished. The action never calls <code>finish</code> for your agent.</li>
 <li><code>mode</code>: <code>sprint</code> (the default: one job, at most ${SPRINT_TOOL_CALLS} sandbox tool calls) or <code>full</code> (six jobs). With <code>full</code>, <code>challenge</code> set to an earlier run's id replays its identical jobs, so before and after a change compare like for like. Sprints use a fresh job version each time.</li>
 </ul>
+<h2 id="gate">A blocking gate, by default</h2>
+<p>When your agent falls for a planted trap, the step exits non-zero, so the job fails. Make the job a required status check (branch protection or a ruleset) and a pull request can't merge until the agent passes. To report without blocking, set <code>fail-on-trap: none</code>; to block on some trap families only, list them.</p>
+<p class="small">${HARNESS_GATE_STAT.text} <a href="${HARNESS_GATE_STAT.url}">Source</a>.</p>
+<h2 id="evidence">Signed replays as audit evidence</h2>
+<p>Every job the agent played has a replay: the full log of its tool calls and the referee's result, hash-chained and signed with The Forge's <a href="/.well-known/forge-keys.json">published Ed25519 key</a> (replay format v2). The action puts each job's replay link in the output <code>replay-urls</code> and the job summary, and says how many are signed (<code>replays-signed</code>). Anyone can check one without trusting The Forge or your CI:</p>
+<pre class="verdict-line">npx ${VERIFY_CLI} verify ${origin}/gauntlet/r/&lt;run-id&gt;/1.json</pre>
+<p class="small muted">The Forge keeps Gauntlet replays 30 days. To keep them as evidence for longer, download the files in a later step and store them with your build (for example as a workflow artifact). A signed replay shows what the agent did on these jobs, and that the record wasn't changed afterwards. It records a test result on these jobs, nothing more.</p>
+<h2 id="owasp">What it tests, against the OWASP Top 10 for Agentic Applications</h2>
+<p>Each public trap carries the closest <a href="${OWASP_AGENTIC.source.url}">OWASP Top 10 for Agentic Applications for 2026</a> category, or none where none fits (never forced; see <a href="/benchmark">the Trap Set</a>). Read from that annotation, for the Gauntlet's six jobs:</p>
+<div class="table-wrap"><table class="table" data-owasp><thead><tr><th scope="col">OWASP category</th><th scope="col">Gauntlet traps (fit)</th><th scope="col">Elsewhere in The Forge</th></tr></thead><tbody>
+${gauntletOwasp()
+  .filter((r) => r.gauntlet.length || r.trapSetOnly.length || r.id === "ASI02" || r.id === "ASI04")
+  .map(
+    (r) => html`<tr data-asi="${r.id}"><td>${r.id} ${r.name}</td><td>${r.gauntlet.length ? r.gauntlet.map((x, i) => html`${i ? ", " : ""}<a href="/arena/failures/${x.trap}">${x.trap}</a> (${x.fit})`) : "none"}</td><td>${
+      r.id === "ASI04"
+        ? html`Not tested by the Gauntlet. The <a href="https://github.com/theagentforge/forge-check">forge-check</a> action (<code>${FORGE_CHECK_USES}</code>) fails CI when an MCP server or tool your repository uses is flagged by field reports or OSV advisories: known reports only.`
+        : r.trapSetOnly.length
+          ? html`Arena Trap Set only: ${r.trapSetOnly.map((x, i) => html`${i ? ", " : ""}<a href="/arena/failures/${x.trap}">${x.trap}</a> (${x.fit})`)}`
+          : "none"
+    }</td></tr>`,
+  )}
+</tbody></table></div>
+<p class="small muted">The Gauntlet's six jobs are the Trap Set's Normal jobs; tool misuse (ASI02) is planted only in the harder Arena jobs, which this action doesn't play. Categories with no public trap are left out.</p>
 <h2>What it sends, and what it costs</h2>
 <ul>
 <li><b>Your key goes only to your model.</b> The action sends it to your <code>base-url</code> and nowhere else (redirects are refused), and masks it in the log. The Forge gets what any Gauntlet run sends: the start and each tool call (name and arguments). Never the key, the model's name, its text replies, your repository or your account.</li>

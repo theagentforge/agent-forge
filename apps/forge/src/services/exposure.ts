@@ -1,4 +1,4 @@
-import { VERSION_PATTERN } from "@forge/shared";
+import { textLike, versionProblem, VERSION_PATTERN } from "@forge/shared";
 import { osvPackageFor, queryAdvisoriesBatch, type Advisory, type OsvPackage } from "./advisories";
 import { kevState, markExploited } from "./kev";
 
@@ -64,8 +64,9 @@ export function normaliseItems(items: ExposureItem[]): { ok: { item: ExposureIte
   const ok: { item: ExposureItem; pkg: OsvPackage }[] = [];
   items.forEach((item, index) => {
     const pkg = osvPackageFor(`${item.ecosystem}:${item.name}`);
-    if (!pkg) return invalid.push({ index, reason: "name" });
-    if (typeof item.version !== "string" || item.version.length > 64 || !VERSION_PATTERN.test(item.version)) return invalid.push({ index, reason: "version" });
+    // ADR 0157: names are echoed in the answer, so one that reads as an instruction is refused like any unreadable name.
+    if (!pkg || textLike(pkg.name)) return invalid.push({ index, reason: "name" });
+    if (typeof item.version !== "string" || item.version.length > 64 || !VERSION_PATTERN.test(item.version) || versionProblem(item.version) !== null) return invalid.push({ index, reason: "version" });
     const key = `${pkg.ecosystem}:${pkg.name}@${item.version}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -128,7 +129,7 @@ export const exposureCounters = (r: ExposureResult) => ["exposure:checks", ...(r
  * One exposure request from MCP or HTTP: `packages` ({ecosystem, name, version}) and/or `pip_freeze` text. Returns the
  * result, or a structured error. Unknown keys and anything that isn't a name or version are never read.
  */
-export async function exposureRequest(env: Pick<Env, "KV">, body: { packages?: unknown; pip_freeze?: unknown }, opts: { fetcher?: typeof fetch; now?: number } = {}): Promise<ExposureResult | ExposureError> {
+export async function exposureRequest(env: Pick<Env, "KV">, body: { packages?: unknown; pip_freeze?: unknown }, opts: { fetcher?: typeof fetch; now?: number; onValid?: () => void } = {}): Promise<ExposureResult | ExposureError> {
   const raw = Array.isArray(body.packages) ? body.packages : [];
   if (raw.length > EXPOSURE_MAX_ITEMS) return { error: "invalid_items", detail: `At most ${EXPOSURE_MAX_ITEMS} items per call.`, invalid: [] };
   const items: ExposureItem[] = raw.map((p) => {
@@ -139,5 +140,7 @@ export async function exposureRequest(env: Pick<Env, "KV">, body: { packages?: u
   if (typeof body.pip_freeze === "string") items.push(...parsePipFreeze(body.pip_freeze));
   const norm = normaliseItems(items);
   if ("error" in norm) return norm;
+  // ADR 0155: the request is valid; the caller counts it here, before the advisory look-up that can take seconds.
+  opts.onValid?.();
   return checkExposure(env, norm.ok, opts);
 }

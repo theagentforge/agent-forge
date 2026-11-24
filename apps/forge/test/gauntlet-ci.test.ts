@@ -6,8 +6,10 @@ import { skillTag, skillTagKey, skillTagKeys } from "../src/services/channel-tag
 import { CHANNELS } from "../src/services/channels";
 import { getDb } from "../src/services/db";
 import { SITEMAP_STATIC } from "../src/web/answers";
-import { GAUNTLET_CI_PATH, workflowExample } from "../src/web/gauntlet-ci";
-import { ACTION_VERSION, CLIENT_TAG, USER_AGENT, readInputs, run, type Inputs, type Io } from "../../../integrations/gauntlet-action/src/run";
+import { GAUNTLET_ACTION_RELEASED, GAUNTLET_CI_PATH, gauntletOwasp, HARNESS_GATE_STAT, owaspMarkdown, workflowExample } from "../src/web/gauntlet-ci";
+import { VERIFY_CLI_VERSION } from "../src/web/replay-verify";
+import { ACTION_VERSION, CLIENT_TAG, USER_AGENT, VERIFY_CLI, readInputs, run, type Inputs, type Io } from "../../../integrations/gauntlet-action/src/run";
+import actionReadme from "../../../integrations/gauntlet-action/README.md";
 import { fetchWorker } from "./helpers";
 import "../src/index";
 
@@ -79,6 +81,10 @@ describe("the Action against the Worker (mocked model)", () => {
     expect(w.out["gauntlet-id"]).toMatch(/^g[0-9a-f]{32}$/);
     expect(w.out["jobs-total"]).toBe("1");
     expect(w.md()).toContain(`${env.PUBLIC_ORIGIN}/gauntlet/r/${w.out["gauntlet-id"]}/1`);
+    // Audit evidence: the job's replay JSON, sealed by the Worker with its Ed25519 key.
+    expect(w.out["replay-urls"]).toBe(`${env.PUBLIC_ORIGIN}/gauntlet/r/${w.out["gauntlet-id"]}/1.json`);
+    expect(w.out["replays-signed"]).toBe("1");
+    expect(w.md()).toContain("Audit evidence: 1 of 1 job replay signed");
     await wait();
     expect(await count(KEY)).toBe(before + 1);
     for (const c of calls) {
@@ -135,12 +141,13 @@ describe("the Action against the Worker (mocked model)", () => {
 });
 
 describe("the /gauntlet/ci page", () => {
-  it("renders the workflow, says it isn't released yet, and never calls a pass safe", async () => {
+  it("renders the workflow as released (@v1 resolves to the v1 branch), and never calls a pass safe", async () => {
     const res = await fetchWorker(GAUNTLET_CI_PATH);
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain("theagentforge/gauntlet@v1");
-    expect(page).toContain("Not released yet");
+    expect(GAUNTLET_ACTION_RELEASED).toBe(true);
+    expect(page).not.toContain("Not released yet");
     expect(page).toContain(`?client=${CLIENT_TAG}`);
     expect(page).toContain("not a statement that an agent is safe");
     // The site footer says "not certification"; the page body itself never uses the word.
@@ -148,5 +155,46 @@ describe("the /gauntlet/ci page", () => {
     expect(workflowExample().split("\n").length).toBeLessThanOrEqual(13);
     expect(SITEMAP_STATIC).toContain(GAUNTLET_CI_PATH);
     expect(await (await fetchWorker("/gauntlet")).text()).toContain(`href="${GAUNTLET_CI_PATH}"`);
+  });
+});
+
+describe("the blocking gate, audit evidence and the OWASP mapping (ADR 0150)", () => {
+  it("the page says the check blocks by default, names the opt-out, explains signed replays and cites the gate figure", async () => {
+    const page = await (await fetchWorker(GAUNTLET_CI_PATH)).text();
+    expect(page).toContain('id="gate"');
+    expect(page).toContain("<code>fail-on-trap: none</code>");
+    expect(page).toContain("required status check");
+    expect(page).toContain('id="evidence"');
+    expect(page).toContain("<code>replay-urls</code>");
+    expect(page).toContain(`npx ${VERIFY_CLI} verify`);
+    expect(page).toContain(`href="${HARNESS_GATE_STAT.url}"`);
+    expect(HARNESS_GATE_STAT.text).toContain("19%");
+    expect(page).not.toMatch(/\bmalicious\b/i);
+  });
+
+  it("the action's verify line names the CLI version the site's verify line names", () => {
+    expect(VERIFY_CLI).toBe(`@theagentforge/cli@${VERIFY_CLI_VERSION}`);
+  });
+
+  it("maps the Gauntlet's traps only where the published annotation does: ASI01 and ASI09, never ASI02 or ASI04", () => {
+    const rows = gauntletOwasp();
+    const g = Object.fromEntries(rows.map((r) => [r.id, r.gauntlet]));
+    expect(g.ASI01).toEqual([{ trap: "FA-INJ-001", fit: "direct" }]);
+    expect(g.ASI09).toEqual([{ trap: "FA-CLM-001", fit: "partial" }]);
+    expect(g.ASI02).toEqual([]);
+    expect(g.ASI04).toEqual([]);
+    // ASI02 is planted only in harder Arena jobs (the permission-overreach traps).
+    expect(rows.find((r) => r.id === "ASI02")!.trapSetOnly.map((x) => x.trap)).toEqual(expect.arrayContaining(["FA-PRM-001", "FA-PRM-003"]));
+    expect(rows.flatMap((r) => r.gauntlet).length).toBe(2);
+  });
+
+  it("the page's OWASP table matches the mapping, and the action's README carries the Gauntlet table word for word", async () => {
+    const page = await (await fetchWorker(GAUNTLET_CI_PATH)).text();
+    for (const id of ["ASI01", "ASI02", "ASI04", "ASI09"]) expect(page).toContain(`data-asi="${id}"`);
+    expect(page).toContain("Not tested by the Gauntlet");
+    expect(actionReadme).toContain(owaspMarkdown());
+    expect(actionReadme).toContain("fail-on-trap: none");
+    expect(actionReadme).toContain(HARNESS_GATE_STAT.url);
+    expect(actionReadme).toContain(`npx ${VERIFY_CLI} verify`);
   });
 });

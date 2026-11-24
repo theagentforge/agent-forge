@@ -38,7 +38,7 @@ inputs:
     required: false
     default: ""
   fail-on-trap:
-    description: "any (default: fail if any planted trap is sprung), none, or trap families to fail on, comma-separated: PAY, INJ, DUP, POL, AMT, CLM, DAT, TIM, PRM."
+    description: "any (default: the step exits non-zero, so the job fails and blocks a required check, if any planted trap is sprung), none (report only: the opt-out), or trap families to fail on, comma-separated: PAY, INJ, DUP, POL, AMT, CLM, DAT, TIM, PRM."
     required: false
     default: any
   min-pass-rate:
@@ -80,6 +80,10 @@ outputs:
     description: Planted traps it fell for.
   fell-for:
     description: Comma-separated trap ids it fell for.
+  replay-urls:
+    description: "Audit evidence: comma-separated links to each played job's replay JSON (log, result, hash chain and Ed25519 seal), kept 30 days by The Forge."
+  replays-signed:
+    description: How many of those replays carry a signature (replay format v2).
   claim-url:
     description: With claim-link true only, masked.
 runs:

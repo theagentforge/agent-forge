@@ -93,7 +93,7 @@ describe("B3-04: small /stats rows are left out until they pass the minimum", ()
 
     const s = await json<Stats>("/stats.json");
     expect(s.gross.items.map((i) => i.key)).toEqual(["ai_tool_calls_7d", "skill_checks_7d"]);
-    expect(s.install.items).toEqual([]);
+    expect("install" in s).toBe(false); // ADR 0155: internal only
     expect("gauntlet_runs_finished" in s.blended).toBe(false);
     expect("gauntlet_sprints_finished" in s.blended).toBe(false);
     expect(JSON.stringify(s)).not.toMatch(/below_minimum|hidden_rows/);
@@ -102,7 +102,7 @@ describe("B3-04: small /stats rows are left out until they pass the minimum", ()
     // Review (ADR 0105): no trace of the hidden total either: no key, no null item, no hidden placeholder.
     const live = await json<Record<string, unknown>>("/agents/live.json");
     expect(live).not.toHaveProperty("install_checks_total");
-    expect(s.totals.items.some((i) => i.key === "install_checks_total")).toBe(false);
+    expect(s.totals.items.some((i) => (i.key as string) === "install_checks_total")).toBe(false);
     expect(JSON.stringify(s)).not.toContain("install_checks_total");
     expect(JSON.stringify(api)).not.toContain("install_checks_total");
     const homeJson = await json<{ stats: { totals: { items: { key: string }[] } } }>("/?format=json");
@@ -136,7 +136,7 @@ describe("B3-04: small /stats rows are left out until they pass the minimum", ()
     for (const r of rows) expect(admin, r.key).toContain(`data-small-row="${r.key}"`);
     const pack = await buyerPack(env);
     expect(pack.kpis.gross!.people_and_7_days.map((i) => i.key)).toEqual(GROSS_RULES.map((r) => r.key));
-    expect(pack.kpis.gross!.install.items).toHaveLength(6);
+    expect(pack.kpis.gross!.install!.items).toHaveLength(6);
     const full = await statsData(env, { allRows: true });
     expect(full.blended.gauntlet_runs_finished).toBe(await count("SELECT count(*) AS n FROM arena_gauntlets WHERE status = 'done' AND mode = 'full'"));
   });
@@ -151,15 +151,15 @@ describe("B3-04: small /stats rows are left out until they pass the minimum", ()
     expect(s.gross.items.some((i) => i.key === "signed_in_agents")).toBe(false);
     expect(s.blended.gauntlet_runs_finished).toBe(25);
     expect(s.blended.gauntlet_sprints_finished).toBe(25);
-    expect(s.install.items.map((i) => i.key)).toEqual(["install_checked_7d", "install_checked_all"]);
-    expect(s.totals.items.find((i) => i.key === "install_checks_total")?.value).toBe(25);
+    // ADR 0155 (Dinike, 16 Nov): install checks stay internal even past their minimum.
+    expect("install" in s).toBe(false);
+    expect(s.totals.items.some((i) => (i.key as string) === "install_checks_total")).toBe(false);
     const html = await page("/stats");
     expect(html).toMatch(/<tr data-k="signed_in_people"><td>[^<]*<\/td><td class="num">50<\/td>/);
     expect(html).toMatch(/<tr data-k="gauntlet_runs_finished"><td>[^<]*<\/td><td class="num">25<\/td>/);
-    expect(html).toMatch(/<tr data-k="install_checked_all"><td>[^<]*<\/td><td class="num">25<\/td>/);
-    expect(html).not.toContain('data-k="install_blocked_all"');
+    expect(html).not.toMatch(/data-k="install_/);
     // /agents/live.json is edge-cached for 30 s, so read its source directly.
-    expect((await liveAgentCounts(env)).install_checks_total).toBe(25);
+    expect((await liveAgentCounts(env)).install_checks_total).toBeNull();
   });
 
   it("the counting rules publish each minimum and say rows appear once they pass it", async () => {
@@ -167,13 +167,15 @@ describe("B3-04: small /stats rows are left out until they pass the minimum", ()
     expect(html).toContain('id="minimums"');
     expect(html).toContain(ROWS_APPEAR_TEXT);
     expect(ROWS_APPEAR_TEXT).toBe("Rows appear once they pass the minimum.");
-    for (const m of ["Gauntlet runs finished 25", "Gauntlet Sprints finished 25", "people signed in 50", "agents linked to a signed-in person 50", "each install-check row 25"]) expect(html, m).toContain(m);
+    for (const m of ["Gauntlet runs finished 25", "Gauntlet Sprints finished 25", "people signed in 50", "agents linked to a signed-in person 50"]) expect(html, m).toContain(m);
+    // ADR 0155: install checks are internal, so the minimums paragraph no longer names one (the changelog still says when it did).
+    expect(html.slice(html.indexOf('id="minimums"'), html.indexOf("<h2>Reproducing"))).not.toContain("install-check row");
     const r = await json<{ version: string; minimums: Record<string, number>; rows_appear: string; rules: { key: string; minimum: number | null }[] }>("/stats/rules?format=json");
     expect(r.version).toBe(STATS_RULES_VERSION);
     expect(r.minimums).toEqual(PUBLIC_ROW_MINIMUMS);
     expect(r.rows_appear).toBe(ROWS_APPEAR_TEXT);
     const min = Object.fromEntries(r.rules.map((x) => [x.key, x.minimum]));
-    expect(min).toMatchObject({ gauntlet_runs_finished: 25, gauntlet_sprints_finished: 25, signed_in_people: 50, signed_in_agents: 50, install_checked_all: 25, install_blocked_7d: 25, bouts_refereed: null, field_reports_all: null, ai_tool_calls_7d: null });
+    expect(min).toMatchObject({ gauntlet_runs_finished: 25, gauntlet_sprints_finished: 25, signed_in_people: 50, signed_in_agents: 50, bouts_refereed: null, field_reports_all: null, ai_tool_calls_7d: null });
   });
 });
 

@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use the referee-validity report or its code, please cite the report as below."
+type: software
+title: "The Agent Forge"
+abstract: "A planted-trap test for AI agents, and safety data on the skills, MCP servers and packages they install. This repository holds the referee, the independent audit checker and the scripts that re-grade every public ranked replay."
+url: "https://theagentforge.io"
+repository-code: "https://github.com/theagentforge/agent-forge"
+authors:
+  - name: "The Agent Forge"
+keywords:
+  - "AI agents"
+  - "benchmark validity"
+  - "referee audit"
+  - "agent safety"
+preferred-citation:
+  type: report
+  title: "Referee validity of The Forge Trap Set: an independent re-grade of every public ranked replay"
+  authors:
+    - name: "The Agent Forge"
+  version: "1"
+  year: 2026
+  month: 11
+  date-published: 2026-11-13
+  url: "https://theagentforge.io/research/referee-validity/v1"

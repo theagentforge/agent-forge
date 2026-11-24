@@ -79,7 +79,10 @@ describe("compact check answers", () => {
     // The summary is the first key, on both forms, and holds the answer.
     expect(Object.keys(c)[0]).toBe("summary");
     expect(Object.keys(f)[0]).toBe("summary");
-    expect(c.summary).toMatchObject({ verdict: "flagged", security_status: "flagged", known: false, tool: `pypi:${PKG}`, version: "1.5.0", field_reports: 0, advisories_checked: true, advisories: 30, malicious: 1, exploited_in_wild: 1 });
+    expect(c.summary).toMatchObject({ verdict: "flagged", security_status: "flagged", known: false, version: "1.5.0", field_reports: 0, advisories_checked: true, advisories: 30, malicious: 1, exploited_in_wild: 1 });
+    // ADR 0157: the asked id isn't echoed as the tool: compact leaves the key out, full has null.
+    expect(c.summary).not.toHaveProperty("tool");
+    expect(f.summary.tool).toBeNull();
     const top = c.summary.top_advisories;
     expect(top).toHaveLength(3);
     expect(top[0]).toEqual({ id: "GHSA-ab20-cd20-ef20", kind: "vulnerability", cve: "CVE-2025-9020", exploited_in_wild: true, fixed_in: ["1.19.0"] });

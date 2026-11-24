@@ -157,7 +157,8 @@ describe("reports", () => {
     const { token } = await connectAgent();
     await postReport(token, report({ tool: { ...tool, version: "2.0.1", fingerprint: fp("d") } }));
     const fresh = await (await fetchWorker(`/api/v1/check?fingerprint=${fp("d")}`)).json();
-    expect(fresh).toMatchObject({ security_status: "clear", distinct_owners: 1, version: "2.0.1" });
+    // ADR 0152: a github.com skill has no advisory source: clear (nothing flagged it), with advisories_checked false.
+    expect(fresh).toMatchObject({ security_status: "clear", advisories_checked: false, distinct_owners: 1, version: "2.0.1" });
   });
 
   it("people verified only by GitHub activity can raise 'under review' but not flag (M3, option b)", async () => {

@@ -158,6 +158,7 @@ describe("Sybil ring of new accounts", () => {
     const c = await check(`fingerprint=${fp("e")}`);
     expect(c.forge_score).toBeNull();
     expect(c.security_status).toBe("clear");
+    expect(c.advisories_checked).toBe(false); // ADR 0152: no advisory source for a github.com skill
     expect(c.verified_owners).toBe(0);
   });
 
@@ -296,7 +297,10 @@ describe("security review fixes", () => {
   });
 
   it("L3 and L5: odd tool addresses neither crash nor split a tool in two", async () => {
-    expect((await fetchWorker("/api/v1/check?id=http://[")).status).toBe(200);
+    // ADR 0157: a malformed URL id is now a structured 400 (not a crash, and no longer looked up as typed).
+    const odd = await fetchWorker("/api/v1/check?id=http://[");
+    expect(odd.status).toBe(400);
+    expect(await odd.json()).toMatchObject({ error: "invalid_query" });
     const { token } = await connectAgent();
     await postReport(token, report({ tool: { kind: "skill", id: "http://github.com/Split/Repo.git", version: "1", fingerprint: fp("5") } }));
     expect((await check("id=github.com/split/repo")).known).toBe(true);

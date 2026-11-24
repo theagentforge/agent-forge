@@ -244,7 +244,11 @@ describe("every path that starts a Claude bout waits at the guard (ADR 0147)", (
     expect(runs.length).toBeGreaterThan(0);
     expect(runs.every((r) => r.arena_runs.status === "queued")).toBe(true);
     expect(out.skipped).toContain("paused: claude manual");
-    expect(fetchSpy.mock.calls.filter((c) => String(c[0]).includes("/chat/completions"))).toEqual([]);
+    // Only Claude calls must wait: on a weekly-bout day the same tick may legitimately play non-Claude models.
+    const claudeCalls = fetchSpy.mock.calls.filter(
+      (c) => String(c[0]).includes("/chat/completions") && /anthropic|claude/i.test(String((c[1] as RequestInit | undefined)?.body ?? "")),
+    );
+    expect(claudeCalls).toEqual([]);
   });
 
   it("the free lane never queues a Claude model (its own caps; nothing on our key)", () => {

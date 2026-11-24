@@ -115,7 +115,7 @@ npx @theagentforge/cli exposure path/to/poetry.lock --json
 stdin; if the command installs something (`npm`/`pnpm`/`yarn`/`bun` add or install, `npx`, `pip`/`uv`/`uvx`/`pipx`,
 `claude mcp add`, cloning a GitHub repo), each package is checked on The Forge, with the exact version when the
 command pins one. Only **flagged** or **confirmed malicious** tools are denied, with a one-line reason. Everything
-else goes ahead unchanged, and so does every command when The Forge can't be reached within 3 seconds. Only the
+else goes ahead unchanged, and so does every command when The Forge can't be reached within 4 seconds. Only the
 package id and pinned version are sent. (Claude Code has its own plugin: theagentforge.io/connect.) The hook keeps
 each answer in the cache folder too: when an install is denied, the reason says what changed since the last check,
 and `forge report` lists drafts for the tools it saw.

@@ -1,4 +1,4 @@
-import { ALL_PASSED_PARTS, ALL_PASSED_WHY, FRONTIER_EXPLAINER, FRONTIER_LABEL, FRONTIER_NAMES_NOTE, FRONTIER_NO_RUNS_NOTE, FRONTIER_RANKED_NOTE, HONEST_DEFINITION, PASS_DEFINITION, PASS_FAIL_FALL, SCORECARD_PARTS } from "../arena/terms";
+import { ALL_PASSED_PARTS, FRONTIER_EXPLAINER, FRONTIER_LABEL, FRONTIER_NAMES_NOTE, FRONTIER_NO_RUNS_NOTE, FRONTIER_RANKED_NOTE, HONEST_DEFINITION, PASS_DEFINITION, PASS_FAIL_FALL, SCORECARD_PARTS } from "../arena/terms";
 import { rulesFields } from "../arena/rules-label";
 import {
   CANARY,
@@ -131,12 +131,37 @@ export function rankBasisLine(tier: Tier, rows: { model: string }[], allPassed: 
  * says "quality, honesty, cost and speed" only when every model listed passed every job it ran in that tier; otherwise it names
  * the whole scorecard, since a pass then counts too.
  */
+/**
+ * Coordinator, 13 Nov (joint review with Boardy, Dinike's go-ahead): a belt only when the top model's range is clear of
+ * the next one's, its lower bound (rating − 2 RD, as shown) above the next model's upper bound (rating + 2 RD).
+ * Overlapping ranges are a tie, so no belt. A lone ranked model has no one to be separated from, so no belt either.
+ */
+export function beltHolder<R extends { rating: number; rd: number }>(rows: R[]): R | null {
+  const [a, b] = rows;
+  if (!a || !b) return null;
+  return a.rating - 2 * a.rd > b.rating + 2 * b.rd ? a : null;
+}
+export const NO_BELT_OVERLAP = "No belt yet: the top ranges overlap, and overlapping ranges are a tie.";
+export const NO_BELT_ALONE = "No belt yet: one ranked model, with no other to be separated from.";
+export const NO_BELT_CEILING = "No belt and no order: every model here passed every attempt in this tier, so these jobs don't separate them.";
+
+/** True when every listed model passed every attempt it made in the tier (the 13 Nov ceiling rule). */
+const atCeiling = (rows: { model: string }[], allPassed: Set<string>) => rows.length > 0 && rows.every((r) => allPassed.has(r.model));
+
 function divisionLists(ranks: Awaited<ReturnType<typeof divisionRankings>>, crowned: boolean, firstAt: string, tier: Tier, allPassed: Set<string>) {
   return Object.entries(DIVISIONS).map(([key, d]) => {
     const rows = ranks[key] ?? [];
     // An empty division says nothing useful, so it waits until it has a ranked model.
     if (!rows.length && key !== "heavyweight") return "";
-    return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">${tierName(tier)} tier belt</abbr>: ${rows[0] && crowned ? html`<b>${rows[0].name}</b>` : html`<b>vacant</b>`}${crowned ? "" : ` · first awarded at ${firstAt}`}.</p>
+    // 13 Nov walkthrough (benchmark ceiling): when every listed model passed every attempt, a rating spread (1870 to
+    // 982) would imply a difference the jobs didn't show. The models are listed by name, with no rating or rank.
+    if (atCeiling(rows, allPassed))
+      return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">${tierName(tier)} tier belt</abbr>: none. <span data-no-belt>${NO_BELT_CEILING}</span></p>
+<ul class="ranking" data-ceiling>${[...rows].sort((x, y) => x.name.localeCompare(y.name)).map((r) => html`<li><b>${r.name}</b> <span class="muted">passed every attempt</span></li>`)}</ul>
+<p class="small muted" data-rank-basis>${tierName(tier)} tier: no rating shown, because every model passed every ranked attempt. ${tier === "normal" ? html`The models are ranked where the jobs separate them: <a href="/arena?tier=hard">the Hard tier</a>.` : ""}</p>`;
+    const belt = crowned ? beltHolder(rows) : null;
+    const beltText = !crowned ? html`<b>vacant</b> · first awarded at ${firstAt}` : belt ? html`<b>${belt.name}</b>` : html`none. <span data-no-belt>${rows.length > 1 ? NO_BELT_OVERLAP : NO_BELT_ALONE}</span>`;
+    return html`<h3>${d.name}</h3><p class="muted">${d.note} <abbr title="${BELT_TITLE}">${tierName(tier)} tier belt</abbr>: ${beltText}${belt || !crowned ? "." : ""}</p>
 ${rows.length ? html`<ol class="ranking">${rows.map((r, i) => html`<li><b>${i + 1}. ${r.name}</b> <span class="muted">${r.rating} (±${2 * r.rd})</span></li>`)}</ol>` : ""}
 ${rows.length > 1 ? rankBasisLine(tier, rows, allPassed) : ""}`;
   });
@@ -311,7 +336,8 @@ ${NOT_AFFILIATED}`,
 export function ladderLine(tier: Tier, ranks: Awaited<ReturnType<typeof divisionRankings>>, allPassed: Set<string>) {
   const shown = Object.values(ranks).flat();
   if (!shown.length || !shown.every((r) => allPassed.has(r.model))) return "";
-  return html`<p class="ladder-line">${tierName(tier)} tier: every ranked model passed every job it ran. ${ALL_PASSED_WHY} The order below comes down to ${ALL_PASSED_PARTS}.</p>`;
+  // 13 Nov walkthrough: at the ceiling no order or rating is shown (divisionLists), so the line doesn't promise one.
+  return html`<p class="ladder-line">${tierName(tier)} tier: every ranked model passed every job it ran, so this tier doesn't separate them and no rating or order is shown.${tier === "normal" ? html` See <a href="/arena?tier=hard">the Hard tier</a> for a ranking.` : ""}</p>`;
 }
 
 site.get("/arena/event/:slug", async (c) => {

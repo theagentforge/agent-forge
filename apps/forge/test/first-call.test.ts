@@ -105,7 +105,7 @@ describe("empty and wrong first calls on /mcp/public", () => {
     }
     expect(expectInputNeeded(await pub("forge_check", { id: 5 }), "forge_check").detail).toBe("id: Invalid input: expected string, received number");
     expect(expectInputNeeded(await pub("forge_check", { id: "npm:x", url: "https://github.com/o/r" }), "forge_check").detail).toMatch(/exactly one of id, url or fingerprint/);
-    expect(expectInputNeeded(await pub("forge_check", { id: "npm:x", version: "not a version" }), "forge_check").detail).toBe("version: expected a version string such as 1.4.2");
+    expect(expectInputNeeded(await pub("forge_check", { id: "npm:x", version: "not a version" }), "forge_check").detail).toBe("version: expected a version string such as 1.4.2 (64 characters at most, no sentences)");
     const sc = expectInputNeeded(await pub("forge_check", {}), "forge_check");
     expect(sc.examples).toHaveLength(3);
     await expectExamplesWork("forge_check", sc.examples);

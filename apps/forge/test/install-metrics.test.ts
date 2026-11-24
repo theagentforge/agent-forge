@@ -114,12 +114,12 @@ describe("B2-06: install checks by AI tools, gross", () => {
 
   it("/stats/rules says the skill-scan Action's run count is opt-in (off by default; ADR 0090 Amendment 1)", async () => {
     expect(INSTALL_RULES.find((r) => r.key.startsWith("install_checked"))!.counts).toMatch(/count-run: true; off by default/);
-    expect(await (await fetchWorker("/stats/rules")).text()).toMatch(/off by default/);
-    await fillInstallRows();
-    expect(await (await fetchWorker("/stats")).text()).toContain("only where its user turned the run count on (it is off by default)");
+    // ADR 0155 (Dinike, 16 Nov): the install rules are internal with their numbers, so /stats/rules no longer lists them.
+    const rules = await (await fetchWorker(`/stats/rules?u=${++ipN}`)).text();
+    for (const r of INSTALL_RULES) expect(rules).not.toContain(`id="${r.key}"`);
   });
 
-  it("/stats shows the three numbers gross with the own-agents line, /stats/rules gives each its SQL, and the SQL reproduces them", async () => {
+  it("each internal install rule's SQL reproduces its number; /stats, /stats.json, the home band and live.json carry none (ADR 0155)", async () => {
     await fillInstallRows();
     await check("id=pypi:litellm&version=1.107.0", "theagentforge-cli/0.5.1");
     await settle(() => runSql("install_blocked_all"), (v) => v > 25);
@@ -128,29 +128,20 @@ describe("B2-06: install checks by AI tools, gross", () => {
       expect(await runSql(`install_${o}_all`), o).toBe(totals.gross.all_time[o]);
       expect(await runSql(`install_${o}_7d`), o).toBe(totals.gross.last_7_days[o]);
     }
-    const page = await (await fetchWorker(`/stats?u=${++ipN}`, { headers: { Accept: "text/html" } })).text();
-    expect(page).toContain('id="install"');
-    for (const o of ["checked", "blocked", "advisory"]) for (const w of ["7d", "all"]) expect(page).toContain(`data-k="install_${o}_${w}"`);
-    expect(page).toContain("Install checks run");
-    expect(page).toContain("Installs our answer would block");
-    expect(pageText(page.slice(page.indexOf('id="install"')))).toMatch(/Includes The Forge.s own test agents\./);
-    const json = (await (await fetchWorker(`/stats.json?u=${++ipN}`)).json()) as { install: { includes_own_test_agents: boolean; caveat: string; items: { key: string; value: number | null }[] } };
-    expect(json.install.includes_own_test_agents).toBe(true);
-    expect(json.install.caveat).toBe("Includes The Forge's own test agents.");
-    expect(json.install.items.find((i) => i.key === "install_checked_all")!.value).toBe(totals.gross.all_time.checked);
-    const rules = await (await fetchWorker("/stats/rules")).text();
     for (const r of INSTALL_RULES) {
-      expect(rules).toContain(`id="${r.key}"`);
       expect(r.label).toMatch(/included/);
       expect(r.label).not.toMatch(/outside|independent|third[- ]party|by other agents/i);
-      expect(r.minimum).toBe(25); // ADR 0099
     }
-    // The home band carries the gross all-time install checks.
-    const live = (await (await fetchWorker(`/agents/live.json?u=${++ipN}`)).json()) as { install_checks_total: number | null };
-    expect(live.install_checks_total).toBeGreaterThan(0);
+    const page = await (await fetchWorker(`/stats?u=${++ipN}`, { headers: { Accept: "text/html" } })).text();
+    expect(page).not.toContain('id="install"');
+    expect(page).not.toMatch(/data-k="install_(checked|blocked|advisory)/);
+    const json = (await (await fetchWorker(`/stats.json?u=${++ipN}`)).json()) as Record<string, unknown>;
+    expect("install" in json).toBe(false);
+    expect(json.internal_only).toContain("install");
+    const live = (await (await fetchWorker(`/agents/live.json?u=${++ipN}`)).json()) as Record<string, unknown>;
+    expect(live).not.toHaveProperty("install_checks_total");
     const home = await (await fetchWorker(`/?u=${++ipN}`, { headers: { Accept: "text/html" } })).text();
-    expect(home).toContain('data-k="install_checks_total"');
-    expect(home).toContain("install checks");
+    expect(home).not.toContain('data-k="install_checks_total"');
   });
 
   it("the outside split and per-client numbers are admin-only; no public page shows them or makes an adoption claim", async () => {
@@ -169,7 +160,7 @@ describe("B2-06: install checks by AI tools, gross", () => {
     expect(kpis).toContain('data-k="install_outside"');
     expect((await fetchWorker("/admin/stats/third-party.json")).status).toBe(403);
     const stats = (await (await fetchWorker(`/stats.json?u=${++ipN}`)).json()) as Record<string, unknown>;
-    expect(JSON.stringify(stats.install)).not.toMatch(/ours|outside|by_client|plugin|hook-/);
+    expect("install" in stats).toBe(false); // ADR 0155: not even the gross rows
     for (const path of ["/stats", "/stats/rules", "/"]) {
       const text = pageText(await (await fetchWorker(`${path}${path.includes("?") ? "&" : "?"}u=${++ipN}`, { headers: { Accept: "text/html" } })).text());
       expect(adoptionClaims(text), path).toEqual([]);
@@ -183,7 +174,7 @@ describe("weekly brief 9 Nov: each install-time client increments its own row on
   // The brief read every row as 0 while "Checks and scans a week" counted 69 checkers. Those checkers were plain REST
   // callers (check_sources kind api), which are not install checks. This pins that a real check from each client moves
   // its own row on the page (the rendered "last 7 days" cell), and a plain REST check moves none.
-  const UAS: Record<Exclude<InstallClient, "skill-scan">, string> = {
+  const UAS: Record<Exclude<InstallClient, "skill-scan" | "cli-exposure">, string> = {
     plugin: "theagentforge-claude-plugin",
     cli: "theagentforge-cli/0.7.1",
     "hook-codex": "theagentforge-cli/0.7.1 (hook codex)",
@@ -212,6 +203,9 @@ describe("weekly brief 9 Nov: each install-time client increments its own row on
       if (c === "skill-scan") {
         const r = await fetchWorker("/api/v1/install-outcome", { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip() }, body: JSON.stringify({ client: "skill-scan", outcome: "clear" }) });
         expect(r.status).toBe(202);
+      } else if (c === "cli-exposure") {
+        const r = await fetchWorker("/api/v1/exposure", { method: "POST", headers: { "Content-Type": "application/json", "User-Agent": UAS.cli, "CF-Connecting-IP": ip() }, body: JSON.stringify({ packages: [{ ecosystem: "npm", name: "install-row-exposure", version: "1.0.0" }] }) });
+        expect(r.status).toBe(200);
       } else expect((await check(`id=npm:install-row-${c}`, UAS[c])).status, c).toBe(200);
       await settle(() => installTotals(env), (v) => v.by_client[c].last_7_days.checked > before[c]);
       const after = await checkedCell(cookie);
@@ -254,14 +248,14 @@ describe("B2-06 review: counting edge cases", () => {
     }
   });
 
-  it("the outside and ours install numbers never appear on a public page or JSON, only the gross ones", async () => {
+  it("no install number (outside, ours or gross) appears on a public page or JSON (ADR 0155)", async () => {
     // Distinctive values: gross = 8,123 + whatever came before; ours 2,347; outside = gross - ours.
     await put(today(), "install:checked:hook-copilot", 8_123);
     await put(today(), "install:ours:checked:hook-copilot", 2_347);
     const t = await installTotals(env);
     const outside = t.gross.all_time.checked - t.ours.all_time.checked;
     const outside7 = t.gross.last_7_days.checked - t.ours.last_7_days.checked;
-    const forbidden = [...new Set([outside, outside7, t.ours.all_time.checked, t.ours.last_7_days.checked, t.by_client["hook-copilot"].all_time.checked])].filter((x) => x !== t.gross.all_time.checked && x !== t.gross.last_7_days.checked);
+    const forbidden = [...new Set([outside, outside7, t.ours.all_time.checked, t.ours.last_7_days.checked, t.by_client["hook-copilot"].all_time.checked, t.gross.all_time.checked, t.gross.last_7_days.checked])];
     for (const x of forbidden) expect(x).toBeGreaterThan(999);
     const nums = (v: unknown, out: number[] = []): number[] => {
       if (typeof v === "number") out.push(v);
@@ -269,8 +263,8 @@ describe("B2-06 review: counting edge cases", () => {
       else if (v && typeof v === "object") Object.values(v).forEach((x) => nums(x, out));
       return out;
     };
-    const stats = (await (await fetchWorker(`/stats.json?u=${++ipN}`)).json()) as { install: { items: { key: string; value: number }[] } };
-    expect(stats.install.items.find((i) => i.key === "install_checked_all")!.value).toBe(t.gross.all_time.checked);
+    const stats = (await (await fetchWorker(`/stats.json?u=${++ipN}`)).json()) as Record<string, unknown>;
+    expect("install" in stats).toBe(false);
     for (const path of ["/stats.json", "/agents/live.json", "/?format=json", "/stats/rules?format=json"]) {
       const n = nums(await (await fetchWorker(`${path}${path.includes("?") ? "&" : "?"}u=${++ipN}`)).json());
       for (const x of forbidden) expect(n, `${path} has ${x}`).not.toContain(x);

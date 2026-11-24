@@ -67,10 +67,10 @@ describe("the tool page's answer line", () => {
   it("doesn't say an npm or PyPI package has no advisory lookup when the lookup just didn't answer", () => {
     const at = Date.UTC(2026, 9, 25, 12);
     const none = { worked: 0, partial: 0, failed: 0 };
-    expect(toolAnswerLine("npm:x", { version: "1.0.0", outcome_breakdown: none, public_signals_summary: null }, at)).toBe(
-      "As of 25 Oct 2026, no field reports on npm:x@1.0.0 yet. The advisory lookup didn't answer this time, so advisories aren't shown.",
+    expect(toolAnswerLine("npm:x", { version: "1.0.0", security_status: "clear", advisories_checked: false, outcome_breakdown: none, public_signals_summary: null }, at)).toBe(
+      "As of 25 Oct 2026, security status for npm:x@1.0.0: not flagged, advisories not checked. No field reports on this version yet. The advisory lookup didn't answer this time, so advisories aren't shown.",
     );
-    expect(toolAnswerLine("pypi:y", { version: null, outcome_breakdown: none, public_signals_summary: null }, at)).toContain("didn't answer this time");
-    expect(toolAnswerLine("github.com/o/r", { version: null, outcome_breakdown: none, public_signals_summary: null }, at)).toContain("No advisory lookup for this kind of tool");
+    expect(toolAnswerLine("pypi:y", { version: null, security_status: "clear", advisories_checked: false, outcome_breakdown: none, public_signals_summary: null }, at)).toContain("didn't answer this time");
+    expect(toolAnswerLine("github.com/o/r", { version: null, security_status: "clear", advisories_checked: false, outcome_breakdown: none, public_signals_summary: null }, at)).toContain("No advisory lookup for this kind of tool");
   });
 });

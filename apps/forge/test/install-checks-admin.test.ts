@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as t from "../src/db/schema";
 import { getDb } from "../src/services/db";
 import { upsertHuman } from "../src/services/identity";
-import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_COUNTING_BEGAN, installClient, installIdsSeen, type InstallClient } from "../src/services/install-metrics";
+import { INSTALL_CLIENT_NAMES, INSTALL_CLIENTS, INSTALL_COUNTING_BEGAN, exposureClient, installClient, installIdsSeen, type InstallClient } from "../src/services/install-metrics";
 import { OPS_MODE_KEY, resetOpsModeCache } from "../src/services/ops-mode";
 import { newSession, SESSION_COOKIE } from "../src/web/session";
 import cliHook from "../../../packages/cli/src/hook.ts?raw";
@@ -41,6 +41,8 @@ function clientAgents(): Record<InstallClient, string> {
     "hook-copilot": `${ua} (hook copilot)`,
     action: one(actionRun, /: \{ Accept: "application\/json", "User-Agent": "([^"]+)" \}/, "the forge-check Action"),
     "skill-scan": one(skillScanRun, /: "(theagentforge-skill-scan\/[^"]+)"/, "the skill-scan Action"),
+    // ADR 0155: `forge exposure` posts to /api/v1/exposure with the CLI's plain User-Agent (run.ts).
+    "cli-exposure": (expect(cliRun).toMatch(/\/api\/v1\/exposure`, \{\s*method: "POST",\s*headers: \{[^}]*"User-Agent": UA \}/), ua),
   };
 }
 
@@ -74,7 +76,8 @@ async function settle(cookie: string, done: (rows: Record<string, { week: number
 describe("install checks on /admin/kpis (build plan 5 Nov, item 3)", () => {
   it("every client's real User-Agent is one the Worker counts, under its own row", () => {
     const agents = clientAgents();
-    for (const c of INSTALL_CLIENTS.filter((x) => x !== "skill-scan")) expect(installClient(agents[c]), `${c}: ${agents[c]}`).toBe(c);
+    for (const c of INSTALL_CLIENTS.filter((x) => x !== "skill-scan" && x !== "cli-exposure")) expect(installClient(agents[c]), `${c}: ${agents[c]}`).toBe(c);
+    expect(exposureClient(agents["cli-exposure"])).toBe("cli-exposure");
     // The skill-scan Action never calls a check; it is counted by its run-count endpoint, which takes the client by name.
     expect(skillScanRun).toContain('JSON.stringify({ client: "skill-scan", outcome })');
   });
@@ -87,6 +90,10 @@ describe("install checks on /admin/kpis (build plan 5 Nov, item 3)", () => {
     expect(page).toContain(`Install counting began ${INSTALL_COUNTING_BEGAN}`);
     expect(page).toContain("2026-11-01 to 2026-11-04 not counted");
     expect(page).toContain("Nothing is backfilled.");
+    // ADR 0155: the paths not measured before their fix, so their earlier zeros read "not measured".
+    expect(page).toContain('data-k="install_not_measured"');
+    expect(page).toContain("POST /api/v1/exposure (CLI forge exposure), 2026-10-28 until the ADR 0155 release");
+    expect(page).toContain('means "not measured", not "no use"');
   });
 
   it("flags a client whose install IDs were seen this week while none of its checks was counted", async () => {
@@ -122,7 +129,9 @@ describe("install checks on /admin/kpis (build plan 5 Nov, item 3)", () => {
       const res =
         c === "skill-scan"
           ? await fetchWorker("/api/v1/install-outcome", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ client: "skill-scan", outcome: "clear" }) })
-          : await fetchWorker(`/api/v1/check?id=npm:item3-${c}&version=1.0.0`, { headers });
+          : c === "cli-exposure"
+            ? await fetchWorker("/api/v1/exposure", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ packages: [{ ecosystem: "npm", name: "item3-exposure", version: "1.0.0" }] }) })
+            : await fetchWorker(`/api/v1/check?id=npm:item3-${c}&version=1.0.0`, { headers });
       expect(res.status, c).toBeLessThan(300);
     }
     const after = await settle(cookie, (rows) => INSTALL_CLIENTS.every((c) => (rows[c]?.week ?? 0) > (before[c]?.week ?? 0)));

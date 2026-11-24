@@ -13,20 +13,37 @@ const empty = { worked: 0, partial: 0, failed: 0 };
 const osv = (total: number, version: string | null = "1.2.0") => ({ source: "osv" as const, ecosystem: "npm" as const, package: "x", version, checked_at: "2026-10-24T08:00:00.000Z", total, advisories: [] });
 
 describe("the tool page's answer line", () => {
-  it("says the date, the reports on the version and the advisories that match", () => {
+  it("says the date, the security status, the reports on the version and the advisories that match, with when they were checked", () => {
     const at = Date.UTC(2026, 9, 25, 12);
-    expect(toolAnswerLine("npm:x", { version: "1.2.0", outcome_breakdown: { worked: 2, partial: 0, failed: 1 }, public_signals_summary: osv(1) }, at)).toBe(
-      "As of 25 Oct 2026, 3 field reports on npm:x@1.2.0: 2 worked, 1 failed. 1 published advisory matches.",
+    expect(toolAnswerLine("npm:x", { version: "1.2.0", security_status: "caution", outcome_breakdown: { worked: 2, partial: 0, failed: 1 }, public_signals_summary: osv(1) }, at)).toBe(
+      "As of 25 Oct 2026, security status for npm:x@1.2.0: caution (a security report is under review). 3 field reports: 2 worked, 1 failed. 1 published advisory matches (OSV, checked 24 Oct 2026).",
     );
-    expect(toolAnswerLine("npm:x", { version: "1.2.0", outcome_breakdown: { worked: 1, partial: 0, failed: 0 }, public_signals_summary: osv(0) }, at)).toBe(
-      "As of 25 Oct 2026, 1 field report on npm:x@1.2.0: 1 worked. No published advisory matches.",
+    expect(toolAnswerLine("npm:x", { version: "1.2.0", security_status: "clear", outcome_breakdown: { worked: 1, partial: 0, failed: 0 }, public_signals_summary: osv(0) }, at)).toBe(
+      "As of 25 Oct 2026, security status for npm:x@1.2.0: clear. 1 field report: 1 worked. No published advisory matches (OSV, checked 24 Oct 2026).",
     );
-    expect(toolAnswerLine("npm:x", { version: "1.2.0", outcome_breakdown: { worked: 0, partial: 2, failed: 0 }, public_signals_summary: osv(3, null) }, at)).toBe(
-      "As of 25 Oct 2026, 2 field reports on npm:x@1.2.0: 2 partial. 3 published advisories match (any version).",
+    expect(toolAnswerLine("npm:x", { version: "1.2.0", security_status: "clear", outcome_breakdown: { worked: 0, partial: 2, failed: 0 }, public_signals_summary: osv(3, null) }, at)).toBe(
+      "As of 25 Oct 2026, security status for npm:x@1.2.0: clear. 2 field reports: 2 partial. 3 published advisories match (any version, OSV, checked 24 Oct 2026).",
     );
-    expect(toolAnswerLine("github.com/o/r", { version: null, outcome_breakdown: empty, public_signals_summary: null }, at)).toBe(
-      "As of 25 Oct 2026, no field reports on github.com/o/r yet. No advisory lookup for this kind of tool (npm and PyPI packages only).",
+    expect(toolAnswerLine("github.com/o/r", { version: null, security_status: "clear", advisories_checked: false, outcome_breakdown: empty, public_signals_summary: null }, at)).toBe(
+      "As of 25 Oct 2026, security status for github.com/o/r: not flagged, advisories not checked. No field reports on this version yet. No advisory lookup for this kind of tool (npm and PyPI packages only).",
     );
+  });
+
+  it("with no field reports, says what we do know: the House install test and the registry listing", () => {
+    const at = Date.UTC(2026, 10, 13, 12);
+    const line = toolAnswerLine(
+      "npm:x",
+      { version: "1.2.0", security_status: "clear", outcome_breakdown: empty, public_signals_summary: osv(0) },
+      at,
+      { install: { night: "2026-11-12", version: "1.2.0", outcome: "worked", tools: 41 }, registry: { source: "mcp-registry", version: "1.2.0", status: "active", fetchedAt: Date.UTC(2026, 10, 11) } },
+    );
+    expect(line).toBe(
+      "As of 13 Nov 2026, security status for npm:x@1.2.0: clear. No field reports on this version yet. No published advisory matches (OSV, checked 24 Oct 2026). House install test (12 Nov 2026, v1.2.0): started and listed its tools (41 tools). Listed in the official MCP Registry (read 11 Nov 2026): latest version 1.2.0, status active.",
+    );
+    // With field reports, the line stays short: the reports speak for the version.
+    const withReports = toolAnswerLine("npm:x", { version: "1.2.0", security_status: "clear", outcome_breakdown: { worked: 1, partial: 0, failed: 0 }, public_signals_summary: osv(0) }, at, { install: { night: "2026-11-12", version: "1.2.0", outcome: "worked", tools: 41 } });
+    expect(withReports).not.toContain("House install test");
+    expect(line).not.toMatch(/\bsafe\b|malicious/i);
   });
 
   it("dates the data by its newest report, status change or advisory check", () => {
@@ -50,7 +67,10 @@ describe("GET /t/<tool>", () => {
     const res = await postReport(token, report({ tool: { kind: "mcp_server", id: "npm:lodash", version: "4.17.20", fingerprint: fp("7") } }));
     expect(res.status).toBe(201);
     const body = await (await fetchWorker(`/t/${encodeURIComponent("npm:lodash")}`, { headers: { Accept: "text/html" } })).text();
-    expect(body).toMatch(/<p class="lead" id="answer">As of \d{1,2} [A-Z][a-z]{2} \d{4}, 1 field report on npm:lodash@4\.17\.20: 1 worked\. 1 published advisory matches\.<\/p>/);
+    expect(body).toMatch(/<p class="lead" id="answer">As of \d{1,2} [A-Z][a-z]{2} \d{4}, security status for npm:lodash@4\.17\.20: caution \(a security report is under review\)\. 1 field report: 1 worked\. 1 published advisory matches \(OSV, checked \d{1,2} [A-Z][a-z]{2} \d{4}\)\.<\/p>/);
+    // 13 Nov walkthrough: the answer comes straight after the title, before the verdict badge.
+    expect(body.indexOf('id="answer"')).toBeLessThan(body.indexOf('class="verdict-row"'));
+    expect(body.indexOf('id="answer"')).toBeGreaterThan(body.indexOf("<h1"));
     expect(body).toMatch(/updated <time datetime="\d{4}-\d{2}-\d{2}T[^"]+">\d{4}-\d{2}-\d{2}<\/time>/);
     const ld = [...body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]!)).find((x) => x["@type"] === "WebPage");
     expect(ld.dateModified).toMatch(/^\d{4}-\d{2}-\d{2}T/);

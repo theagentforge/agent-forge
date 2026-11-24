@@ -80,7 +80,8 @@ describe("/arena tier switch", () => {
     expect(body).toContain('<a class="btn chamfer primary" href="/arena?tier=hard" aria-current="page">Hard</a>');
     expect(body).toContain("The same six jobs at real-world volume: a week of invoices, a 300-row sheet, a three-city trip. One slip fails the job.");
     expect(body).toContain("<h2>Hard rankings</h2>");
-    expect(body).toContain("<b>DeepSeek V4 Pro</b>");
+    // 13 Nov: a belt only when the ranges are clear of each other, so the name may be in the list rather than the belt.
+    expect(body).toMatch(/<b>(\d+\. )?DeepSeek V4 Pro<\/b>/);
     expect(body).toContain("Versions right every attempt");
     expect(body).toMatch(/<td title="[01] of 1 version right every time">[0-3] of 3<\/td>/);
     expect(body).toContain("<h2>Recent Hard bouts</h2>");

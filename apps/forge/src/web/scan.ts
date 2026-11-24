@@ -5,7 +5,7 @@ import { SCAN_MAX_BYTES, SCAN_RULES, SCAN_RULES_VERSION, scanFingerprint, scanSu
 import { html } from "hono/html";
 import { reached } from "../services/counters";
 import { getDb } from "../services/db";
-import { clawhubPage, fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
+import { agentSourceUrl, clawhubPage, fetchSkillText, latestBySource, rawUrl, recentPublic, ruleFrequency, scanAndRecord, scanByFingerprint, scanPath, scanStats, skillLabel } from "../services/scans";
 import { recordMiss, scanMissLabel } from "../services/misses";
 import { bulkSummary, pct, type BulkSummary } from "../services/bulk-scan";
 import { recordBadgeReferrer } from "../services/growth";
@@ -75,7 +75,7 @@ function scanForm(prefill: { url?: string; text?: string } = {}) {
 function findingsTable(findings: ScanFinding[]) {
   if (!findings.length) return html`<p class="muted">Nothing matched any of the ${SCAN_RULES.length} rules.</p>`;
   return html`<table class="table stack"><thead><tr><th>Severity</th><th>Pattern</th><th class="num">Line</th><th>What it says</th></tr></thead><tbody>${findings.map(
-    (f) => html`<tr><td data-label="Severity"><span class="sev sev-${f.severity}">${SEV_LABEL[f.severity]}</span></td><td><b>${f.title}</b> <a class="mono small" href="/scan/rules#${f.rule}">${f.rule}</a><br><span class="small muted">${f.why}</span></td><td class="num" data-label="Line">${f.line}</td><td data-label="Excerpt"><code class="excerpt">${f.evidence}</code></td></tr>`,
+    (f) => html`<tr><td data-label="Severity"><span class="sev sev-${f.severity}">${SEV_LABEL[f.severity]}</span></td><td><b>${f.title}</b> <a class="mono small" href="/scan/rules#${f.rule}">${f.rule}</a><br><span class="small muted">${f.why}</span></td><td class="num" data-label="Line">${f.line}</td><td data-label="Excerpt"><code class="excerpt" data-untrusted="scanned file excerpt">${f.evidence}</code></td></tr>`,
   )}</tbody></table>`;
 }
 
@@ -245,7 +245,7 @@ site.get("/skill-watch", async (c) => {
   const freq = ruleFrequency(flagged).slice(0, 8);
   const rule = (id: string) => SCAN_RULES.find((x) => x.id === id);
   if (c.req.query("format") === "json")
-    return c.json({ rules_version: SCAN_RULES_VERSION, stats, rule_frequency: freq.map(([id, n]) => ({ rule: id, skills: n })), bulk_scan: bulk ? { ...bulk, rules_url: `${c.env.PUBLIC_ORIGIN}/scan/rules`, counting_rule_url: `${c.env.PUBLIC_ORIGIN}/skill-watch#bulk-scan` } : null, recent: flagged.map((r) => ({ fingerprint: r.fingerprint, verdict: r.verdict, source_url: r.sourceUrl, counts: r.counts, first_seen: new Date(r.firstSeen).toISOString(), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(r.fingerprint)}` })) });
+    return c.json({ rules_version: SCAN_RULES_VERSION, stats, rule_frequency: freq.map(([id, n]) => ({ rule: id, skills: n })), bulk_scan: bulk ? { ...bulk, rules_url: `${c.env.PUBLIC_ORIGIN}/scan/rules`, counting_rule_url: `${c.env.PUBLIC_ORIGIN}/skill-watch#bulk-scan` } : null, recent: flagged.map((r) => ({ fingerprint: r.fingerprint, verdict: r.verdict, source_url: agentSourceUrl(r.sourceUrl), counts: r.counts, first_seen: new Date(r.firstSeen).toISOString(), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(r.fingerprint)}` })) });
   return send(c, {
     title: "Skill Watch",
     description: "Agent skills that matched risky patterns in the Forge's free scanner, newest first, with every flagged line.",

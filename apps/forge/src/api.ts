@@ -7,11 +7,11 @@ import { CHALLENGE_PATTERN, gauntletAct, gauntletStatus, startGauntlet } from ".
 import { arenaStatus } from "./arena/status";
 import { isClaudeByok, opsCallAllowed } from "./arena/credit";
 import { modelById } from "./arena/lineup";
-import { agentView, fetchSkillText, scanAndRecord, scanByFingerprint, scanPath, watchStatus } from "./services/scans";
+import { agentSourceUrl, agentView, fetchSkillText, scanAndRecord, scanByFingerprint, scanPath, watchStatus } from "./services/scans";
 import { SCAN_MAX_BYTES } from "@forge/shared";
 import { growthStats, publicGrowth } from "./services/growth";
 import { mcpHandler } from "./mcp";
-import { checkTool, describeMe, publicStats, submitReport } from "./services/forge";
+import { cachedCheckTool, checkTool, describeMe, publicStats, submitReport } from "./services/forge";
 import { checkShare, scanShare } from "./services/receipts";
 import { exposureAnswer, ownerClaim, restCheckAnswer, scanRelated, watchAnswer } from "./services/compact";
 import { houseAgentProps, houseAlreadyReported, privateWorkflow, verifyActionsToken, verifyHouseToken } from "./services/house";
@@ -28,7 +28,7 @@ import { storeToolLists } from "./services/house-tools";
 import { checkKind, recordCheck } from "./services/proof";
 import { houseInstall, INSTALL_ID_HEADER, recordInstallId } from "./services/install-ids";
 import { BOT_EXCLUDED, isLikelyBot } from "./services/bots";
-import { installClient, installCounters, isSkillScanOutcome, parseAnswer, recordInstallCheck, SKILL_SCAN_OUTCOMES } from "./services/install-metrics";
+import { installClient, installCounters, isSkillScanOutcome, parseAnswer, recordExposureArrival, recordExposureOutcome, recordInstallArrival, recordInstallCheck, recordInstallOutcome, SKILL_SCAN_OUTCOMES } from "./services/install-metrics";
 import { internalCaller, internalKey, internalOf } from "./services/internal";
 import type { AgentProps } from "./services/props";
 import { eq } from "drizzle-orm";
@@ -40,11 +40,14 @@ import { RATE_LIMITED, CHECK_QUERY_HELP } from "./services/errors";
 import { anonymousLimited, keyGate } from "./services/api-keys";
 import { EXPOSURE_MAX_TEXT, exposureCounters, exposureRequest } from "./services/exposure";
 import { actionTagOncePerSourceDay, skillTagKeys, startedViaKeys } from "./services/channel-tags";
+import { onWorkerError } from "./web/page-snapshots";
 
 // Public routes (no token) and protected routes (a valid OAuth access token; one token = one agent).
 
 const CHECK_CACHE_SECONDS = 60;
 const CHECK_KEYS = new Set(["id", "url", "fingerprint", "version"]);
+/** ADR 0154: "kv" when a check was answered from the KV copy (services/forge.ts cachedCheckTool), else "miss". */
+export const CHECK_CACHE_HEADER = "X-Check-Cache";
 
 export const publicApi = new Hono<{ Bindings: Env }>();
 
@@ -113,18 +116,24 @@ publicApi.get("/api/v1/check", async (c) => {
     if (!success) return c.json(anonymousLimited(c.env), 429, { "Retry-After": "60" });
   }
   countTag();
+  // ADR 0154: an install-time check is counted (and its install ID noted) on arrival, before the slow look-up, so a
+  // hook that gives up after 3 s, and the Worker cancelled with it, still counts. Its outcome is counted below.
+  c.executionCtx.waitUntil(recordInstallArrival(c.env, ua, internal));
+  // B3-09 (ADR 0103): the anonymous install ID, when an install-time client sent one (first and last day only).
+  c.executionCtx.waitUntil(recordInstallId(c.env, c.req.header(INSTALL_ID_HEADER), ua, internal));
 
-  const checked = await checkTool(c.env, parsed.data);
+  // ADR 0154: the same question asked in the last CHECK_KV_SECONDS anywhere is answered from KV (global), so a
+  // popular tool's check costs no D1 round trip in a data centre whose edge cache doesn't hold it yet.
+  const { result: checked, cached } = await cachedCheckTool(c.env, parsed.data, { waitUntil: (p) => c.executionCtx.waitUntil(p) });
   const share = await checkShare(c.env, checked, parsed.data.id ?? parsed.data.url ?? parsed.data.fingerprint ?? "");
   // The full shape the plugin, CLI and Action read, with `summary` first and `related` added (ADR 0056).
   const answer = restCheckAnswer({ ...checked, share }, parsed.data, c.env.PUBLIC_ORIGIN);
   const res = c.json(answer, 200, {
     "Cache-Control": `public, max-age=${CHECK_CACHE_SECONDS}`,
+    [CHECK_CACHE_HEADER]: cached ? "kv" : "miss",
   });
   c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
-  c.executionCtx.waitUntil(recordInstallCheck(c.env, ua, internal, answer));
-  // B3-09 (ADR 0103): the anonymous install ID, when an install-time client sent one (first and last day only).
-  c.executionCtx.waitUntil(recordInstallId(c.env, c.req.header(INSTALL_ID_HEADER), ua, internal));
+  c.executionCtx.waitUntil(recordInstallOutcome(c.env, ua, internal, answer));
   return keyed ? withKeyHeaders(res, keyed) : res;
 });
 
@@ -350,7 +359,7 @@ publicApi.get("/api/v1/scan/:fp", async (c) => {
   if (!FP.test(fp)) return c.json({ error: "not_found" }, 404);
   const row = await scanByFingerprint(getDb(c.env), fp.startsWith("sha256:") ? fp : `sha256:${fp}`);
   if (!row || !row.public) return c.json({ error: "not_found" }, 404);
-  return c.json({ verdict: row.verdict, fingerprint: row.fingerprint, rules_version: row.rulesVersion, counts: row.counts, findings: (row.findings as { rule: string; family: string; severity: string; line: number; column: number }[]).map((f) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })), source_url: row.sourceUrl, page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(row.fingerprint)}`, first_seen: new Date(row.firstSeen).toISOString(), scans: row.scans, guarantee: false, provenance: provenance("scan", row.lastSeen) }, 200, { "Cache-Control": "public, max-age=300" });
+  return c.json({ verdict: row.verdict, fingerprint: row.fingerprint, rules_version: row.rulesVersion, counts: row.counts, findings: (row.findings as { rule: string; family: string; severity: string; line: number; column: number }[]).map((f) => ({ rule: f.rule, family: f.family, severity: f.severity, line: f.line, column: f.column })), source_url: agentSourceUrl(row.sourceUrl), page_url: `${c.env.PUBLIC_ORIGIN}${scanPath(row.fingerprint)}`, first_seen: new Date(row.firstSeen).toISOString(), scans: row.scans, guarantee: false, provenance: provenance("scan", row.lastSeen) }, 200, { "Cache-Control": "public, max-age=300" });
 });
 
 /** The weekly watch (ADR 0026): fingerprints in, status out. Reads only. */
@@ -395,10 +404,15 @@ publicApi.post("/api/v1/exposure", async (c) => {
   const g = await gateOrIp(c, "ip");
   if (g.res) return g.res;
   if (Number(c.req.header("content-length") ?? 0) > EXPOSURE_MAX_TEXT * 2) return c.json({ error: "too_large", max_bytes: EXPOSURE_MAX_TEXT * 2 }, 413);
-  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(c.req.header("User-Agent")), ip, { internal: internalCaller(c.req.raw.headers) }));
-  const r = await exposureRequest(c.env, await bodyOf(c));
+  const ua = c.req.header("User-Agent");
+  const internal = internalCaller(c.req.raw.headers);
+  c.executionCtx.waitUntil(recordCheck(c.env, checkKind(ua), ip, { internal }));
+  // ADR 0155: `forge exposure` is an install-time check too (it wrote a "cli" check source but no install count). Counted
+  // once the request is valid and before the slow look-up, within the per-address limit above; its outcome below.
+  const r = await exposureRequest(c.env, await bodyOf(c), { onValid: () => c.executionCtx.waitUntil(recordExposureArrival(c.env, ua, internal)) });
   if ("error" in r) return c.json(r, 400);
   c.executionCtx.waitUntil(bump(c.env, exposureCounters(r)).catch(() => {}));
+  c.executionCtx.waitUntil(recordExposureOutcome(c.env, ua, internal, r));
   const { asked, ...result } = r;
   return keyedJson(c.json(await exposureAnswer(c.env, result, asked ?? []), 200, { "Cache-Control": "no-store" }), g.headers);
 });
@@ -451,6 +465,8 @@ type ProtectedCtx = ExecutionContext & { props: AgentProps };
 const propsOf = (c: Context<{ Bindings: Env }>) => (c.executionCtx as ProtectedCtx).props;
 
 export const protectedApi = new Hono<{ Bindings: Env }>();
+// ADR 0154: overload is 429 with Retry-After here too (this app is served by the OAuth provider, not the site app).
+protectedApi.onError(onWorkerError);
 
 protectedApi.all("/mcp", async (c) => {
   const props = propsOf(c);

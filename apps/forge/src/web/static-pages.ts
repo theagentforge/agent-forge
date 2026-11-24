@@ -169,3 +169,24 @@ site.get("/marketplace.json", (c) => {
   });
 });
 
+/**
+ * 13 Nov walkthrough: addresses people and agents guess, each sent to the page that answers it (permanent, so search
+ * engines and assistants learn the real address). A query string is kept.
+ */
+export const GUESSED_PATHS: Record<string, string> = {
+  "/docs": "/connect",
+  "/developers": "/connect#tab-developers",
+  "/faq": "/about",
+  "/contact": "/about#investors",
+  "/status": "/stats",
+  "/for-teams": "/teams",
+  "/pilot": "/teams",
+  "/keys": "/dashboard/keys",
+};
+for (const [from, to] of Object.entries(GUESSED_PATHS))
+  site.get(from, (c) => {
+    const q = new URL(c.req.url).search;
+    const [path, hash] = to.split("#");
+    return c.redirect(`${path}${q}${hash ? `#${hash}` : ""}`, 301);
+  });
+

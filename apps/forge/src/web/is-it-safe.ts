@@ -476,7 +476,8 @@ site.get(`${IS_IT_SAFE_PATH}/:rest{.+}`, async (c) => {
   // One address per package: npm names in lower case, PyPI names PEP 503 normalised.
   if (name !== m![2]) return c.redirect(`${packagePagePath(ecosystem, name)}${markdown ? ".md" : ""}${url.search}`, 301);
   const a = await packageAnswer(c.env, ecosystem, name);
-  if (!a) return notFound(c, "No such package found", `${ECOSYSTEM_LABEL[ecosystem]} has no package named ${name}, or its registry didn't answer.`);
+  // ADR 0157: the name asked isn't repeated on a not-found page.
+  if (!a) return notFound(c, "No such package found", `${ECOSYSTEM_LABEL[ecosystem]} has no package by that name, or its registry didn't answer.`);
   if (wantsJson(c) && !markdown) return sendJson(c, a, IS_IT_SAFE_MAX_AGE);
   const res = await renderPage(c, a);
   return markdown ? markdownResponse(res, a.markdown_url) : res;

@@ -63,8 +63,9 @@ export async function arenaPause(env: Env, now = Date.now()): Promise<ArenaPause
   const budget = await claudeBudget(env, now, { cached: true }).catch(() => null);
   const claude = !!budget && (budget.reason === "budget" || budget.reason === "manual");
   const notes: string[] = [];
-  if (openrouter) notes.push("Paused: the Arena's prepaid model credit has run out, so new bouts on non-Claude models wait until it is topped up.");
-  if (claude) notes.push(`Paused: Claude bouts run on a monthly API budget that is nearly used; they resume when it resets on ${day(anthropicNextReset(now))}.`);
+  // 13 Nov walkthrough: neutral schedule wording on public pages, no budget talk (the reasons are on /admin/costs).
+  if (claude) notes.push(`Next Claude bouts: ${day(anthropicNextReset(now))}.`);
+  if (openrouter) notes.push("New bouts on non-Claude models are on hold; the next date will be posted here.");
   if (notes.length) notes.push("Published results, replays and the dataset are unaffected.");
   return { openrouter, claude, notes };
 }

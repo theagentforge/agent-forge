@@ -3,6 +3,8 @@ import { anyTaskById, Attempt, PRACTICE_ONLY_TASK_IDS, TRAP_CATALOG, type Attemp
 import { eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  AUDIT_ERROR_TRAPS,
+  auditRetired,
   FIXED_LINE,
   HERO_LINES,
   HERO_STATE_KEY,
@@ -14,6 +16,7 @@ import {
   latestFall,
   lineAction,
   linePairs,
+  pinnedLineKeys,
   lineText,
   randomIndex,
   RECHECK_MS,
@@ -40,6 +43,8 @@ const reset = () => env.KV.delete(HERO_STATE_KEY);
 const ev = { practice: crypto.randomUUID(), ranked: crypto.randomUUID(), held: crypto.randomUUID() };
 const ids: Record<string, string> = {};
 const t0 = Date.UTC(2026, 9, 20);
+// Review of the 16 Nov revert: a line covering an audit-error trap (FA-CLM-001, the false-claim line) is never backed.
+const BACKABLE = HERO_LINES.filter((l) => !auditRetired(l));
 
 function made(task: string, fell: string[], status: "done" | "cannot_complete" = "done") {
   const a = new Attempt(anyTaskById(task)!, 5_200_001);
@@ -51,13 +56,15 @@ function made(task: string, fell: string[], status: "done" | "cannot_complete" =
   return { result: { ...base, passed: false, traps } as AttemptResult, log: a.log };
 }
 
-async function add(key: string, o: { task: string; fell: string[]; status?: "done" | "cannot_complete"; event?: string; model?: string; at: number; heldOut?: boolean; badSig?: boolean }) {
+async function add(key: string, o: { task: string; fell: string[]; status?: "done" | "cannot_complete"; event?: string; model?: string; at: number; heldOut?: boolean; badSig?: boolean; unsealed?: boolean }) {
   const r = made(o.task, o.fell, o.status);
   const id = crypto.randomUUID();
   const signature = o.badSig ? "nope" : await signReport(env.REPORT_SIGNING_KEY, { id, log: JSON.stringify(r.log) });
   await getDb(env).insert(t.arenaRuns).values({
     id, eventId: o.event ?? ev.practice, modelId: o.model ?? "mistral-large-4", task: o.task, seed: 5_200_001, attemptNo: 1, status: "done", heldOut: o.heldOut ?? false,
     passed: false, score: 0.1, cost: 0.01, tokens: 900, result: r.result, log: r.log, signature, finishedAt: o.at,
+    // 13 Nov walkthrough: only replay format v2 (sealed) runs back a headline; a seal's presence marks v2 here.
+    replaySeal: o.unsealed ? null : ({ v: 2, fixture: true } as never),
   });
   ids[key] = id;
   return id;
@@ -166,14 +173,33 @@ describe("eligibility (ADR 0130 rules)", () => {
       ["double-order", ids.dup],
       ["bank-details", ids.bank],
       ["deleted-row", ids.row],
-      ["false-claim", ids.claim],
       ["hotel", ids.hotel],
     ]);
-    expect(ps.find((p) => p.line === "false-claim")!.claim).toBe("cannot_complete");
     expect(ps.find((p) => p.line === "deleted-row")!.trap.id).toBe("FA-DAT-001");
     expect(ps.find((p) => p.line === "hotel")!.trap.id).toBe("FA-POL-012");
-    const excluded = ["dup-cannot", "dup-embargoed", "dup-heldout", "dup-held-event", "dup-badsig", "private", "claim-partial", "row-wrong-job", "invoice-hard", "bank-hard", "row-hard"].map((k) => ids[k]);
+    const excluded = ["claim", "dup-cannot", "dup-embargoed", "dup-heldout", "dup-held-event", "dup-badsig", "private", "claim-partial", "row-wrong-job", "invoice-hard", "bank-hard", "row-hard"].map((k) => ids[k]);
     for (const p of ps) expect(excluded).not.toContain(p.run);
+  });
+
+  it("a sealed FA-CLM-001 run never backs a headline, and false-claim is never pinned (audit 2: the referee's error trap)", async () => {
+    expect([...AUDIT_ERROR_TRAPS]).toEqual(["FA-CLM-001"]);
+    expect(HERO_LINES.filter(auditRetired).map((l) => l.key)).toEqual(["false-claim"]);
+    // ids.claim is sealed, public, signed and marked false_claim by the referee: it would have qualified before.
+    await add("claim-ranked", { task: "impossible", fell: ["false_claim"], status: "done", event: ev.ranked, at: t0 + 16 });
+    await reset();
+    const ps = await heroProofs(env);
+    expect(ps.map((p) => p.line)).not.toContain("false-claim");
+    expect(ps.map((p) => p.run)).not.toContain(ids.claim);
+    expect(ps.map((p) => p.run)).not.toContain(ids["claim-ranked"]);
+    // Even a pin written by an older release is ignored.
+    const state = (await env.KV.get<{ pins: Record<string, unknown> }>(HERO_STATE_KEY, "json"))!;
+    state.pins["false-claim"] = { run: ids["claim-ranked"], ranked: true, at: Date.now() };
+    await env.KV.put(HERO_STATE_KEY, JSON.stringify(state));
+    expect(await pinnedLineKeys(env)).not.toContain("false-claim");
+    expect((await heroProofs(env)).map((p) => p.line)).not.toContain("false-claim");
+    expect(await page()).not.toContain("It never was");
+    await reset();
+    await heroProofs(env);
   });
 
   it("keeps each pick; a ranked replay replaces a practice one (at the next recheck), never the other way", async () => {
@@ -203,19 +229,19 @@ describe("eligibility (ADR 0130 rules)", () => {
 });
 
 describe("one line per visit, then one cycle (ADR 0130)", () => {
-  it("picks among every backed line at random (the default picker covers all six)", async () => {
+  it("picks among every backed line at random (the default picker covers all of them)", async () => {
     const seen = new Set<number>();
     for (let i = 0; i < 400; i++) seen.add(randomIndex(6));
     expect([...seen].sort()).toEqual([0, 1, 2, 3, 4, 5]);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < BACKABLE.length; i++) {
       const h = await homeHero(env, Date.now(), { random: () => i });
-      expect(h.case === "replay" && h.line.key).toBe(HERO_LINES[i]!.key);
+      expect(h.case === "replay" && h.line.key).toBe(BACKABLE[i]!.key);
     }
   });
 
   it("each visit's server-rendered line varies through the edge cache, and the share title never does", async () => {
     const seen = new Set<string>();
-    for (let i = 0; i < 80 && seen.size < 6; i++) {
+    for (let i = 0; i < 80 && seen.size < BACKABLE.length; i++) {
       const body = await page();
       const line = /data-hero-source="[^"]+" data-hero-line="([a-z-]+)"/.exec(body)?.[1];
       expect(line).toBeTruthy();
@@ -223,7 +249,7 @@ describe("one line per visit, then one cycle (ADR 0130)", () => {
       expect(body).toContain(`<meta property="og:title" content="${HOME_OG_TITLE}">`);
       expect(body).toContain(`<meta name="twitter:title" content="${HOME_OG_TITLE}">`);
     }
-    expect([...seen].sort()).toEqual(HERO_LINES.map((l) => l.key).sort());
+    expect([...seen].sort()).toEqual(BACKABLE.map((l) => l.key).sort());
     expect(HOME_OG_TITLE).toBe("An AI agent paid a fake invoice and reported the job done");
   });
 
@@ -253,8 +279,8 @@ describe("one line per visit, then one cycle (ADR 0130)", () => {
     const root = /<div class="hero-rot" data-hero-rot data-start="(\d)" data-hero-lines="([^"]+)">/.exec(body)!;
     expect(root).toBeTruthy();
     const data = JSON.parse(root[2]!.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")) as { key: string; action: string | null; text: string; href: string; run: string; kind: string; name: string }[];
-    expect(data.map((d) => d.key)).toEqual(HERO_LINES.map((l) => l.key));
-    expect(data.map((d) => d.text)).toEqual(HERO_LINES.map(lineText));
+    expect(data.map((d) => d.key)).toEqual(BACKABLE.map((l) => l.key));
+    expect(data.map((d) => d.text)).toEqual(BACKABLE.map(lineText));
     for (const d of data) expect(d.href).toBe(`/arena/run/${d.run}?from=home-source-${d.key}`);
     const shown = data[Number(root[1])]!;
     // The h1 holds only the current line (its accessible name), never announced.
@@ -264,8 +290,8 @@ describe("one line per visit, then one cycle (ADR 0130)", () => {
     expect(h1.replace(/<[^>]+>/g, "")).toBe(shown.text);
     if (shown.action) expect(h1).toContain(`<span class="hero-act">${shown.action}</span> and <em>reported the job done</em>.`);
     // Hidden copies of all six lines and their sources hold the tallest height (CLS 0); hidden from readers and snippets.
-    expect(body.match(/<p class="hero-size hero-size-h1" aria-hidden="true" data-nosnippet>/g)).toHaveLength(6);
-    expect(body.match(/<p class="small hero-source hero-size" aria-hidden="true" data-nosnippet>/g)).toHaveLength(6);
+    expect(body.match(/<p class="hero-size hero-size-h1" aria-hidden="true" data-nosnippet>/g)).toHaveLength(BACKABLE.length);
+    expect(body.match(/<p class="small hero-source hero-size" aria-hidden="true" data-nosnippet>/g)).toHaveLength(BACKABLE.length);
     // A small control beside the source line, not a full-size button; its name is the label text.
     expect(body).toContain('<button type="button" class="hero-pause hero-pause-off" data-hero-pause aria-pressed="false"><span class="hero-ico" aria-hidden="true"></span><span class="hero-lbl" data-hero-pause-label>Pause headlines</span></button></div>');
     expect(body).toMatch(/<div class="hero-srcrow"><div class="hero-cell"><p class="small hero-source" data-hero-source=/);
@@ -282,10 +308,11 @@ describe("one line per visit, then one cycle (ADR 0130)", () => {
     const strip = /<p class="small hero-strip" data-hero-strip>(.*?)<\/p>/.exec(body)![1]!;
     expect(strip).toMatch(/^<span class="muted">Caught in refereed runs:<\/span> /);
     const links = [...strip.matchAll(/<a href="\/arena\/run\/([0-9a-f-]+)\?from=home-strip-([a-z-]+)" data-strip-line="[a-z-]+">([^<]+)<\/a>/g)];
-    expect(links.map((m) => m[2])).toEqual([...STRIP_ORDER]);
+    const order = STRIP_ORDER.filter((k) => BACKABLE.some((l) => l.key === k));
+    expect(links.map((m) => m[2])).toEqual(order);
     const ps = await heroProofs(env);
     for (const m of links) expect(ps.find((p) => p.line === m[2])!.run).toBe(m[1]);
-    expect(links.map((m) => m[3])).toEqual(STRIP_ORDER.map((k) => HERO_LINES.find((l) => l.key === k)!.strip.replace(/“/g, "“")));
+    expect(links.map((m) => m[3])).toEqual(order.map((k) => HERO_LINES.find((l) => l.key === k)!.strip.replace(/“/g, "“")));
   });
 
   it("the JSON twin says which line was shown and lists every backed line; fixed_source stays the fake invoice", async () => {
@@ -296,7 +323,7 @@ describe("one line per visit, then one cycle (ADR 0130)", () => {
       shownLines.add(src.line as string);
       expect(j.hero.headline).toBe(src.text);
       expect(src).toMatchObject({ case: "replay", status: "found", selection: "one_backed_line_at_random_per_visit" });
-      expect(src.lines.map((l) => l.line)).toEqual(HERO_LINES.map((l) => l.key));
+      expect(src.lines.map((l) => l.line)).toEqual(BACKABLE.map((l) => l.key));
       for (const l of src.lines) expect(l.replay_url).toMatch(new RegExp(`^${env.PUBLIC_ORIGIN}/arena/run/[0-9a-f-]+$`));
       expect(j.hero.fixed_source).toMatchObject({ status: "found", line: "invoice", run: ids.invoice, trap_id: "FA-INJ-001" });
       expect(JSON.stringify(j)).not.toContain(MODEL_WORDS);

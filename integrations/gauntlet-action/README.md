@@ -69,11 +69,20 @@ step would (none of the action's inputs); pass your own secrets with `env:`.
           command: python agent/play_gauntlet.py
 ```
 
+## A blocking gate, by default
+When your agent falls for a planted trap, the step exits non-zero, so the job fails. Make the job a **required status
+check** (branch protection or a ruleset) and a pull request can't merge until the agent passes. To report without
+blocking, set `fail-on-trap: none`; to block on some trap families only, list them (below).
+
+In Harness's [State of Agent DLC 2026](https://www.harness.io/state-of-agent-dlc-2026) (a Sapio Research survey of 700
+technology professionals at large enterprises, July 2026), 19% said they have a gate that automatically blocks every
+bad release.
+
 ## When the check fails
 
 | Input | Default | Meaning |
 |---|---|---|
-| `fail-on-trap` | `any` | `any` sprung trap fails the check; `none` never; or trap families, e.g. `PAY,INJ,PRM` |
+| `fail-on-trap` | `any` | `any` sprung trap fails the check (the step exits non-zero); `none` reports only (the opt-out); or trap families, e.g. `PAY,INJ,PRM` |
 | `min-pass-rate` | `0` | Also fail when fewer than this % of jobs are right |
 | `mode` | `sprint` | `sprint` (one job, the week's pick) or `full` (six jobs) |
 | `challenge` | | With `mode: full`: an earlier run id (from the `gauntlet-id` output) or `model:<id>`, to play identical jobs |
@@ -95,12 +104,64 @@ always fails, even with no trap sprung: the action never calls `finish` for your
 - **Pull request comment:** off by default. `comment: true` posts one comment and edits it on later runs (needs
   `permissions: pull-requests: write`; a fork's pull request gets a read-only token, so the summary carries it).
 - **Outputs:** `verdict` (pass, fail, incomplete, not-run), `gauntlet-id`, `report-url`, `jobs-passed`, `jobs-total`,
-  `traps-fell`, `fell-for`.
+  `traps-fell`, `fell-for`, `replay-urls` (each played job's signed replay) and `replays-signed`.
 - **Score page and badge:** off by default. Runs are anonymous. With `claim-link: true` the masked output `claim-url`
   holds the run's private claim link; a verified owner who opens it can claim the run, which gives it a score page
   (`/score/<id>`) and a README badge. Don't print it or paste it anywhere public: anyone with it can claim the run.
 
 A pass means your agent didn't fall for these traps on these jobs. It is not a statement that an agent is safe.
+
+## Audit evidence: signed replays
+Every job the agent played has a replay: the log of its tool calls and the referee's result, hash-chained and signed
+with The Forge's published Ed25519 key (replay format v2, keys at
+`https://theagentforge.io/.well-known/forge-keys.json`). The output `replay-urls` lists each job's replay JSON and
+`replays-signed` says how many carry a signature; the job summary links them. Anyone can check one without trusting
+The Forge or your CI:
+
+```sh
+npx @theagentforge/cli@0.7.1 verify https://theagentforge.io/gauntlet/r/<run-id>/1.json
+```
+
+The Forge keeps Gauntlet replays 30 days. To keep them with your build for longer, save them in a later step:
+
+```yaml
+      - uses: theagentforge/gauntlet@v1
+        id: gauntlet
+        with:
+          model: gpt-5-mini
+          api-key: ${{ secrets.OPENAI_API_KEY }}
+      - name: Save the signed replays
+        if: always() && steps.gauntlet.outputs.replay-urls != ''
+        env:
+          URLS: ${{ steps.gauntlet.outputs.replay-urls }}
+        run: |
+          mkdir -p gauntlet-evidence
+          for u in ${URLS//,/ }; do curl -fsS "$u" -o "gauntlet-evidence/$(basename "$(dirname "$u")")-$(basename "$u")"; done
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.gauntlet.outputs.replay-urls != ''
+        with:
+          name: gauntlet-evidence
+          path: gauntlet-evidence/
+```
+
+A signed replay shows what the agent did on these jobs and that the record wasn't changed afterwards. It records a
+test result on these jobs, nothing more.
+
+## What it tests, against the OWASP Top 10 for Agentic Applications
+Each public trap carries the closest category of the
+[OWASP Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+(OWASP GenAI Security Project, 9 Dec 2025), or none where none fits; the mapping is never forced. For the Gauntlet's
+six jobs:
+
+| OWASP category | Gauntlet traps (fit) | Note |
+|---|---|---|
+| ASI01 Agent Goal Hijack | FA-INJ-001 (direct) |  |
+| ASI02 Tool Misuse and Exploitation | none | Planted only in the harder Arena jobs, which this action doesn't play ([full mapping](https://theagentforge.io/gauntlet/ci#owasp)). |
+| ASI04 Agentic Supply Chain Vulnerabilities | none | Not tested by the Gauntlet. [forge-check](https://github.com/theagentforge/forge-check) fails CI when an MCP server or tool your repository uses is flagged (field reports, OSV advisories): known reports only. |
+| ASI09 Human-Agent Trust Exploitation | FA-CLM-001 (partial) |  |
+
+The other traps of these jobs (changed payee, double order, refund and booking policy, wrong amount, deleted record, time zone)
+have no OWASP agentic category that fits.
 
 ## What is sent to The Forge
 Exactly what any Gauntlet run sends: the start (`mode`, and `challenge` if set) and each tool call your agent makes

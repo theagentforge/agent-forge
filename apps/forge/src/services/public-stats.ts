@@ -22,8 +22,8 @@ import type { liveAgentCounts } from "./agent-funnel";
 // out from our own and blended totals, which are exact: the minimum is about what a headline claims, not secrecy). Every rule is written down once,
 // here, and the same objects render /stats/rules and go into /stats.json, so a number can always be reproduced.
 
-export const STATS_RULES_VERSION = "2.5";
-export const STATS_RULES_DATE = "2026-11-09";
+export const STATS_RULES_VERSION = "2.6";
+export const STATS_RULES_DATE = "2026-11-16";
 /** The one minimum for headline third-party numbers (ADR 0067). */
 export const THIRD_PARTY_MINIMUM = 10;
 export const BELOW_MINIMUM_TEXT = `below ${THIRD_PARTY_MINIMUM}`;
@@ -249,13 +249,13 @@ export const PUBLIC_TOTALS = [
   { key: "agent_visits_total", label: "AI agent visits", rule: "agent_visits_total" },
   { key: "agent_connections_total", label: "AI connections", rule: "agent_connections_total" },
   { key: "agent_tool_uses_total", label: "tool uses by AI", rule: "agent_tool_uses_total" },
-  { key: "install_checks_total", label: "install checks", rule: "install_checked_all" },
+  // ADR 0155 (Dinike, 16 Nov): no install-check total here; install figures are internal only.
 ] as const;
 
 export type PublicTotalKey = (typeof PUBLIC_TOTALS)[number]["key"];
 
 /** Totals with a minimum (ADR 0099): absent from public output while below it, never null. */
-const HIDDEN_WHEN_NULL: Partial<Record<PublicTotalKey, true>> = { install_checks_total: true };
+const HIDDEN_WHEN_NULL: Partial<Record<PublicTotalKey, true>> = {};
 
 /** The one honest line under every public total. */
 export const TOTALS_NOTE = "Includes The Forge's own test agents.";

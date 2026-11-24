@@ -28,6 +28,17 @@ describe("verdict strings", () => {
     );
     expect(verdictLine({ ...base, security_status: "caution" })).toContain("[F!] · caution");
   });
+  it("advisories_checked false (ADR 0152): the verdict comes from the reports, and the line says the advisories weren't checked", () => {
+    expect(verdictLine({ ...base, advisories_checked: false })).toBe(
+      "[F✓] · clear · Forge Score 87 · 41 independent agents · github.com/acme/pdf-tools@1.4.2 · advisories not checked · theagentforge.io/t/github.com%2Facme%2Fpdf-tools",
+    );
+    expect(verdictLine({ ...base, advisories_checked: false, forge_score: null, distinct_owners: 1 })).toContain("not enough reports yet (1 of 5) · github.com/acme/pdf-tools@1.4.2 · advisories not checked");
+    // Checked, or an answer from before the field existed: unchanged.
+    expect(verdictLine({ ...base, advisories_checked: true })).not.toContain("advisories not checked");
+    expect(verdictLine(base)).not.toContain("advisories not checked");
+    // A flag is said as before.
+    expect(verdictLine({ ...base, advisories_checked: false, security_status: "caution" })).not.toContain("advisories not checked");
+  });
   it("unknown tools", () => {
     expect(verdictLine({ ...base, known: false, tool: null })).toBe(
       "[F–] · not enough reports yet (0 of 5) · unknown tool · no field reports yet",

@@ -31,6 +31,7 @@ function displayVerdict(c) {
   if (c.security_status !== "clear") return c.security_status;
   return c.forge_score === null ? "insufficient" : "clear";
 }
+var ADVISORIES_NOT_CHECKED = "advisories not checked";
 var plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 function verdictLine(c) {
   const v = displayVerdict(c);
@@ -43,9 +44,11 @@ function verdictLine(c) {
   switch (v) {
     case "clear":
       parts.push("clear", `Forge Score ${c.forge_score}`, plural(c.distinct_owners, "independent agent"), subject);
+      if (c.advisories_checked === false) parts.push(ADVISORIES_NOT_CHECKED);
       break;
     case "insufficient":
       parts.push(`not enough reports yet (${Math.min(c.distinct_owners, MIN_OWNERS_FOR_SCORE)} of ${MIN_OWNERS_FOR_SCORE})`, subject);
+      if (c.advisories_checked === false) parts.push(ADVISORIES_NOT_CHECKED);
       break;
     case "caution":
       parts.push("caution", "security report under review", subject);
@@ -519,7 +522,7 @@ function installIdFor(origin, env = process.env) {
 }
 
 // src/hooks/pre-install.ts
-var TIMEOUT_MS = 3e3;
+var TIMEOUT_MS = 5e3;
 async function decide(command, origin, fetcher = fetch, ctx = {}) {
   const refs = installRefs(command);
   if (!refs.length) return null;

@@ -37,6 +37,23 @@ const LEGACY = {
       production: { file: "forge-production-0.7.1-2832ac15b8ca.zip", sha256: "2832ac15b8cae8cc4d943272200986edf57bb12843ab9e8a01e90a01e8e2d7e9" },
     },
   },
+  // 0.9.0-full, replaced by 0.9.1-full on 13 Nov (ADR 0152): kept because the Claude directory's reviewers and cached
+  // marketplace.json copies may hold these URLs.
+  "theagentforge@0.9.0-full": {
+    version: "0.9.0-full",
+    files: {
+      staging: { file: "theagentforge-staging-0.9.0-full-c1f65e5556a0.zip", sha256: "c1f65e5556a04649894fddf9280bc41b70488655481ca4dbe13f038fdb024d8b" },
+      production: { file: "theagentforge-production-0.9.0-full-38eb8eabc30f.zip", sha256: "38eb8eabc30f909c6b511aeda927b276c6602a60a2472eef4800076d23807132" },
+    },
+  },
+  // The same version rebuilt on 13 Nov with the 5 s hook timeout (ADR 0154), served from main until 0.9.1.
+  "theagentforge@0.9.0-full-timeout5s": {
+    version: "0.9.0-full",
+    files: {
+      staging: { file: "theagentforge-staging-0.9.0-full-e96358ba5dad.zip", sha256: "e96358ba5dad54b0b6dd9225b48db612100ffe7068549c24c82726ff9615e759" },
+      production: { file: "theagentforge-production-0.9.0-full-38f8d4a7d86b.zip", sha256: "38f8d4a7d86bcc17558a91132ddd41d08e26965817a9476d349020f568ac8e3b" },
+    },
+  },
 };
 const legacyFiles = Object.values(LEGACY).flatMap((l) => Object.values(l.files));
 

@@ -70,9 +70,9 @@ ${sprintPicker(origin, "gauntlet")}</section>
 <li><p><b>You get a report card</b>: jobs right, traps fallen for, and the Arena's headline models on the same jobs.</p></li>
 <li><p><b>Then a trap card</b>, with checks for the traps it fell for first. One re-run on six new job versions, with the card, measures whether it helped.</p></li>
 </ol>
-<p class="muted">Top models pass all six. If yours doesn't, find out before it touches real money. Six jobs is a signal, not a guarantee.</p>
+<p class="muted">${allSixLine(opponents)}Find out where yours slips before it touches real money. Six jobs is a signal, not a guarantee.</p>
 <p class="muted small-print">No account, no IP address stored. Tool calls deleted after 30 days. Anyone with a report link can see it. Runs stay anonymous unless you claim them. <a href="/privacy">More</a></p>
-<p><a class="text-link" href="${SEASON_1.path}">Season 1 leaderboard (ends 31 Dec) →</a></p>
+<p><a class="text-link" href="${SEASON_1.path}">Season 1 leaderboard (ends 31 Dec 2026) →</a></p>
 <p><a class="text-link" href="/arena?from=gauntlet">Watch headline models on the same jobs →</a></p>
 <p><a class="text-link" href="/gauntlet/ci">Test your agent on every pull request (GitHub Action) →</a></p>
 ${opponents.length
@@ -81,6 +81,18 @@ ${opponents.length
   : ""}`,
   });
 });
+
+/**
+ * 16 Nov site audit: "Top models pass all six" sat above a list where some headline models got 5 of 6. The line now says
+ * what the list below shows, read from the same stored ranked runs, or nothing when there is no list.
+ */
+export function allSixLine(opponents: { passed: number }[]) {
+  if (!opponents.length) return "";
+  const all = opponents.filter((o) => o.passed === JOBS.length).length;
+  if (all === opponents.length) return "Every headline model below passes all six. ";
+  if (all === 0) return "No headline model below passes all six. ";
+  return `${all} of the ${opponents.length} headline models below ${all === 1 ? "passes" : "pass"} all six. `;
+}
 
 // V3: the page a shared "Take this challenge" link opens. It names the run (or model) and gives the line to paste.
 site.get("/gauntlet/challenge/:target", async (c) => {

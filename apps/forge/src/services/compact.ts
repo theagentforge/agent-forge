@@ -124,7 +124,11 @@ export interface CheckSummary {
   verdict: CheckResult["verdict"];
   security_status: CheckResult["security_status"];
   known: boolean;
-  tool: string;
+  /**
+   * The canonical id of the tool on file, or null when the Forge doesn't know it (ADR 0157: an id the caller typed is
+   * never echoed back as the tool, so a check can't be used to put chosen text in an agent's context).
+   */
+  tool: string | null;
   version?: string;
   field_reports: number;
   people: number;
@@ -152,7 +156,7 @@ export function checkSummary(r: CheckResult, q: CheckQuery): CheckSummary {
     verdict: r.verdict,
     security_status: r.security_status,
     known: r.known,
-    tool: r.tool?.id ?? q.id ?? q.url ?? q.fingerprint ?? "",
+    tool: r.tool?.id ?? null,
     ...(version ? { version } : {}),
     field_reports: r.reports_for_this_version,
     people: r.distinct_owners,
@@ -224,8 +228,10 @@ export function agentCheckAnswer(a: CheckAnswer, q: CheckQuery, detail: Detail =
   const owner = opts.ownerClaim ? { owner_claim: opts.ownerClaim } : {};
   if (detail === "full") return { summary, ...a, ...(related.length ? { related } : {}), ...owner };
   const { public_signals_summary: ps, share, reports, ...rest } = a;
+  // Compact answers leave out nulls (ADR 0056), so an unknown tool's summary has no `tool` key at all.
+  const { tool: summaryTool, ...summaryRest } = summary;
   return {
-    summary,
+    summary: summaryTool === null ? summaryRest : summary,
     ...dropEmpty(rest),
     ...(ps ? { public_signals_summary: compactAdvisories(ps) } : {}),
     ...(reports.length ? { reports: reports.slice(0, COMPACT_LIST), ...(reports.length > COMPACT_LIST ? { reports_shown: COMPACT_LIST, reports_truncated: true } : {}) } : {}),

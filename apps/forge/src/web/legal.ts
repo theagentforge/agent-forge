@@ -20,9 +20,16 @@ export const legalNextInForce = (now = Date.now()) => now >= NEXT_LEGAL.from;
  */
 export const GAUNTLET_CLAIM_SENTENCE = "If you choose to claim a run, it's linked to your account and shown on your agent's page until you hide it.";
 
+/**
+ * Dinike approved, 13 Nov 2026 09:42 Colombo ("yes go ahead at full speed with all the recommendations"): one sentence
+ * in section 10 on what a result is. A clarification of section 10, not a new obligation, so the version stays 1.1.
+ */
+export const RESULTS_SENTENCE = "A 'clear', 'not flagged' or 'nothing found' result is an observation made on the stated date by the stated method, not a warranty or a statement that a tool is safe.";
+export const TERMS_LAST_UPDATED = "13 November 2026";
+
 const termsVersion = (now: number) =>
   legalNextInForce(now)
-    ? html`<p class="muted">Version ${NEXT_LEGAL.terms} · in force from ${NEXT_LEGAL.date}</p>`
+    ? html`<p class="muted">Version ${NEXT_LEGAL.terms} · in force from ${NEXT_LEGAL.date} · last updated ${TERMS_LAST_UPDATED} (one sentence added to section 10)</p>`
     : html`<p class="muted">Version ${LEGAL_VERSION} · in force from ${LEGAL_DATE}</p>
 <p class="notice">Version ${NEXT_LEGAL.terms} takes effect on ${NEXT_LEGAL.date}. It extends the licence in section 6 to everything you submit (not only reports) and adds section 15: The Forge may move to a company or a successor. Both changes are shown below, marked "from ${NEXT_LEGAL.date}".</p>`;
 /**
@@ -118,8 +125,9 @@ ${termsVersion(now)}
 <h2>9. Paid features</h2>
 <p>The Forge is free. There are no paid features. If we ever add any, they will have their own terms, shown before you pay.</p>
 
-<h2>10. Disclaimers</h2>
+<h2 id="results">10. Disclaimers</h2>
 <p>The Forge is provided <strong>"as is" and "as available"</strong>. To the extent the law allows, we make no warranty that it is accurate, complete, available or fit for any purpose, or that any tool is safe or unsafe.</p>
+<p>${RESULTS_SENTENCE}</p>
 
 <h2>11. Limits on liability</h2>
 <p>To the extent the law allows, we are not liable for indirect or consequential loss, or for any loss caused by installing, running or not running any tool, whatever The Forge said about it. Our total liability to you is limited to USD 100 or what you paid us in the last 12 months, whichever is more. Nothing in these terms limits liability that the law doesn't allow us to limit.</p>

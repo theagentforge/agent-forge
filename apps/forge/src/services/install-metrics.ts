@@ -22,7 +22,7 @@ import { bump } from "./usage";
 // 28 Oct: gross numbers only on the site).
 
 /** The install-time clients, in display order. */
-export const INSTALL_CLIENTS = ["plugin", "cli", "hook-codex", "hook-gemini", "hook-copilot", "action", "skill-scan"] as const;
+export const INSTALL_CLIENTS = ["plugin", "cli", "hook-codex", "hook-gemini", "hook-copilot", "action", "skill-scan", "cli-exposure"] as const;
 export type InstallClient = (typeof INSTALL_CLIENTS)[number];
 export type InstallOutcome = "checked" | "blocked" | "advisory";
 export const INSTALL_OUTCOMES: readonly InstallOutcome[] = ["checked", "blocked", "advisory"];
@@ -35,6 +35,7 @@ export const INSTALL_CLIENT_NAMES: Record<InstallClient, string> = {
   "hook-copilot": "CLI hook for GitHub Copilot",
   action: "forge-check GitHub Action",
   "skill-scan": "skill-scan GitHub Action (one count per run)",
+  "cli-exposure": "CLI lockfile check (forge exposure, one count per request)",
 };
 
 /** The install-time client a check came from, by its User-Agent; null for everyone else (browsers, crawlers, scripts). */
@@ -91,6 +92,74 @@ export async function recordInstallCheck(env: Env, userAgent: string | undefined
   }
 }
 
+/**
+ * ADR 0154 (13 Nov usage audit: "0 install checks ever"): the uncached path counts the check when it arrives, before
+ * the slow look-up, and its outcome (blocked or advisory) once the answer is ready. The hooks give up after a few
+ * seconds, and a Worker whose client has gone may be cancelled before code that runs after a slow await, so a count
+ * made only after the answer was lost exactly when the check was slow. Same keys as recordInstallCheck. Never throws.
+ */
+export async function recordInstallArrival(env: Env, userAgent: string | undefined, internal: InternalComponent | null, now = Date.now()) {
+  try {
+    const client = installClient(userAgent);
+    if (!client) return;
+    await bump(env, installCounters(client, null, internal), now);
+  } catch (e) {
+    console.error("install_count_failed", String(e));
+  }
+}
+
+/** The outcome half of an uncached check (see recordInstallArrival): only `blocked` or `advisory`, never `checked`. */
+export async function recordInstallOutcome(env: Env, userAgent: string | undefined, internal: InternalComponent | null, answer: Partial<Answer> | null, now = Date.now()) {
+  try {
+    const client = installClient(userAgent);
+    const outcome = installOutcome(answer);
+    if (!client || !outcome) return;
+    const keys = installCounters(client, outcome, internal).filter((k) => !/^install:(ours:)?checked:/.test(k));
+    await bump(env, keys, now);
+  } catch (e) {
+    console.error("install_count_failed", String(e));
+  }
+}
+
+/**
+ * ADR 0155: `forge exposure` (the CLI's lockfile check) posts to /api/v1/exposure with the CLI's User-Agent. From
+ * 28 Oct until this fix that route wrote a "cli" check source but no install counter, so a CLI user could show in the
+ * check sources and never in the install numbers. It counts under its own client, one per request (up to 500 packages
+ * each), so one lockfile never adds hundreds of "install checks". Only the CLI's plain User-Agent counts here.
+ */
+export function exposureClient(userAgent: string | null | undefined): InstallClient | null {
+  return installClient(userAgent) === "cli" ? "cli-exposure" : null;
+}
+
+/** What `forge exposure` does with the answer: a malicious-package match ("flagged") fails it; any other match is an advisory. */
+export function exposureOutcome(r: { matches?: { status?: string }[] } | null | undefined): "blocked" | "advisory" | null {
+  const m = r?.matches ?? [];
+  if (m.some((x) => x.status === "flagged")) return "blocked";
+  return m.length ? "advisory" : null;
+}
+
+/** ADR 0155: a CLI lockfile check, counted on arrival (the advisory look-up can take seconds), as ADR 0154 does for checks. Never throws. */
+export async function recordExposureArrival(env: Env, userAgent: string | undefined, internal: InternalComponent | null, now = Date.now()) {
+  try {
+    const client = exposureClient(userAgent);
+    if (client) await bump(env, installCounters(client, null, internal), now);
+  } catch (e) {
+    console.error("install_count_failed", String(e));
+  }
+}
+
+/** The outcome half of a CLI lockfile check (see recordExposureArrival): only `blocked` or `advisory`. Never throws. */
+export async function recordExposureOutcome(env: Env, userAgent: string | undefined, internal: InternalComponent | null, result: Parameters<typeof exposureOutcome>[0], now = Date.now()) {
+  try {
+    const client = exposureClient(userAgent);
+    const outcome = exposureOutcome(result);
+    if (!client || !outcome) return;
+    await bump(env, installCounters(client, outcome, internal).filter((k) => !/^install:(ours:)?checked:/.test(k)), now);
+  } catch (e) {
+    console.error("install_count_failed", String(e));
+  }
+}
+
 /** The skill-scan Action's end-of-run outcome (its only call to us): blocked = the job failed on findings. */
 export const SKILL_SCAN_OUTCOMES = { blocked: "blocked", findings: "advisory", clear: null } as const;
 export type SkillScanOutcome = keyof typeof SKILL_SCAN_OUTCOMES;
@@ -109,6 +178,16 @@ const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
  */
 export const INSTALL_COUNTING_BEGAN = "2026-10-28";
 export const INSTALL_GAPS = [{ from: "2026-11-01", to: "2026-11-04", why: "lean mode skipped every usage counter, install checks included (fixed by ADR 0124, released 5 Nov); install IDs were kept" }] as const;
+
+/**
+ * ADR 0155: paths whose install checks were not measured before a fix. Unlike INSTALL_GAPS (every client, every
+ * check), each covers one path, so a zero there before its end means "not measured", never "no use". Nothing is
+ * backfilled.
+ */
+export const INSTALL_NOT_MEASURED = [
+  { path: "POST /api/v1/exposure (CLI forge exposure)", from: INSTALL_COUNTING_BEGAN, until: "the ADR 0155 release", why: "the CLI's lockfile check wrote a check source but never an install counter" },
+  { path: "GET /api/v1/check, fresh answers (every check client)", from: INSTALL_COUNTING_BEGAN, until: "2026-11-14", why: "the install count was made only after the slow look-up, while the check source was written on arrival; a check whose client gave up first (hooks wait 3 s, the CLI 10 s) kept its check source and lost its install count (fixed by ADR 0154, released 14 Nov): partly measured" },
+] as const;
 
 export interface InstallTotals {
   days: number;
@@ -179,7 +258,7 @@ export async function installChecksTotal(env: Env): Promise<number | null> {
 }
 
 const INSTALL_COUNTS =
-  "Checks made at the moment of an install by The Forge's install-time clients, told apart by the User-Agent each sends: the Claude Code plugin's install hook, the CLI (forge check) and its hooks for Codex, Gemini CLI and GitHub Copilot, and the forge-check GitHub Action, one per package or tool checked; plus one per run of the skill-scan GitHub Action where its user turned the run count on (count-run: true; off by default, so most runs are never counted), which scans on the runner and sends only its outcome. Crawlers, page views, MCP connections and plain API checks are not counted. A User-Agent can be copied, so this counts what those clients report, not verified installs: anyone who copies one can raise it, up to the rate limit of 60 counted checks (or skill-scan runs) a minute per network address.";
+  "Checks made at the moment of an install by The Forge's install-time clients, told apart by the User-Agent each sends: the Claude Code plugin's install hook, the CLI (forge check) and its hooks for Codex, Gemini CLI and GitHub Copilot, and the forge-check GitHub Action, one per package or tool checked; one per request of the CLI's lockfile check (forge exposure, up to 500 packages a request; not measured before ADR 0155); plus one per run of the skill-scan GitHub Action where its user turned the run count on (count-run: true; off by default, so most runs are never counted), which scans on the runner and sends only its outcome. Crawlers, page views, MCP connections and plain API checks are not counted. A User-Agent can be copied, so this counts what those clients report, not verified installs: anyone who copies one can raise it, up to the rate limit of 60 counted checks (or skill-scan runs) a minute per network address.";
 const INSTALL_OURS = "Includes The Forge's own test agents: our CI and repositories (tagged X-Forge-Internal) count in this number, like House activity.";
 const OUTCOME_LABEL: Record<InstallOutcome, string> = {
   checked: "Install checks by AI tools",
